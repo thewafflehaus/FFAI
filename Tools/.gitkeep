@@ -1,0 +1,8 @@
+# Tools/ holds developer-only utilities NOT shipped in the Swift package.
+#
+# Phase 0 plans:
+#   capture-fixtures.py  — Python script that runs mlx-lm to capture
+#                          golden reference activations and token
+#                          sequences into Tests/Fixtures/. Only used
+#                          when regenerating fixtures, never during
+#                          `swift test`.

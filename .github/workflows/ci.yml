@@ -1,0 +1,116 @@
+name: CI
+
+# Build and test FFAI on Apple Silicon. Runs on every push to main and
+# every PR. Phase 0 surface only; expands as later phases land.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  build_and_test:
+    if: github.repository_owner == 'ekryski'
+    name: Build and test (Apple Silicon)
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: FFAI
+
+    steps:
+      - name: Checkout FFAI
+        uses: actions/checkout@v4
+        with:
+          path: FFAI
+
+      - name: Checkout sibling metaltile
+        uses: actions/checkout@v4
+        with:
+          repository: ekryski/metaltile
+          ref: main
+          path: metaltile
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          uname -a
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry + metaltile build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/metaltile/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('metaltile/Cargo.lock', 'metaltile/Cargo.toml') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Cache SwiftPM build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            FFAI/.build
+            ~/Library/Caches/org.swift.swiftpm
+          key: spm-${{ runner.os }}-${{ hashFiles('FFAI/Package.swift', 'FFAI/Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-
+
+      - name: Resolve Swift packages
+        run: swift package resolve
+
+      - name: Generate kernel artifacts (metaltile-emit)
+        # Phase 0: this step compiles metaltile and produces
+        # kernels.metallib + manifest.json + Generated/MetalTileKernels.swift
+        # into FFAI/Sources/MetalTileSwift/. Once the SPM build plugin lands
+        # this becomes implicit.
+        run: |
+          # TODO: implement metaltile-emit bin and uncomment:
+          # cargo run --release --manifest-path ../metaltile/Cargo.toml \
+          #   -p metaltile-emit -- \
+          #   --out Sources/MetalTileSwift
+          echo "metaltile-emit not yet implemented (Phase 0 deliverable)"
+
+      - name: Build
+        run: swift build
+
+      - name: Run tests with coverage
+        run: swift test --enable-code-coverage
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          BIN_PATH=$(swift build --show-bin-path)
+          PROF_DATA="$BIN_PATH/codecov/default.profdata"
+          if [ -f "$PROF_DATA" ]; then
+            xcrun llvm-cov report \
+              "$BIN_PATH/FFAIPackageTests.xctest/Contents/MacOS/FFAIPackageTests" \
+              -instr-profile="$PROF_DATA" \
+              -ignore-filename-regex='(\.build|Tests|Generated)' || true
+          else
+            echo "No coverage data produced (no tests ran?)"
+          fi
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            FFAI/.build/**/Logs/Test/*.xcresult
+          retention-days: 7

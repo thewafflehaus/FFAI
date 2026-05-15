@@ -1,0 +1,20 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj
+Package.resolved
+
+# Generated kernel artifacts (regenerated on every build by SPM plugin).
+# Ignore everything in Generated/ except .gitkeep so the directory
+# survives a fresh clone before metaltile-emit runs.
+Sources/MetalTileSwift/Resources/kernels.metallib
+Sources/MetalTileSwift/Resources/manifest.json
+Sources/MetalTileSwift/Resources/kernels/
+Sources/MetalTileSwift/Generated/*
+!Sources/MetalTileSwift/Generated/.gitkeep
+
+# Local model files
+Models/
+*.safetensors
+*.gguf

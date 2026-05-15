@@ -1,0 +1,8 @@
+# This directory holds metaltile-generated artifacts:
+#   kernels.metallib   — pre-compiled Metal binary (gitignored)
+#   manifest.json      — per-kernel metadata (gitignored)
+#   kernels/*.metal    — MSL sources for inspection (gitignored)
+#
+# Files are produced by `cargo run -p metaltile-emit` (sibling metaltile
+# repo) and consumed by the SPM build plugin. See planning/plan.md
+# Phase 0.

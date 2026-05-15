@@ -1,0 +1,3 @@
+# Generated/MetalTileKernels.swift is produced by metaltile-emit at build
+# time. It contains one strongly-typed Swift function per kernel. See
+# planning/plan.md Phase 0.
