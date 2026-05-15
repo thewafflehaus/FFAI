@@ -14,7 +14,9 @@ Sources/MetalTileSwift/Resources/kernels/
 Sources/MetalTileSwift/Generated/*
 !Sources/MetalTileSwift/Generated/.gitkeep
 
-# Local model files
-Models/
+# Local model files (downloaded checkpoints land in /Models at the repo
+# root; Sources/FFAI/Models/ is the family-file source directory and IS
+# tracked).
+/Models/
 *.safetensors
 *.gguf
