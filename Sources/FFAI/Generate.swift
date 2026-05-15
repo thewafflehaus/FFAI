@@ -37,28 +37,31 @@ public extension Model {
         let caches = engine.makeKVCache()
         let eos = config.eosTokenId
 
-        // Prefill: feed each prompt token, discard logits except the last.
+        // Prefill: feed each prompt token through forwardSample so the
+        // last call returns the first sampled token directly (logits
+        // never leave the GPU). Earlier prompt tokens use the same path
+        // for symmetry — the sampled value is discarded.
         let prefillStart = Date()
-        var lastLogits: Tensor?
+        var nextToken = 0
         for (i, t) in promptTokens.enumerated() {
-            lastLogits = engine.forward(tokenId: t, position: i, caches: caches)
+            nextToken = engine.forwardSample(tokenId: t, position: i, caches: caches)
         }
         let prefillTime = Date().timeIntervalSince(prefillStart)
-        guard let initialLogits = lastLogits else {
+        guard !promptTokens.isEmpty else {
             return GenerationResult(promptTokens: promptTokens, generatedTokens: [],
                                     text: "", prefillTimeS: 0, decodeTimeS: 0)
         }
 
-        // Decode loop
+        // Decode loop. nextToken already holds the first sampled token
+        // from the last prefill step.
         let decodeStart = Date()
         var generated: [Int] = []
-        var nextLogits = initialLogits
         var pos = promptTokens.count
         for _ in 0..<options.maxNewTokens {
-            let next = Sampling.argmax(nextLogits)
-            if options.stopOnEOS, let e = eos, next == e { break }
-            generated.append(next)
-            nextLogits = engine.forward(tokenId: next, position: pos, caches: caches)
+            if options.stopOnEOS, let e = eos, nextToken == e { break }
+            generated.append(nextToken)
+            nextToken = engine.forwardSample(tokenId: nextToken, position: pos,
+                                             caches: caches)
             pos += 1
         }
         let decodeTime = Date().timeIntervalSince(decodeStart)

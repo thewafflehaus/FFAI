@@ -212,6 +212,9 @@ public final class LlamaLayer: Module {
     /// Single-token forward pass. `h` is the residual stream [hidden].
     /// `position` is the absolute sequence index of this token.
     /// Returns the updated residual stream.
+    ///
+    /// All work is queued on `cmd` — no commit/wait inside. Caller is
+    /// responsible for committing once at end-of-token and waiting.
     func forward(_ h: Tensor, position: Int, cache: KVCache,
                  cmd: MTLCommandBuffer, device: Device) -> Tensor {
         // Attention
@@ -228,39 +231,30 @@ public final class LlamaLayer: Module {
                                 position: position, headDim: headDim,
                                 thetaBase: ropeTheta, scaling: ropeScaling, on: cmd)
 
-        // Append to KV cache. Need to sync the command buffer first so
-        // rotated K/V are CPU-visible before memcpy.
-        cmd.commit()
-        cmd.waitUntilCompleted()
-
-        cache.append(kFlat: kRotated, vFlat: v.reshaped(to: [nKVHeads, headDim]))
-
-        // New command buffer for SDPA + MLP
-        let cmd2 = device.makeCommandBuffer()
+        // GPU KV cache update — no CPU sync. Bumps cache.length so
+        // SDPA below sees this token in its attended-positions count.
+        cache.appendOnGPU(kFlat: kRotated,
+                          vFlat: v.reshaped(to: [nKVHeads, headDim]),
+                          on: cmd)
 
         // SDPA — cache is [nKVHeads, maxSeq, headDim]; kernel takes
-        // n_kv = filled length, kv_stride = maxSeq physical stride.
+        // n_kv = filled length (post-append), kv_stride = maxSeq.
         let attnOut = Ops.sdpaDecode(
             q: qRotated, k: cache.kBuffer, v: cache.vBuffer,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
             nKV: cache.length, kvStride: cache.maxSeq,
-            scale: scale, on: cmd2)
-        let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd2)
-        let postAttn = Ops.add(h, oOut, on: cmd2)
+            scale: scale, on: cmd)
+        let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
+        let postAttn = Ops.add(h, oOut, on: cmd)
 
-        // MLP
-        let mlpNorm = postAttnNorm(postAttn, on: cmd2)
-        let gate = gateProj(mlpNorm, on: cmd2)
-        let up = upProj(mlpNorm, on: cmd2)
-        let siluGate = Ops.silu(gate, on: cmd2)
-        let mlpInner = Ops.mul(siluGate, up, on: cmd2)
-        let mlpOut = downProj(mlpInner, on: cmd2)
-        let result = Ops.add(postAttn, mlpOut, on: cmd2)
-
-        cmd2.commit()
-        cmd2.waitUntilCompleted()
-
-        return result
+        // MLP — SwiGLU
+        let mlpNorm = postAttnNorm(postAttn, on: cmd)
+        let gate = gateProj(mlpNorm, on: cmd)
+        let up = upProj(mlpNorm, on: cmd)
+        let siluGate = Ops.silu(gate, on: cmd)
+        let mlpInner = Ops.mul(siluGate, up, on: cmd)
+        let mlpOut = downProj(mlpInner, on: cmd)
+        return Ops.add(postAttn, mlpOut, on: cmd)
     }
 }
 
@@ -318,32 +312,68 @@ public final class LlamaModel: LanguageModel {
 
     /// Single-token forward. `tokenId` is the input token; `position` is
     /// its absolute sequence index. Returns logits [vocab].
+    ///
+    /// All N layers + embedding + final norm + lm head are queued on
+    /// ONE MTLCommandBuffer with a single commit + wait at the end.
     public func forward(tokenId: Int, position: Int,
                         caches: [KVCache], device: Device) -> Tensor {
+        let cmd = device.makeCommandBuffer()
+
         // Embedding
-        let cmd0 = device.makeCommandBuffer()
         let tokenBuf = device.makeBuffer(length: 4)
         var tid = UInt32(tokenId)
         memcpy(tokenBuf.contents(), &tid, 4)
         let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
-        var h = embedTokens(tokenTensor, on: cmd0).reshaped(to: [hidden])
-        cmd0.commit()
-        cmd0.waitUntilCompleted()
+        var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
 
-        // Layers
+        // Layers — all queued on the same command buffer, no syncs.
         for (i, layer) in layers.enumerated() {
-            let cmdL = device.makeCommandBuffer()
             h = layer.forward(h, position: position, cache: caches[i],
-                              cmd: cmdL, device: device)
+                              cmd: cmd, device: device)
         }
 
         // Final norm + lm head
-        let cmdF = device.makeCommandBuffer()
-        let normed = finalNorm(h, on: cmdF)
-        let logits = lmHead(normed, on: cmdF)
-        cmdF.commit()
-        cmdF.waitUntilCompleted()
+        let normed = finalNorm(h, on: cmd)
+        let logits = lmHead(normed, on: cmd)
+
+        // ONE sync per token.
+        cmd.commit()
+        cmd.waitUntilCompleted()
 
         return logits
+    }
+
+    /// Forward + GPU argmax fused into one command buffer. Only 4 bytes
+    /// (the chosen token id) cross CPU↔GPU per token instead of vocab_size
+    /// floats.
+    public func forwardSample(tokenId: Int, position: Int,
+                              caches: [KVCache], device: Device) -> Int {
+        let cmd = device.makeCommandBuffer()
+
+        let tokenBuf = device.makeBuffer(length: 4)
+        var tid = UInt32(tokenId)
+        memcpy(tokenBuf.contents(), &tid, 4)
+        let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
+        var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
+
+        for (i, layer) in layers.enumerated() {
+            h = layer.forward(h, position: position, cache: caches[i],
+                              cmd: cmd, device: device)
+        }
+
+        let normed = finalNorm(h, on: cmd)
+        let logits = lmHead(normed, on: cmd)
+
+        // GPU argmax — 4-byte output buffer reused across calls would be
+        // ideal; for Phase 4 simplicity allocate fresh per token.
+        let outBuf = device.makeBuffer(length: 4)
+        let outTensor = Tensor(buffer: outBuf, offset: 0, shape: [1], dtype: .u32)
+        Ops.argmax(logits, into: outTensor, on: cmd)
+
+        cmd.commit()
+        cmd.waitUntilCompleted()
+
+        let result = outBuf.contents().bindMemory(to: UInt32.self, capacity: 1).pointee
+        return Int(result)
     }
 }

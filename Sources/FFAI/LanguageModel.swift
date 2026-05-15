@@ -20,6 +20,11 @@ public protocol LanguageModel: Module {
 
     /// Single-token forward pass. Returns logits [vocab].
     func forward(tokenId: Int, position: Int, caches: [KVCache], device: Device) -> Tensor
+
+    /// Forward + GPU argmax in one command buffer. Returns just the
+    /// chosen token id (4-byte readback) — no full logits transfer.
+    func forwardSample(tokenId: Int, position: Int,
+                       caches: [KVCache], device: Device) -> Int
 }
 
 public extension LanguageModel {
@@ -29,5 +34,9 @@ public extension LanguageModel {
 
     func forward(tokenId: Int, position: Int, caches: [KVCache]) -> Tensor {
         forward(tokenId: tokenId, position: position, caches: caches, device: .shared)
+    }
+
+    func forwardSample(tokenId: Int, position: Int, caches: [KVCache]) -> Int {
+        forwardSample(tokenId: tokenId, position: position, caches: caches, device: .shared)
     }
 }

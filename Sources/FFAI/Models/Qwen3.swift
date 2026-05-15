@@ -234,18 +234,16 @@ public final class Qwen3Layer: Module {
 
     /// Single-token forward pass. Same shape as LlamaLayer.forward but
     /// applies q_norm / k_norm to each head's [head_dim] vector before
-    /// RoPE (rather than on the full hidden dim).
+    /// RoPE. All work queued on `cmd`, no commit/wait inside.
     func forward(_ h: Tensor, position: Int, cache: KVCache,
                  cmd: MTLCommandBuffer, device: Device) -> Tensor {
         // Attention
         let xNorm = inputNorm(h, on: cmd)
-        let q = qProj(xNorm, on: cmd)   // [n_heads * head_dim]
-        let k = kProj(xNorm, on: cmd)   // [n_kv_heads * head_dim]
-        let v = vProj(xNorm, on: cmd)   // [n_kv_heads * head_dim]
+        let q = qProj(xNorm, on: cmd)
+        let k = kProj(xNorm, on: cmd)
+        let v = vProj(xNorm, on: cmd)
 
-        // Apply per-head q_norm and k_norm. q_norm.weight is shape
-        // [head_dim] and is applied INDEPENDENTLY to each head's
-        // head_dim-vector.
+        // Per-head q_norm / k_norm
         let qNormed = applyPerHeadRMSNorm(q, weight: qNorm.weight, eps: qNorm.eps,
                                           nHeads: nHeads, headDim: headDim,
                                           on: cmd, device: device)
@@ -253,7 +251,7 @@ public final class Qwen3Layer: Module {
                                           nHeads: nKVHeads, headDim: headDim,
                                           on: cmd, device: device)
 
-        // RoPE on q and k
+        // RoPE
         let qRotated = Ops.rope(qNormed.reshaped(to: [nHeads, headDim]),
                                 position: position, headDim: headDim,
                                 thetaBase: ropeTheta, scaling: ropeScaling, on: cmd)
@@ -261,34 +259,27 @@ public final class Qwen3Layer: Module {
                                 position: position, headDim: headDim,
                                 thetaBase: ropeTheta, scaling: ropeScaling, on: cmd)
 
-        // Sync so the rotated K/V are CPU-visible for the cache append.
-        cmd.commit()
-        cmd.waitUntilCompleted()
-        cache.append(kFlat: kRotated, vFlat: v.reshaped(to: [nKVHeads, headDim]))
-
-        let cmd2 = device.makeCommandBuffer()
+        // GPU KV cache update — no CPU sync.
+        cache.appendOnGPU(kFlat: kRotated,
+                          vFlat: v.reshaped(to: [nKVHeads, headDim]),
+                          on: cmd)
 
         let attnOut = Ops.sdpaDecode(
             q: qRotated, k: cache.kBuffer, v: cache.vBuffer,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
             nKV: cache.length, kvStride: cache.maxSeq,
-            scale: scale, on: cmd2)
-        let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd2)
-        let postAttn = Ops.add(h, oOut, on: cmd2)
+            scale: scale, on: cmd)
+        let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
+        let postAttn = Ops.add(h, oOut, on: cmd)
 
         // MLP — SwiGLU
-        let mlpNorm = postAttnNorm(postAttn, on: cmd2)
-        let gate = gateProj(mlpNorm, on: cmd2)
-        let up = upProj(mlpNorm, on: cmd2)
-        let siluGate = Ops.silu(gate, on: cmd2)
-        let mlpInner = Ops.mul(siluGate, up, on: cmd2)
-        let mlpOut = downProj(mlpInner, on: cmd2)
-        let result = Ops.add(postAttn, mlpOut, on: cmd2)
-
-        cmd2.commit()
-        cmd2.waitUntilCompleted()
-
-        return result
+        let mlpNorm = postAttnNorm(postAttn, on: cmd)
+        let gate = gateProj(mlpNorm, on: cmd)
+        let up = upProj(mlpNorm, on: cmd)
+        let siluGate = Ops.silu(gate, on: cmd)
+        let mlpInner = Ops.mul(siluGate, up, on: cmd)
+        let mlpOut = downProj(mlpInner, on: cmd)
+        return Ops.add(postAttn, mlpOut, on: cmd)
     }
 
     /// Apply RMSNorm independently to each head's [head_dim] slice of a
@@ -364,26 +355,53 @@ public final class Qwen3Model: LanguageModel {
 
     public func forward(tokenId: Int, position: Int,
                         caches: [KVCache], device: Device) -> Tensor {
-        let cmd0 = device.makeCommandBuffer()
+        let cmd = device.makeCommandBuffer()
+
         let tokenBuf = device.makeBuffer(length: 4)
         var tid = UInt32(tokenId)
         memcpy(tokenBuf.contents(), &tid, 4)
         let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
-        var h = embedTokens(tokenTensor, on: cmd0).reshaped(to: [hidden])
-        cmd0.commit()
-        cmd0.waitUntilCompleted()
+        var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
 
         for (i, layer) in layers.enumerated() {
-            let cmdL = device.makeCommandBuffer()
             h = layer.forward(h, position: position, cache: caches[i],
-                              cmd: cmdL, device: device)
+                              cmd: cmd, device: device)
         }
 
-        let cmdF = device.makeCommandBuffer()
-        let normed = finalNorm(h, on: cmdF)
-        let logits = lmHead(normed, on: cmdF)
-        cmdF.commit()
-        cmdF.waitUntilCompleted()
+        let normed = finalNorm(h, on: cmd)
+        let logits = lmHead(normed, on: cmd)
+
+        cmd.commit()
+        cmd.waitUntilCompleted()
         return logits
+    }
+
+    public func forwardSample(tokenId: Int, position: Int,
+                              caches: [KVCache], device: Device) -> Int {
+        let cmd = device.makeCommandBuffer()
+
+        let tokenBuf = device.makeBuffer(length: 4)
+        var tid = UInt32(tokenId)
+        memcpy(tokenBuf.contents(), &tid, 4)
+        let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
+        var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
+
+        for (i, layer) in layers.enumerated() {
+            h = layer.forward(h, position: position, cache: caches[i],
+                              cmd: cmd, device: device)
+        }
+
+        let normed = finalNorm(h, on: cmd)
+        let logits = lmHead(normed, on: cmd)
+
+        let outBuf = device.makeBuffer(length: 4)
+        let outTensor = Tensor(buffer: outBuf, offset: 0, shape: [1], dtype: .u32)
+        Ops.argmax(logits, into: outTensor, on: cmd)
+
+        cmd.commit()
+        cmd.waitUntilCompleted()
+
+        let result = outBuf.contents().bindMemory(to: UInt32.self, capacity: 1).pointee
+        return Int(result)
     }
 }

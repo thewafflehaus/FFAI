@@ -54,9 +54,10 @@ public final class KVCache: @unchecked Sendable {
         self.vBuffer.zero()
     }
 
-    /// Append one timestep of K and V. `kFlat` and `vFlat` are
-    /// [nKVHeads, headDim] (flat row-major). For each head h, copy
-    /// kFlat[h, :] into kBuffer[h, length, :].
+    /// CPU-side legacy append. Caller must have already sync'd the
+    /// command buffer that produced kFlat / vFlat. Kept for tests +
+    /// callers that don't have a live MTLCommandBuffer; the inference
+    /// path uses `appendOnGPU` instead, which is sync-free.
     public func append(kFlat: Tensor, vFlat: Tensor) {
         precondition(length < maxSeq, "KVCache: capacity exhausted")
         precondition(kFlat.dtype == dtype && vFlat.dtype == dtype, "KVCache: dtype mismatch")
@@ -64,7 +65,6 @@ public final class KVCache: @unchecked Sendable {
         let kSrc = kFlat.buffer.contents().advanced(by: kFlat.offset)
         let vSrc = vFlat.buffer.contents().advanced(by: vFlat.offset)
         for h in 0..<nKVHeads {
-            // dst offset within kBuffer: h * maxSeq * headDim + length * headDim
             let dstHeadOffset = (h * maxSeq + length) * headDim * dtype.byteSize
             let kDst = kBuffer.buffer.contents().advanced(by: kBuffer.offset + dstHeadOffset)
             let vDst = vBuffer.buffer.contents().advanced(by: vBuffer.offset + dstHeadOffset)
@@ -72,6 +72,25 @@ public final class KVCache: @unchecked Sendable {
             kDst.copyMemory(from: kSrc.advanced(by: srcOffset), byteCount: bytesPerHead)
             vDst.copyMemory(from: vSrc.advanced(by: srcOffset), byteCount: bytesPerHead)
         }
+        length += 1
+    }
+
+    /// Append one timestep on the GPU via Ops.kvCacheUpdate. The dispatch
+    /// is queued on `cmd`; no commit/wait happens here. Caller is
+    /// responsible for ensuring the command buffer that produced kFlat /
+    /// vFlat is the same one (or a strictly-prior one) so dependencies
+    /// are honored. Bumps `length` immediately so subsequent SDPA
+    /// dispatches see the updated count.
+    public func appendOnGPU(kFlat: Tensor, vFlat: Tensor,
+                            on cmd: MTLCommandBuffer) {
+        precondition(length < maxSeq, "KVCache: capacity exhausted")
+        precondition(kFlat.dtype == dtype && vFlat.dtype == dtype, "KVCache: dtype mismatch")
+        Ops.kvCacheUpdate(src: kFlat, into: kBuffer,
+                          nKVHeads: nKVHeads, headDim: headDim,
+                          maxSeq: maxSeq, position: length, on: cmd)
+        Ops.kvCacheUpdate(src: vFlat, into: vBuffer,
+                          nKVHeads: nKVHeads, headDim: headDim,
+                          maxSeq: maxSeq, position: length, on: cmd)
         length += 1
     }
 

@@ -158,8 +158,9 @@ public enum Ops {
         return result
     }
 
-    /// Naive matrix-vector. weight: [out_dim, in_dim], input: [in_dim],
-    /// output: [out_dim]. Caller picks output dtype to match weight.
+    /// Cooperative-thread matrix-vector multiply. weight: [out_dim, in_dim],
+    /// input: [in_dim], output: [out_dim]. One threadgroup per output row;
+    /// threads cooperate on the dot-product reduction.
     public static func gemv(weight: Tensor, input: Tensor,
                             on cmd: MTLCommandBuffer,
                             into out: Tensor? = nil) -> Tensor {
@@ -171,7 +172,13 @@ public enum Ops {
         let outDim = weight.shape[0]
         let inDim = weight.shape[1]
         let result = out ?? Tensor.empty(shape: [outDim], dtype: weight.dtype)
-        let (grid, tg) = elementwiseGrid(outDim)
+        // Reduction kernel: one threadgroup per output row.
+        // dispatchThreads dispatches outDim*tgWidth threads in groups
+        // of tgWidth — yielding outDim threadgroups, each cooperating
+        // over the in_dim axis.
+        let tgWidth = 256
+        let grid = MTLSize(width: outDim * tgWidth, height: 1, depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
         switch weight.dtype {
         case .f32:
             MetalTileKernels.gemv_f32(
@@ -528,7 +535,10 @@ public enum Ops {
         precondition(input.elementCount == inDim,
                      "dequantGemv: input \(input.elementCount) ≠ in_dim \(inDim)")
         let result = out ?? Tensor.empty(shape: [outDim], dtype: input.dtype)
-        let (grid, tg) = elementwiseGrid(outDim)
+        // Reduction kernel: one threadgroup per output row.
+        let tgWidth = 256
+        let grid = MTLSize(width: outDim * tgWidth, height: 1, depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
         let inDimU = UInt32(inDim)
         let groupSizeU = UInt32(groupSize)
 
@@ -684,6 +694,78 @@ public enum Ops {
         dequantGemv(weight: weight, scales: scales, biases: biases,
                     input: input, bits: 4, groupSize: groupSize,
                     on: cmd, into: out)
+    }
+
+    /// GPU argmax over a 1D logits tensor. Caller supplies a 1-element
+    /// u32 output buffer. Uses the cooperative 256-thread Reduction
+    /// kernel — one threadgroup, ~80-300 KB / vocab logits in registers.
+    public static func argmax(_ logits: Tensor, into out: Tensor,
+                              on cmd: MTLCommandBuffer) {
+        precondition(out.dtype == .u32, "Ops.argmax: output must be u32")
+        precondition(out.elementCount == 1, "Ops.argmax: output must be a single element")
+        let n = logits.elementCount
+        // Reduction: dispatch 256 threads in 1 group (full simdgroups).
+        let tg = MTLSize(width: 256, height: 1, depth: 1)
+        let grid = MTLSize(width: 256, height: 1, depth: 1)
+        switch logits.dtype {
+        case .f32:
+            MetalTileKernels.argmax_f32(
+                inp: logits.buffer, inpOffset: logits.offset,
+                out: out.buffer, outOffset: out.offset,
+                n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.argmax_f16(
+                inp: logits.buffer, inpOffset: logits.offset,
+                out: out.buffer, outOffset: out.offset,
+                n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.argmax_bf16(
+                inp: logits.buffer, inpOffset: logits.offset,
+                out: out.buffer, outOffset: out.offset,
+                n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.argmax: unsupported dtype \(logits.dtype)")
+        }
+    }
+
+    /// Append one timestep to a KV cache on the GPU. `src` is
+    /// [nKVHeads, headDim] (rotated K or V for the current token);
+    /// `cache` is the full [nKVHeads, maxSeq, headDim] buffer.
+    /// `position` is the slot to write into. Replaces the CPU-side
+    /// memcpy + mid-layer commit/wait pattern from Phase 2.
+    public static func kvCacheUpdate(
+        src: Tensor, into cache: Tensor,
+        nKVHeads: Int, headDim: Int, maxSeq: Int, position: Int,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(src.dtype == cache.dtype, "kvCacheUpdate: dtype mismatch")
+        let total = nKVHeads * headDim
+        let (grid, tg) = elementwiseGrid(total)
+        let hd = UInt32(headDim)
+        let ms = UInt32(maxSeq)
+        let pos = UInt32(position)
+        switch src.dtype {
+        case .f32:
+            MetalTileKernels.kv_cache_update_f32(
+                src: src.buffer, srcOffset: src.offset,
+                out: cache.buffer, outOffset: cache.offset,
+                head_dim: hd, max_seq: ms, position: pos,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.kv_cache_update_f16(
+                src: src.buffer, srcOffset: src.offset,
+                out: cache.buffer, outOffset: cache.offset,
+                head_dim: hd, max_seq: ms, position: pos,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.kv_cache_update_bf16(
+                src: src.buffer, srcOffset: src.offset,
+                out: cache.buffer, outOffset: cache.offset,
+                head_dim: hd, max_seq: ms, position: pos,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.kvCacheUpdate: unsupported dtype \(src.dtype)")
+        }
     }
 
     /// SDPA decode. q: [n_q_heads, head_dim]. k/v cache layout:
