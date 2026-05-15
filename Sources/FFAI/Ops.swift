@@ -261,6 +261,59 @@ public enum Ops {
         return result
     }
 
+    /// Multi-row RMSNorm. Input is [nRows, n]; weight is [n] (shared
+    /// across all rows). Each row gets its own threadgroup. Used by
+    /// Qwen3 to dispatch all per-head q_norm / k_norm in one call
+    /// instead of one per head.
+    public static func rmsNormRows(_ x: Tensor, weight: Tensor, eps: Float,
+                                   nRows: Int, rowSize: Int,
+                                   on cmd: MTLCommandBuffer,
+                                   into out: Tensor? = nil) -> Tensor {
+        precondition(x.elementCount == nRows * rowSize,
+                     "rmsNormRows: x size \(x.elementCount) ≠ nRows*rowSize")
+        precondition(weight.elementCount == rowSize, "rmsNormRows: weight must be [rowSize]")
+        precondition(x.dtype == weight.dtype, "rmsNormRows: dtype mismatch")
+        let result = out ?? Tensor.empty(shape: x.shape, dtype: x.dtype)
+
+        var epsValue = eps
+        let epsBuf = device.makeBuffer(length: 4)
+        memcpy(epsBuf.contents(), &epsValue, 4)
+
+        // Reduction kernel: one threadgroup per row.
+        let tgWidth = 256
+        let grid = MTLSize(width: nRows * tgWidth, height: 1, depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+        switch x.dtype {
+        case .f32:
+            MetalTileKernels.rms_norm_f32(
+                x: x.buffer, xOffset: x.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                out: result.buffer, outOffset: result.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                n: UInt32(rowSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.rms_norm_f16(
+                x: x.buffer, xOffset: x.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                out: result.buffer, outOffset: result.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                n: UInt32(rowSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.rms_norm_bf16(
+                x: x.buffer, xOffset: x.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                out: result.buffer, outOffset: result.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                n: UInt32(rowSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.rmsNormRows: unsupported dtype \(x.dtype)")
+        }
+        return result
+    }
+
     /// Llama-3-style RoPE with frequency-band scaling. Pass `scaleFactor=1`
     /// + `originalMaxPosition` very large to disable scaling.
     public struct RoPEScaling: Sendable {

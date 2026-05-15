@@ -283,28 +283,15 @@ public final class Qwen3Layer: Module {
     }
 
     /// Apply RMSNorm independently to each head's [head_dim] slice of a
-    /// flat [nHeads * headDim] tensor. Phase 2.5 implementation: launch
-    /// one rmsNorm per head sequentially. Slow (nHeads kernel launches)
-    /// but trivially correct; an optimized multi-row rms_norm kernel is
-    /// a Phase 5 follow-up.
+    /// flat [nHeads * headDim] tensor via a single multi-row dispatch
+    /// (Ops.rmsNormRows). Phase 4 collapse from one-launch-per-head.
     private func applyPerHeadRMSNorm(
         _ x: Tensor, weight: Tensor, eps: Float,
         nHeads: Int, headDim: Int,
         on cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
-        let result = Tensor.empty(shape: x.shape, dtype: x.dtype)
-        let bytesPerHead = headDim * x.dtype.byteSize
-        for h in 0..<nHeads {
-            let inSlice = Tensor(buffer: x.buffer,
-                                 offset: x.offset + h * bytesPerHead,
-                                 shape: [headDim], dtype: x.dtype)
-            let outSlice = Tensor(buffer: result.buffer,
-                                  offset: result.offset + h * bytesPerHead,
-                                  shape: [headDim], dtype: x.dtype)
-            _ = Ops.rmsNorm(inSlice, weight: weight, eps: eps,
-                            on: cmd, into: outSlice)
-        }
-        return result
+        Ops.rmsNormRows(x, weight: weight, eps: eps,
+                        nRows: nHeads, rowSize: headDim, on: cmd)
     }
 }
 
