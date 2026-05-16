@@ -752,6 +752,67 @@ public enum Ops {
     /// GPU argmax over a 1D logits tensor. Caller supplies a 1-element
     /// u32 output buffer. Uses the cooperative 256-thread Reduction
     /// kernel — one threadgroup, ~80-300 KB / vocab logits in registers.
+    /// Mamba 2 selective-scan single-token decode step. Updates the
+    /// per-layer recurrent state `h` in place and writes the output
+    /// channel vector `y`. `h` lives in fp32 (state accumulates over
+    /// many decode steps; bf16's 7-bit mantissa drifts fast). One
+    /// thread per `(head, channel)` — total `nHeads * headDim` threads.
+    ///
+    /// See `SSMStateCache` for the storage class that wraps the per-layer
+    /// `h` buffer; Mamba 2 family files (Phase 5e+) call this through
+    /// that cache.
+    public static func ssmStep(
+        x: Tensor, a: Tensor, b: Tensor, c: Tensor, dt: Tensor,
+        state h: Tensor, into y: Tensor,
+        nHeads: Int, headDim: Int, stateDim: Int,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(h.dtype == .f32, "Ops.ssmStep: state h must be f32")
+        precondition(x.dtype == y.dtype, "Ops.ssmStep: x and y dtype must match")
+        precondition(a.dtype == x.dtype && b.dtype == x.dtype
+                     && c.dtype == x.dtype && dt.dtype == x.dtype,
+                     "Ops.ssmStep: a/b/c/dt dtype must match x")
+        let grid = MTLSize(width: nHeads * headDim, height: 1, depth: 1)
+        let tg = MTLSize(width: 1, height: 1, depth: 1)
+        switch x.dtype {
+        case .f32:
+            MetalTileKernels.ssm_step_f32(
+                x: x.buffer, xOffset: x.offset,
+                a: a.buffer, aOffset: a.offset,
+                b: b.buffer, bOffset: b.offset,
+                c: c.buffer, cOffset: c.offset,
+                dt: dt.buffer, dtOffset: dt.offset,
+                h: h.buffer, hOffset: h.offset,
+                y: y.buffer, yOffset: y.offset,
+                head_dim: UInt32(headDim), state_dim: UInt32(stateDim),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.ssm_step_f16(
+                x: x.buffer, xOffset: x.offset,
+                a: a.buffer, aOffset: a.offset,
+                b: b.buffer, bOffset: b.offset,
+                c: c.buffer, cOffset: c.offset,
+                dt: dt.buffer, dtOffset: dt.offset,
+                h: h.buffer, hOffset: h.offset,
+                y: y.buffer, yOffset: y.offset,
+                head_dim: UInt32(headDim), state_dim: UInt32(stateDim),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.ssm_step_bf16(
+                x: x.buffer, xOffset: x.offset,
+                a: a.buffer, aOffset: a.offset,
+                b: b.buffer, bOffset: b.offset,
+                c: c.buffer, cOffset: c.offset,
+                dt: dt.buffer, dtOffset: dt.offset,
+                h: h.buffer, hOffset: h.offset,
+                y: y.buffer, yOffset: y.offset,
+                head_dim: UInt32(headDim), state_dim: UInt32(stateDim),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.ssmStep: unsupported dtype \(x.dtype)")
+        }
+    }
+
     public static func argmax(_ logits: Tensor, into out: Tensor,
                               on cmd: MTLCommandBuffer) {
         precondition(out.dtype == .u32, "Ops.argmax: output must be u32")
