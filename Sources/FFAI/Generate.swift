@@ -167,27 +167,45 @@ public extension Model {
         let weightsBytes = engine.parameters().reduce(0) { $0 + $1.1.byteCount }
         let memTracker = PhaseMemoryTracker()
 
-        // Greedy fast path keeps the existing 4-byte-per-token GPU argmax;
-        // any non-default sampling knob forces the CPU sample path (one
-        // full vocab readback per token, then Sampling.sample).
-        let isGreedyPath = params.temperature == 0
-            && params.topK == 0
-            && params.topP >= 1.0
-            && params.minP == 0
-            && params.repetitionPenalty == 1.0
+        // Path selector for the sampling step:
+        //
+        //   greedy-GPU       T == 0, no filters — existing argmax kernel
+        //                    (4-byte readback per token, fastest path).
+        //   gpu-categorical  T > 0, no filters — forward + GPU softmax +
+        //                    categorical sample kernel. Logits stay on GPU;
+        //                    only the chosen token id flows back (4 bytes).
+        //   cpu-sample       Any of top-K / top-P / min-P / rep-penalty:
+        //                    full vocab readback + Sampling.sample pipeline.
+        let hasFilters = params.topK > 0 || params.topP < 1.0 || params.minP > 0
+            || params.repetitionPenalty != 1.0
+        enum Path: String { case greedyGPU, gpuCategorical, cpuSample }
+        let path: Path = {
+            if hasFilters             { return .cpuSample }
+            if params.temperature == 0 { return .greedyGPU }
+            return .gpuCategorical
+        }()
+
         var rng = params.makeRNG()
-        var tokenHistory = promptTokens   // grows as decode produces tokens
+        var tokenHistory = promptTokens   // grows as decode produces tokens; used by cpu-sample
 
         func sampleNext(tokenId t: Int, position i: Int) -> Int {
-            if isGreedyPath {
+            switch path {
+            case .greedyGPU:
                 return engine.forwardSample(tokenId: t, position: i, caches: caches)
+            case .gpuCategorical:
+                let u = Float(Double.random(in: 0..<1, using: &rng))
+                return engine.forwardSampleCategorical(
+                    tokenId: t, position: i, caches: caches,
+                    temperature: params.temperature, uniformDraw: u
+                )
+            case .cpuSample:
+                let logits = engine.forward(tokenId: t, position: i, caches: caches)
+                return Sampling.sample(logits, parameters: params,
+                                       rng: &rng, tokenHistory: tokenHistory)
             }
-            let logits = engine.forward(tokenId: t, position: i, caches: caches)
-            return Sampling.sample(logits, parameters: params,
-                                   rng: &rng, tokenHistory: tokenHistory)
         }
 
-        Debug.log(.generate, "begin prefill: \(promptTokens.count) tokens, maxTokens=\(params.maxTokens), path=\(isGreedyPath ? "greedy-GPU" : "cpu-sample")")
+        Debug.log(.generate, "begin prefill: \(promptTokens.count) tokens, maxTokens=\(params.maxTokens), path=\(path.rawValue)")
 
         // ─── Prefill ─────────────────────────────────────────────────
         let prefillStart = Date()

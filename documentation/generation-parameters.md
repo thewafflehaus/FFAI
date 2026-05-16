@@ -13,7 +13,7 @@ mutates fields, or constructs their own.
 | `stopOnEOS: Bool` | `true` | ✅ | Stop at the model's `eosTokenId`. |
 | `extraStopTokens: Set<Int>` | `[]` | ✅ | Additional stop ids beyond EOS. |
 | `prefillStepSize: Int` | `1024` | 🚧 Phase 5+ | Honored once chunked prefill ships; today's per-token prefill ignores it. |
-| `temperature: Float` | `0.6` | ✅ | `0` → greedy (GPU argmax fast path, no logits readback). `> 0` → CPU sample (one logits readback per token, ~30% decode-tok/s tax). |
+| `temperature: Float` | `0.6` | ✅ | `0` → greedy (GPU argmax fast path, no logits readback). `> 0` with no filters → GPU `softmax_categorical_sample` kernel, no logits readback. `> 0` with any filter (top-K / top-P / min-P / rep-penalty) → CPU sample (one logits readback per token, ~30% decode-tok/s tax). |
 | `topP: Float` | `1.0` | ✅ | Nucleus cutoff. `1.0` = disabled. Forces CPU sample path when set. |
 | `topK: Int` | `0` | ✅ | `0` = disabled. Forces CPU sample path when set. |
 | `minP: Float` | `0.0` | ✅ | Qwen-style min-P cutoff: keep tokens with prob ≥ `min_p × max_prob`. Forces CPU sample path. |
@@ -21,17 +21,25 @@ mutates fields, or constructs their own.
 | `presencePenalty: Float` | `0.0` | 🚧 Phase 5+ | Additive. `0` = disabled. |
 | `seed: UInt64?` | `nil` | ✅ | When set, the CPU sample path is reproducible run-to-run (SplitMix64 PRNG seeded by this). Ignored on the greedy path (no RNG draw). |
 
-Greedy (the family defaults' `temperature: 0`) stays on the
-existing GPU argmax fast path — only 4 bytes cross CPU↔GPU per
-token. Setting any sampling knob (`temperature > 0`, `topK > 0`,
-`topP < 1`, `minP > 0`, `repetitionPenalty != 1`) switches to the
-CPU sample path: the forward pass returns logits to CPU, then
-`Sampling.sample(...)` runs the rep-penalty → temperature →
-top-K → top-P → min-P → categorical pipeline. Costs one
-vocab-sized readback per token (~300 KB on Qwen3 vocab=151_936 fp16,
-trivial on unified memory) and ~30% of decode tok/s. A GPU sample
-kernel is on the metaltile `ek/sampling-kernels` branch for the
-fully-on-GPU path later.
+Generate picks the cheapest path that produces correct output for
+the supplied parameters:
+
+| Path | Triggered by | Cost per token |
+|---|---|---|
+| `greedy-GPU` | `temperature == 0`, no filters | GPU argmax + 4-byte readback (fastest). |
+| `gpu-categorical` | `temperature > 0`, no filters | Forward + `softmax_categorical_sample` GPU kernel + 4-byte readback. Two cmdbufs today (forward + sample); per-family fusion is a follow-up. |
+| `cpu-sample` | Any of `topK > 0`, `topP < 1`, `minP > 0`, `repetitionPenalty != 1` | Forward + full vocab readback (~300 KB at Qwen 3 fp16, trivial on unified memory) + `Sampling.sample(...)` pipeline. |
+
+The GPU categorical kernel itself (`softmax_categorical_sample`)
+lives in metaltile on the `ek/sampling-kernels` branch — cooperative
+256-thread reduction for max + sum-exp, then a single-threaded
+inverse-CDF walk. The single-thread walk is the ~150µs bottleneck
+at vocab=152K; a parallel prefix-scan version is the natural
+follow-up alongside per-family `forwardSampleCategorical` fusion.
+
+GPU top-K / top-P / min-P / rep-penalty kernels are deferred — they
+need a sort or radix-select, which is a substantial follow-up. Until
+those land, setting any filter falls back to the CPU sample path.
 
 ## Family defaults
 

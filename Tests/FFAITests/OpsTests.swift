@@ -156,4 +156,121 @@ struct OpsTests {
         // Single KV → softmax([single_score]) = 1 → output = v[0]
         #expect(out.toArray(as: Float.self) == [7, 8, 9, 10])
     }
+
+    // MARK: - softmax_categorical_sample
+
+    /// Helper: run the GPU sample once with a given uniform draw, return token id.
+    private func runGPUSample(logits: Tensor, temperature: Float, uniform: Float) -> Int {
+        let tBuf = Tensor.empty(shape: [1], dtype: .f32)
+        tBuf.copyIn(from: [temperature])
+        let uBuf = Tensor.empty(shape: [1], dtype: .f32)
+        uBuf.copyIn(from: [uniform])
+        let out = Tensor.empty(shape: [1], dtype: .u32)
+        runAndWait { cb in
+            Ops.softmaxCategoricalSample(logits, into: out, temperature: tBuf,
+                                         uniform: uBuf, on: cb)
+        }
+        return Int(out.toArray(as: UInt32.self)[0])
+    }
+
+    @Test("GPU sample: peaked distribution always picks the peak")
+    func gpuSamplePeaked() {
+        let l = Tensor.empty(shape: [5], dtype: .f32)
+        l.copyIn(from: [Float(0), 0, 10, 0, 0])
+        for u in [Float(0.001), 0.5, 0.999] {
+            #expect(runGPUSample(logits: l, temperature: 1.0, uniform: u) == 2)
+        }
+    }
+
+    @Test("GPU sample: uniform logits + uniform=0.0 picks index 0")
+    func gpuSampleUniformLow() {
+        let l = Tensor.empty(shape: [4], dtype: .f32)
+        l.copyIn(from: [Float(1), 1, 1, 1])
+        #expect(runGPUSample(logits: l, temperature: 1.0, uniform: 0.0) == 0)
+    }
+
+    @Test("GPU sample: uniform logits + uniform near 1 picks last index")
+    func gpuSampleUniformHigh() {
+        let l = Tensor.empty(shape: [4], dtype: .f32)
+        l.copyIn(from: [Float(1), 1, 1, 1])
+        #expect(runGPUSample(logits: l, temperature: 1.0, uniform: 0.99) == 3)
+    }
+
+    @Test("GPU sample: matches CPU CDF walk over a 32-vocab sweep")
+    func gpuSampleMatchesCPU() {
+        let n = 32
+        var vals = [Float](repeating: 0, count: n)
+        for i in 0..<n { vals[i] = Float(i) / 5.0 }
+        let l = Tensor.empty(shape: [n], dtype: .f32)
+        l.copyIn(from: vals)
+
+        let T: Float = 1.5
+        let invT = 1.0 / T
+        let scaled = vals.map { $0 * invT }
+        let maxL = scaled.max() ?? 0
+        let expSums = scaled.map { Foundation.exp(Double($0 - maxL)) }
+        let total = expSums.reduce(0, +)
+        func cpuExpected(uniform: Float) -> Int {
+            let target = Double(uniform) * total
+            var cum = 0.0
+            for i in 0..<n {
+                cum += expSums[i]
+                if cum >= target { return i }
+            }
+            return n - 1
+        }
+        for u in stride(from: Float(0.05), to: 1.0, by: 0.1) {
+            let gpu = runGPUSample(logits: l, temperature: T, uniform: u)
+            let cpu = cpuExpected(uniform: u)
+            #expect(gpu == cpu, "uniform=\(u): gpu=\(gpu) cpu=\(cpu)")
+        }
+    }
+
+    @Test("GPU sample: large vocab + sparse peak (model-shaped)")
+    func gpuSampleLargeVocab() {
+        // Real models have vocab ~128-152K with a sparse peak.
+        // Reproduce that shape to flush out any precision/overflow bugs.
+        let n = 152_000
+        var vals = [Float](repeating: -10.0, count: n)
+        // Three tokens have most of the mass.
+        vals[42] = 8.0      // dominant
+        vals[1000] = 6.0    // secondary
+        vals[50_000] = 4.0  // tertiary
+        let l = Tensor.empty(shape: [n], dtype: .f32)
+        l.copyIn(from: vals)
+
+        // CPU reference (same algorithm as the kernel).
+        let T: Float = 1.0
+        let invT = 1.0 / T
+        let scaled = vals.map { $0 * invT }
+        let maxL = scaled.max() ?? 0
+        let expSums = scaled.map { Foundation.exp(Double($0 - maxL)) }
+        let total = expSums.reduce(0, +)
+
+        // Sweep uniform draws — each must match the CPU CDF walk.
+        for u in stride(from: Float(0.001), to: 1.0, by: 0.07) {
+            let gpu = runGPUSample(logits: l, temperature: T, uniform: u)
+
+            let target = Double(u) * total
+            var cum = 0.0
+            var expected = n - 1
+            for i in 0..<n {
+                cum += expSums[i]
+                if cum >= target { expected = i; break }
+            }
+            #expect(gpu == expected, "uniform=\(u): gpu=\(gpu) cpu=\(expected)")
+        }
+    }
+
+    @Test("GPU sample: works on bf16 + f16 logits")
+    func gpuSampleDtypes() {
+        let f16 = Tensor.empty(shape: [4], dtype: .f16)
+        f16.copyIn(from: [Float16(0), 0, 8, 0])   // peak at index 2
+        #expect(runGPUSample(logits: f16, temperature: 1.0, uniform: 0.5) == 2)
+
+        let bf16 = Tensor.empty(shape: [4], dtype: .bf16)
+        // bf16 representations of 0, 0, 8, 0:
+        bf16.copyIn(from: [UInt16(0), 0, 0x4100, 0])   // 0x4100 = bf16(8.0)
+        #expect(runGPUSample(logits: bf16, temperature: 1.0, uniform: 0.5) == 2)
+    }
 }

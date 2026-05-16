@@ -781,6 +781,62 @@ public enum Ops {
         }
     }
 
+    /// GPU softmax + categorical sample over a 1D logits tensor.
+    /// Caller supplies:
+    ///   - 1-element u32 output buffer for the sampled token id
+    ///   - 1-element f32 temperature buffer (must be > 0; T=0 should
+    ///     route to `argmax` instead)
+    ///   - 1-element f32 uniform draw in [0, 1) — CPU-generated each
+    ///     decode step from `GenerationParameters.makeRNG()`
+    ///
+    /// Used by the Generate decode loop for the pure-temperature
+    /// sampling path (T > 0, no top-K / top-P / min-P / rep-penalty)
+    /// to keep logits on the GPU. Top-K / top-P / min-P /
+    /// rep-penalty still flow through the CPU `Sampling.sample(...)`
+    /// path until separate filter kernels land.
+    public static func softmaxCategoricalSample(
+        _ logits: Tensor,
+        into out: Tensor,
+        temperature: Tensor,
+        uniform: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(out.dtype == .u32, "Ops.softmaxCategoricalSample: output must be u32")
+        precondition(out.elementCount == 1, "Ops.softmaxCategoricalSample: output must be a single element")
+        precondition(temperature.dtype == .f32 && temperature.elementCount == 1,
+                     "Ops.softmaxCategoricalSample: temperature must be a 1-element f32 tensor")
+        precondition(uniform.dtype == .f32 && uniform.elementCount == 1,
+                     "Ops.softmaxCategoricalSample: uniform must be a 1-element f32 tensor")
+        let n = logits.elementCount
+        let tg = MTLSize(width: 256, height: 1, depth: 1)
+        let grid = MTLSize(width: 256, height: 1, depth: 1)
+        switch logits.dtype {
+        case .f32:
+            MetalTileKernels.softmax_categorical_sample_f32(
+                inp: logits.buffer, inpOffset: logits.offset,
+                out: out.buffer, outOffset: out.offset,
+                temperature_in: temperature.buffer, temperature_inOffset: temperature.offset,
+                uniform_in: uniform.buffer, uniform_inOffset: uniform.offset,
+                n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.softmax_categorical_sample_f16(
+                inp: logits.buffer, inpOffset: logits.offset,
+                out: out.buffer, outOffset: out.offset,
+                temperature_in: temperature.buffer, temperature_inOffset: temperature.offset,
+                uniform_in: uniform.buffer, uniform_inOffset: uniform.offset,
+                n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.softmax_categorical_sample_bf16(
+                inp: logits.buffer, inpOffset: logits.offset,
+                out: out.buffer, outOffset: out.offset,
+                temperature_in: temperature.buffer, temperature_inOffset: temperature.offset,
+                uniform_in: uniform.buffer, uniform_inOffset: uniform.offset,
+                n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.softmaxCategoricalSample: unsupported dtype \(logits.dtype)")
+        }
+    }
+
     /// Append one timestep to a KV cache on the GPU. `src` is
     /// [nKVHeads, headDim] (rotated K or V for the current token);
     /// `cache` is the full [nKVHeads, maxSeq, headDim] buffer.
