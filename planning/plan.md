@@ -605,7 +605,7 @@ correctness sweeps at vocab=4, 32, and 152K (model-shaped).
   (currently ~150µs at vocab=152K).
 - GPU top-K / top-P / min-P / rep-penalty kernels.
 
-### Phase 5c — Affine-quantized KV cache (int8) ✅ SHIPPED
+### Phase 5c — Affine-quantized KV cache (int8 + int4) ✅ SHIPPED
 
 int8 affine group-quantization with a shared working buffer pair
 across all layers. Real memory savings on
@@ -630,11 +630,18 @@ Shipped:
   layers within a cmdbuf — that's the architectural unlock that
   makes the memory savings real vs per-layer working buffers).
 
+int4 shipped: metaltile commit `67ab7a3` (quantize_kv_int4 +
+bulk_dequant_kv_int4 kernels) + FFAI commit `31589b4`. Activate
+via `LoadOptions.kvCache = .affineQuantized(bits: 4, groupSize: 32)`
+or CLI `--kv-cache int4`. Measured ~70% KV memory savings vs raw
+on Qwen3 1.7B at maxSeq=40960 (4.38 GB → 1.37 GB) with no further
+tok/s tax beyond int8. Uses group_size=32 default — group_size=64
+at int4 loses too much discriminative power and decode degenerates.
+
 Follow-ups not yet done:
 
-- **int4 + int6 variants** — kernels with byte-packed sub-byte
-  storage (mirror the existing `dequant_gather_int{3,5,6}` pattern).
-  int4 should land ~3.5× memory savings vs raw.
+- **int6 variant** — byte-packed sub-byte storage (mirror the
+  existing `dequant_gather_int6` pattern).
 - **Fused `bulk_dequant + sdpa_decode`** — today each attention
   step pays one extra dequant kernel dispatch. Fusing removes
   the working-buffer materialisation.

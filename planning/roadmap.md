@@ -33,12 +33,12 @@ fully phased build-out (deliverables, kernels, tests per phase) see
 - **Single-stream KV cache** (raw fp16 / bf16). Append + slice on the
   GPU via the `kv_cache_update` kernel — no per-layer CPU sync.
   TurboQuant + SSM/GDN caches land in Phase 5d/e.
-- **Affine-quantized KV cache (int8)** (Phase 5c). `LoadOptions.kvCache
-  = .affineQuantized(bits: 8, groupSize: 64)` or CLI
-  `--kv-cache int8` switches to a packed int8 cache with shared
-  working buffer. ~45% smaller KV cache on Qwen3 1.7B at maxSeq=40960
-  (4.38 GB → 2.32 GB), 7% decode-tok/s tax. int4 + int6 + a fused
-  dequant-into-SDPA kernel are 5c follow-ups.
+- **Affine-quantized KV cache (int8 + int4)** (Phase 5c). Activate via
+  `LoadOptions.kvCache = .affineQuantized(bits: N, groupSize: ...)`
+  or CLI `--kv-cache int8` / `--kv-cache int4`. Measured on Qwen3 1.7B
+  at maxSeq=40960: int8 saves 47% KV (4.38 → 2.32 GB) at −7% tok/s;
+  int4 (group_size=32) saves 69% KV (4.38 → 1.37 GB) at −3% tok/s.
+  int6 + fused-dequant-into-SDPA are 5c follow-ups.
 - **Full sampling pipeline** (Phase 5a + 5b). `temperature`, `top-K`,
   `top-P`, `min-P`, `repetition penalty`, seeded reproducible
   sampling — all wired through `GenerationParameters` + CLI flags
@@ -57,7 +57,7 @@ fully phased build-out (deliverables, kernels, tests per phase) see
 | Per-family `forwardSampleCategorical` fusion | 5b+ | Today's default impl uses 2 cmdbufs (forward + sample); fusing into 1 unlocks the real `gpu-categorical` perf win. Llama / Qwen 3 each get the per-family override. |
 | GPU filter kernels (top-K / top-P / min-P sort) | 5b+ | Today's filter-bearing paths fall back to `cpu-sample`. GPU filters need a sort or radix-select kernel. |
 | Parallel prefix-scan CDF walk | 5b+ | Replaces the single-thread CDF walk in `softmax_categorical_sample` (~150µs at vocab=152K today). |
-| Affine KV cache int4 + int6 | 5c+ | int8 shipped (45% memory savings, 7% tok/s tax). int4 + int6 follow up with byte-packed kernels (target ~3.5× at int4). |
+| Affine KV cache int6 | 5c+ | int4 + int8 shipped (47%/69% memory savings). int6 is a byte-packed follow-up between them. |
 | Fused `bulk_dequant + sdpa_decode` | 5c+ | Today each attention step queues a separate dequant kernel into the shared working buffer before SDPA. Fusing removes the working-buffer materialisation entirely. |
 | TurboQuant compressed-domain attention | 5d | ~6-8× memory. Block-wise MSE codec with asymmetric K/V bits. Substantial research-grade codec port — multiple sessions. |
 | SSM / GatedDeltaNet hybrid models (Qwen 3.5, NemotronH, Mamba) | 5e | New `SSMStateCache` + `gated_delta_step` / `ssm_kernel` kernels. Requires Mamba selective-scan port. |
