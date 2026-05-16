@@ -131,7 +131,7 @@ hybrid (GDN + attention), Qwen 3.5 MoE, Mistral, Phi, Gemma, vision
 ┌────────────────────────▼────────────────────────────────┐
 │  metaltile (Rust, sibling repo)                         │
 │   • #[kernel] DSL → IR → MSL                            │
-│   • metaltile-emit produces:                            │
+│   • `tile build --emit all` (metaltile-cli) produces:   │
 │       kernels.metallib   (compiled by xcrun metal)      │
 │       manifest.json      (kernel metadata)              │
 │       MetalTileKernels.swift  (typed wrappers)          │
@@ -153,9 +153,9 @@ make test                                                     # 122 tests, ~30s
 ```
 
 `setup-dev.sh` verifies Xcode CLI tools + `xcrun metal`, the Swift
-toolchain, Cargo (for metaltile), and the sibling metaltile checkout;
-resolves SPM deps; and runs the first build to populate
-`kernels.metallib`.
+toolchain, Cargo (for the metaltile `tile` CLI), and the sibling
+metaltile checkout; resolves SPM deps; and runs the first build to
+populate `kernels.metallib`.
 
 Common Make targets:
 
@@ -165,10 +165,19 @@ Common Make targets:
 | `make build-release` | Same, release config |
 | `make test` | Regenerate kernels + `swift test` |
 | `make coverage` | `swift test --enable-code-coverage` + summary |
-| `make regenerate-kernels` | Run `metaltile-emit` only |
+| `make regenerate-kernels` | Run `tile build --emit all` only |
 | `make format` | `swift-format` the repo in place |
-| `make docs` | Verify docs build clean |
+| `make docs` | Lint markdown + (if `../ffai-website` exists) preview the docs site locally |
 | `make clean` | Remove `.build/` + generated artifacts |
+
+User-facing documentation lives at
+[**ffai.dev**](https://houseofwaffles.github.io/ffai-website/) (built
+from the markdown in this repo's [`documentation/`](documentation/),
+the top-level `README.md`, and `planning/architecture.md` +
+`planning/roadmap.md`). The site source is at
+[houseofwaffles/ffai-website](https://github.com/houseofwaffles/ffai-website);
+pushing markdown changes here triggers a rebuild automatically via
+a GitHub Action.
 
 For best practices, testing conventions, benchmarking, and porting
 new models see [`documentation/developing/`](documentation/developing/developing.md).
