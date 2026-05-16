@@ -426,4 +426,59 @@ public final class LlamaModel: LanguageModel {
         let result = outBuf.contents().bindMemory(to: UInt32.self, capacity: 1).pointee
         return Int(result)
     }
+
+    /// Forward + GPU softmax-categorical-sample fused into one command
+    /// buffer. Same shape as `forwardSample` but uses the
+    /// `softmax_categorical_sample` kernel instead of argmax — for the
+    /// pure-temperature sampling path (T > 0 with no top-K / top-P /
+    /// min-P / rep-penalty). Only the chosen token id (4 bytes) crosses
+    /// CPU↔GPU; logits never leave the GPU.
+    ///
+    /// Overrides the LanguageModel default impl that uses two cmdbufs
+    /// (forward + sample as separate commits) — fusing into one
+    /// removes that overhead and is the perf win for the
+    /// `gpu-categorical` path Generate selects.
+    public func forwardSampleCategorical(
+        tokenId: Int, position: Int, caches: [any KVCacheProtocol],
+        temperature: Float, uniformDraw: Float,
+        device: Device
+    ) -> Int {
+        let cmd = device.makeCommandBuffer()
+
+        let tokenBuf = device.makeBuffer(length: 4)
+        var tid = UInt32(tokenId)
+        memcpy(tokenBuf.contents(), &tid, 4)
+        let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
+        var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
+
+        for (i, layer) in layers.enumerated() {
+            h = layer.forward(h, position: position, cache: caches[i],
+                              cmd: cmd, device: device)
+        }
+
+        let normed = finalNorm(h, on: cmd)
+        let logits = lmHead(normed, on: cmd)
+
+        // Stage temperature + uniform draw + output as 1-element buffers
+        // queued on the same cmdbuf — no separate commit/wait.
+        let tBuf = device.makeBuffer(length: 4)
+        var tVal = temperature
+        memcpy(tBuf.contents(), &tVal, 4)
+        let temperatureT = Tensor(buffer: tBuf, offset: 0, shape: [1], dtype: .f32)
+
+        let uBuf = device.makeBuffer(length: 4)
+        var uVal = uniformDraw
+        memcpy(uBuf.contents(), &uVal, 4)
+        let uniformT = Tensor(buffer: uBuf, offset: 0, shape: [1], dtype: .f32)
+
+        let outBuf = device.makeBuffer(length: 4)
+        let outTensor = Tensor(buffer: outBuf, offset: 0, shape: [1], dtype: .u32)
+        Ops.softmaxCategoricalSample(logits, into: outTensor,
+                                     temperature: temperatureT,
+                                     uniform: uniformT, on: cmd)
+
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return Int(outBuf.contents().bindMemory(to: UInt32.self, capacity: 1).pointee)
+    }
 }

@@ -433,4 +433,52 @@ public final class Qwen3Model: LanguageModel {
         let result = outBuf.contents().bindMemory(to: UInt32.self, capacity: 1).pointee
         return Int(result)
     }
+
+    /// Forward + GPU softmax-categorical-sample fused into one command
+    /// buffer. Same structure as `forwardSample` but uses
+    /// `softmax_categorical_sample` instead of argmax. Overrides the
+    /// LanguageModel default impl that runs forward + sample on two
+    /// cmdbufs — fusing them is the perf win for the `gpu-categorical`
+    /// path Generate selects when T > 0 with no filters.
+    public func forwardSampleCategorical(
+        tokenId: Int, position: Int, caches: [any KVCacheProtocol],
+        temperature: Float, uniformDraw: Float,
+        device: Device
+    ) -> Int {
+        let cmd = device.makeCommandBuffer()
+
+        let tokenBuf = device.makeBuffer(length: 4)
+        var tid = UInt32(tokenId)
+        memcpy(tokenBuf.contents(), &tid, 4)
+        let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
+        var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
+
+        for (i, layer) in layers.enumerated() {
+            h = layer.forward(h, position: position, cache: caches[i],
+                              cmd: cmd, device: device)
+        }
+
+        let normed = finalNorm(h, on: cmd)
+        let logits = lmHead(normed, on: cmd)
+
+        let tBuf = device.makeBuffer(length: 4)
+        var tVal = temperature
+        memcpy(tBuf.contents(), &tVal, 4)
+        let temperatureT = Tensor(buffer: tBuf, offset: 0, shape: [1], dtype: .f32)
+
+        let uBuf = device.makeBuffer(length: 4)
+        var uVal = uniformDraw
+        memcpy(uBuf.contents(), &uVal, 4)
+        let uniformT = Tensor(buffer: uBuf, offset: 0, shape: [1], dtype: .f32)
+
+        let outBuf = device.makeBuffer(length: 4)
+        let outTensor = Tensor(buffer: outBuf, offset: 0, shape: [1], dtype: .u32)
+        Ops.softmaxCategoricalSample(logits, into: outTensor,
+                                     temperature: temperatureT,
+                                     uniform: uniformT, on: cmd)
+
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return Int(outBuf.contents().bindMemory(to: UInt32.self, capacity: 1).pointee)
+    }
 }
