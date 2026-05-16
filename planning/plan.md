@@ -551,13 +551,63 @@ should support 80-200 tok/s on these workloads.
 
 ---
 
-## Phase 5 — Advanced kernels (TurboQuant, GDN, SSM)
+## Phase 5 — Advanced kernels (sampling, TurboQuant, GDN, SSM)
 
-**Goal:** Port the high-value custom kernels currently in mlx-swift-lm.
-These were the original motivator for this project — the 4-repo dance to
-ship a new TurboQuant variant is the pain we're eliminating.
+**Goal:** Port the high-value custom kernels currently in mlx-swift-lm
+plus close the user-visible sampling gap. The custom kernels were
+the original motivator for this project — the 4-repo dance to ship
+a new TurboQuant variant is the pain we're eliminating.
 
-**DSL prerequisites in metaltile (must land first):**
+Phase 5 is now sub-divided since the full scope is many sessions.
+Each sub-phase ships independently with its own commit + verification.
+
+### Phase 5a — Sampling pipeline ✅ SHIPPED
+
+CPU sampling pipeline (temperature, top-K, top-P, min-P, repetition
+penalty, seeded reproducible RNG) wired through
+`GenerationParameters` + CLI flags. Greedy stays on the GPU argmax
+fast path; non-greedy reads logits to CPU once per token and runs
+the pipeline there. ~30% decode-tok/s tax vs greedy.
+
+Done: `feat(phase-5): CPU sampling pipeline (...)` —
+[`Sources/FFAI/Sampling.swift`](../Sources/FFAI/Sampling.swift) +
+`Sources/FFAI/Generate.swift` + `Sources/FFAICLI/GenerateCommand.swift`
++ `Tests/FFAITests/SamplingTests.swift` + sampling sections in
+`documentation/generation-parameters.md`. Verified end-to-end
+against `mlx-community/Qwen3-1.7B-4bit`: greedy deterministic at
+~53 tok/s; seeded non-greedy reproducible at ~36 tok/s.
+
+### Phase 5b — GPU softmax + categorical sample kernel (next)
+
+Move the sample pipeline onto the GPU so the per-token logits
+readback goes away. Two metaltile kernels (or one fused):
+
+- `softmax_temperature` — applies `T` + stable softmax in-place
+- `categorical_sample` — picks token from prob distribution given a
+  CPU-supplied uniform draw, via parallel prefix scan + atomic-min
+
+Top-K / top-P / rep-penalty stay on the CPU path until a sort/select
+kernel lands; the most common case (just `temperature`) becomes
+pure-GPU. Branch: `ek/sampling-kernels` in metaltile.
+
+### Phase 5c — Affine-quantized KV cache (4 / 6 / 8-bit)
+
+Reduces KV memory ~3.5× at 4-bit. Needs:
+
+- `quantize_group_affine_<bits>` kernel — fp16 K/V row → packed
+  uint32 + per-group fp16 scales/biases
+- `bulk_dequant_affine_<bits>` kernel — packed K/V up to `length` →
+  fp16 working buffer for SDPA
+- Cache-abstraction refactor (`KVCacheProtocol` over the concrete
+  `KVCache`); new `AffineQuantizedKVCache` conformance
+- Wire `LoadOptions.kvCache = .affineQuantized` through family
+  `makeKVCache(...)`
+
+### Phase 5d — TurboQuant compressed-domain attention
+
+The original motivator. ~6-8× memory at `turbo4v2`. Substantial
+research-grade codec port (many sessions). DSL prerequisites in
+metaltile (must land first):
 
 - Sub-byte packed dtypes (`Packed4`, `Packed2`) with bit-unpack ops
 - `simd_shuffle_xor` (needed for FWHT butterfly)
@@ -565,7 +615,8 @@ ship a new TurboQuant variant is the pain we're eliminating.
 - Persistent state-buffer convention (in/out aliasing the same MTLBuffer)
 - Type-checked launch builder (closes the v0.2 "shape algebra" gap)
 
-**TurboQuant kernels (port from `Libraries/MLXLMCommon/TurboQuantKernels.swift`):**
+TurboQuant kernels (port from
+`Libraries/MLXLMCommon/TurboQuantKernels.swift`):
 
 - `turbo_encode` (dense rotation Π + Lloyd-Max + bit-pack + norm correction)
 - `turbo_encode_wht` (FWHT butterfly variant)
@@ -574,22 +625,24 @@ ship a new TurboQuant variant is the pain we're eliminating.
 - `turbo_flash_pass1` / `turbo_flash_pass2` + causal/NR0 variants
 - `turbo_flash_sdpav` (single-dispatch fused)
 
-**SSM / GDN kernels:**
+FFAI: `TurboQuantizedKVCache` (port the two-phase prefill+compress logic).
+
+### Phase 5e — SSM / GDN hybrid models
+
+Unlocks Qwen 3.5 (GDN + attention), Mamba 2 families (NemotronH,
+GraniteMoeHybrid, FalconH1). Kernels:
 
 - `gated_delta_step` + `gated_delta_step_record` (with delta tape)
 - `state_replay` (refold accepted prefix from tape)
 - `ssm_kernel` (Mamba selective scan)
 - Tests for masked-timestep correctness + branchless SIMD pattern
 
-**FFAI changes:**
+FFAI: `SSMStateCache` with rollback, `GatedDelta` + `SSM` model
+layers, hybrid model variants in `Models/Qwen3.swift`.
 
-- `TurboQuantizedKVCache` (port the two-phase prefill+compress logic)
-- `SSMStateCache` with rollback
-- `GatedDelta`, `SSM` model layers
-- Hybrid model support (Qwen 3.5 etc.)
-
-**Done when:** Qwen 3.5 (hybrid GDN+attention with TurboQuant KV) runs
-end-to-end with measured tokens/sec ≥ current mlx-swift-lm baseline.
+**Phase 5 done when:** Qwen 3.5 (hybrid GDN+attention with
+TurboQuant KV) runs end-to-end with measured tokens/sec ≥ current
+mlx-swift-lm baseline.
 
 ---
 
