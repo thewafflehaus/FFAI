@@ -60,7 +60,7 @@ fully phased build-out (deliverables, kernels, tests per phase) see
 | Affine KV cache int6 | 5c+ | int4 + int8 shipped (47%/69% memory savings). int6 is a byte-packed follow-up between them. |
 | Fused `bulk_dequant + sdpa_decode` | 5c+ | Today each attention step queues a separate dequant kernel into the shared working buffer before SDPA. Fusing removes the working-buffer materialisation entirely. |
 | TurboQuant compressed-domain attention | 5d | ~6-8× memory. Block-wise MSE codec with asymmetric K/V bits. Substantial research-grade codec port — multiple sessions. |
-| Mamba 2 hybrid models (NemotronH, GraniteMoeHybrid, FalconH1) | 5e | **Foundation shipped**: `ssm_step` kernel + `SSMStateCache` + `Ops.ssmStep` + tests. Still needed: chunked-prefill scan kernel, depthwise-conv state buffer, Mamba 2 family file. |
+| Mamba 2 hybrid models (NemotronH, GraniteMoeHybrid, FalconH1) | 5e | **Building blocks shipped**: `ssm_step` + `conv1d_causal_step` kernels, `SSMStateCache` + `ConvStateCache` classes, both with multi-step CPU-reference tests. Still needed: Mamba 2 family file (mixer block + weight loader), chunked-prefill parallel-scan kernel for prefill perf. |
 | GatedDeltaNet hybrid (Qwen 3.5) | 5e+ | Needs `gated_delta_step` + `gated_delta_step_record` + `state_replay` kernels for speculative-decoding rollback. Builds on the 5e SSM foundation. |
 | Vision encoders + multi-modal capability matrix | 6 | First targets Qwen 2.5-VL / Qwen 3.5-VL. Depends on Phase 5e for the text backbone if going hybrid. |
 | Audio (`.audioIn` for STT, `.audioOut` for TTS) | 8+ | First audio target TBD (Whisper, Qwen-Omni, …). |

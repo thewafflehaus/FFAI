@@ -691,25 +691,38 @@ FFAI main f58a801):
   12-step recurrence (catches per-step drift) + bf16-input variant.
   All pass.
 
+**1D depthwise causal conv shipped** (metaltile a9f6787 + FFAI
+ad04737):
+
+- `conv1d_causal_step` kernel — Mamba 2 input-projection conv in
+  streaming-decode form. One thread per channel; state shifts
+  in-place after compute.
+- `Ops.conv1dCausalStep(...)` Swift wrapper.
+- `ConvStateCache` class — per-layer rolling window of
+  `[K-1, nChannels]`, constant size w.r.t. sequence length.
+- 7 correctness tests including 8-step sequential verification.
+
+Both Mamba 2 building blocks (`ssm_step` + `conv1d_causal_step`) +
+both caches (`SSMStateCache` + `ConvStateCache`) are now in place.
+
 **Still needed for end-to-end Mamba 2 inference:**
 
-- `gated_delta_step` + `gated_delta_step_record` kernels (with
-  delta tape) — needed for GatedDeltaNet (Qwen 3.5 hybrid) and
-  speculative-decoding rollback
-- `state_replay` kernel — refold accepted prefix from tape
+- Mamba 2 family file (`Models/Mamba2.swift`): mixer block
+  composing input projection → conv1d_causal_step → split into
+  (xBC, dt) → ssm_step → output projection. Plus RMSNorm,
+  embeddings, LM head.
+- Weight loader for one of: Mamba 2 130M / 1.3B, NemotronH,
+  GraniteMoeHybrid, FalconH1. Smallest checkpoint first for fast
+  iteration.
 - Chunked-prefill parallel-scan variant of `ssm_step` (prefill
-  perf; today's kernel is decode-only)
-- 1D depthwise conv state buffer in `SSMStateCache` (Mamba 2's
-  input projection applies a small conv)
-- Mamba 2 family file (`Models/Mamba2.swift` or similar): conv
-  layer, mixer block, weight loader for the NemotronH /
-  GraniteMoeHybrid / Mamba 2 130M architectures
+  perf; today's kernel is decode-only — usable but slow for long
+  prompts).
 - Hybrid layer integration in `Models/Qwen3.swift` (for Qwen 3.5
-  GDN + attention)
+  GDN + attention) — separate from pure Mamba 2 and needs the
+  `gated_delta_step` + `state_replay` kernels.
 
-The kernel + cache foundation in this commit is what every
-follow-up uses; integrating into a working model is the next
-session's work.
+The kernels + caches in place are what every follow-up uses;
+integrating into a working model is the next session's work.
 
 **Phase 5 done when:** Qwen 3.5 (hybrid GDN+attention with
 TurboQuant KV) runs end-to-end with measured tokens/sec ≥ current
