@@ -180,8 +180,11 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
                 bits: Int, groupSize: Int,
                 sharedWorkingK: Tensor, sharedWorkingV: Tensor,
                 device: Device = .shared) {
-        precondition(bits == 8, "AffineQuantizedKVCache: only int8 supported today (int4 + int6 are Phase 5c follow-ups)")
-        precondition(headDim % 4 == 0, "headDim must be divisible by 4 for int8 packing")
+        precondition(bits == 4 || bits == 8,
+                     "AffineQuantizedKVCache: bits must be 4 or 8 today (int6 is a Phase 5c follow-up)")
+        let valuesPerWord = 32 / bits   // int8 → 4, int4 → 8
+        precondition(headDim % valuesPerWord == 0,
+                     "headDim must be divisible by \(valuesPerWord) for int\(bits) packing")
         precondition(headDim % groupSize == 0, "headDim must be divisible by groupSize")
         precondition(sharedWorkingK.shape == [nKVHeads, maxSeq, headDim],
                      "sharedWorkingK shape mismatch")
@@ -197,7 +200,7 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
         self.bits = bits
         self.groupSize = groupSize
 
-        let packsPerRow = headDim / 4
+        let packsPerRow = headDim / valuesPerWord
         let groupsPerRow = headDim / groupSize
         self.kWeights = Tensor.empty(shape: [nKVHeads, maxSeq, packsPerRow], dtype: .u32, device: device)
         self.vWeights = Tensor.empty(shape: [nKVHeads, maxSeq, packsPerRow], dtype: .u32, device: device)
@@ -221,14 +224,14 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
         precondition(length < maxSeq, "AffineQuantizedKVCache: capacity exhausted")
         precondition(kFlat.dtype == dtype && vFlat.dtype == dtype,
                      "AffineQuantizedKVCache: dtype mismatch")
-        Ops.quantizeKVInt8(src: kFlat,
-                           weights: kWeights, scales: kScales, biases: kBiases,
-                           nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
-                           groupSize: groupSize, position: length, on: cmd)
-        Ops.quantizeKVInt8(src: vFlat,
-                           weights: vWeights, scales: vScales, biases: vBiases,
-                           nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
-                           groupSize: groupSize, position: length, on: cmd)
+        Ops.quantizeKVAffine(src: kFlat,
+                             weights: kWeights, scales: kScales, biases: kBiases,
+                             nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                             groupSize: groupSize, position: length, bits: bits, on: cmd)
+        Ops.quantizeKVAffine(src: vFlat,
+                             weights: vWeights, scales: vScales, biases: vBiases,
+                             nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                             groupSize: groupSize, position: length, bits: bits, on: cmd)
         length += 1
     }
 
@@ -237,14 +240,14 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
         // from the working buffers; the cache's compressed storage
         // is the persistent state.
         guard length > 0 else { return (sharedWorkingK, sharedWorkingV) }
-        Ops.bulkDequantKVInt8(weights: kWeights, scales: kScales, biases: kBiases,
-                              into: sharedWorkingK,
-                              nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
-                              groupSize: groupSize, nPositions: length, on: cmd)
-        Ops.bulkDequantKVInt8(weights: vWeights, scales: vScales, biases: vBiases,
-                              into: sharedWorkingV,
-                              nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
-                              groupSize: groupSize, nPositions: length, on: cmd)
+        Ops.bulkDequantKVAffine(weights: kWeights, scales: kScales, biases: kBiases,
+                                into: sharedWorkingK,
+                                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                                groupSize: groupSize, nPositions: length, bits: bits, on: cmd)
+        Ops.bulkDequantKVAffine(weights: vWeights, scales: vScales, biases: vBiases,
+                                into: sharedWorkingV,
+                                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                                groupSize: groupSize, nPositions: length, bits: bits, on: cmd)
         return (sharedWorkingK, sharedWorkingV)
     }
 
@@ -252,7 +255,8 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
     /// The shared working buffer is accounted once at the caller
     /// (model engine), not multiplied across layers.
     public var bytesAllocated: Int {
-        let packs = headDim / 4
+        let valuesPerWord = 32 / bits
+        let packs = headDim / valuesPerWord
         let groups = headDim / groupSize
         // K + V × (weights + scales + biases)
         return 2 * (
@@ -262,7 +266,8 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
     }
 
     public var bytesInUse: Int {
-        let packs = headDim / 4
+        let valuesPerWord = 32 / bits
+        let packs = headDim / valuesPerWord
         let groups = headDim / groupSize
         return 2 * (
             nKVHeads * length * packs * 4

@@ -10,7 +10,8 @@ land in Phase 5.
 | Algorithm | When to use | Memory ratio | Status |
 |---|---|---|---|
 | **Raw fp16 / bf16** (`KVCache`, default) | All current models. | 1× | ✅ Shipped (Phase 2). |
-| **Affine quantization int8** (`AffineQuantizedKVCache`) | Memory-constrained; ~7% decode-tok/s tax. | ~0.55× (45% smaller) measured on Qwen3 1.7B | ✅ Shipped (Phase 5c — int8 only; int4 + int6 are follow-ups). |
+| **Affine quantization int8** (`AffineQuantizedKVCache`) | Memory-constrained; ~7% decode-tok/s tax. | ~0.55× (45% smaller) measured on Qwen3 1.7B | ✅ Shipped (Phase 5c). |
+| **Affine quantization int4** (`AffineQuantizedKVCache`) | Tight memory; same speed as int8. | ~0.31× (69% smaller, group_size=32) | ✅ Shipped (Phase 5c). |
 | **TurboQuant** | Best memory ratio at minimal quality loss. | ~6–8× at `turbo4v2` | ⏳ Planned (Phase 5d). |
 | **SSM / Hybrid** | Mamba / GatedDeltaNet (Qwen 3.5, NemotronH) | n/a — stores recurrent + conv state | ⏳ Planned (Phase 5e). |
 | **Batched** | Multi-stream decode (speculative, B>1 serving) | linear in B | ⏳ Planned (Phase 8+). |
@@ -89,22 +90,32 @@ reuse across layers within a single command buffer.
 
 ### Measured on Qwen3 1.7B 4-bit at maxSeq=40960
 
-|  | Raw | int8 affine | Δ |
-|---|---|---|---|
-| KV cache (alloc) | 4.38 GB | 2.32 GB | −47% |
-| Peak GPU | 5.28 GB | 3.38 GB | −36% |
-| Decode tok/s | 46.7 | 43.6 | −7% |
-| Greedy output | "...Paris...Washington, D.C. So, the capital of the United Kingdom is" | "...Paris...Washington, D.C. The capital of the United Kingdom is London," | matches first ~13 tokens, then minor drift |
+|  | Raw | int8 affine | int4 affine | Δ vs raw |
+|---|---|---|---|---|
+| KV cache (alloc) | 4.38 GB | 2.32 GB | 1.37 GB | −47% / −69% |
+| Peak GPU | 5.28 GB | 3.38 GB | 2.44 GB | −36% / −54% |
+| Decode tok/s | 46.7 | 43.6 | 45.4 | −7% / −3% |
+| Output quality | reference | first ~13 tokens match raw, then minor drift | coherent, simpler answers | both stay on-topic |
+
+### Per-bit `groupSize` choice
+
+| Bits | Default `groupSize` | Why |
+|---|---|---|
+| int8 | 64 | Plenty of precision per group; matches mlx-format weight-quant convention. |
+| int4 | **32** | 4 bits per element ÷ a wider group loses too much discriminative power on K/V — decode degenerates into repetition at group_size=64. TurboQuant-style rotation (Phase 5d) would let larger groups work. |
 
 ### Coming next (5c follow-ups)
 
-- **int4 + int6 variants** — same kernel shape, byte-packed
-  storage (mirror the existing dequant_gather_int{3,5,6} pattern).
-  int4 should land ~3.5× memory savings vs raw.
+- **int6 variant** — byte-packed sub-byte storage (mirror the
+  existing dequant_gather_int6 pattern). Memory between int4 and
+  int8.
 - **Fused dequant-into-SDPA** — today each attention step pays
   one extra dequant kernel dispatch. A fused
   `bulk_dequant + sdpa_decode` kernel removes the working-buffer
   materialisation entirely.
+- **TurboQuant** (Phase 5d) — block-wise MSE codec with asymmetric
+  K/V bits + dense rotation; will recover full quality at int4
+  group_size=64.
 
 ## Multi-turn / streaming
 

@@ -61,7 +61,7 @@ struct GenerateCommand: AsyncParsableCommand {
     @Option(name: .long, help: "PRNG seed for reproducible sampling.")
     var seed: UInt64?
 
-    @Option(name: .long, help: "KV cache scheme: \"raw\" (default fp16/bf16) or \"int8\" (affine-quantized, ~40% memory savings).")
+    @Option(name: .long, help: "KV cache scheme: \"raw\" (default fp16/bf16), \"int8\" (affine, ~45% smaller), or \"int4\" (affine, ~70% smaller).")
     var kvCache: String?
 
     func run() async throws {
@@ -81,10 +81,17 @@ struct GenerateCommand: AsyncParsableCommand {
         switch (kvCache ?? "raw").lowercased() {
         case "raw":
             loadOpts.kvCache = .raw
-        case "int8", "affine", "affine8", "affinequantized":
+        case "int8", "affine8", "affinequantized":
             loadOpts.kvCache = .affineQuantized(bits: 8, groupSize: 64)
+        case "int4", "affine4":
+            // group_size=32 at int4 — finer groups than int8's 64 to
+            // preserve enough precision; without it K/V loses too much
+            // discriminative power and decode degenerates into loops.
+            // TurboQuant-style rotation would let group_size=64 work
+            // at 4-bit; that's Phase 5d.
+            loadOpts.kvCache = .affineQuantized(bits: 4, groupSize: 32)
         default:
-            throw ValidationError("Unknown --kv-cache \"\(kvCache ?? "")\". Use \"raw\" or \"int8\".")
+            throw ValidationError("Unknown --kv-cache \"\(kvCache ?? "")\". Use \"raw\", \"int8\", or \"int4\".")
         }
         let m = try await Model.load(model, options: loadOpts)
         print("loaded in \(String(format: "%.2f", Date().timeIntervalSince(loadStart)))s")

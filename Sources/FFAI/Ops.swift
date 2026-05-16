@@ -837,6 +837,151 @@ public enum Ops {
         }
     }
 
+    /// Affine-quantize one K (or V) row into an int4 or int8 KV cache
+    /// slot. Dispatches to the right `quantize_kv_int{4,8}` kernel
+    /// based on `bits`.
+    public static func quantizeKVAffine(
+        src: Tensor,
+        weights: Tensor, scales: Tensor, biases: Tensor,
+        nKVHeads: Int, headDim: Int, maxSeq: Int,
+        groupSize: Int, position: Int, bits: Int,
+        on cmd: MTLCommandBuffer
+    ) {
+        switch bits {
+        case 4:
+            quantizeKVInt4(src: src, weights: weights, scales: scales, biases: biases,
+                           nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                           groupSize: groupSize, position: position, on: cmd)
+        case 8:
+            quantizeKVInt8(src: src, weights: weights, scales: scales, biases: biases,
+                           nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                           groupSize: groupSize, position: position, on: cmd)
+        default:
+            fatalError("Ops.quantizeKVAffine: unsupported bits=\(bits) (use 4 or 8)")
+        }
+    }
+
+    /// Bulk-dequant int4/int8 KV cache → working buffer. Dispatches to
+    /// the right `bulk_dequant_kv_int{4,8}` kernel based on `bits`.
+    public static func bulkDequantKVAffine(
+        weights: Tensor, scales: Tensor, biases: Tensor,
+        into out: Tensor,
+        nKVHeads: Int, headDim: Int, maxSeq: Int,
+        groupSize: Int, nPositions: Int, bits: Int,
+        on cmd: MTLCommandBuffer
+    ) {
+        switch bits {
+        case 4:
+            bulkDequantKVInt4(weights: weights, scales: scales, biases: biases,
+                              into: out, nKVHeads: nKVHeads, headDim: headDim,
+                              maxSeq: maxSeq, groupSize: groupSize,
+                              nPositions: nPositions, on: cmd)
+        case 8:
+            bulkDequantKVInt8(weights: weights, scales: scales, biases: biases,
+                              into: out, nKVHeads: nKVHeads, headDim: headDim,
+                              maxSeq: maxSeq, groupSize: groupSize,
+                              nPositions: nPositions, on: cmd)
+        default:
+            fatalError("Ops.bulkDequantKVAffine: unsupported bits=\(bits) (use 4 or 8)")
+        }
+    }
+
+    /// Affine-quantize one K (or V) row into an int4 KV cache slot.
+    /// Packs 8 nibbles per uint32. One thread per group.
+    public static func quantizeKVInt4(
+        src: Tensor,
+        weights: Tensor, scales: Tensor, biases: Tensor,
+        nKVHeads: Int, headDim: Int, maxSeq: Int,
+        groupSize: Int, position: Int,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(weights.dtype == .u32, "quantizeKVInt4: weights must be u32")
+        precondition(scales.dtype == src.dtype && biases.dtype == src.dtype,
+                     "quantizeKVInt4: scales/biases dtype must match src")
+        let groupsPerHead = headDim / groupSize
+        let grid = MTLSize(width: nKVHeads * groupsPerHead, height: 1, depth: 1)
+        let tg = MTLSize(width: 1, height: 1, depth: 1)
+        switch src.dtype {
+        case .f32:
+            MetalTileKernels.quantize_kv_int4_f32(
+                src: src.buffer, srcOffset: src.offset,
+                out_w: weights.buffer, out_wOffset: weights.offset,
+                out_s: scales.buffer, out_sOffset: scales.offset,
+                out_b: biases.buffer, out_bOffset: biases.offset,
+                head_dim: UInt32(headDim), max_seq: UInt32(maxSeq),
+                group_size: UInt32(groupSize), position: UInt32(position),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.quantize_kv_int4_f16(
+                src: src.buffer, srcOffset: src.offset,
+                out_w: weights.buffer, out_wOffset: weights.offset,
+                out_s: scales.buffer, out_sOffset: scales.offset,
+                out_b: biases.buffer, out_bOffset: biases.offset,
+                head_dim: UInt32(headDim), max_seq: UInt32(maxSeq),
+                group_size: UInt32(groupSize), position: UInt32(position),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.quantize_kv_int4_bf16(
+                src: src.buffer, srcOffset: src.offset,
+                out_w: weights.buffer, out_wOffset: weights.offset,
+                out_s: scales.buffer, out_sOffset: scales.offset,
+                out_b: biases.buffer, out_bOffset: biases.offset,
+                head_dim: UInt32(headDim), max_seq: UInt32(maxSeq),
+                group_size: UInt32(groupSize), position: UInt32(position),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.quantizeKVInt4: unsupported dtype \(src.dtype)")
+        }
+    }
+
+    /// Bulk-dequant the live slice of an int4 KV cache into a
+    /// working buffer for SDPA. Unpacks 8 nibbles per uint32.
+    public static func bulkDequantKVInt4(
+        weights: Tensor, scales: Tensor, biases: Tensor,
+        into out: Tensor,
+        nKVHeads: Int, headDim: Int, maxSeq: Int,
+        groupSize: Int, nPositions: Int,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(weights.dtype == .u32, "bulkDequantKVInt4: weights must be u32")
+        precondition(scales.dtype == out.dtype && biases.dtype == out.dtype,
+                     "bulkDequantKVInt4: scales/biases dtype must match output")
+        let total = nKVHeads * nPositions * headDim
+        let grid = MTLSize(width: total, height: 1, depth: 1)
+        let tg = MTLSize(width: 1, height: 1, depth: 1)
+        switch out.dtype {
+        case .f32:
+            MetalTileKernels.bulk_dequant_kv_int4_f32(
+                in_w: weights.buffer, in_wOffset: weights.offset,
+                in_s: scales.buffer, in_sOffset: scales.offset,
+                in_b: biases.buffer, in_bOffset: biases.offset,
+                out: out.buffer, outOffset: out.offset,
+                head_dim: UInt32(headDim), max_seq: UInt32(maxSeq),
+                group_size: UInt32(groupSize), n_positions: UInt32(nPositions),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.bulk_dequant_kv_int4_f16(
+                in_w: weights.buffer, in_wOffset: weights.offset,
+                in_s: scales.buffer, in_sOffset: scales.offset,
+                in_b: biases.buffer, in_bOffset: biases.offset,
+                out: out.buffer, outOffset: out.offset,
+                head_dim: UInt32(headDim), max_seq: UInt32(maxSeq),
+                group_size: UInt32(groupSize), n_positions: UInt32(nPositions),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.bulk_dequant_kv_int4_bf16(
+                in_w: weights.buffer, in_wOffset: weights.offset,
+                in_s: scales.buffer, in_sOffset: scales.offset,
+                in_b: biases.buffer, in_bOffset: biases.offset,
+                out: out.buffer, outOffset: out.offset,
+                head_dim: UInt32(headDim), max_seq: UInt32(maxSeq),
+                group_size: UInt32(groupSize), n_positions: UInt32(nPositions),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.bulkDequantKVInt4: unsupported dtype \(out.dtype)")
+        }
+    }
+
     /// Affine-quantize one K (or V) row into an int8 KV cache slot.
     /// `src` is `[nKVHeads, headDim]` in fp16/bf16; outputs are the
     /// cache's packed weights + per-group scales + biases (see

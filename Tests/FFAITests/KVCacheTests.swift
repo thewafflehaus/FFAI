@@ -192,6 +192,78 @@ struct KVCacheTests {
         }
     }
 
+    @Test("AffineQuantizedKVCache(int4): round-trip preserves values within int4 precision")
+    func affineInt4RoundTrip() {
+        let nKVHeads = 2
+        let headDim = 64
+        let maxSeq = 8
+        let groupSize = 32
+        let (sk, sv) = makeSharedWorking(nKVHeads: nKVHeads, maxSeq: maxSeq,
+                                         headDim: headDim, dtype: .f32)
+        let cache = AffineQuantizedKVCache(
+            nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+            dtype: .f32, bits: 4, groupSize: groupSize,
+            sharedWorkingK: sk, sharedWorkingV: sv
+        )
+        var kFlatData = [Float](repeating: 0, count: nKVHeads * headDim)
+        var vFlatData = [Float](repeating: 0, count: nKVHeads * headDim)
+        for h in 0..<nKVHeads {
+            for d in 0..<headDim {
+                kFlatData[h * headDim + d] = Float(d) / Float(headDim) * 2 - 1
+                vFlatData[h * headDim + d] = Float(d) / Float(headDim) * 4 - 2
+            }
+        }
+        let kFlat = Tensor.empty(shape: [nKVHeads, headDim], dtype: .f32)
+        let vFlat = Tensor.empty(shape: [nKVHeads, headDim], dtype: .f32)
+        kFlat.copyIn(from: kFlatData)
+        vFlat.copyIn(from: vFlatData)
+        runAndWait { cb in cache.appendOnGPU(kFlat: kFlat, vFlat: vFlat, on: cb) }
+
+        var dqK: Tensor!, dqV: Tensor!
+        runAndWait { cb in
+            let pair = cache.prepareForAttention(on: cb)
+            dqK = pair.k; dqV = pair.v
+        }
+        let kOut = dqK.toArray(as: Float.self)
+        let vOut = dqV.toArray(as: Float.self)
+        // int4 tolerance: range/15 per group, much coarser than int8.
+        // For groupSize=32 over input range 2: ~0.13 max error per element.
+        let tolK: Float = 0.15
+        let tolV: Float = 0.3
+        for h in 0..<nKVHeads {
+            for d in 0..<headDim {
+                let outIdx = h * maxSeq * headDim + d
+                #expect(abs(kOut[outIdx] - kFlatData[h * headDim + d]) < tolK)
+                #expect(abs(vOut[outIdx] - vFlatData[h * headDim + d]) < tolV)
+            }
+        }
+    }
+
+    @Test("AffineQuantizedKVCache(int4): bytesAllocated halves vs int8")
+    func affineInt4BytesAccounting() {
+        let nKVHeads = 8, headDim = 128, maxSeq = 4096, groupSize = 64
+        let (sk, sv) = makeSharedWorking(nKVHeads: nKVHeads, maxSeq: maxSeq,
+                                         headDim: headDim, dtype: .f16)
+        let int4 = AffineQuantizedKVCache(
+            nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+            dtype: .f16, bits: 4, groupSize: groupSize,
+            sharedWorkingK: sk, sharedWorkingV: sv
+        )
+        let int8 = AffineQuantizedKVCache(
+            nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+            dtype: .f16, bits: 8, groupSize: groupSize,
+            sharedWorkingK: sk, sharedWorkingV: sv
+        )
+        // int4 weights are half as large; scales/biases the same → int4
+        // total is somewhere around half the int8 total (not exactly,
+        // because scales/biases overhead is fixed).
+        #expect(int4.bytesAllocated < int8.bytesAllocated)
+        // The weights portion alone should be exactly half.
+        let int4Weights = 2 * nKVHeads * maxSeq * (headDim / 8) * 4
+        let int8Weights = 2 * nKVHeads * maxSeq * (headDim / 4) * 4
+        #expect(int4Weights == int8Weights / 2)
+    }
+
     @Test("AffineQuantizedKVCache: bytesAllocated reflects compressed storage, not the working buffer")
     func affineBytesAccounting() {
         let nKVHeads = 8
