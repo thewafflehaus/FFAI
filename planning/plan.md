@@ -673,15 +673,43 @@ FFAI: `TurboQuantizedKVCache` (port the two-phase prefill+compress logic).
 ### Phase 5e — SSM / GDN hybrid models
 
 Unlocks Qwen 3.5 (GDN + attention), Mamba 2 families (NemotronH,
-GraniteMoeHybrid, FalconH1). Kernels:
+GraniteMoeHybrid, FalconH1).
 
-- `gated_delta_step` + `gated_delta_step_record` (with delta tape)
-- `state_replay` (refold accepted prefix from tape)
-- `ssm_kernel` (Mamba selective scan)
-- Tests for masked-timestep correctness + branchless SIMD pattern
+**Foundation shipped** (metaltile `ek/sampling-kernels` 1224890 +
+FFAI main f58a801):
 
-FFAI: `SSMStateCache` with rollback, `GatedDelta` + `SSM` model
-layers, hybrid model variants in `Models/Qwen3.swift`.
+- `ssm_step` kernel — Mamba 2 selective-scan single-token decode.
+  Per-head A, shared B/C, fp32 recurrent state h
+  `[nHeads, stateDim, headDim]`. One thread per (head, channel).
+  Registered for f32/f16/bf16.
+- `Ops.ssmStep(...)` Swift wrapper.
+- `SSMStateCache` class — per-layer recurrent state holder.
+  O(1) memory per layer (state size doesn't grow with seq length —
+  selective scan compresses history into fixed-size state).
+- 6 correctness tests in `Tests/FFAITests/SSMStateCacheTests.swift`:
+  cache plumbing (3) + single-step kernel vs CPU reference +
+  12-step recurrence (catches per-step drift) + bf16-input variant.
+  All pass.
+
+**Still needed for end-to-end Mamba 2 inference:**
+
+- `gated_delta_step` + `gated_delta_step_record` kernels (with
+  delta tape) — needed for GatedDeltaNet (Qwen 3.5 hybrid) and
+  speculative-decoding rollback
+- `state_replay` kernel — refold accepted prefix from tape
+- Chunked-prefill parallel-scan variant of `ssm_step` (prefill
+  perf; today's kernel is decode-only)
+- 1D depthwise conv state buffer in `SSMStateCache` (Mamba 2's
+  input projection applies a small conv)
+- Mamba 2 family file (`Models/Mamba2.swift` or similar): conv
+  layer, mixer block, weight loader for the NemotronH /
+  GraniteMoeHybrid / Mamba 2 130M architectures
+- Hybrid layer integration in `Models/Qwen3.swift` (for Qwen 3.5
+  GDN + attention)
+
+The kernel + cache foundation in this commit is what every
+follow-up uses; integrating into a working model is the next
+session's work.
 
 **Phase 5 done when:** Qwen 3.5 (hybrid GDN+attention with
 TurboQuant KV) runs end-to-end with measured tokens/sec ≥ current

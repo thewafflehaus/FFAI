@@ -54,13 +54,14 @@ fully phased build-out (deliverables, kernels, tests per phase) see
 
 | Capability | Phase | Notes |
 |---|---|---|
-| Per-family `forwardSampleCategorical` fusion | 5b+ | Today's default impl uses 2 cmdbufs (forward + sample); fusing into 1 unlocks the real `gpu-categorical` perf win. Llama / Qwen 3 each get the per-family override. |
+| Parallel-prefix CDF walk in `softmax_categorical_sample` | 5b+ | Per-family fusion shipped (Llama + Qwen 3 override `forwardSampleCategorical` to use one cmdbuf), but perf is bottlenecked by the single-thread CDF walk inside the kernel (~150µs at vocab=152K). Parallel-prefix replacement is the remaining lever. |
 | GPU filter kernels (top-K / top-P / min-P sort) | 5b+ | Today's filter-bearing paths fall back to `cpu-sample`. GPU filters need a sort or radix-select kernel. |
 | Parallel prefix-scan CDF walk | 5b+ | Replaces the single-thread CDF walk in `softmax_categorical_sample` (~150µs at vocab=152K today). |
 | Affine KV cache int6 | 5c+ | int4 + int8 shipped (47%/69% memory savings). int6 is a byte-packed follow-up between them. |
 | Fused `bulk_dequant + sdpa_decode` | 5c+ | Today each attention step queues a separate dequant kernel into the shared working buffer before SDPA. Fusing removes the working-buffer materialisation entirely. |
 | TurboQuant compressed-domain attention | 5d | ~6-8× memory. Block-wise MSE codec with asymmetric K/V bits. Substantial research-grade codec port — multiple sessions. |
-| SSM / GatedDeltaNet hybrid models (Qwen 3.5, NemotronH, Mamba) | 5e | New `SSMStateCache` + `gated_delta_step` / `ssm_kernel` kernels. Requires Mamba selective-scan port. |
+| Mamba 2 hybrid models (NemotronH, GraniteMoeHybrid, FalconH1) | 5e | **Foundation shipped**: `ssm_step` kernel + `SSMStateCache` + `Ops.ssmStep` + tests. Still needed: chunked-prefill scan kernel, depthwise-conv state buffer, Mamba 2 family file. |
+| GatedDeltaNet hybrid (Qwen 3.5) | 5e+ | Needs `gated_delta_step` + `gated_delta_step_record` + `state_replay` kernels for speculative-decoding rollback. Builds on the 5e SSM foundation. |
 | Vision encoders + multi-modal capability matrix | 6 | First targets Qwen 2.5-VL / Qwen 3.5-VL. Depends on Phase 5e for the text backbone if going hybrid. |
 | Audio (`.audioIn` for STT, `.audioOut` for TTS) | 8+ | First audio target TBD (Whisper, Qwen-Omni, …). |
 | Speculative decoding (n-gram + draft model) | 8+ | Requires the batched KV cache. |
