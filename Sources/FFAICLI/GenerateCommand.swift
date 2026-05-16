@@ -41,6 +41,26 @@ struct GenerateCommand: AsyncParsableCommand {
             help: "Profiling level: 0 (off), 1 (wallclock breakdown), 2 (level 1 + os_signpost intervals).")
     var profiling: Int = 0
 
+    // ─── Sampling knobs (override the model-family defaults) ─────────
+
+    @Option(name: .long, help: "Sampling temperature. 0 = greedy argmax (deterministic, GPU fast path).")
+    var temperature: Float?
+
+    @Option(name: .long, help: "Top-K cutoff. 0 = disabled.")
+    var topK: Int?
+
+    @Option(name: .long, help: "Top-P / nucleus cutoff. 1.0 = disabled.")
+    var topP: Float?
+
+    @Option(name: .long, help: "Min-P cutoff (Qwen-style). 0 = disabled.")
+    var minP: Float?
+
+    @Option(name: .long, help: "Repetition penalty. 1.0 = disabled.")
+    var repetitionPenalty: Float?
+
+    @Option(name: .long, help: "PRNG seed for reproducible sampling.")
+    var seed: UInt64?
+
     func run() async throws {
         // Apply --debug + --profiling before any FFAI work so the
         // model-load path is captured.
@@ -78,9 +98,15 @@ struct GenerateCommand: AsyncParsableCommand {
             return
         }
 
-        // Family defaults + the user's --max-tokens override (if any).
+        // Family defaults + any explicit CLI overrides.
         let params = m.defaultGenerationParameters.with {
-            if let n = maxTokens { $0.maxTokens = n }
+            if let n = maxTokens          { $0.maxTokens = n }
+            if let t = temperature        { $0.temperature = t }
+            if let k = topK               { $0.topK = k }
+            if let p = topP               { $0.topP = p }
+            if let mp = minP              { $0.minP = mp }
+            if let rp = repetitionPenalty { $0.repetitionPenalty = rp }
+            if let s = seed               { $0.seed = s }
         }
 
         print("---")

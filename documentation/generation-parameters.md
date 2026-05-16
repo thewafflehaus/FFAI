@@ -12,18 +12,26 @@ mutates fields, or constructs their own.
 | `maxTokens: Int` | `256` | ✅ | Hard cap on generated tokens. |
 | `stopOnEOS: Bool` | `true` | ✅ | Stop at the model's `eosTokenId`. |
 | `extraStopTokens: Set<Int>` | `[]` | ✅ | Additional stop ids beyond EOS. |
-| `prefillStepSize: Int` | `1024` | 🚧 Phase 5 | Honored once chunked prefill ships; today's per-token prefill ignores it. |
-| `temperature: Float` | `0.6` | 🚧 Phase 5 | `0` → greedy. Wired through but the decode path is greedy until GPU sampling kernels land. |
-| `topP: Float` | `1.0` | 🚧 Phase 5 | Nucleus cutoff. `1.0` = disabled. |
-| `topK: Int` | `0` | 🚧 Phase 5 | `0` = disabled. |
-| `minP: Float` | `0.0` | 🚧 Phase 5 | Qwen-style min-P cutoff. |
-| `repetitionPenalty: Float` | `1.0` | 🚧 Phase 5 | `1.0` = disabled. |
-| `presencePenalty: Float` | `0.0` | 🚧 Phase 5 | Additive. `0` = disabled. |
-| `seed: UInt64?` | `nil` | 🚧 Phase 5 | Reproducible sampling. |
+| `prefillStepSize: Int` | `1024` | 🚧 Phase 5+ | Honored once chunked prefill ships; today's per-token prefill ignores it. |
+| `temperature: Float` | `0.6` | ✅ | `0` → greedy (GPU argmax fast path, no logits readback). `> 0` → CPU sample (one logits readback per token, ~30% decode-tok/s tax). |
+| `topP: Float` | `1.0` | ✅ | Nucleus cutoff. `1.0` = disabled. Forces CPU sample path when set. |
+| `topK: Int` | `0` | ✅ | `0` = disabled. Forces CPU sample path when set. |
+| `minP: Float` | `0.0` | ✅ | Qwen-style min-P cutoff: keep tokens with prob ≥ `min_p × max_prob`. Forces CPU sample path. |
+| `repetitionPenalty: Float` | `1.0` | ✅ | Hugging-Face convention — divide logit by penalty when seen + logit > 0; multiply when seen + logit < 0. `1.0` = disabled. Forces CPU sample path. |
+| `presencePenalty: Float` | `0.0` | 🚧 Phase 5+ | Additive. `0` = disabled. |
+| `seed: UInt64?` | `nil` | ✅ | When set, the CPU sample path is reproducible run-to-run (SplitMix64 PRNG seeded by this). Ignored on the greedy path (no RNG draw). |
 
-The Phase-5 fields are part of the API surface today so per-family
-defaults don't churn when sampling lands. Until then they're
-no-ops on the greedy fast path.
+Greedy (the family defaults' `temperature: 0`) stays on the
+existing GPU argmax fast path — only 4 bytes cross CPU↔GPU per
+token. Setting any sampling knob (`temperature > 0`, `topK > 0`,
+`topP < 1`, `minP > 0`, `repetitionPenalty != 1`) switches to the
+CPU sample path: the forward pass returns logits to CPU, then
+`Sampling.sample(...)` runs the rep-penalty → temperature →
+top-K → top-P → min-P → categorical pipeline. Costs one
+vocab-sized readback per token (~300 KB on Qwen3 vocab=151_936 fp16,
+trivial on unified memory) and ~30% of decode tok/s. A GPU sample
+kernel is on the metaltile `ek/sampling-kernels` branch for the
+fully-on-GPU path later.
 
 ## Family defaults
 
@@ -97,17 +105,31 @@ family-tuned baseline.
 
 ## CLI behaviour
 
-`ffai --max-tokens N` overrides only the `maxTokens` field — every
-other knob still picks up the family default. Omit `--max-tokens`
-entirely to use the family value:
+Each CLI flag overrides only its corresponding `GenerationParameters`
+field; every other knob still picks up the family default. Omit all
+sampling flags to use the family value:
 
 ```bash
-ffai --model mlx-community/Qwen3-4B-4bit --prompt "Hello"        # uses Qwen 3 defaults (256 tokens)
-ffai --model mlx-community/Qwen3-4B-4bit --prompt "Hello" --max-tokens 64
+# Family defaults — Qwen 3 ships temperature=0.6 / top-p=0.95 / top-k=20.
+# Routes through the CPU sample path (non-greedy):
+ffai --model mlx-community/Qwen3-1.7B-4bit --prompt "Hello"
+
+# Greedy fast path (GPU argmax, 4-byte readback per token, no sampling):
+ffai --model mlx-community/Qwen3-1.7B-4bit --prompt "Hello" \
+     --temperature 0 --max-tokens 64
+
+# Seeded non-greedy — reproducible run-to-run:
+ffai --model mlx-community/Qwen3-1.7B-4bit --prompt "Hello" \
+     --temperature 0.7 --top-p 0.9 --seed 42 --max-tokens 64
+
+# Full sampling pipeline:
+ffai --model mlx-community/Qwen3-1.7B-4bit --prompt "Hello" \
+     --temperature 0.8 --top-k 40 --top-p 0.95 --min-p 0.05 \
+     --repetition-penalty 1.05 --seed 12345
 ```
 
-More CLI knobs (`--temperature`, `--top-p`, etc.) land alongside the
-GPU sampling kernels.
+Available flags: `--temperature`, `--top-k`, `--top-p`, `--min-p`,
+`--repetition-penalty`, `--seed`. Plus `--max-tokens`.
 
 ## See also
 

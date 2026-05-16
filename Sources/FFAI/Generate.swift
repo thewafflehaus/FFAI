@@ -167,7 +167,27 @@ public extension Model {
         let weightsBytes = engine.parameters().reduce(0) { $0 + $1.1.byteCount }
         let memTracker = PhaseMemoryTracker()
 
-        Debug.log(.generate, "begin prefill: \(promptTokens.count) tokens, maxTokens=\(params.maxTokens)")
+        // Greedy fast path keeps the existing 4-byte-per-token GPU argmax;
+        // any non-default sampling knob forces the CPU sample path (one
+        // full vocab readback per token, then Sampling.sample).
+        let isGreedyPath = params.temperature == 0
+            && params.topK == 0
+            && params.topP >= 1.0
+            && params.minP == 0
+            && params.repetitionPenalty == 1.0
+        var rng = params.makeRNG()
+        var tokenHistory = promptTokens   // grows as decode produces tokens
+
+        func sampleNext(tokenId t: Int, position i: Int) -> Int {
+            if isGreedyPath {
+                return engine.forwardSample(tokenId: t, position: i, caches: caches)
+            }
+            let logits = engine.forward(tokenId: t, position: i, caches: caches)
+            return Sampling.sample(logits, parameters: params,
+                                   rng: &rng, tokenHistory: tokenHistory)
+        }
+
+        Debug.log(.generate, "begin prefill: \(promptTokens.count) tokens, maxTokens=\(params.maxTokens), path=\(isGreedyPath ? "greedy-GPU" : "cpu-sample")")
 
         // ─── Prefill ─────────────────────────────────────────────────
         let prefillStart = Date()
@@ -175,7 +195,7 @@ public extension Model {
         try Profile.signpost("prefill") {
             for (i, t) in promptTokens.enumerated() {
                 try Task.checkCancellation()
-                nextToken = engine.forwardSample(tokenId: t, position: i, caches: caches)
+                nextToken = sampleNext(tokenId: t, position: i)
                 memTracker.sample()
             }
         }
@@ -216,9 +236,11 @@ public extension Model {
             continuation.yield(GenerationChunk(text: chunkText,
                                                tokens: [nextToken],
                                                position: pos + 1, stats: nil))
+            let priorToken = nextToken
             nextToken = Profile.signpost("decode_step") {
-                engine.forwardSample(tokenId: nextToken, position: pos, caches: caches)
+                sampleNext(tokenId: priorToken, position: pos)
             }
+            tokenHistory.append(priorToken)
             memTracker.sample()
             let now = Date()
             perTokenWallclock.append(now.timeIntervalSince(lastStep))
