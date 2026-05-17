@@ -131,8 +131,12 @@ jobs:
           cargo run --release --bin tile -- build --emit all \
             --out ${{ github.workspace }}/FFAI/Sources/MetalTileSwift
 
-      - name: Build (release)
-        run: swift build -c release
+      - name: Build (release, with tests)
+        # `--build-tests` compiles the xctest bundle alongside the
+        # library so the subsequent `swift test --skip-build` steps
+        # can reuse it. Without this, --skip-build fails with
+        # "FFAIPackageTests.xctest doesn't exist".
+        run: swift build -c release --build-tests
 
       - name: Run unit tests
         # FFAITests + MetalTileSwiftTests. CI on the merged branch
