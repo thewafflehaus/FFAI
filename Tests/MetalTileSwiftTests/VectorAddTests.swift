@@ -1,17 +1,17 @@
 // Round-trip test for the vector_add kernel.
 //
-// Validates the full Phase 0 pipeline:
-//   metaltile-emit → kernels.metallib + Generated/MetalTileKernels.swift
+// Validates the full build pipeline:
+//   `tile build --emit all` → kernels.metallib + Generated/MetalTileKernels.swift
 //   → MetalTileLibrary loads metallib
 //   → PSOCache compiles the PSO
-//   → MetalTileKernels.vector_add dispatches on a real MTLCommandBuffer
+//   → MetalTileKernels.vector_add_f32 dispatches on a real MTLCommandBuffer
 //   → output matches expected (a[i] + b[i])
 
 import Metal
 import Testing
 @testable import MetalTileSwift
 
-@Suite("add_f32 round-trip")
+@Suite("vector_add_f32 round-trip")
 struct VectorAddTests {
     @Test("a + b produces expected output")
     func vectorAdd() throws {
@@ -37,7 +37,7 @@ struct VectorAddTests {
         }
 
         let cache = PSOCache(library: lib)
-        let pso = try cache.pipelineStateThrowing(for: "add_f32")
+        let pso = try cache.pipelineStateThrowing(for: "vector_add_f32")
 
         // Dispatch one thread per element. vector_add is Elementwise mode:
         // `program_id::<0>()` returns thread_position_in_grid.
