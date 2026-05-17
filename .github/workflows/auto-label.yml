@@ -34,7 +34,7 @@ permissions:
 
 jobs:
   label:
-    if: github.repository_owner == 'houseofwaffles'
+    if: github.repository_owner == 'thewafflehaus'
     runs-on: ubuntu-latest
     steps:
       - name: Apply label based on title prefix

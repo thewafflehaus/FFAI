@@ -1,0 +1,196 @@
+name: Release
+
+# Manual-trigger release workflow. Designed to run from `main` (after
+# `dev → main` PR has merged). Computes the next version, runs tests,
+# creates a `release/<tag>` branch (kept open for hotfixes) and an
+# annotated tag, then publishes a GitHub Release with auto-generated
+# notes. The release publish event then automatically fires
+# notify-docs.yml, which triggers the ffai-website rebuild.
+#
+# Usage: GitHub UI → Actions → "Release" → Run workflow.
+#   bump_type:        major / minor / patch
+#   prerelease_tag:   alpha / beta / rc / none
+#   override_version: optional; bypass auto-bump (e.g. "0.2.0-alpha")
+#   tag_prefix:       'v' by convention; 'auto' inherits from last tag
+#
+# Notes generation: GitHub's `--generate-notes` reads PR labels and
+# categorizes them per `.github/release.yml`. The `auto-label`
+# workflow applies labels from PR title prefixes (feat:/fix:/etc.)
+# at PR time, so by the time releases happen the labels are in place.
+#
+# Always run from `main` (the workflow_dispatch UI lets you pick the
+# branch). Running from dev or a feature branch would tag the wrong
+# commit.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump'
+        required: true
+        default: 'minor'
+        type: choice
+        options: [major, minor, patch]
+      prerelease_tag:
+        description: 'Pre-release suffix (none = stable)'
+        required: true
+        default: 'alpha'
+        type: choice
+        options: [alpha, beta, rc, none]
+      override_version:
+        description: 'Override version (bypasses auto-bump). e.g. 0.2.0-alpha'
+        required: false
+        default: ''
+      tag_prefix:
+        description: 'Tag prefix (v / auto-detect from last tag)'
+        required: false
+        default: 'v'
+        type: choice
+        options: [v, auto]
+
+permissions:
+  contents: write   # tag + release branch + GitHub Release creation
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    if: github.repository_owner == 'thewafflehaus'
+    name: Test before tag (Apple Silicon)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: FFAI
+    steps:
+      - name: Checkout FFAI
+        uses: actions/checkout@v6
+        with:
+          path: FFAI
+          fetch-depth: 0   # full history so the release job can do tag math
+
+      - name: Checkout sibling metaltile
+        # Pinned to `dev`; see ci.yml for why. Bump to `main` (or a
+        # release tag) when upstream stabilizes.
+        uses: actions/checkout@v6
+        with:
+          repository: thewafflehaus/metaltile
+          ref: dev
+          path: metaltile
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          uname -a
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry + metaltile build
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/metaltile/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('metaltile/Cargo.lock', 'metaltile/Cargo.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Cache SwiftPM build artifacts
+        uses: actions/cache@v5
+        with:
+          path: |
+            FFAI/.build
+            ~/Library/Caches/org.swift.swiftpm
+          key: spm-${{ runner.os }}-${{ hashFiles('FFAI/Package.swift', 'FFAI/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Resolve Swift packages
+        run: swift package resolve
+
+      - name: Generate kernel artifacts (tile build --emit all)
+        working-directory: metaltile
+        run: |
+          cargo run --release --bin tile -- build --emit all \
+            --out ${{ github.workspace }}/FFAI/Sources/MetalTileSwift
+
+      - name: Build (release)
+        run: swift build -c release
+
+      - name: Run unit tests
+        # ModelTests download HF snapshots and take minutes per model;
+        # release-gate the fast unit suite, leave ModelTests to nightly.
+        run: swift test --filter FFAITests
+
+  release:
+    needs: test
+    if: github.repository_owner == 'thewafflehaus'
+    name: Tag + GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+      release_branch: ${{ steps.bump.outputs.release_branch }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Guard against running off main
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "::error::Release must be cut from main, not ${{ github.ref }}."
+            echo "Re-run the workflow with 'main' selected in the branch dropdown."
+            exit 1
+          fi
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Compute version + create branch/tag
+        id: bump
+        env:
+          BUMP_TYPE:        ${{ inputs.bump_type }}
+          PRERELEASE_TAG:   ${{ inputs.prerelease_tag }}
+          OVERRIDE_VERSION: ${{ inputs.override_version }}
+          TAG_PREFIX:       ${{ inputs.tag_prefix }}
+        run: ./scripts/release.sh
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
+          TAG:            ${{ steps.bump.outputs.tag }}
+          RELEASE_BRANCH: ${{ steps.bump.outputs.release_branch }}
+          PRERELEASE:     ${{ inputs.prerelease_tag != 'none' }}
+        run: |
+          # `--target` is the release branch we just pushed. `--generate-notes`
+          # uses .github/release.yml's category map to group PR titles since
+          # the previous tag. The `release:published` event fires once this
+          # returns; notify-docs.yml picks it up from there.
+          ARGS=(
+            --target "$RELEASE_BRANCH"
+            --title "$TAG"
+            --generate-notes
+          )
+          if [ "$PRERELEASE" = "true" ]; then
+            ARGS+=(--prerelease)
+          fi
+          gh release create "$TAG" "${ARGS[@]}"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Released ${{ steps.bump.outputs.tag }}"
+            echo "- Branch:  \`${{ steps.bump.outputs.release_branch }}\`"
+            echo "- Commit:  \`${{ steps.bump.outputs.commit }}\`"
+            echo "- Release: https://github.com/${{ github.repository }}/releases/tag/${{ steps.bump.outputs.tag }}"
+            echo ""
+            echo "notify-docs.yml will fire on the \`release: published\` event and rebuild ffai-website."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,112 @@
+name: Issue
+description: Report a bug, suggest a feature, request a model, or start a discussion.
+title: "[type]: <one-sentence summary>"
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file. A few seconds spent on
+        structure here saves a lot of round-trips during triage —
+        and lets AI agents reading the issue stream pick up the
+        relevant signal without scraping freeform prose.
+
+        **Before filing:**
+        - Search [existing issues](https://github.com/thewafflehaus/FFAI/issues?q=is%3Aissue) to avoid duplicates.
+        - For features: check [`planning/roadmap.md`](https://github.com/thewafflehaus/FFAI/blob/main/planning/roadmap.md) — it may already be planned.
+        - For bugs: try `main` HEAD; many issues are already fixed.
+
+  - type: checkboxes
+    id: type
+    attributes:
+      label: Type
+      description: What is this issue about? Check all that apply.
+      options:
+        - label: "🐛 Bug — something doesn't work as documented"
+        - label: "✨ Feature — new capability or API surface"
+        - label: "🤖 New model — add support for a new architecture / variant / size"
+        - label: "🚀 Performance — slower than expected, or an optimization opportunity"
+        - label: "💭 Discussion / idea — design conversation, RFC, brainstorm"
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: |
+        One paragraph of context. What are you trying to do, what
+        happened (or what should happen), why does it matter?
+      placeholder: |
+        Loading mlx-community/Qwen3-1.7B-bf16 fails on first call
+        with "X" on macOS 15.4.0 / M1 Max / Xcode 16.2 / FFAI commit
+        abc123. The same checkpoint loads fine in mlx-lm.
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Reproduction / proposal / details
+      description: |
+        - **Bug**: minimum reproducer (CLI invocation or 5-10 lines of
+          Swift). Expected vs actual behavior.
+        - **Feature / new model / perf**: proposed API / target
+          architecture / benchmark numbers. Prior art links welcome.
+        - **Discussion**: the question or idea, plus what you've
+          already considered.
+      placeholder: |
+        ```bash
+        ffai generate -m mlx-community/Qwen3-1.7B-bf16 -p "Hi"
+        # → Error: ...
+        ```
+
+        Expected: coherent generation. Actual: hang at "loading".
+        Adding `--debug` shows X.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: |
+        Required for bugs / perf issues. Optional for features and
+        discussions. Paste output of `swift --version` + `xcodebuild
+        -version` + `sw_vers` + the FFAI commit / version you're on.
+      render: shell
+      placeholder: |
+        macOS 15.4.0 (M1 Max, 64GB)
+        Xcode 16.2 (Build version 16C5032a)
+        Apple Swift version 6.1
+        FFAI: thewafflehaus/FFAI@abc1234 (dev)
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: ai_usage
+    attributes:
+      label: AI assistance disclosure
+      description: |
+        Did you use AI to write this issue? Check each category that
+        applies — or "No AI used" if it's hand-written. This is
+        transparency, not gatekeeping. Agentic issues are welcome.
+      options:
+        - label: "🔍 Research — searching docs, finding related issues, understanding APIs"
+        - label: "💡 Ideation — brainstorming the design, weighing trade-offs"
+        - label: "⌨️ Implementation — writing code snippets / reproducers or updating documentation"
+        - label: "🧪 Testing — running test cases to verify the bug or proposal"
+        - label: "📚 Documentation — writing this issue's content"
+        - label: "✋ No AI used — this is hand-written"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched for duplicate issues.
+          required: true
+        - label: I read [`CONTRIBUTING.md`](https://github.com/thewafflehaus/FFAI/blob/main/CONTRIBUTING.md).
+          required: true

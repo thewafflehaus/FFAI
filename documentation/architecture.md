@@ -28,7 +28,7 @@ for and how a single token moves through the stack.
 ┌────────────────────────▼────────────────────────────────┐
 │  metaltile (Rust, sibling repo)                         │
 │   • #[kernel] DSL → IR → MSL                            │
-│   • metaltile-emit produces:                            │
+│   • `tile build --emit all` (metaltile-cli) produces:   │
 │       kernels.metallib   (compiled by xcrun metal)      │
 │       manifest.json      (kernel metadata)              │
 │       MetalTileKernels.swift  (typed wrappers)          │
@@ -39,9 +39,10 @@ for and how a single token moves through the stack.
 
 A `#[kernel]` proc-macro lowers a small Rust DSL into an IR; the
 codegen back-end emits Metal Shading Language. Authoring lives here:
-new kernels are Rust functions, registered in `metaltile-emit`'s
-kernel set. End users never touch Rust — they consume the artifacts
-shipped in `Sources/MetalTileSwift/Resources/`.
+new kernels are Rust `pub fn`s in `crates/metaltile-std/src/ops/`,
+annotated with `#[bench_kernel(...)]` so the registry picks them up.
+End users never touch Rust — they consume the artifacts shipped in
+`Sources/MetalTileSwift/Resources/`.
 
 ### `MetalTileSwift`
 
@@ -75,12 +76,12 @@ The user-facing layer:
 ## The build pipeline
 
 ```
-┌──────────────┐  cargo run -p   ┌──────────────────┐  xcrun metal   ┌────────────────────┐
-│  Rust kernels│   metaltile-emit│  *.metal sources │   + metallib   │  kernels.metallib  │
-│  (#[kernel]) │ ───────────────▶│  manifest.json   │ ──────────────▶│  manifest.json     │
-└──────────────┘                 │  MetalTileKernels│                │  MetalTileKernels  │
-                                 │  .swift (typed)  │                │  .swift (typed)    │
-                                 └──────────────────┘                └────────────────────┘
+┌──────────────┐  tile build       ┌──────────────────┐  xcrun metal   ┌────────────────────┐
+│  Rust kernels│  --emit all --out │  *.metal sources │   + metallib   │  kernels.metallib  │
+│  (#[kernel]) │ ─────────────────▶│  manifest.json   │ ──────────────▶│  manifest.json     │
+└──────────────┘                   │  MetalTileKernels│                │  MetalTileKernels  │
+                                   │  .swift (typed)  │                │  .swift (typed)    │
+                                   └──────────────────┘                └────────────────────┘
                                                                               │
                                                                               ▼
                                                                 ┌──────────────────────────┐

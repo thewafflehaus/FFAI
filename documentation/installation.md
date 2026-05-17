@@ -11,7 +11,7 @@ FFAI ships as a SwiftPM package with three products:
 ## SwiftPM `Package.swift`
 
 ```swift
-.package(url: "https://github.com/houseofwaffles/FFAI", from: "0.1.0"),
+.package(url: "https://github.com/thewafflehaus/FFAI", from: "0.1.0"),
 
 .target(
     name: "YourTarget",
@@ -24,7 +24,7 @@ FFAI ships as a SwiftPM package with three products:
 ## Xcode
 
 1. **Project → Package Dependencies → `+`**
-2. Enter `https://github.com/houseofwaffles/FFAI` and pick a version / branch.
+2. Enter `https://github.com/thewafflehaus/FFAI` and pick a version / branch.
 3. Add the `FFAI` product to your target.
 
 Apple's [Adding package dependencies to your app](https://developer.apple.com/documentation/xcode/adding-package-dependencies-to-your-app)
@@ -58,12 +58,12 @@ languages.
 ## Local checkout (contributors)
 
 Cloning the repo to hack on FFAI itself requires the sibling
-[`metaltile`](https://github.com/houseofwaffles/metaltile) checkout (the
+[`metaltile`](https://github.com/thewafflehaus/metaltile) checkout (the
 Rust DSL that compiles kernels) and Cargo:
 
 ```bash
-git clone https://github.com/houseofwaffles/FFAI
-git clone https://github.com/houseofwaffles/metaltile
+git clone https://github.com/thewafflehaus/FFAI
+git clone https://github.com/thewafflehaus/metaltile
 cd FFAI
 ./scripts/setup-dev.sh
 ```

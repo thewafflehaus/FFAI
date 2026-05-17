@@ -59,7 +59,7 @@ if [ ! -d "$METALTILE_DIR" ]; then
     warn "metaltile not found at $METALTILE_DIR"
     echo ""
     echo "Clone it with:"
-    echo "  cd $(dirname "$PROJECT_ROOT") && git clone https://github.com/houseofwaffles/metaltile"
+    echo "  cd $(dirname "$PROJECT_ROOT") && git clone https://github.com/thewafflehaus/metaltile"
     echo ""
     fail "metaltile checkout required for kernel generation"
 fi

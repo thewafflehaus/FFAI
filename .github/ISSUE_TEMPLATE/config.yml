@@ -1,0 +1,14 @@
+# Disables the "Open a blank issue" escape hatch so every issue
+# carries the structured metadata the template collects.
+blank_issues_enabled: false
+
+contact_links:
+  - name: 📖 Documentation
+    url: https://thewafflehaus.github.io/ffai-website/
+    about: User-facing docs (installation, quickstart, models, KV cache, quantization, perf, observability).
+  - name: 🗺️ Roadmap
+    url: https://github.com/thewafflehaus/FFAI/blob/main/planning/roadmap.md
+    about: What's shipped vs planned. Check here before proposing a feature.
+  - name: 🤝 Contributing guide
+    url: https://github.com/thewafflehaus/FFAI/blob/main/CONTRIBUTING.md
+    about: Read this before opening an issue or PR.

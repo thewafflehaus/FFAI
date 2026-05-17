@@ -8,7 +8,7 @@ built binary path, or by symlinking onto `PATH`.
 ## Build
 
 ```bash
-git clone https://github.com/houseofwaffles/FFAI
+git clone https://github.com/thewafflehaus/FFAI
 cd FFAI
 
 swift build -c release        # binary lands at .build/release/ffai

@@ -1,0 +1,95 @@
+name: Trigger docs rebuild
+
+# Docs are versioned by FFAI release. Every published release fires
+# `workflow_dispatch` on ffai-website's `deploy.yml`, passing the
+# release tag + metadata as inputs. Uses the least-privilege scope
+# (Actions: write on ffai-website only) so a leaked
+# WEBSITE_DISPATCH_TOKEN can't modify ffai-website's repo contents —
+# the worst an attacker could do with the token is spam-trigger the
+# deploy workflow or cancel runs.
+#
+# Required secret: WEBSITE_DISPATCH_TOKEN
+#   Type:        Fine-grained personal access token
+#   Resource owner: thewafflehaus
+#   Repository access: Only `ffai-website`
+#   Permissions:
+#     - Actions:  Read and write   ← needed to call `workflow_dispatch`
+#     - Contents: Read-only        ← needed to resolve refs (e.g. `--ref main`)
+#     - Metadata: Read-only        ← implicit dependency of any fine-grained PAT
+#   Notes: NOT `Contents: write`. That was needed for the older
+#          `repository_dispatch` flow; we dropped it to shrink the
+#          blast radius if the token leaks.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'FFAI release tag to dispatch for (defaults to latest)'
+        required: false
+        type: string
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve release metadata
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          # Whether we got here via the `release` event, a workflow
+          # dispatch with a named tag, or a workflow dispatch with no
+          # input, route through `gh release view` so the body /
+          # published_at / url all come from one consistent source.
+          if [ -n "$EVENT_TAG" ]; then
+            tag="$EVENT_TAG"
+          elif [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+          else
+            tag=$(gh release view --repo "$GITHUB_REPOSITORY" \
+                    --json tagName -q .tagName 2>/dev/null || true)
+          fi
+          if [ -z "$tag" ]; then
+            echo "::warning::No release tag resolved (no releases yet?) — skipping dispatch."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          data=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
+                   --json tagName,name,url,publishedAt,body)
+          {
+            echo "skip=false"
+            echo "tag=$(echo "$data" | jq -r .tagName)"
+            echo "name=$(echo "$data" | jq -r .name)"
+            echo "url=$(echo "$data" | jq -r .url)"
+            echo "published_at=$(echo "$data" | jq -r .publishedAt)"
+            echo "body<<__BODY_EOF__"
+            echo "$data" | jq -r .body
+            echo "__BODY_EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Trigger ffai-website deploy
+        if: steps.meta.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+          TAG:          ${{ steps.meta.outputs.tag }}
+          NAME:         ${{ steps.meta.outputs.name }}
+          URL:          ${{ steps.meta.outputs.url }}
+          PUBLISHED_AT: ${{ steps.meta.outputs.published_at }}
+          BODY:         ${{ steps.meta.outputs.body }}
+        run: |
+          # `gh workflow run` POSTs to /actions/workflows/{id}/dispatches.
+          # Token needs Actions:write on ffai-website. Multi-line BODY
+          # is passed via env var → --field, which gh handles correctly.
+          gh workflow run deploy.yml \
+            --repo thewafflehaus/ffai-website \
+            --ref main \
+            --field ffai_tag="$TAG" \
+            --field ffai_release_name="$NAME" \
+            --field ffai_release_url="$URL" \
+            --field ffai_release_published_at="$PUBLISHED_AT" \
+            --field ffai_release_body="$BODY"
+          echo "dispatched ffai-website/deploy.yml for $TAG"

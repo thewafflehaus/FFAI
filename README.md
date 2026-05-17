@@ -3,7 +3,7 @@
 **Fucking Fast Apple Inference.**
 
 A minimal, dependency-light LLM inference library for Apple Silicon, built on
-pre-compiled Metal kernels generated from the [metaltile](https://github.com/houseofwaffles/metaltile)
+pre-compiled Metal kernels generated from the [metaltile](https://github.com/thewafflehaus/metaltile)
 DSL. No Python. No MLX. No C compilation. No JIT. No four-repo dependency chain.
 
 **Just really fucking fast AI!** 🚀
@@ -51,7 +51,7 @@ deep-dives (KV cache, quantization, performance, capabilities) see
 Install via SwiftPM:
 
 ```swift
-.package(url: "https://github.com/houseofwaffles/FFAI", from: "0.1.0")
+.package(url: "https://github.com/thewafflehaus/FFAI", from: "0.1.0")
 ```
 
 Then generate text in five lines:
@@ -80,7 +80,7 @@ CLI equivalent (the `ffai` executable target):
 ffai --model unsloth/Llama-3.2-1B --prompt "Once upon a time"
 ```
 
-See [`documentation/quickstart.md`](documentation/quickstart.md) for
+See [`quickstart.md`](documentation/quickstart.md) for
 streaming, chat templates, capability gating, and lower-level
 forward APIs. Using a non-default cache directory (external SSD,
 shared cache between Python tools, etc.)? See
@@ -91,7 +91,7 @@ shared cache between Python tools, etc.)? See
 Two architecture families ship today; both run real HuggingFace
 checkpoints end-to-end. Adding a new family is one Swift file plus
 test fixtures — see
-[`documentation/adding-a-model.md`](documentation/adding-a-model.md).
+[`adding-a-model.md`](documentation/adding-a-model.md).
 
 | Family | Variants | Sizes | Quantizations |
 |---|---|---|---|
@@ -102,7 +102,7 @@ Quant layouts follow the **mlx-community** packed-uint32 format
 (weights + scales + biases per group). Pass any HuggingFace repo ID
 and the loader resolves architecture, downloads the snapshot, and
 routes to the right family. See
-[`documentation/models.md`](documentation/models.md) for the full
+[`models.md`](documentation/models.md) for the full
 matrix and known gaps.
 
 **Coming next** (per [`planning/plan.md`](planning/plan.md)): Qwen 3.5
@@ -131,7 +131,7 @@ hybrid (GDN + attention), Qwen 3.5 MoE, Mistral, Phi, Gemma, vision
 ┌────────────────────────▼────────────────────────────────┐
 │  metaltile (Rust, sibling repo)                         │
 │   • #[kernel] DSL → IR → MSL                            │
-│   • metaltile-emit produces:                            │
+│   • `tile build --emit all` (metaltile-cli) produces:   │
 │       kernels.metallib   (compiled by xcrun metal)      │
 │       manifest.json      (kernel metadata)              │
 │       MetalTileKernels.swift  (typed wrappers)          │
@@ -145,33 +145,13 @@ inference dispatch loop) see
 
 ## Contributing
 
-```bash
-git clone https://github.com/houseofwaffles/FFAI && cd FFAI
-git clone https://github.com/houseofwaffles/metaltile ../metaltile   # sibling
-./scripts/setup-dev.sh                                        # toolchains + first build
-make test                                                     # 122 tests, ~30s
-```
+Read **[`CONTRIBUTING.md`](CONTRIBUTING.md)** first — it covers:
 
-`setup-dev.sh` verifies Xcode CLI tools + `xcrun metal`, the Swift
-toolchain, Cargo (for metaltile), and the sibling metaltile checkout;
-resolves SPM deps; and runs the first build to populate
-`kernels.metallib`.
-
-Common Make targets:
-
-| Target | What |
-|---|---|
-| `make build` | Regenerate kernels + `swift build` (debug) |
-| `make build-release` | Same, release config |
-| `make test` | Regenerate kernels + `swift test` |
-| `make coverage` | `swift test --enable-code-coverage` + summary |
-| `make regenerate-kernels` | Run `metaltile-emit` only |
-| `make format` | `swift-format` the repo in place |
-| `make docs` | Verify docs build clean |
-| `make clean` | Remove `.build/` + generated artifacts |
-
-For best practices, testing conventions, benchmarking, and porting
-new models see [`documentation/developing/`](documentation/developing/developing.md).
+- the community guidelines;
+- issue-first rule;
+- what good PRs look like;
+- how we deal with AI-assisted contributions; and
+- how to get started! 🚀
 
 ## License
 

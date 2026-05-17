@@ -1,26 +1,34 @@
 name: CI
 
-# Build and test FFAI on Apple Silicon. Runs on every push to main and
-# every PR. Phase 0 surface only; expands as later phases land.
+# Build and test FFAI on Apple Silicon. Runs on:
+#   - every push to `main` (release branch — gate before tagging)
+#   - every push to `dev`  (working branch — catch regressions early)
+#   - every PR targeting either branch
+#
+# The release workflow runs its own pre-tag test pass on the release
+# commit too — see .github/workflows/release.yml.
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 permissions:
   contents: read
 
 concurrency:
+  # Don't cancel in-progress runs on protected branches (main, dev) so
+  # the green-build history stays intact; do cancel earlier runs on the
+  # same feature branch as a contributor pushes new commits.
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 
 jobs:
   build_and_test:
-    if: github.repository_owner == 'houseofwaffles'
+    if: github.repository_owner == 'thewafflehaus'
     name: Build and test (Apple Silicon)
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 30
     defaults:
       run:
@@ -28,15 +36,22 @@ jobs:
 
     steps:
       - name: Checkout FFAI
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: FFAI
 
       - name: Checkout sibling metaltile
-        uses: actions/checkout@v4
+        # Pinned to `dev` for now because:
+        #   - thewafflehaus/metaltile main is behind upstream's CLI rework.
+        #   - upstream/metaltile main is a `gm` placeholder commit.
+        #   - All the kernels FFAI's Ops.swift expects live on
+        #     thewafflehaus/metaltile dev (post the ek/std-kernels merge).
+        # Move back to `main` once we sync our org's main from upstream's
+        # post-CLI-rework main, or cut a metaltile release tag and pin to it.
+        uses: actions/checkout@v6
         with:
-          repository: houseofwaffles/metaltile
-          ref: main
+          repository: thewafflehaus/metaltile
+          ref: dev
           path: metaltile
 
       - name: Show toolchain
@@ -51,7 +66,7 @@ jobs:
           toolchain: stable
 
       - name: Cache cargo registry + metaltile build
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -62,7 +77,7 @@ jobs:
             cargo-${{ runner.os }}-
 
       - name: Cache SwiftPM build artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             FFAI/.build
@@ -74,15 +89,15 @@ jobs:
       - name: Resolve Swift packages
         run: swift package resolve
 
-      - name: Generate kernel artifacts (metaltile-emit)
-        # Phase 0: this step compiles metaltile and produces
-        # kernels.metallib + manifest.json + Generated/MetalTileKernels.swift
-        # into FFAI/Sources/MetalTileSwift/. Once the SPM build plugin lands
-        # (post-Phase 0) this becomes implicit. Run from metaltile/ so its
+      - name: Generate kernel artifacts (tile build --emit all)
+        # Compiles metaltile and produces kernels.metallib + manifest.json
+        # + Generated/MetalTileKernels.swift into FFAI/Sources/MetalTileSwift/.
+        # Once the `tile` binary ships via Homebrew this no longer needs
+        # the sibling metaltile checkout. Run from metaltile/ so its
         # rust-toolchain.toml (nightly, 2024 edition) is picked up.
         working-directory: metaltile
         run: |
-          cargo run --release -p metaltile-emit -- \
+          cargo run --release --bin tile -- build --emit all \
             --out ${{ github.workspace }}/FFAI/Sources/MetalTileSwift
 
       - name: Build
@@ -107,7 +122,7 @@ jobs:
 
       - name: Upload test results on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-results
           path: |

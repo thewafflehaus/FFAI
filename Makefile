@@ -31,7 +31,7 @@ build-release: regenerate-kernels ## swift build (release)
 	swift build -c release
 
 .PHONY: regenerate-kernels
-regenerate-kernels: ## run metaltile-emit to regenerate metallib + Swift wrappers
+regenerate-kernels: ## run `tile build --emit all` to regenerate metallib + Swift wrappers
 	@if [ ! -d "$(METALTILE_DIR)" ]; then \
 	  echo "Error: metaltile not found at $(METALTILE_DIR)"; \
 	  echo "Clone the sibling metaltile repo at ../metaltile."; \
@@ -40,8 +40,14 @@ regenerate-kernels: ## run metaltile-emit to regenerate metallib + Swift wrapper
 	@# Run cargo from the metaltile dir so its rust-toolchain.toml (nightly,
 	@# 2024 edition) is honored. Running cargo from FFAI/ would use the
 	@# system default toolchain, which lacks edition=2024 support.
+	@#
+	@# `tile build --emit all` writes:
+	@#   $(KERNEL_OUT)/Resources/kernels/<name>.metal     per-kernel MSL
+	@#   $(KERNEL_OUT)/Resources/kernels.metallib         compiled metallib
+	@#   $(KERNEL_OUT)/Resources/manifest.json            IR descriptor
+	@#   $(KERNEL_OUT)/Generated/MetalTileKernels.swift   dispatch wrappers
 	cd $(METALTILE_DIR) && cargo run --release \
-	  -p metaltile-emit -- --out $(KERNEL_OUT)
+	  --bin tile -- build --emit all --out $(KERNEL_OUT)
 
 # ─── Test ─────────────────────────────────────────────────────────────
 .PHONY: test
@@ -62,8 +68,33 @@ format-check: ## check formatting without modifying files
 	swift-format lint --configuration .swift-format --recursive . && echo "format OK"
 
 # ─── Docs ─────────────────────────────────────────────────────────────
+# User-facing documentation lives at https://thewafflehaus.github.io/ffai-website/
+# (source: github.com/thewafflehaus/ffai-website).
+#
+# The website fetches markdown from this repo at build time, so committing
+# changes to documentation/, README.md, planning/architecture.md, or
+# planning/roadmap.md on `main` triggers a rebuild via a GitHub Action.
+
+WEBSITE_DIR := $(PROJECT_ROOT)/../ffai-website
+
 .PHONY: docs
-docs: ## verify documentation builds without warnings
+docs: ## verify markdown + preview the docs site locally (if ../ffai-website is checked out)
+	./scripts/verify-docs.sh
+	@if [ -d "$(WEBSITE_DIR)" ]; then \
+	  echo ""; \
+	  echo "Preview the docs site (Ctrl+C to stop):"; \
+	  echo "  cd $(WEBSITE_DIR) && pnpm dev"; \
+	  echo ""; \
+	  echo "Or to build a one-shot static preview:"; \
+	  echo "  cd $(WEBSITE_DIR) && pnpm build && pnpm dlx serve dist"; \
+	else \
+	  echo ""; \
+	  echo "Tip: clone the docs site to preview locally:"; \
+	  echo "  git clone https://github.com/thewafflehaus/ffai-website $(WEBSITE_DIR)"; \
+	fi
+
+.PHONY: docs-verify
+docs-verify: ## swift-docc target-by-target verification only (no website preview)
 	./scripts/verify-docs.sh
 
 # ─── Clean ────────────────────────────────────────────────────────────

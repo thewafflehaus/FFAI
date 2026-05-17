@@ -39,10 +39,10 @@ let package = Package(
     ],
     targets: [
         // Pre-compiled Metal kernels + Swift dispatch wrappers.
-        // Resources are produced at build time by metaltile-emit (Rust bin
-        // in the sibling metaltile workspace) and live under Resources/.
-        // Generated/ contains the typed Swift wrappers, also produced by
-        // metaltile-emit.
+        // Resources are produced at build time by `tile build --emit all`
+        // (the metaltile-cli binary in the sibling metaltile workspace)
+        // and live under Resources/. Generated/ contains the typed Swift
+        // wrappers, also produced by `tile build`.
         .target(
             name: "MetalTileSwift",
             path: "Sources/MetalTileSwift",

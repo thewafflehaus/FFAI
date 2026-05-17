@@ -44,19 +44,24 @@ resources.
                       │
                       ▼
   ┌──────────────────────────────────────────────────────────────┐
-  │  metaltile-emit (Rust bin, new in Phase 0)                   │
+  │  tile build --emit all --out Sources/MetalTileSwift          │
+  │  (metaltile-cli, dev sibling repo)                           │
   │                                                              │
-  │  Walks registry of kernels, for each:                        │
-  │   1. Run codegen → write Sources/MetalTileSwift/             │
-  │      Resources/kernels/<name>.metal                          │
-  │   2. Append to manifest.json (name, params, dtypes,          │
-  │      function constants, default grid/threadgroup rule)      │
+  │  Walks the inventory of `BenchSpec`-registered kernels,      │
+  │  for each (kernel × dtype):                                  │
+  │   1. Codegen MSL → write Resources/kernels/<name>.metal      │
+  │   2. Append to Resources/manifest.json (name, params,        │
+  │      dtype, constexprs, mode)                                │
   │   3. Append to Generated/MetalTileKernels.swift              │
   │      (one strongly-typed Swift func per kernel)              │
   │                                                              │
   │  Then: shell out to                                          │
   │   xcrun -sdk macosx metal -c   *.metal → *.air               │
   │   xcrun -sdk macosx metallib   *.air   → kernels.metallib    │
+  │                                                              │
+  │  Emit logic lives in metaltile-codegen::emit so other        │
+  │  tooling (build scripts, future SPM plugins) can consume     │
+  │  it without going through the CLI binary.                    │
   └───────────────────┬──────────────────────────────────────────┘
                       │
                       ▼
@@ -804,8 +809,8 @@ day one.
   ┌──────────────────────────────────────────────────────────┐
   │  metaltile (Rust workspace, sibling repo)                │
   │  Generates kernels.metallib + manifest + Swift wrappers  │
-  │  via SPM build plugin invoking `cargo run -p             │
-  │  metaltile-emit`                                         │
+  │  via the `tile build --emit all --out <dir>` CLI         │
+  │  command (metaltile-cli).                                │
   └──────────────────────────────────────────────────────────┘
 ```
 
@@ -813,5 +818,5 @@ day one.
 swift-transformers. That's it.
 
 **Build-time dependencies:** add Xcode (for `xcrun metal`), a Rust
-toolchain (for metaltile-emit), and the metaltile sibling repo
-checkout.
+toolchain (for `tile`), and the metaltile sibling repo checkout
+until the `tile` binary ships via Homebrew.

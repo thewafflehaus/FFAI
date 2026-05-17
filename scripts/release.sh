@@ -1,0 +1,178 @@
+#!/bin/bash
+# Compute the next FFAI release version from the most recent reachable
+# tag, then create the release branch + tag and push them. Designed to
+# run from `main` (post-merge) — never tag dev directly.
+#
+# Usage (env-driven):
+#   BUMP_TYPE=major|minor|patch         # default: minor
+#   PRERELEASE_TAG=alpha|beta|rc|none   # default: none
+#   OVERRIDE_VERSION=                   # optional; bypasses auto-bump
+#   TAG_PREFIX=auto|v|                  # default: auto (inherit from last tag)
+#   PUSH=1                              # default: 1 (set 0 for dry-run)
+#   ./scripts/release.sh
+#
+# Outputs (printed to stdout, also written to $GITHUB_OUTPUT if present):
+#   tag=<tag>             # e.g. v0.1.0
+#   version=<version>     # e.g. 0.1.0
+#   release_branch=<name> # e.g. release/v0.1.0
+#   commit=<sha>          # release commit (HEAD at script start)
+
+set -euo pipefail
+
+BUMP_TYPE="${BUMP_TYPE:-minor}"
+PRERELEASE_TAG="${PRERELEASE_TAG:-none}"
+OVERRIDE_VERSION="${OVERRIDE_VERSION:-}"
+TAG_PREFIX_INPUT="${TAG_PREFIX:-auto}"
+PUSH="${PUSH:-1}"
+
+# ─── Detect tag prefix ─────────────────────────────────────────────
+# Auto-inherit from the last reachable tag; default to "v" if there
+# are no tags yet (FFAI's chosen convention).
+detect_prefix() {
+  local last
+  last=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+  if [[ "$last" == v* ]]; then
+    echo "v"
+  elif [ -z "$last" ]; then
+    echo "v"
+  else
+    echo ""
+  fi
+}
+
+if [ "$TAG_PREFIX_INPUT" = "auto" ]; then
+  TAG_PREFIX=$(detect_prefix)
+else
+  TAG_PREFIX="$TAG_PREFIX_INPUT"
+fi
+
+# ─── Compute next version ──────────────────────────────────────────
+if [ -n "$OVERRIDE_VERSION" ]; then
+  NEW_VERSION="${OVERRIDE_VERSION#v}"
+else
+  CURRENT_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "${TAG_PREFIX}0.0.0")
+  CLEAN="${CURRENT_TAG#v}"             # strip leading v
+  CLEAN="${CLEAN%%-*}"                 # strip any -alpha/-beta suffix
+
+  IFS='.' read -r MAJOR MINOR PATCH <<< "$CLEAN"
+  MAJOR="${MAJOR:-0}"; MINOR="${MINOR:-0}"; PATCH="${PATCH:-0}"
+
+  case "$BUMP_TYPE" in
+    major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+    minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+    patch) PATCH=$((PATCH + 1)) ;;
+    *) echo "Invalid BUMP_TYPE: $BUMP_TYPE" >&2; exit 1 ;;
+  esac
+
+  NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+fi
+
+if [ "$PRERELEASE_TAG" != "none" ] && [[ "$NEW_VERSION" != *-* ]]; then
+  NEW_VERSION="${NEW_VERSION}-${PRERELEASE_TAG}"
+fi
+
+NEW_TAG="${TAG_PREFIX}${NEW_VERSION}"
+RELEASE_BRANCH="release/${NEW_TAG}"
+
+# ─── Guard: refuse to clobber an existing tag ──────────────────────
+if git rev-parse "$NEW_TAG" >/dev/null 2>&1; then
+  echo "Tag $NEW_TAG already exists. Refusing to overwrite." >&2
+  exit 1
+fi
+
+# ─── Auto-bump FFAI.version to match the new tag ───────────────────
+#
+# `FFAI.version` is surfaced in CLI output (`ffai --version`,
+# `ffai <ver> — loading …`) and recorded in bench reports — it needs
+# to match whatever tag we're about to create.
+#
+# Behavior:
+#   - If FFAI.version already equals NEW_VERSION (e.g. a contributor
+#     bumped it manually in the release PR), this is a no-op.
+#   - Otherwise: rewrite the literal, commit on the current branch
+#     (typically `main`, since the release workflow guards against
+#     running off other branches), and tag the bump commit. The
+#     `[skip ci]` marker keeps the push from re-running CI we already
+#     passed in the workflow's `test` job.
+#   - Under PUSH=0 (dry-run) we report what would happen but don't
+#     modify the working tree, to keep dry-runs trivial to undo.
+VERSION_FILE="Sources/FFAI/FFAI.swift"
+VERSION_REGEX='public static let version = "[^"]*"'
+
+if [ ! -f "$VERSION_FILE" ]; then
+  echo "Version file not found at $VERSION_FILE. Run from FFAI repo root." >&2
+  exit 1
+fi
+
+CURRENT_VERSION=$(grep -oE "$VERSION_REGEX" "$VERSION_FILE" \
+  | sed 's/.*"\(.*\)".*/\1/')
+
+if [ -z "$CURRENT_VERSION" ]; then
+  echo "Couldn't parse FFAI.version from $VERSION_FILE." >&2
+  echo "Expected a line matching: $VERSION_REGEX" >&2
+  exit 1
+fi
+
+if [ "$CURRENT_VERSION" = "$NEW_VERSION" ]; then
+  echo "FFAI.version already at $NEW_VERSION — no bump needed."
+elif [ "$PUSH" = "1" ]; then
+  # Refuse to bump if the working tree has unrelated changes — they'd
+  # accidentally land in the release commit otherwise.
+  if [ -n "$(git status --porcelain | grep -v "^.. ${VERSION_FILE}$" || true)" ]; then
+    echo "Working tree has uncommitted changes outside $VERSION_FILE." >&2
+    echo "Commit or stash them first." >&2
+    git status --short >&2
+    exit 1
+  fi
+  echo "Bumping FFAI.version: $CURRENT_VERSION → $NEW_VERSION"
+  # In-place rewrite. perl handles macOS + GNU sed differences.
+  perl -i -pe "s|${VERSION_REGEX}|public static let version = \"${NEW_VERSION}\"|" \
+    "$VERSION_FILE"
+  git add "$VERSION_FILE"
+  git commit -m "chore: bump FFAI.version to ${NEW_VERSION} [skip ci]
+
+Auto-generated by scripts/release.sh as part of cutting ${NEW_TAG}.
+The tag is on this commit so a checkout of the tag carries the
+matching version string."
+else
+  echo "[dry-run] would bump FFAI.version: $CURRENT_VERSION → $NEW_VERSION + commit."
+fi
+
+# ─── Create branch + tag ───────────────────────────────────────────
+# Re-read HEAD here so the release branch + tag point at the bump
+# commit (when one was made) rather than the pre-bump SHA.
+COMMIT=$(git rev-parse HEAD)
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+# Release branch kept open for hotfixes against this version line.
+git branch "$RELEASE_BRANCH" "$COMMIT" 2>/dev/null || \
+  echo "Release branch $RELEASE_BRANCH already exists; reusing it."
+
+# Annotated tag on the release commit.
+git tag -a "$NEW_TAG" "$COMMIT" -m "Release $NEW_TAG"
+
+# ─── Push ──────────────────────────────────────────────────────────
+if [ "$PUSH" = "1" ]; then
+  # Push the bump commit on the current branch (typically `main`) so
+  # origin reflects the version we just tagged. Only pushes when we
+  # actually made a commit; otherwise the `git push <branch>` is a
+  # no-op because origin already has it.
+  git push origin "$CURRENT_BRANCH"
+  git push origin "$RELEASE_BRANCH"
+  git push origin "$NEW_TAG"
+fi
+
+# ─── Outputs ───────────────────────────────────────────────────────
+echo "tag=${NEW_TAG}"
+echo "version=${NEW_VERSION}"
+echo "release_branch=${RELEASE_BRANCH}"
+echo "commit=${COMMIT}"
+
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+  {
+    echo "tag=${NEW_TAG}"
+    echo "version=${NEW_VERSION}"
+    echo "release_branch=${RELEASE_BRANCH}"
+    echo "commit=${COMMIT}"
+  } >> "$GITHUB_OUTPUT"
+fi

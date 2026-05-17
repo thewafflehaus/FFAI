@@ -22,8 +22,13 @@ Three layers, all in this repo except metaltile (sibling Rust repo,
 already forked at `~/Development/personal/ai/metaltile`):
 
 1. **metaltile** (Rust) — `#[kernel]` DSL, IR, MSL codegen, CPU interpreter.
-   Adds a new `metaltile-emit` bin that produces `kernels.metallib`,
-   `manifest.json`, and `MetalTileKernels.swift`.
+   Ships a `tile` CLI (`metaltile-cli`) whose `build --emit all`
+   subcommand produces `kernels.metallib`, `manifest.json`, and
+   `MetalTileKernels.swift`. Historical note: Phase 0 originally
+   wired a standalone `metaltile-emit` bin for this; that pipeline
+   was rehomed into `metaltile-codegen::emit` + `tile build` in
+   May 2026 when upstream consolidated the build/bench/test commands
+   under one CLI.
 2. **MetalTileSwift** (Swift, in this repo at `Sources/MetalTileSwift/`) —
    loads the pre-compiled `.metallib`, manages a PSO cache with function
    constants, exposes typed Swift wrappers per kernel.
@@ -41,7 +46,7 @@ No JIT compilation at runtime. No Rust at runtime. No `MLX*` imports.
 |---|---|
 | Approach | Option B: build-time metallib emission, pure-Swift runtime |
 | Swift package location | Inside FFAI (Sources/MetalTileSwift) |
-| Kernel author flow | Rust `#[kernel]` → SPM build plugin invokes `metaltile-emit` automatically |
+| Kernel author flow | Rust `#[kernel]` → `make regenerate-kernels` runs `tile build --emit all --out Sources/MetalTileSwift` (an SPM build plugin would automate this if the `tile` binary ships via Homebrew) |
 | Authoring DSL | Rust (metaltile). Swift macro frontend deferred indefinitely; metaltile IR is serde-serializable so this stays open. |
 | MTLBuffer access | Direct (we own the tensor type, no MLXArray middle-man) |
 | Testing | 100% line coverage target. Every kernel, every Swift function, every model layer gets unit tests. CI gates on coverage + correctness. |

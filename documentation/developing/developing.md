@@ -6,8 +6,8 @@ Repo layout, the `make` workflow, and how to regenerate kernels.
 
 ```bash
 cd ~/Development
-git clone https://github.com/houseofwaffles/FFAI
-git clone https://github.com/houseofwaffles/metaltile     # sibling repo, required
+git clone https://github.com/thewafflehaus/FFAI
+git clone https://github.com/thewafflehaus/metaltile     # sibling repo, required
 cd FFAI
 ./scripts/setup-dev.sh
 ```
@@ -53,7 +53,7 @@ For the per-Sources-file purpose see
 ```bash
 make build              # regenerate kernels + swift build (debug)
 make build-release      # regenerate kernels + swift build -c release
-make regenerate-kernels # run metaltile-emit only
+make regenerate-kernels # run `tile build --emit all` only
 make test               # regenerate kernels + swift test
 make coverage           # swift test --enable-code-coverage + summary
 make format             # swift-format the repo in place
@@ -68,30 +68,37 @@ no out-of-date kernels in CI or local dev.
 ## How kernel regeneration works
 
 ```
-~/Development/metaltile        ←  Rust kernel source
-   cargo run -p metaltile-emit ←  generates →  Sources/MetalTileSwift/
-                                                 Resources/kernels.metallib
-                                                 Resources/manifest.json
-                                                 Generated/MetalTileKernels.swift
+~/Development/metaltile          ←  Rust kernel source
+   cargo run --bin tile          ←  generates →  Sources/MetalTileSwift/
+   -- build --emit all                              Resources/kernels.metallib
+   --out Sources/MetalTileSwift                     Resources/kernels/*.metal
+                                                    Resources/manifest.json
+                                                    Generated/MetalTileKernels.swift
                                                                   ↓
-                                                 Sources/FFAI/Ops.swift uses
-                                                 the generated typed wrappers
+                                                    Sources/FFAI/Ops.swift uses
+                                                    the generated typed wrappers
 ```
 
-`make regenerate-kernels` runs `cargo run --release -p metaltile-emit
--- --out Sources/MetalTileSwift` from the sibling metaltile repo.
-Cargo runs from the metaltile dir so its `rust-toolchain.toml`
-(nightly, 2024 edition) is honored.
+`make regenerate-kernels` runs `cargo run --release --bin tile -- build
+--emit all --out Sources/MetalTileSwift` from the sibling metaltile
+repo. Cargo runs from the metaltile dir so its `rust-toolchain.toml`
+(nightly, 2024 edition) is honored. Eventually the `tile` binary will
+ship via Homebrew so this won't need a metaltile checkout — only
+kernel authors will need the repo.
 
-The generated artifacts are checked into the repo so end-user SPM
+The generated artifacts are checked into the FFAI repo so end-user SPM
 consumers don't need Cargo or the metaltile checkout.
 
 ## Writing a new kernel
 
 Kernels are Rust functions in metaltile, not Swift. The flow:
 
-1. Add a `#[kernel]` Rust function to the metaltile workspace.
-2. Register it in `metaltile-emit`'s kernel set.
+1. Add a `#[kernel]` Rust function to
+   `crates/metaltile-std/src/ops/<file>.rs` in the metaltile sibling repo.
+2. Annotate it with `#[bench_kernel(op="…", subop="…", class=…, …)]`
+   so the registry picks it up. For kernels without an MLX-comparable
+   bench, submit a hand-rolled `BenchSpec` with `shapes: &[]` and the
+   right `kernel_mode: Some(KernelMode::…)` instead.
 3. `make regenerate-kernels` from the FFAI repo — picks up the new
    kernel, regenerates `kernels.metallib` + `MetalTileKernels.swift`.
 4. Add a thin `Ops.swift` wrapper if the typed `MetalTileKernels`
