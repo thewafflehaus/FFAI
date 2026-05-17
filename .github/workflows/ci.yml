@@ -86,6 +86,23 @@ jobs:
           restore-keys: |
             spm-${{ runner.os }}-
 
+      - name: Cache HuggingFace model snapshots
+        # Integration tests pull mlx-community/* + unsloth/* checkpoints
+        # from HF on first run (several GB per model). Cache the whole
+        # ~/.cache/huggingface/hub so subsequent runs skip the download.
+        #
+        # Fixed key (no hashFiles): GitHub evicts oldest entries when the
+        # repo exceeds the 10 GB cache quota, so the most-used models
+        # stay warm + tail evictions just re-download on the next run.
+        # Bump `-v1` if we need to invalidate (e.g. integration test
+        # switches to a different model variant).
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/huggingface/hub
+          key: hf-models-${{ runner.os }}-v1
+          restore-keys: |
+            hf-models-${{ runner.os }}-
+
       - name: Resolve Swift packages
         run: swift package resolve
 
@@ -103,8 +120,19 @@ jobs:
       - name: Build
         run: swift build
 
-      - name: Run tests with coverage
-        run: swift test --enable-code-coverage
+      - name: Run unit tests (parallel)
+        # FFAITests (215 cases) + MetalTileSwiftTests (kernel round-trip).
+        # Fast — runs in parallel against the just-built binary.
+        run: swift test --enable-code-coverage --skip-build --filter "FFAITests|MetalTileSwiftTests"
+
+      - name: Run integration tests (serialized — models load one at a time)
+        # ModelTests pull HF snapshots and run real end-to-end inference
+        # against Llama / Qwen3 (×5 quants) / Mamba 2. Each load peaks
+        # 3-8 GB on GPU; macos-latest M1 runners cap at 7 GB RAM, so
+        # parallel suites OOM-thrash. `--num-workers 1` forces one suite
+        # in memory at a time. `--enable-code-coverage` merges into the
+        # same .profdata file the unit-tests step wrote.
+        run: swift test --enable-code-coverage --skip-build --filter "ModelTests" --num-workers 1
 
       - name: Coverage summary
         if: always()
