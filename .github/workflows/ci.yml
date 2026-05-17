@@ -41,10 +41,17 @@ jobs:
           path: FFAI
 
       - name: Checkout sibling metaltile
+        # Pinned to `dev` for now because:
+        #   - thewafflehaus/metaltile main is behind upstream's CLI rework.
+        #   - upstream/metaltile main is a `gm` placeholder commit.
+        #   - All the kernels FFAI's Ops.swift expects live on
+        #     thewafflehaus/metaltile dev (post the ek/std-kernels merge).
+        # Move back to `main` once we sync our org's main from upstream's
+        # post-CLI-rework main, or cut a metaltile release tag and pin to it.
         uses: actions/checkout@v6
         with:
           repository: thewafflehaus/metaltile
-          ref: main
+          ref: dev
           path: metaltile
 
       - name: Show toolchain

@@ -72,10 +72,12 @@ jobs:
           fetch-depth: 0   # full history so the release job can do tag math
 
       - name: Checkout sibling metaltile
+        # Pinned to `dev`; see ci.yml for why. Bump to `main` (or a
+        # release tag) when upstream stabilizes.
         uses: actions/checkout@v6
         with:
           repository: thewafflehaus/metaltile
-          ref: main
+          ref: dev
           path: metaltile
 
       - name: Show toolchain
