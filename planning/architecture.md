@@ -201,7 +201,7 @@ entirely.
    • repo id "Qwen/Qwen3.5-9B-VL"          OR
    • local path "/path/to/local-model"
    • LoadOptions(capabilities: [.textIn, .textOut],
-                 kvCache: .turbo,
+                 kvCache: .gigaQuantized(scheme: "giga4v2"),
                  lazyCapabilities: true)
        │
        ▼
@@ -442,6 +442,105 @@ entirely.
 - Module instantiation: O(num_layers), microseconds.
 - `enable(.visionIn)` on warm cache: ~100ms (mostly module
   construction). Cold cache (after disable + GC): re-mmap is fast.
+
+### 3c. Modality strip — vision + audio encoders hooking into the backbone
+
+Multi-modal models compose a text backbone with optional
+`VisionEncoder` and `AudioEncoder` sub-modules. The `Capability`
+system decides which encoders are built; the backbone receives
+**already-tokenised activations** from each enabled encoder via a
+splice helper. Encoders never see the text token stream and the
+backbone never sees raw pixels or audio frames — the interface
+between them is `[seq, hidden]` activations plus a position map.
+
+```
+                       MODALITY STRIP
+                       ──────────────
+
+  ┌──────────────────────────────────────────────────────────┐
+  │  raw inputs (per request)                                │
+  │                                                          │
+  │  text:   "describe this image: <img>"                    │
+  │  image:  CGImage / Data (PNG, JPEG, …)                   │
+  │  audio:  AVAudioPCMBuffer / Float32 [samples]            │
+  └──────────────────────────────────────────────────────────┘
+        │                  │                    │
+        │                  │                    │
+        ▼                  ▼                    ▼
+  ┌──────────┐    ┌──────────────────┐  ┌──────────────────┐
+  │ Tokenizer│    │ ImagePreprocess  │  │ AudioPreprocess  │
+  │          │    │  resize/normalize│  │  resample/mel    │
+  │          │    │  patchify        │  │  frame           │
+  └────┬─────┘    └────────┬─────────┘  └────────┬─────────┘
+       │                   │                     │
+       ▼                   ▼                     ▼
+  text_ids        patches [P, c, h, w]    mel [T, n_mels]
+       │                   │                     │
+       │                   │                     │
+       │          ┌────────▼─────────┐  ┌────────▼─────────┐
+       │          │ VisionEncoder    │  │ AudioEncoder     │
+       │          │  patch_embed     │  │  audio_conv1d    │
+       │          │  + ViT layers    │  │  + transformer   │
+       │          │  + vision_proj   │  │  + audio_proj    │
+       │          │   to backbone    │  │   to backbone    │
+       │          │   hidden dim     │  │   hidden dim     │
+       │          └────────┬─────────┘  └────────┬─────────┘
+       │                   │                     │
+       │            image_emb [Pi, H]      audio_emb [Pa, H]
+       │                   │                     │
+       ▼                   ▼                     ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │  Cross-modal splice                                      │
+  │                                                          │
+  │  Walk text token stream; at each <img> / <audio>         │
+  │  placeholder, splice the corresponding encoder output    │
+  │  into the activation sequence. Position map records      │
+  │  where each token came from so RoPE / position embeds    │
+  │  use the right offsets.                                  │
+  │                                                          │
+  │  Output: spliced_hidden [seq, H],  position_map [seq]    │
+  └──────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │  Text backbone (Llama / Qwen3.5 / Gemma 4 / GPT-OSS / …) │
+  │                                                          │
+  │  Receives spliced_hidden directly — no embedding lookup  │
+  │  on this path (embed_tokens used only for plain text     │
+  │  spans). All subsequent layers (attention, MLP, MoE,     │
+  │  GDN, SSM, sliding-window) are identical to the          │
+  │  text-only forward pass.                                 │
+  │                                                          │
+  │  Output: token stream — text only, or interleaved with   │
+  │  audio tokens when .audioOut is enabled (Omni models).   │
+  └──────────────────────────────────────────────────────────┘
+
+  Output side (optional, Omni / TTS models):
+                                │
+                                ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │  AudioDecoder (TTS families: Kokoro / Bark)              │
+  │                                                          │
+  │  Token stream → vocoder → audio waveform.                │
+  │  Only built when Capability.audioOut is enabled.         │
+  └──────────────────────────────────────────────────────────┘
+```
+
+**What the Capability system gates:**
+
+- `.visionIn` → builds `VisionEncoder`, mmaps `vision_model.*` weights,
+  prewarms vision PSOs.
+- `.audioIn` → builds `AudioEncoder`, mmaps `audio_model.*` weights,
+  prewarms audio PSOs.
+- `.audioOut` → builds `AudioDecoder` (vocoder + decoder layers),
+  mmaps `audio_decoder.*` weights.
+- `.toolCalling` → no weight load; toggles the chat template's
+  tool-call grammar.
+
+Encoder modules are independent of the backbone's choice of cache
+type — vision and audio activations always live in plain fp16 / bf16
+since they're encoder-resident and don't get cached across tokens.
+GigaQuant / affine quant only apply to the backbone KV cache.
 
 ---
 
@@ -756,6 +855,208 @@ day one.
 
 ---
 
+## 4c. GDN / SSM hybrid layer dispatch
+
+Hybrid families (Qwen 3.5 GDN, NemotronH, Jamba, GraniteMoeHybrid,
+FalconH1) interleave **attention layers** with **recurrent layers**
+(GDN or Mamba 2 SSM) in a fixed schedule. The schedule is data-driven:
+NemotronH ships a layer-string like `M*EM-*M…` where each char picks
+a mixer; Qwen 3.5 ships an integer `fullAttentionInterval` so attention
+fires every N layers and GDN runs in between.
+
+The per-token decode loop branches on layer type at dispatch time —
+each layer's mixer protocol selects the right kernel set + cache
+type without the outer loop knowing the difference.
+
+```
+                 HYBRID LAYER DISPATCH
+                 ─────────────────────
+
+  ModelConfig (NemotronH example):
+    layer_pattern = "M*EM-*M-*EM-*M-*EM-*M-*EM-*M-*…"
+                     │ │  │ │ │ │
+                     │ │  │ │ │ └── '*' attention
+                     │ │  │ │ └──── '-' MLP residual
+                     │ │  │ └────── 'M' Mamba 2
+                     │ │  └──────── '-' MLP
+                     │ └─────────── '*' attention
+                     └───────────── 'M' Mamba 2
+
+  Qwen 3.5 GDN example:
+    fullAttentionInterval = 6
+    decoder_layers = 60
+    layer i mixer = (i % 6 == 0) ? attention : gdn
+
+  At load time, each layer instantiates its mixer protocol:
+    LayerMixer = AttentionMixer | GDNMixer | Mamba2Mixer | MLPOnly
+
+  Per-layer cache also picks its type:
+    cache[i] = KVCache | AffineQuantizedKVCache | GigaQuantizedKVCache
+                                       (attention layers)
+             | GDNStateCache            (GDN layers)
+             | Mamba2LayerCache         (SSM layers — conv + state)
+             | nil                      (MLP-only layers)
+
+  All caches conform to LayerCacheProtocol; attention ones extend
+  with KVCacheProtocol; SSM/GDN ones extend with StateReplayCache.
+
+
+                 PER-TOKEN DECODE LOOP
+                 ─────────────────────
+
+  for each layer in model.layers:
+    switch layer.mixer {
+
+    case .attention(let attn):
+      // Standard attention path — RMSNorm → QKV → RoPE →
+      // SDPA (against KV cache) → o_proj → residual
+      h = attn.forward(h, cache: cache[i], on: cmdBuf)
+
+    case .gdn(let gdn):
+      // Gated DeltaNet — RMSNorm → q/k/v + β/g projections →
+      // gated_delta_step (state in fp32) → out_proj → residual
+      h = gdn.forward(h, state: cache[i], on: cmdBuf)
+      // GDNStateCache.state holds the recurrent matrix S_t
+
+    case .mamba2(let ssm):
+      // Mamba 2 mixer — RMSNorm → in_proj →
+      // conv1d_causal_step + SiLU → softplus(dt) →
+      // ssm_step → D·x skip → SiLU(z) gate → out_proj
+      h = ssm.forward(h, state: cache[i], on: cmdBuf)
+      // Mamba2LayerCache wraps SSMStateCache + ConvStateCache
+
+    case .mlpOnly:
+      // No mixer; pass residual to the MLP block only.
+      pass
+    }
+
+    // MLP path is shared (or routed through MoE if the family
+    // ships an expert layer at this position).
+    h = layer.mlpOrMoE.forward(h, on: cmdBuf)
+
+
+  Key invariant: the outer decode loop is single-cmdbuf per token
+  regardless of mixer type. Mixers queue kernels onto the shared
+  cmdBuf; only after every layer commits does the GPU sync.
+```
+
+Speculative decoding rollback (Phase 8) leans on this dispatch:
+GDN + SSM caches expose `record(...)` + `rollback(acceptedPrefix:)`
+via `StateReplayCache`. Attention caches truncate the KV slice;
+`MLPOnly` is stateless and needs nothing. The verifier walks the
+draft, accepts a prefix, and per-layer caches roll back to that
+prefix — the loop body above is unchanged.
+
+---
+
+## 4d. Speculative decoding loop
+
+Phase 8 ships several speculative-decoding strategies that share a
+common skeleton: a **drafter** proposes K candidate tokens; a
+**verifier** runs one forward pass to score all K (batched along the
+sequence axis); an **accept/reject** stage decides how many to keep;
+caches roll back to the accepted prefix and the loop continues.
+
+```
+                 SPECULATIVE DECODING LOOP
+                 ─────────────────────────
+
+  state:  prev_token, layer caches (KV + GDN + SSM)
+       │
+       ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │  Drafter — pick one (or stack multiple):                 │
+  │                                                          │
+  │  • ngram lookup (spec 013)                               │
+  │      └─ multi-size hash on recent context → K tokens     │
+  │                                                          │
+  │  • MTP head / EAGLE-3 (spec 030)                         │
+  │      └─ small draft head shares weights w/ verifier      │
+  │                                                          │
+  │  • PLD+ attention-weighted span (spec 019)               │
+  │      └─ pick the span the verifier "wanted to copy"      │
+  │                                                          │
+  │  • DFlash draft model (spec 015)                         │
+  │      └─ small companion model with its own KV state      │
+  │                                                          │
+  │  Output: draft_tokens[K]                                 │
+  └──────────────────────────────────────────────────────────┘
+       │
+       ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │  Verifier forward — one cmdBuf, K positions              │
+  │                                                          │
+  │  Per layer:                                              │
+  │    record_caches.record(...)   ◄── tape per-token delta  │
+  │                                    on every KV/GDN/SSM   │
+  │                                    cache for rollback    │
+  │    layer.forward(positions: K, cmdBuf)                   │
+  │                                                          │
+  │  Tree attention (spec 014): K positions live in a        │
+  │  branching tree, not a flat sequence. SDPA uses a        │
+  │  tree mask so each branch sees only its ancestors.       │
+  │                                                          │
+  │  Output: logits[K, vocab]                                │
+  └──────────────────────────────────────────────────────────┘
+       │
+       ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │  Accept / reject — pick one:                             │
+  │                                                          │
+  │  • Greedy: accept while draft[i] == argmax(logits[i])    │
+  │                                                          │
+  │  • Leviathan (spec 023): non-greedy accept-reject —      │
+  │      sample u ~ U[0,1]; accept iff                       │
+  │        u ≤ min(1, p_target(draft[i]) / p_draft(draft[i]))│
+  │      reject + resample at the first failure.             │
+  │                                                          │
+  │  • Tree-aware: walk the branch with the longest accept   │
+  │      prefix; rejected branches' caches roll back.        │
+  │                                                          │
+  │  Output: accepted_prefix_len (m where 0 ≤ m ≤ K),        │
+  │           plus one bonus token sampled from the          │
+  │           failing position's residual distribution.      │
+  └──────────────────────────────────────────────────────────┘
+       │
+       ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │  Cache rollback                                          │
+  │                                                          │
+  │  for each layer cache:                                   │
+  │    switch cache {                                        │
+  │      case KVCache:               truncate to prefix_len  │
+  │      case GigaQuantizedKVCache:  truncate compressed slab│
+  │      case GDNStateCache:         state_replay(prefix_len)│
+  │      case Mamba2LayerCache:      ssm_replay(prefix_len)  │
+  │      case MLPOnly:               (stateless)             │
+  │    }                                                     │
+  │                                                          │
+  │  All replay kernels re-fold the recorded delta tape      │
+  │  back to the accepted boundary; KV caches just adjust    │
+  │  their length cursor.                                    │
+  └──────────────────────────────────────────────────────────┘
+       │
+       ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │  Emit accepted_prefix + bonus_token to the consumer      │
+  │  AsyncStream. Update prev_token = bonus_token. Loop.     │
+  └──────────────────────────────────────────────────────────┘
+
+
+  Batched verify (spec 8.4 — `generateBatched` integration):
+  B requests verify K candidates each in one cmdBuf.
+  K·B positions go through SDPA together; per-request caches
+  (BatchedKVCache + BatchedHybridCache) roll back independently.
+```
+
+The throughput win comes from amortising one verifier forward over
+multiple accepted tokens. Worst case (everything rejects) costs one
+forward + the drafting overhead — auto-disengage logic (issue #153)
+kills the speculation path when the accept rate drops below a
+floor.
+
+---
+
 ## 5. Where this differs from MLX
 
 | Concern | MLX path | FFAI path |
@@ -782,10 +1083,32 @@ day one.
                        │ calls
   ┌────────────────────▼────────────────────────────────────┐
   │  FFAI                                                   │
-  │  Tensor • Module • Linear • Embedding • RMSNorm •       │
-  │  KVCache • SafeTensors • ModelDownloader •              │
-  │  TokenizerLoader • Sampling • Generate •                │
-  │  Models/{Llama, Qwen3, …}                               │
+  │                                                         │
+  │  Core text path                                         │
+  │   Tensor • Module • Linear • Embedding • RMSNorm •      │
+  │   SafeTensors • ModelDownloader • TokenizerLoader •     │
+  │   Sampling • Generate • ChatTemplate                    │
+  │                                                         │
+  │  Caches                                                 │
+  │   KVCache • AffineQuantizedKVCache •                    │
+  │   GigaQuantizedKVCache • SSMStateCache •                │
+  │   GDNStateCache • Mamba2LayerCache •                    │
+  │   BatchedKVCache • BatchedHybridCache •                 │
+  │   PrefixKVCache • StateReplayCache                      │
+  │                                                         │
+  │  Modality encoders (Capability-gated)                   │
+  │   VisionEncoder • ImagePreprocessing                    │
+  │   AudioEncoder  • AudioPreprocessing                    │
+  │                                                         │
+  │  Speculative decoding                                   │
+  │   NGramSpeculativeTokenIterator •                       │
+  │   MTPSelfSpeculativeTokenIterator •                     │
+  │   AssistantDraftRegistry • MirrorSpeculativeLoop        │
+  │                                                         │
+  │  Models/{Llama, Qwen3, Qwen35, Mamba2, GPTOSS,          │
+  │          Gemma3, Gemma4, NemotronH, Jamba,              │
+  │          GraniteMoeHybrid, FalconH1, Mistral, Phi,      │
+  │          Whisper, Kokoro/Bark, QwenOmni, …}             │
   └────────┬─────────────────────┬──────────────────────────┘
            │ kernels             │ HF + tokenizers
            ▼                     ▼
