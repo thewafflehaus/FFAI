@@ -26,9 +26,13 @@ Release-time: PR `dev` → `main`.
    - `tag_prefix` — `v` (default) or `auto` (inherit from last tag)
 3. The workflow does the rest: clean test pass on macOS, then
    [`scripts/release.sh`](../../scripts/release.sh) computes the next
-   version from `git describe`, creates `release/<tag>` branch + an
-   annotated tag, pushes both. Finally `gh release create --generate-notes`
-   publishes the GitHub Release.
+   version from `git describe`, **rewrites `FFAI.version` in
+   `Sources/FFAI/FFAI.swift` to match the new tag** (and commits the
+   bump on `main` with `[skip ci]`), creates `release/<tag>` branch
+   + an annotated tag pointing at the bump commit, pushes branch +
+   tag + the updated `main`. Finally `gh release create
+   --generate-notes` publishes the GitHub Release targeting the
+   release branch.
 4. The `release: published` event automatically fires
    [`notify-docs.yml`](../../.github/workflows/notify-docs.yml), which
    dispatches the [ffai-website](https://github.com/thewafflehaus/ffai-website)
@@ -38,19 +42,45 @@ Always run the Release workflow **from `main`** (the branch picker in
 the workflow_dispatch UI). The workflow guards against running off
 any other branch.
 
+## What the script does to `FFAI.version`
+
+There's exactly one in-code version string,
+[`FFAI.version`](../../Sources/FFAI/FFAI.swift), surfaced by `ffai
+--version` + on every CLI invocation + recorded in bench reports.
+`release.sh` keeps it in lockstep with the tag automatically:
+
+- **If `FFAI.version` already matches** the computed `NEW_VERSION`
+  (e.g. a contributor manually bumped it in the release PR), the
+  script logs `no bump needed` and proceeds.
+- **Otherwise** it rewrites the string literal, commits the change
+  on the current branch with `chore: bump FFAI.version to <tag>
+  [skip ci]`, and `git push origin <branch>`. The release branch +
+  tag are created on the bump commit, so any checkout of the tag
+  carries the matching version string.
+
+Convention for `dev` between releases: suffix `-dev` (e.g.
+`"0.2.0-dev"` after v0.1.0 ships) so stale dev builds are easy to
+spot in CLI output and bench logs. This bump is **not** automated
+today — open a manual PR on dev after each release.
+
 ## Dry-running the version bump locally
 
 `scripts/release.sh` honors a `PUSH=0` env var for dry-runs:
 
 ```bash
 PUSH=0 BUMP_TYPE=minor PRERELEASE_TAG=alpha ./scripts/release.sh
+# FFAI.version already at 0.1.0 — no bump needed.
+# (or:)
+# [dry-run] would bump FFAI.version: 0.0.5-dev → 0.1.0-alpha + commit.
 # tag=v0.1.0-alpha
 # version=0.1.0-alpha
 # release_branch=release/v0.1.0-alpha
 # commit=<sha of HEAD>
 ```
 
-The local tag + branch get created but not pushed. Clean up with:
+Dry-run doesn't write to `FFAI.swift` or make any commits — it only
+creates the local tag + release branch (which point at unchanged
+HEAD). Clean up with:
 
 ```bash
 git tag -d v0.1.0-alpha
