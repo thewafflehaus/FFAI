@@ -110,6 +110,18 @@ jobs:
           key: spm-${{ runner.os }}-${{ hashFiles('FFAI/Package.swift', 'FFAI/Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-
 
+      - name: Cache HuggingFace model snapshots
+        # Integration tests below pull mlx-community/* + unsloth/*
+        # checkpoints (~10 GB cumulative). Stable key — GitHub evicts
+        # oldest entries when the repo exceeds the 10 GB cache quota.
+        # Bump `-v1` to invalidate (e.g. when the integration matrix
+        # switches to a different model variant).
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/huggingface/hub
+          key: hf-models-${{ runner.os }}-v1
+          restore-keys: hf-models-${{ runner.os }}-
+
       - name: Resolve Swift packages
         run: swift package resolve
 
@@ -123,9 +135,21 @@ jobs:
         run: swift build -c release
 
       - name: Run unit tests
-        # ModelTests download HF snapshots and take minutes per model;
-        # release-gate the fast unit suite, leave ModelTests to nightly.
-        run: swift test --filter FFAITests
+        # FFAITests + MetalTileSwiftTests. CI on the merged branch
+        # already ran these on the source commit; this is the
+        # belt-and-suspenders pass on the exact commit we're about to
+        # tag, in release config.
+        run: swift test -c release --skip-build --filter "FFAITests|MetalTileSwiftTests"
+
+      - name: Run integration tests (serialized — models load one at a time)
+        # The real value-add of running tests inside the release
+        # workflow: end-to-end inference against Llama / Qwen3 (×5
+        # quants) / Mamba 2 right before we cut the tag.
+        # `--parallel --num-workers 1` enables the scheduler but caps
+        # at one worker, so suites run effectively serially with only
+        # one model resident in the runner's 7 GB RAM envelope at a
+        # time. (Swift PM rejects `--num-workers` without `--parallel`.)
+        run: swift test -c release --skip-build --filter "ModelTests" --parallel --num-workers 1
 
   release:
     needs: test
