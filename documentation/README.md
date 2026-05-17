@@ -53,6 +53,8 @@ every page in the tree so you can jump straight to a topic.
   architecture from a reference implementation.
 - [Testing](developing/testing.md) — running tests, golden fixtures,
   coverage targets.
+- [Publishing](developing/publishing.md) — dev → main release flow,
+  release notes, and how the docs site rebuilds.
 
 ## See also
 

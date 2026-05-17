@@ -145,11 +145,17 @@ inference dispatch loop) see
 
 ## Contributing
 
+Read **[`CONTRIBUTING.md`](CONTRIBUTING.md)** first — it covers the
+issue-first rule, what good PRs look like, and how to disclose
+AI-assisted contributions.
+
+### Setup
+
 ```bash
 git clone https://github.com/thewafflehaus/FFAI && cd FFAI
 git clone https://github.com/thewafflehaus/metaltile ../metaltile   # sibling
 ./scripts/setup-dev.sh                                        # toolchains + first build
-make test                                                     # 122 tests, ~30s
+make test                                                     # full unit suite
 ```
 
 `setup-dev.sh` verifies Xcode CLI tools + `xcrun metal`, the Swift
@@ -157,7 +163,7 @@ toolchain, Cargo (for the metaltile `tile` CLI), and the sibling
 metaltile checkout; resolves SPM deps; and runs the first build to
 populate `kernels.metallib`.
 
-Common Make targets:
+### Common Make targets
 
 | Target | What |
 |---|---|
@@ -170,47 +176,21 @@ Common Make targets:
 | `make docs` | Lint markdown + (if `../ffai-website` exists) preview the docs site locally |
 | `make clean` | Remove `.build/` + generated artifacts |
 
+### Where to read next
+
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — contribution guidelines, AI disclosure.
+- [`documentation/developing/`](documentation/developing/) — dev workflow, testing, adding a model, publishing.
+- [`planning/architecture.md`](planning/architecture.md) — architectural invariants.
+- [`planning/roadmap.md`](planning/roadmap.md) — what's shipped vs planned.
+
 User-facing documentation lives at
 [**ffai.dev**](https://thewafflehaus.github.io/ffai-website/) (built
 from the markdown in this repo's [`documentation/`](documentation/),
 the top-level `README.md`, and `planning/architecture.md` +
-`planning/roadmap.md`). The site source is at
-[thewafflehaus/ffai-website](https://github.com/thewafflehaus/ffai-website);
-pushing markdown changes here triggers a rebuild automatically via
-a GitHub Action.
-
-For best practices, testing conventions, benchmarking, and porting
-new models see [`documentation/developing/`](documentation/developing/developing.md).
-
-### Branching and releases
-
-Day-to-day work happens on **`dev`**. `main` only ever advances via
-"release PR" merges. Both branches get full CI on push + PR.
-
-When it's time to cut a release:
-
-1. Open a PR `dev` → `main` titled `Release vX.Y.Z`.
-2. Wait for CI to pass + a review. Merge the PR.
-3. Switch to GitHub UI → Actions → **Release** → Run workflow on
-   `main` with the right `bump_type` (patch / minor / major) and
-   `prerelease_tag` (alpha / beta / rc / none).
-
-That workflow runs a clean test pass on the release commit, then
-[`scripts/release.sh`](scripts/release.sh) computes the next version
-from the most recent reachable tag, creates a `release/<tag>` branch
-(kept open for hotfixes) and an annotated tag, pushes both, then
-`gh release create --generate-notes` publishes the GitHub Release.
-PR-title categorization happens via [`.github/release.yml`](.github/release.yml)
-+ the [`auto-label`](.github/workflows/auto-label.yml) workflow.
-
-The `release: published` event automatically fires
-[`notify-docs.yml`](.github/workflows/notify-docs.yml), which
-dispatches the [ffai-website](https://github.com/thewafflehaus/ffai-website)
-build against the new tag — pulling in the latest docs + generating
-a Changelog entry from the release body.
-
-For local dry-runs of the version-bump logic:
-`PUSH=0 BUMP_TYPE=patch ./scripts/release.sh`.
+`planning/roadmap.md`). Site source:
+[thewafflehaus/ffai-website](https://github.com/thewafflehaus/ffai-website).
+For the release → docs publishing flow see
+[`documentation/developing/publishing.md`](documentation/developing/publishing.md).
 
 ## License
 

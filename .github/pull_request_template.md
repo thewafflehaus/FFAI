@@ -1,27 +1,93 @@
-## Proposed changes
+<!--
+  Read CONTRIBUTING.md before opening this PR:
+    https://github.com/thewafflehaus/FFAI/blob/main/CONTRIBUTING.md
 
-Please describe the problem or feature this PR addresses. Link any
-relevant issue with `#<issue-number>`.
+  PRs without a linked, discussed issue will be closed.
+-->
 
-## Checklist
+## Linked issue
 
-- [ ] I have read [`planning/plan.md`](../planning/plan.md) and
-      confirmed this change fits the current phase or is explicitly
-      out of scope
-- [ ] I have run `pre-commit run --all-files` (or installed pre-commit)
-- [ ] I have added tests that exercise the new code (100% line coverage
-      target — see `planning/plan.md` Quality bar)
-- [ ] I have updated `planning/architecture.md` if this changes a
-      load-time, kernel, or dispatch flow
-- [ ] If this PR adds a new kernel, I regenerated artifacts via
-      `cargo run -p metaltile-emit` and the build still passes
+<!--
+  REQUIRED. Use `Fixes #123` or `Closes #123` (auto-closes the issue
+  on merge), or `Refs #123` if the PR only partially addresses it.
+  PRs with no linked issue will be closed.
+-->
 
-## Conventional commit prefix
+Fixes #
 
-PR title prefix is used by `auto-label.yml` for release-notes
-categorization. Use one of:
+## Type of change
 
-`feat: …` `fix: …` `perf: …` `docs: …` `test: …`
-`chore: …` `ci: …` `build: …` `refactor: …` `style: …`
+<!-- Check all that apply. PR title prefix (feat: / fix: / perf: /
+     docs: / test: / chore: / refactor:) drives release-notes
+     categorization via .github/release.yml — see CONTRIBUTING.md. -->
 
-Add `!` for breaking changes (`feat!: …`).
+- [ ] 🐛 Bug fix (no API change)
+- [ ] ✨ Feature (new API surface or capability)
+- [ ] 🤖 New model (architecture / variant / size)
+- [ ] 🚀 Performance (faster / smaller, no API change)
+- [ ] 📚 Documentation
+- [ ] 🧪 Tests only
+- [ ] 🔧 Chore / refactor / CI (`ignore-for-release` label, hidden from notes)
+- [ ] 💥 Breaking change (any of the above with `!` suffix in commit prefix)
+
+## Summary
+
+<!-- One paragraph: what does this PR do, and why. Keep it tight —
+     reviewers should know if the change is in their wheelhouse
+     without scrolling. -->
+
+## What changed
+
+<!-- Bulleted list of the substantive changes, grouped by file or
+     subsystem. Skip mechanical things (whitespace, lint). -->
+
+-
+
+## Test plan
+
+<!-- How you verified this works. Required for behavior changes. -->
+
+- [ ] `make test` passes locally
+- [ ] Added/updated tests in `Tests/FFAITests/` or `Tests/ModelTests/`
+- [ ] Manual verification (describe below)
+
+<details>
+<summary>Manual test steps + observed output</summary>
+
+```
+
+```
+
+</details>
+
+## Documentation
+
+<!-- Required for user-visible changes. The docs site rebuilds
+     against the next release tag — see
+     documentation/developing/publishing.md. -->
+
+- [ ] No user-visible change (skip)
+- [ ] Updated `documentation/` for the affected surface
+- [ ] Updated `planning/architecture.md` (load-time / kernel / dispatch flow changed)
+- [ ] Updated `planning/roadmap.md` (shipped vs planned status changed)
+
+## AI assistance disclosure
+
+<!-- Check each category that applies, or "No AI used" if hand-written.
+     Transparency, not gatekeeping. Agentic PRs are welcome — but the
+     diff + description still need to read as if hand-written. -->
+
+- [ ] 🔍 **Research** — searching docs, prior art, related issues
+- [ ] 💡 **Ideation** — brainstorming approach, weighing trade-offs
+- [ ] ⌨️ **Implementation** — writing the actual diff
+- [ ] 🧪 **Testing** — writing or running test cases
+- [ ] ✋ **No AI used** — this is hand-written
+
+## Final checklist
+
+- [ ] Linked issue above is real, open, and was discussed before I opened this PR
+- [ ] PR title follows conventional-commit prefix (`feat:` / `fix:` / `perf:` / `docs:` / `test:` / `chore:` / `refactor:`, optionally with `!` for breaking)
+- [ ] Scope is tight — one logical change (split if not)
+- [ ] CI is green
+- [ ] Tests + docs updated where applicable
+- [ ] I read [`CONTRIBUTING.md`](../blob/main/CONTRIBUTING.md)
