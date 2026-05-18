@@ -20,3 +20,4 @@ Sources/MetalTileSwift/Generated/*
 /Models/
 *.safetensors
 *.gguf
+planning/session-plan.md
