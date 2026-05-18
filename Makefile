@@ -50,12 +50,42 @@ regenerate-kernels: ## run `tile build --emit all` to regenerate metallib + Swif
 	  --bin tile -- build --emit all --out $(KERNEL_OUT)
 
 # ─── Test ─────────────────────────────────────────────────────────────
+#
+# Test execution mirrors CI exactly (see .github/workflows/ci.yml +
+# release.yml). The split matters: ModelTests download multi-GB
+# HuggingFace snapshots and do real end-to-end inference per suite
+# (Llama / Qwen3 fp16 + x5 quants / Mamba 2), so running multiple
+# suites in parallel will OOM or stall on contention. Each individual
+# suite is already `.serialized` internally, but Swift Testing still
+# parallelizes *across* suites by default — so we cap workers to 1.
+#
+# - `make test-unit`        — fast (~minutes); FFAITests + MetalTileSwift
+#                             only. Safe to run in parallel.
+# - `make test-integration` — slow (tens of minutes); ModelTests with
+#                             `--parallel --num-workers 1` so only one
+#                             model is ever resident in GPU memory.
+# - `make test`             — both in sequence (unit gate, then full
+#                             integration). The CI release workflow
+#                             does the same.
+
 .PHONY: test
-test: regenerate-kernels ## swift test
-	swift test
+test: regenerate-kernels test-unit test-integration ## run unit then integration test suites (mirrors release CI)
+
+.PHONY: test-unit
+test-unit: regenerate-kernels ## fast unit + Metal tests (parallel ok); matches ci.yml
+	swift test --filter "FFAITests|MetalTileSwiftTests"
+
+.PHONY: test-integration
+test-integration: regenerate-kernels ## end-to-end model tests, serialized (--num-workers 1); matches release.yml
+	@# Swift PM rejects `--num-workers` without `--parallel`. The combo
+	@# enables the scheduler but caps it at one worker, which means
+	@# suites run effectively serially — only one model resident at a
+	@# time. Matches the "Run integration tests (serialized)" step in
+	@# release.yml exactly.
+	swift test --filter "ModelTests" --parallel --num-workers 1
 
 .PHONY: coverage
-coverage: ## swift test with coverage report
+coverage: ## swift test with coverage report (unit suite only, matches ci.yml)
 	./scripts/coverage.sh
 
 # ─── Lint / format ────────────────────────────────────────────────────
