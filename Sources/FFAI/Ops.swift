@@ -1318,4 +1318,198 @@ public enum Ops {
         }
         return result
     }
+
+    // MARK: - AURA (Phase 5d)
+
+    /// AURA fused encode for `rows` flat vectors of length `dim`.
+    /// Computes per-row L2 norm, rotates by `rotation` (`[dim×dim]`
+    /// f32), quantises against `boundaries`, packs codebook indices
+    /// into `packed_out`, and writes the norm-correction factor to
+    /// `norms_out`. One threadgroup per row, `dim` threads per group.
+    ///
+    /// Per-bit-width dispatch — `bits ∈ {2, 3, 4, 8}` use the
+    /// generated `aura_encode_int{2,3,4,8}_f32` kernel; the encode
+    /// kernel is f32-only (input promotion is the caller's job).
+    public static func auraEncode(
+        input: Tensor, rotation: Tensor, boundaries: Tensor, codebook: Tensor,
+        packedOut: Tensor, normsOut: Tensor,
+        rows: Int, dim: Int, packedWidth: Int, bits: Int,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(input.dtype == .f32, "Ops.auraEncode: input must be f32 (got \(input.dtype))")
+        precondition(rotation.dtype == .f32 && boundaries.dtype == .f32 && codebook.dtype == .f32,
+                     "Ops.auraEncode: rotation/boundaries/codebook must be f32")
+        precondition(packedOut.dtype == .u32, "Ops.auraEncode: packed_out must be u32")
+        precondition(normsOut.dtype == .f32, "Ops.auraEncode: norms_out must be f32")
+        // One threadgroup per row; `dim` threads per group (each thread
+        // owns one rotated coordinate). Reduction-mode kernels declare
+        // their own grid via `tgid_x` + `tid`.
+        let grid = MTLSize(width: dim, height: rows, depth: 1)
+        let tg = MTLSize(width: dim, height: 1, depth: 1)
+        switch bits {
+        case 2:
+            MetalTileKernels.aura_encode_int2_f32(
+                input: input.buffer, inputOffset: input.offset,
+                rotation: rotation.buffer, rotationOffset: rotation.offset,
+                boundaries: boundaries.buffer, boundariesOffset: boundaries.offset,
+                codebook: codebook.buffer, codebookOffset: codebook.offset,
+                packed_out: packedOut.buffer, packed_outOffset: packedOut.offset,
+                norms_out: normsOut.buffer, norms_outOffset: normsOut.offset,
+                dim: UInt32(dim), packed_width: UInt32(packedWidth),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case 3:
+            MetalTileKernels.aura_encode_int3_f32(
+                input: input.buffer, inputOffset: input.offset,
+                rotation: rotation.buffer, rotationOffset: rotation.offset,
+                boundaries: boundaries.buffer, boundariesOffset: boundaries.offset,
+                codebook: codebook.buffer, codebookOffset: codebook.offset,
+                packed_out: packedOut.buffer, packed_outOffset: packedOut.offset,
+                norms_out: normsOut.buffer, norms_outOffset: normsOut.offset,
+                dim: UInt32(dim), packed_width: UInt32(packedWidth),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case 4:
+            MetalTileKernels.aura_encode_int4_f32(
+                input: input.buffer, inputOffset: input.offset,
+                rotation: rotation.buffer, rotationOffset: rotation.offset,
+                boundaries: boundaries.buffer, boundariesOffset: boundaries.offset,
+                codebook: codebook.buffer, codebookOffset: codebook.offset,
+                packed_out: packedOut.buffer, packed_outOffset: packedOut.offset,
+                norms_out: normsOut.buffer, norms_outOffset: normsOut.offset,
+                dim: UInt32(dim), packed_width: UInt32(packedWidth),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case 8:
+            MetalTileKernels.aura_encode_int8_f32(
+                input: input.buffer, inputOffset: input.offset,
+                rotation: rotation.buffer, rotationOffset: rotation.offset,
+                boundaries: boundaries.buffer, boundariesOffset: boundaries.offset,
+                codebook: codebook.buffer, codebookOffset: codebook.offset,
+                packed_out: packedOut.buffer, packed_outOffset: packedOut.offset,
+                norms_out: normsOut.buffer, norms_outOffset: normsOut.offset,
+                dim: UInt32(dim), packed_width: UInt32(packedWidth),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.auraEncode: unsupported bits=\(bits) (use 2 / 3 / 4 / 8)")
+        }
+    }
+
+    /// AURA bulk dequant — codebook lookup + norm rescale for every
+    /// stored token, into a fp32 / fp16 / bf16 working buffer in
+    /// rotated codec space. The caller applies the inverse rotation
+    /// (e.g. by folding Π into W_o offline, or via a follow-up
+    /// matmul / fused pass2_with_rot kernel).
+    ///
+    /// Grid: `(packed_width, tokens, B*H)` — `dispatchThreads` does
+    /// not pad, so no per-thread bounds guards are needed.
+    public static func auraDequantRotated(
+        packed: Tensor, norms: Tensor, codebook: Tensor,
+        into out: Tensor,
+        nKVHeads: Int, dim: Int, packedWidth: Int, tokens: Int, bits: Int,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(packed.dtype == .u32, "Ops.auraDequantRotated: packed must be u32")
+        precondition(norms.dtype == .f32 && codebook.dtype == .f32,
+                     "Ops.auraDequantRotated: norms/codebook must be f32")
+        let grid = MTLSize(width: packedWidth, height: tokens, depth: nKVHeads)
+        let tg = MTLSize(width: packedWidth, height: 1, depth: 1)
+        switch (bits, out.dtype) {
+        case (2, .f32):
+            MetalTileKernels.aura_dequant_rotated_int2_f32(
+                packed: packed.buffer, packedOffset: packed.offset,
+                norms: norms.buffer, normsOffset: norms.offset,
+                codebook: codebook.buffer, codebookOffset: codebook.offset,
+                out: out.buffer, outOffset: out.offset,
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (2, .f16):
+            MetalTileKernels.aura_dequant_rotated_int2_f16(
+                packed: packed.buffer, packedOffset: packed.offset,
+                norms: norms.buffer, normsOffset: norms.offset,
+                codebook: codebook.buffer, codebookOffset: codebook.offset,
+                out: out.buffer, outOffset: out.offset,
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (2, .bf16):
+            MetalTileKernels.aura_dequant_rotated_int2_bf16(
+                packed: packed.buffer, packedOffset: packed.offset,
+                norms: norms.buffer, normsOffset: norms.offset,
+                codebook: codebook.buffer, codebookOffset: codebook.offset,
+                out: out.buffer, outOffset: out.offset,
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (3, .f32):
+            MetalTileKernels.aura_dequant_rotated_int3_f32(
+                packed: packed.buffer, packedOffset: packed.offset,
+                norms: norms.buffer, normsOffset: norms.offset,
+                codebook: codebook.buffer, codebookOffset: codebook.offset,
+                out: out.buffer, outOffset: out.offset,
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (3, .f16):
+            MetalTileKernels.aura_dequant_rotated_int3_f16(
+                packed: packed.buffer, packedOffset: packed.offset,
+                norms: norms.buffer, normsOffset: norms.offset,
+                codebook: codebook.buffer, codebookOffset: codebook.offset,
+                out: out.buffer, outOffset: out.offset,
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (3, .bf16):
+            MetalTileKernels.aura_dequant_rotated_int3_bf16(
+                packed: packed.buffer, packedOffset: packed.offset,
+                norms: norms.buffer, normsOffset: norms.offset,
+                codebook: codebook.buffer, codebookOffset: codebook.offset,
+                out: out.buffer, outOffset: out.offset,
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (4, .f32):
+            MetalTileKernels.aura_dequant_rotated_int4_f32(
+                packed: packed.buffer, packedOffset: packed.offset,
+                norms: norms.buffer, normsOffset: norms.offset,
+                codebook: codebook.buffer, codebookOffset: codebook.offset,
+                out: out.buffer, outOffset: out.offset,
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (4, .f16):
+            MetalTileKernels.aura_dequant_rotated_int4_f16(
+                packed: packed.buffer, packedOffset: packed.offset,
+                norms: norms.buffer, normsOffset: norms.offset,
+                codebook: codebook.buffer, codebookOffset: codebook.offset,
+                out: out.buffer, outOffset: out.offset,
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (4, .bf16):
+            MetalTileKernels.aura_dequant_rotated_int4_bf16(
+                packed: packed.buffer, packedOffset: packed.offset,
+                norms: norms.buffer, normsOffset: norms.offset,
+                codebook: codebook.buffer, codebookOffset: codebook.offset,
+                out: out.buffer, outOffset: out.offset,
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (8, .f32):
+            MetalTileKernels.aura_dequant_rotated_int8_f32(
+                packed: packed.buffer, packedOffset: packed.offset,
+                norms: norms.buffer, normsOffset: norms.offset,
+                codebook: codebook.buffer, codebookOffset: codebook.offset,
+                out: out.buffer, outOffset: out.offset,
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (8, .f16):
+            MetalTileKernels.aura_dequant_rotated_int8_f16(
+                packed: packed.buffer, packedOffset: packed.offset,
+                norms: norms.buffer, normsOffset: norms.offset,
+                codebook: codebook.buffer, codebookOffset: codebook.offset,
+                out: out.buffer, outOffset: out.offset,
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (8, .bf16):
+            MetalTileKernels.aura_dequant_rotated_int8_bf16(
+                packed: packed.buffer, packedOffset: packed.offset,
+                norms: norms.buffer, normsOffset: norms.offset,
+                codebook: codebook.buffer, codebookOffset: codebook.offset,
+                out: out.buffer, outOffset: out.offset,
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.auraDequantRotated: unsupported (bits=\(bits), dtype=\(out.dtype))")
+        }
+    }
 }
