@@ -357,6 +357,8 @@ public final class LlamaModel: LanguageModel {
                     device: device
                 )
             }
+        case .auraQuantized:
+            fatalError("Llama: .auraQuantized cache not yet wired — pending AURAQuantizedKVCache + W_o rotation fold (Phase 5d.C follow-up).")
         }
     }
 

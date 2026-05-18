@@ -17,7 +17,12 @@ public enum KVCacheKind: Sendable, Equatable {
     /// or `--kv-cache affine4`.
     case affineQuantized(bits: Int = 8, groupSize: Int = 64)
 
-    // .turbo  — Phase 5d (TurboQuant compressed-domain attention)
+    /// AURA-compressed K/V (Phase 5d). Rotated + Lloyd-Max scalar
+    /// quantized + bit-packed, with optional asymmetric K/V
+    /// bit-widths. See `AURAScheme` for the recipe surface and
+    /// `papers/aura-compression-algorithm.md` for the codec design.
+    /// CLI: `--kv-cache aura4v2`, `--kv-cache aura4`, etc.
+    case auraQuantized(scheme: AURAScheme = .default)
 }
 
 public enum DispatchMode: Sendable {
