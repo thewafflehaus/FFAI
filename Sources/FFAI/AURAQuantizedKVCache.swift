@@ -10,17 +10,36 @@
 // widths (the production aura4v2 recipe is K=4-bit, V=2-bit per
 // `papers/aura-compression-algorithm.md` §2.5).
 //
-// ─── First-light rotation choice ────────────────────────────────────
+// ─── Per-layer SRHT rotation Π ──────────────────────────────────────
 //
-// This implementation uses `AURARotation.identityMatrix(dim:)` as Π.
-// Identity rotation is the "first-light" path the AURARotation doc
-// explicitly calls out: it exercises the encode/decode kernels end-to-
-// end without requiring the SRHT-based rotation + W_o offline fold
-// described in §2.2 of the AURA paper. Compression quality is worse
-// than SRHT (the codebook assumes Beta-distributed rotated coords);
-// the smoke-test bar is "produces coherent output," not optimal PPL.
+// Π is the random orthogonal rotation the AURA codec assumes its inputs
+// have been multiplied by (Lloyd-Max boundaries were trained against
+// Beta-distributed rotated coordinates — see
+// `papers/aura-compression-algorithm.md` §2.2). The encode kernel
+// applies Π internally before quantising and `prepareForAttention`
+// returns K and V *still rotated*, so the rest of the forward pass has
+// to compensate:
 //
-// SRHT integration + W_o pre-multiply lands as a Phase 5d.E follow-up.
+//   * Q is rotated by Π post-RoPE so the SDPA score
+//     `(Π·Q)·(Π·K)^T = Q·K^T` recovers the original attention scores
+//     (orthogonality + transpose of an orthogonal matrix is its
+//     inverse).
+//   * The SDPA output is in Π-rotated space (`Σ softmax · (Π·V) = Π·O`)
+//     so the layer un-rotates by Π^T before `oProj`.
+//
+// RoPE doesn't commute with arbitrary orthogonal rotations, so the
+// per-token call order MUST be project → RMSNorm → RoPE → Π·.
+//
+// Π is built per-layer (deterministic seed = layer index) by
+// `AURARotation.srhtMatrix` and is shared across heads within a layer.
+// Π^T is precomputed at cache build time so the runtime path is two
+// per-head gemvs (no transpose dispatch). For an orthogonal Π,
+// Π^T = Π^(-1); the encode kernel only needs Π itself.
+//
+// Stage 1a (this implementation) applies Π via per-head Ops.gemv
+// dispatches; Stage 1b folds the rotation into the compressed-domain
+// `aura_flash_p1` / pass2 kernels so the cost drops to one fused
+// dispatch.
 //
 // ─── Dispatch granularity ───────────────────────────────────────────
 //
@@ -52,9 +71,18 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
     public let kPackedWidth: Int
     public let vPackedWidth: Int
 
-    // Codec data — shared across all layers' caches in a model.
-    // Constructed once by makeLayerCaches and passed in here.
-    public let rotation: Tensor       // [headDim, headDim] f32
+    // Codec data — built per-layer by makeLayerCaches and passed in here.
+    // (`rotation` / `rotationT` are per-layer; the codebooks are shared
+    // across layers because Lloyd-Max levels are dim-only — no layer
+    // statistics are baked in yet.)
+    public let rotation: Tensor       // [headDim, headDim] f32 — Π, encode kernel input
+    public let rotationT: Tensor      // [headDim, headDim] f32 — Π^T, for un-rotation kernels / future use
+    /// Π in the activation dtype, used by `Ops.auraRotatePerHead` on the
+    /// Q post-RoPE side. Aliases `rotation` when `dtype == .f32`.
+    public let rotationDtype: Tensor
+    /// Π^T in the activation dtype, used to un-rotate the SDPA output
+    /// before `oProj`. Aliases `rotationT` when `dtype == .f32`.
+    public let rotationDtypeT: Tensor
     public let kCodebook: Tensor      // [2^keyBits]   f32
     public let kBoundaries: Tensor    // [2^keyBits-1] f32
     public let vCodebook: Tensor      // [2^valueBits] f32
@@ -87,14 +115,17 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
     public convenience init(
         nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
         scheme: AURAScheme,
-        rotation: Tensor,
+        rotation: Tensor, rotationT: Tensor,
+        rotationDtype: Tensor, rotationDtypeT: Tensor,
         kCodebook: Tensor, kBoundaries: Tensor,
         vCodebook: Tensor, vBoundaries: Tensor,
         sharedWorkingK: Tensor, sharedWorkingV: Tensor,
         device: Device = .shared
     ) {
         self.init(nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
-                  dtype: dtype, scheme: scheme, rotation: rotation,
+                  dtype: dtype, scheme: scheme,
+                  rotation: rotation, rotationT: rotationT,
+                  rotationDtype: rotationDtype, rotationDtypeT: rotationDtypeT,
                   kCodebook: kCodebook, kBoundaries: kBoundaries,
                   vCodebook: vCodebook, vBoundaries: vBoundaries,
                   sharedWorkingK: sharedWorkingK, sharedWorkingV: sharedWorkingV,
@@ -104,7 +135,8 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
     public init(
         nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
         scheme: AURAScheme,
-        rotation: Tensor,
+        rotation: Tensor, rotationT: Tensor,
+        rotationDtype: Tensor, rotationDtypeT: Tensor,
         kCodebook: Tensor, kBoundaries: Tensor,
         vCodebook: Tensor, vBoundaries: Tensor,
         sharedWorkingK: Tensor, sharedWorkingV: Tensor,
@@ -115,6 +147,15 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
                      "AURAQuantizedKVCache: rotation must be [headDim, headDim]")
         precondition(rotation.dtype == .f32,
                      "AURAQuantizedKVCache: rotation must be f32")
+        precondition(rotationT.shape == [headDim, headDim],
+                     "AURAQuantizedKVCache: rotationT must be [headDim, headDim]")
+        precondition(rotationT.dtype == .f32,
+                     "AURAQuantizedKVCache: rotationT must be f32")
+        precondition(rotationDtype.shape == [headDim, headDim] &&
+                     rotationDtypeT.shape == [headDim, headDim],
+                     "AURAQuantizedKVCache: rotationDtype/rotationDtypeT must be [headDim, headDim]")
+        precondition(rotationDtype.dtype == dtype && rotationDtypeT.dtype == dtype,
+                     "AURAQuantizedKVCache: rotationDtype/rotationDtypeT dtype must match cache dtype \(dtype)")
         precondition(kCodebook.dtype == .f32 && kBoundaries.dtype == .f32,
                      "AURAQuantizedKVCache: K codebook/boundaries must be f32")
         precondition(vCodebook.dtype == .f32 && vBoundaries.dtype == .f32,
@@ -132,6 +173,9 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         self.dtype = dtype
         self.scheme = scheme
         self.rotation = rotation
+        self.rotationT = rotationT
+        self.rotationDtype = rotationDtype
+        self.rotationDtypeT = rotationDtypeT
         self.kCodebook = kCodebook
         self.kBoundaries = kBoundaries
         self.vCodebook = vCodebook
@@ -219,11 +263,11 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
     }
 
     /// Bulk-dequant the entire filled prefix of K and V into the shared
-    /// working buffers. The output lives in **rotated** codec space; with
-    /// identity rotation that's the same as the original K/V space, so
-    /// downstream SDPA on the working buffers is correct. The SRHT path
-    /// would inject an inverse rotation here (or fold it into W_o
-    /// offline).
+    /// working buffers. The output lives in **Π-rotated** codec space.
+    /// The caller (e.g. `Qwen3Layer.forward`) is expected to apply Π to
+    /// Q before SDPA so the scores cancel correctly, and apply Π^T to
+    /// the SDPA output before `oProj` so the residual stream is in the
+    /// original activation space. See file header for the math.
     public func prepareForAttention(on cmd: MTLCommandBuffer) -> (k: Tensor, v: Tensor) {
         guard length > 0 else { return (sharedWorkingK, sharedWorkingV) }
         Ops.auraDequantRotated(
@@ -295,5 +339,74 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
                 rows: 1, dim: headDim, packedWidth: packedWidth, bits: bits,
                 on: cmd)
         }
+    }
+}
+
+/// Build the four rotation tensors AURAQuantizedKVCache needs for a
+/// single layer. Π is generated via SRHT seeded by `layerIndex` so
+/// every layer gets its own rotation but the model is fully
+/// deterministic across runs (and across model loads). Π^T is computed
+/// CPU-side; activation-dtype copies are pre-cast so the runtime path
+/// can call Ops.auraRotatePerHead without a cast dispatch.
+///
+/// Lives outside the cache class so both Qwen3 and Llama (and any
+/// future host model that wires AURAQuantizedKVCache) can build the
+/// per-layer rotations the same way.
+public enum AURAQuantizedKVCacheRotations {
+    public struct Bundle {
+        public let rotation: Tensor       // [headDim, headDim] f32
+        public let rotationT: Tensor      // [headDim, headDim] f32
+        public let rotationDtype: Tensor  // [headDim, headDim] activationDtype
+        public let rotationDtypeT: Tensor // [headDim, headDim] activationDtype
+    }
+
+    public static func build(
+        headDim: Int, layerIndex: Int,
+        activationDtype: DType, device: Device
+    ) -> Bundle {
+        // CPU-side rotation. SRHT requires power-of-2 headDim; transpose
+        // is a straightforward row/column swap of the row-major buffer.
+        let piData = AURARotation.srhtMatrix(dim: headDim, seed: UInt64(layerIndex))
+        var piTData = [Float](repeating: 0, count: headDim * headDim)
+        for i in 0..<headDim {
+            for j in 0..<headDim {
+                piTData[j * headDim + i] = piData[i * headDim + j]
+            }
+        }
+
+        // f32 copies — required by the encode kernel and kept around for
+        // any future kernel that expects f32 rotations.
+        let rotation = Tensor.empty(shape: [headDim, headDim], dtype: .f32, device: device)
+        rotation.copyIn(from: piData)
+        let rotationT = Tensor.empty(shape: [headDim, headDim], dtype: .f32, device: device)
+        rotationT.copyIn(from: piTData)
+
+        // Activation-dtype copies — alias when dtype is f32 (no cast
+        // needed), otherwise cast bit-pattern-correctly into a fresh
+        // tensor. Small (headDim^2 * dtype bytes) so the cast cost is
+        // negligible vs the inference loop.
+        let rotationDtype: Tensor
+        let rotationDtypeT: Tensor
+        switch activationDtype {
+        case .f32:
+            rotationDtype = rotation
+            rotationDtypeT = rotationT
+        case .f16:
+            rotationDtype = Tensor.empty(shape: [headDim, headDim], dtype: .f16, device: device)
+            rotationDtype.copyIn(from: piData.map { Float16($0) })
+            rotationDtypeT = Tensor.empty(shape: [headDim, headDim], dtype: .f16, device: device)
+            rotationDtypeT.copyIn(from: piTData.map { Float16($0) })
+        case .bf16:
+            // bf16 is the top 16 bits of fp32 — truncating cast.
+            rotationDtype = Tensor.empty(shape: [headDim, headDim], dtype: .bf16, device: device)
+            rotationDtype.copyIn(from: piData.map { UInt16(truncatingIfNeeded: $0.bitPattern >> 16) })
+            rotationDtypeT = Tensor.empty(shape: [headDim, headDim], dtype: .bf16, device: device)
+            rotationDtypeT.copyIn(from: piTData.map { UInt16(truncatingIfNeeded: $0.bitPattern >> 16) })
+        default:
+            preconditionFailure("AURAQuantizedKVCacheRotations: unsupported activation dtype \(activationDtype)")
+        }
+
+        return Bundle(rotation: rotation, rotationT: rotationT,
+                      rotationDtype: rotationDtype, rotationDtypeT: rotationDtypeT)
     }
 }

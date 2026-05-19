@@ -257,17 +257,43 @@ public final class LlamaLayer: Module {
                           vFlat: v.reshaped(to: [nKVHeads, headDim]),
                           on: cmd)
 
+        // AURA cache stores K and V in Π-rotated space; apply Π to Q
+        // before SDPA and Π^T to the SDPA output before oProj so the
+        // scores cancel and the residual stream stays in the original
+        // activation space. Raw / affine caches skip both rotations.
+        // See AURAQuantizedKVCache header for the math.
+        let qForSdpa: Tensor
+        if let auraCache = cache as? AURAQuantizedKVCache {
+            qForSdpa = Ops.auraRotatePerHead(
+                qRotated.reshaped(to: [nHeads * headDim]),
+                rotation: auraCache.rotationDtype,
+                nHeads: nHeads, headDim: headDim, on: cmd
+            ).reshaped(to: [nHeads, headDim])
+        } else {
+            qForSdpa = qRotated
+        }
+
         // SDPA — cache is [nKVHeads, maxSeq, headDim]; kernel takes
         // n_kv = filled length (post-append), kv_stride = maxSeq. For
         // affine-quantized caches, prepareForAttention queues a
         // bulk-dequant pass into the shared working buffer first.
         let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
         let attnOut = Ops.sdpaDecode(
-            q: qRotated, k: cacheK, v: cacheV,
+            q: qForSdpa, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
             nKV: cache.length, kvStride: cache.maxSeq,
             scale: scale, on: cmd)
-        let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
+
+        let attnReadyForOProj: Tensor
+        if let auraCache = cache as? AURAQuantizedKVCache {
+            attnReadyForOProj = Ops.auraRotatePerHead(
+                attnOut.reshaped(to: [nHeads * headDim]),
+                rotation: auraCache.rotationDtypeT,
+                nHeads: nHeads, headDim: headDim, on: cmd)
+        } else {
+            attnReadyForOProj = attnOut.reshaped(to: [nHeads * headDim])
+        }
+        let oOut = oProj(attnReadyForOProj, on: cmd)
         let postAttn = Ops.add(h, oOut, on: cmd)
 
         // MLP — SwiGLU
@@ -364,13 +390,9 @@ public final class LlamaModel: LanguageModel {
                 )
             }
         case .auraQuantized(let scheme):
-            // Build codec data once, share across layers. Identity
-            // rotation for first-light — see AURAQuantizedKVCache
-            // header for the SRHT+W_o-fold follow-up.
-            let rotationData = AURARotation.identityMatrix(dim: headDim)
-            let rotation = Tensor.empty(shape: [headDim, headDim], dtype: .f32, device: device)
-            rotation.copyIn(from: rotationData)
-
+            // Codebooks are shared across layers; rotations are per-layer
+            // (deterministic SRHT seeded by layer index). See Qwen3's
+            // matching case for the longer explanation.
             let kCodebookData = AURACodebook.centroids(dim: headDim, bits: scheme.keyBits)
             let kBoundariesData = AURACodebook.boundaries(dim: headDim, bits: scheme.keyBits)
             let vCodebookData = AURACodebook.centroids(dim: headDim, bits: scheme.valueBits)
@@ -389,11 +411,15 @@ public final class LlamaModel: LanguageModel {
                                        dtype: dtype, device: device)
             let sharedV = Tensor.empty(shape: [nKVHeads, cap, headDim],
                                        dtype: dtype, device: device)
-            return (0..<nLayers).map { _ in
-                AURAQuantizedKVCache(
+            return (0..<nLayers).map { i in
+                let rot = AURAQuantizedKVCacheRotations.build(
+                    headDim: headDim, layerIndex: i,
+                    activationDtype: dtype, device: device)
+                return AURAQuantizedKVCache(
                     nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
                     dtype: dtype, scheme: scheme,
-                    rotation: rotation,
+                    rotation: rot.rotation, rotationT: rot.rotationT,
+                    rotationDtype: rot.rotationDtype, rotationDtypeT: rot.rotationDtypeT,
                     kCodebook: kCodebook, kBoundaries: kBoundaries,
                     vCodebook: vCodebook, vBoundaries: vBoundaries,
                     sharedWorkingK: sharedK, sharedWorkingV: sharedV,
