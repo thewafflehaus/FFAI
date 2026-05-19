@@ -61,28 +61,16 @@ struct Gemma3IntegrationTests {
         #expect(globalCount == 4)
         #expect(slidingCount == 22)
 
-        // Greedy decode. Coherence is a KNOWN GAP at first-light:
-        // the architecture loads + the new head_dim=256 SDPA kernel
-        // dispatches without crashing, but greedy decode collapses to
-        // a degenerate token-0 stream pending validation of one of:
-        //   - d256 SDPA correctness vs a naive CPU reference
-        //   - bf16 RMSNorm-weight +1 fold (load-time conversion)
-        //   - q_norm / k_norm placement (per-head, pre-RoPE)
-        //   - sqrt(hidden) embed scale in bf16
-        // Until the bug is pinned, we assert the pipeline runs
-        // without crashing + the per-layer eviction wiring (above)
-        // matched the sliding-window pattern. expectCoherentOutput
-        // is wrapped behind `KNOWN_BROKEN_OK` so it doesn't fail
-        // CI; remove the guard once the bug is fixed.
+        // Greedy decode + hard coherence assert. The first-light
+        // all-NaN bug was a bf16 tanh overflow inside the GELU
+        // template; fixed in metaltile preamble.rs by computing GELU
+        // in fp32 with the tanh argument clamped to ±15. See
+        // papers/gemma3-coherence-investigation-2026-05-19.md.
         let result = try await m.generate(
             prompt: prompt,
             parameters: GenerationParameters(maxTokens: maxTokens, temperature: 0)
         )
         #expect(result.tokensPerSecond > 0)
-        if ProcessInfo.processInfo.environment["GEMMA3_COHERENCE_EXPECTED"] == "1" {
-            expectCoherentOutput(result.generatedTokens, label: "Gemma 3 1B-it bf16")
-        } else {
-            print("[Gemma 3 1B] first \(result.generatedTokens.prefix(8)) — coherence not yet asserted (set GEMMA3_COHERENCE_EXPECTED=1 to enforce)")
-        }
+        expectCoherentOutput(result.generatedTokens, label: "Gemma 3 1B-it bf16")
     }
 }

@@ -472,40 +472,62 @@ public final class Gemma3Layer: Module {
     }
 
     /// Single-token forward. `position` is the absolute sequence
-    /// index of this token (used for RoPE).
+    /// index of this token (used for RoPE). `layerIdx` is used only
+    /// for the GEMMA3_DEBUG_TAPS=1 first-light dump prefix.
+    ///
+    /// `cmd` is `inout` so debug-tap commit-and-replace can update
+    /// the caller's reference. The caller (Gemma3Model.forward) is
+    /// responsible for passing a *private* cmdbuf when debug taps
+    /// are active so the user-facing cmd never sees double-commit.
     func forward(_ h: Tensor, position: Int, cache: any KVCacheProtocol,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
+                 cmd: inout MTLCommandBuffer, device: Device,
+                 layerIdx: Int = -1) -> Tensor {
+        // Debug-only intermediate-value dumps. Disabled by default
+        // (zero overhead). When GEMMA3_DEBUG_TAPS=1 is set, each
+        // tap commits the current cmdbuf, waits, reads the named
+        // tensor, prints stats (min/max/nan/inf/first-4), and
+        // recreates the cmdbuf to continue. Optional layer filter
+        // GEMMA3_DEBUG_TAP_LAYERS=0,1,2 restricts the dump.
+        let taps = ProcessInfo.processInfo.environment["GEMMA3_DEBUG_TAPS"] == "1"
+        let allowedLayers: Set<Int>? = ProcessInfo.processInfo
+            .environment["GEMMA3_DEBUG_TAP_LAYERS"]
+            .flatMap { s in Set(s.split(separator: ",").compactMap { Int($0) }) }
+        let tapsActive = taps && (allowedLayers?.contains(layerIdx) ?? true)
+        @inline(__always) func tap(_ t: Tensor, _ label: String) {
+            guard tapsActive else { return }
+            cmd = Gemma3Layer.dumpAndRestart(
+                t, label: label, layerIdx: layerIdx,
+                cmd: cmd, device: device
+            )
+        }
+
+        tap(h, "h_in")
+
         // Pre-attn norm.
         let xNorm = inputNorm(h, on: cmd)
+        tap(xNorm, "xNorm (input_layernorm)")
 
         // QKV projections.
         let q = qProj(xNorm, on: cmd)
         let k = kProj(xNorm, on: cmd)
         let v = vProj(xNorm, on: cmd)
+        tap(q, "q (after q_proj)")
+        tap(k, "k (after k_proj)")
+        tap(v, "v (after v_proj)")
 
         // Per-head q_norm / k_norm sit between projection and RoPE.
         // q has shape [nHeads * headDim], rmsNormRows applies the
         // [headDim]-wide weight per row.
-        //
-        // GEMMA3_SKIP_QK_NORM=1 bypasses these for first-light
-        // debugging — see the integration test header for the open
-        // bug list.
-        let skipQKNorm = ProcessInfo.processInfo.environment["GEMMA3_SKIP_QK_NORM"] == "1"
-        let qNorm2D: Tensor
-        let kNorm2D: Tensor
-        if skipQKNorm {
-            qNorm2D = q.reshaped(to: [nHeads, headDim])
-            kNorm2D = k.reshaped(to: [nKVHeads, headDim])
-        } else {
-            qNorm2D = Ops.rmsNormRows(
-                q, weight: qNorm.weight, eps: qNorm.eps,
-                nRows: nHeads, rowSize: headDim, on: cmd
-            ).reshaped(to: [nHeads, headDim])
-            kNorm2D = Ops.rmsNormRows(
-                k, weight: kNorm.weight, eps: kNorm.eps,
-                nRows: nKVHeads, rowSize: headDim, on: cmd
-            ).reshaped(to: [nKVHeads, headDim])
-        }
+        let qNorm2D = Ops.rmsNormRows(
+            q, weight: qNorm.weight, eps: qNorm.eps,
+            nRows: nHeads, rowSize: headDim, on: cmd
+        ).reshaped(to: [nHeads, headDim])
+        let kNorm2D = Ops.rmsNormRows(
+            k, weight: kNorm.weight, eps: kNorm.eps,
+            nRows: nKVHeads, rowSize: headDim, on: cmd
+        ).reshaped(to: [nKVHeads, headDim])
+        tap(qNorm2D, "qNorm2D")
+        tap(kNorm2D, "kNorm2D")
 
         // RoPE on the normed q and k.
         let qRotated = Ops.rope(qNorm2D,
@@ -514,6 +536,8 @@ public final class Gemma3Layer: Module {
         let kRotated = Ops.rope(kNorm2D,
                                 position: position, headDim: headDim,
                                 thetaBase: ropeTheta, scaling: .none, on: cmd)
+        tap(qRotated, "qRotated")
+        tap(kRotated, "kRotated")
 
         // Append + SDPA.
         cache.appendOnGPU(kFlat: kRotated,
@@ -525,22 +549,81 @@ public final class Gemma3Layer: Module {
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
             nKV: cache.length, kvStride: cache.maxSeq,
             scale: scale, on: cmd)
+        tap(attnOut, "attnOut (SDPA)")
 
         // o_proj → post_attention_layernorm → +residual.
         let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
+        tap(oOut, "oOut (o_proj)")
         let normedAttn = postAttnNorm(oOut, on: cmd)
+        tap(normedAttn, "normedAttn (post_attn_norm)")
         let postAttn = Ops.add(h, normedAttn, on: cmd)
+        tap(postAttn, "postAttn (residual)")
 
         // MLP path: pre_feedforward_layernorm → MLP → post_feedforward_layernorm → +residual.
         // Gemma 3 uses gelu(gate) * up → down (vs Llama's silu).
         let mlpNorm = preFFNorm(postAttn, on: cmd)
+        tap(mlpNorm, "mlpNorm (pre_ff_norm)")
         let gate = gateProj(mlpNorm, on: cmd)
         let up = upProj(mlpNorm, on: cmd)
+        tap(gate, "gate")
+        tap(up, "up")
         let geluGate = Ops.gelu(gate, on: cmd)
+        tap(geluGate, "geluGate")
         let mlpInner = Ops.mul(geluGate, up, on: cmd)
+        tap(mlpInner, "mlpInner (gelu(gate)*up)")
         let mlpOut = downProj(mlpInner, on: cmd)
+        tap(mlpOut, "mlpOut (down_proj)")
         let normedMLP = postFFNorm(mlpOut, on: cmd)
-        return Ops.add(postAttn, normedMLP, on: cmd)
+        tap(normedMLP, "normedMLP (post_ff_norm)")
+        let result = Ops.add(postAttn, normedMLP, on: cmd)
+        tap(result, "h_out (layer residual)")
+
+        return result
+    }
+
+    /// Debug-only intermediate-value dump. Commits + waits + reads
+    /// the named tensor + prints stats, returns a FRESH cmdbuf for
+    /// continued work. Guarded by GEMMA3_DEBUG_TAPS=1 inside
+    /// `forward(...)`.
+    fileprivate static func dumpAndRestart(
+        _ t: Tensor, label: String, layerIdx: Int,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> MTLCommandBuffer {
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        let n = t.elementCount
+        let basePtr = t.buffer.contents().advanced(by: t.offset)
+        var floats: [Float] = []
+        floats.reserveCapacity(n)
+        switch t.dtype {
+        case .f32:
+            let p = basePtr.bindMemory(to: Float.self, capacity: n)
+            for i in 0..<n { floats.append(p[i]) }
+        case .f16:
+            let p = basePtr.bindMemory(to: UInt16.self, capacity: n)
+            for i in 0..<n { floats.append(halfBitsToFloat(p[i])) }
+        case .bf16:
+            let p = basePtr.bindMemory(to: UInt16.self, capacity: n)
+            for i in 0..<n { floats.append(bf16BitsToFloat(p[i])) }
+        default:
+            print("[L\(layerIdx) \(label)] (unsupported dtype \(t.dtype))")
+            return device.makeCommandBuffer()
+        }
+        var nanCount = 0, infCount = 0
+        var mn: Float = .infinity, mx: Float = -.infinity
+        for v in floats {
+            if v.isNaN { nanCount += 1 }
+            else if !v.isFinite { infCount += 1 }
+            else {
+                if v < mn { mn = v }
+                if v > mx { mx = v }
+            }
+        }
+        let head = floats.prefix(4).map { String(format: "%.4f", $0) }.joined(separator: ", ")
+        let mnStr = mn.isFinite ? String(format: "%.4f", mn) : "—"
+        let mxStr = mx.isFinite ? String(format: "%.4f", mx) : "—"
+        print("[L\(layerIdx) \(label)] n=\(n) min=\(mnStr) max=\(mxStr) nan=\(nanCount) inf=\(infCount) first=[\(head)]")
+        return device.makeCommandBuffer()
     }
 }
 
@@ -646,6 +729,13 @@ public final class Gemma3Model: LanguageModel {
     public func forward(tokenId: Int, position: Int,
                         caches: [any LayerCacheProtocol],
                         on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        // Debug-tap mode forces a *private* cmdbuf so per-op
+        // commit+wait sync points don't double-commit the caller's
+        // cmd. In production / non-debug mode, queue everything on
+        // the caller's cmd as the protocol expects.
+        let tapsActive = ProcessInfo.processInfo.environment["GEMMA3_DEBUG_TAPS"] == "1"
+        var workCmd = tapsActive ? device.makeCommandBuffer() : cmd
+
         // Embed lookup + sqrt(hidden) scale. The scale buffer is
         // pre-baked at load time (`Gemma3Dense.loadModel`) and tied
         // to the activation dtype.
@@ -653,19 +743,33 @@ public final class Gemma3Model: LanguageModel {
         var tid = UInt32(tokenId)
         memcpy(tokenBuf.contents(), &tid, 4)
         let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
-        let h0 = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
-        // GEMMA3_DISABLE_EMBED_SCALE skips the scale to isolate
-        // first-light bugs — see the integration test header for the
-        // open questions on Gemma 3 coherence.
-        let skipEmbedScale = ProcessInfo.processInfo.environment["GEMMA3_DISABLE_EMBED_SCALE"] == "1"
-        var h = skipEmbedScale ? h0 : Ops.mul(h0, embedScale, on: cmd)
+        let h0 = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
+        var h = Ops.mul(h0, embedScale, on: workCmd)
+
+        if tapsActive {
+            workCmd = Gemma3Layer.dumpAndRestart(
+                h, label: "h after embed*scale", layerIdx: -1,
+                cmd: workCmd, device: device
+            )
+        }
 
         for (i, layer) in layers.enumerated() {
             h = layer.forward(h, position: position,
                               cache: caches[i] as! any KVCacheProtocol,
-                              cmd: cmd, device: device)
+                              cmd: &workCmd, device: device, layerIdx: i)
         }
-        h = finalNorm(h, on: cmd)
-        return lmHead(h, on: cmd)
+        h = finalNorm(h, on: workCmd)
+        let logits = lmHead(h, on: workCmd)
+
+        if tapsActive {
+            workCmd = Gemma3Layer.dumpAndRestart(
+                logits, label: "logits", layerIdx: -1,
+                cmd: workCmd, device: device
+            )
+            // The final tap committed everything; logits buffer holds
+            // valid data. The caller will commit their own (empty)
+            // cmd, which is a fast no-op.
+        }
+        return logits
     }
 }

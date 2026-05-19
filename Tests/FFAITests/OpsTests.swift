@@ -71,6 +71,34 @@ struct OpsTests {
         }
     }
 
+    @Test("gelu bf16 — extreme inputs stay finite (Gemma 3 regression)")
+    func geluBf16ExtremeInputs() {
+        // Gemma 3 1B layer-1 gate values span [-10.25, 10.81] in bf16.
+        // The tanh argument hits k*(x + 0.044715*x^3) ≈ ±54 there,
+        // beyond Metal's native bf16 tanh range and beyond what an
+        // (exp(2x)-1)/(exp(2x)+1) evaluation can survive in bf16's
+        // 8-bit exponent. Test that gelu(bf16) over the failing range
+        // produces only finite values — no NaN, no inf.
+        autoreleasepool {
+            let xs: [Float] = stride(from: Float(-15.0), through: 15.0, by: 0.25).map { $0 }
+            let n = xs.count
+            let x = Tensor.empty(shape: [n], dtype: .bf16)
+            // Pack fp32 → bf16 via FFAI's existing test helper.
+            let xPtr = x.buffer.contents().bindMemory(to: UInt16.self, capacity: n)
+            for (i, v) in xs.enumerated() {
+                xPtr[i] = floatToBf16BitsForTest(v)
+            }
+            var out: Tensor!
+            runAndWait { cb in out = Ops.gelu(x, on: cb) }
+            let outPtr = out.buffer.contents().bindMemory(to: UInt16.self, capacity: n)
+            for i in 0..<n {
+                let v = bf16BitsToFloatForTest(outPtr[i])
+                #expect(v.isFinite,
+                        "gelu(\(xs[i])) in bf16 → \(v); must be finite")
+            }
+        }
+    }
+
     @Test("gather f32 — picks the right rows")
     func gatherF32() {
         autoreleasepool {

@@ -1,5 +1,28 @@
 # Gemma 3 coherence bug investigation — 2026-05-19
 
+## Status: RESOLVED 2026-05-19
+
+**Root cause:** bf16 tanh overflow inside the GELU template.
+
+Metal's native `tanh<bfloat>` evaluates as `(exp(2x)-1)/(exp(2x)+1)`.
+For x ≈ ±54 (which Gemma 3 layer-1 gate values produce as the tanh
+argument), `exp(108)` overflows bf16's 8-bit exponent (max ≈ 88.7),
+yielding inf/inf = NaN.
+
+**Fix:** Cast to fp32 inside `mt_gelu`, compute the tanh argument in
+fp32, clamp to ±15 (tanh saturates to ±1 to within fp32 precision
+well before that), cast back. Single edit in
+`crates/metaltile-codegen/src/msl/preamble.rs`.
+
+**Regression test:** `Tests/FFAITests/OpsTests.swift::geluBf16ExtremeInputs`
+hammers bf16 GELU across [-15, 15] in 0.25 steps and asserts every
+output is finite.
+
+Gemma 3 1B-it integration test now passes with hard coherence
+assertion. The original tap infrastructure remains in
+`Sources/FFAI/Models/Gemma3.swift::dumpAndRestart` for future
+debugging (gated by `GEMMA3_DEBUG_TAPS=1`).
+
 ## Symptom
 
 Gemma 3 1B (`mlx-community/gemma-3-1b-it-bf16`) loads + dispatches
