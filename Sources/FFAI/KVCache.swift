@@ -49,6 +49,22 @@ public protocol KVCacheProtocol: LayerCacheProtocol {
     var headDim: Int { get }
     var dtype: DType { get }
 
+    /// Eviction policy. `.unbounded` means classic monotonic growth
+    /// up to `maxSeq` and a panic on overflow. `.window(maxSize:keep:)`
+    /// enables FIFO ring-buffer rotation past `maxSize` positions,
+    /// optionally pinning `keep` attention-sink slots at the front.
+    var eviction: KVEviction { get }
+
+    /// Maximum positions the cache retains — `maxSize` from
+    /// `.window(...)` or `maxSeq` for `.unbounded`. Returned to the
+    /// engine for cache-size reporting + sliding-window attention
+    /// mask construction.
+    var effectiveMaxSize: Int { get }
+
+    /// Monotonic count of tokens ever appended (does not reset on
+    /// eviction). Used by the engine to derive the next RoPE position.
+    var absolutePosition: Int { get }
+
     /// Append one timestep's K and V (each [nKVHeads, headDim]) on the
     /// GPU. Queued on `cmd`; no commit/wait. Bumps `length`.
     func appendOnGPU(kFlat: Tensor, vFlat: Tensor, on cmd: MTLCommandBuffer)
@@ -63,6 +79,15 @@ public protocol KVCacheProtocol: LayerCacheProtocol {
     func prepareForAttention(on cmd: MTLCommandBuffer) -> (k: Tensor, v: Tensor)
 }
 
+public extension KVCacheProtocol {
+    /// Default for callers that pre-date the sliding-window addition —
+    /// behaves like a non-rotating cache. Concrete classes override
+    /// when they wire `KVEvictionState` in.
+    var eviction: KVEviction { .unbounded }
+    var effectiveMaxSize: Int { maxSeq }
+    var absolutePosition: Int { length }
+}
+
 // MARK: - KVCache (raw fp16 / bf16)
 
 public final class KVCache: KVCacheProtocol, @unchecked Sendable {
@@ -74,23 +99,38 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
     public let kBuffer: Tensor   // [nKVHeads, maxSeq, headDim]
     public let vBuffer: Tensor   // [nKVHeads, maxSeq, headDim]
 
-    /// Lock-protected fill count. Safe today even without the lock —
+    /// Lock-protected fill state. Safe today even without the lock —
     /// single-threaded decode — but Phase 8's batched / speculative
     /// decode coordinates multiple Tasks against one cache. The lock
-    /// makes the `(read position, queue dispatch, increment)` sequence
-    /// in `appendOnGPU` atomic so concurrent appenders don't queue
-    /// dispatches against the same position.
+    /// makes the `(reserve slot, queue dispatch, increment)` sequence
+    /// in `appendOnGPU` atomic so concurrent appenders don't write to
+    /// the same physical slot.
     ///
-    /// `NSLock` rather than `OSAllocatedUnfairLock<Int>` because the
-    /// critical section captures `MTLCommandBuffer` (not Sendable),
-    /// which `OSAllocatedUnfairLock.withLock`'s `@Sendable` closure
-    /// signature rejects. NSLock has no such restriction and the
-    /// performance difference at decode-step granularity is noise.
+    /// `NSLock` rather than `OSAllocatedUnfairLock<KVEvictionState>`
+    /// because the critical section captures `MTLCommandBuffer` (not
+    /// Sendable), which `OSAllocatedUnfairLock.withLock`'s `@Sendable`
+    /// closure signature rejects. NSLock has no such restriction and
+    /// the performance difference at decode-step granularity is noise.
     private let lengthLock = NSLock()
-    private var _length: Int = 0
-    public var length: Int { lengthLock.withLock { _length } }
+    private var _evictionState: KVEvictionState
+    public var length: Int { lengthLock.withLock { _evictionState.length } }
+    public var absolutePosition: Int { lengthLock.withLock { _evictionState.absolutePosition } }
+    public var eviction: KVEviction { _evictionState.policy }
+    public var effectiveMaxSize: Int {
+        switch _evictionState.policy {
+        case .unbounded: return maxSeq
+        case .window(let m, _): return m
+        }
+    }
+
+    public convenience init(nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
+                            device: Device = .shared) {
+        self.init(nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                  dtype: dtype, eviction: .unbounded, device: device)
+    }
 
     public init(nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
+                eviction: KVEviction,
                 device: Device = .shared) {
         self.nKVHeads = nKVHeads
         self.headDim = headDim
@@ -100,6 +140,7 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
         self.vBuffer = Tensor.empty(shape: [nKVHeads, maxSeq, headDim], dtype: dtype, device: device)
         self.kBuffer.zero()
         self.vBuffer.zero()
+        self._evictionState = KVEvictionState(policy: eviction, bufferCapacity: maxSeq)
     }
 
     /// CPU-side legacy append. Caller must have already sync'd the
@@ -109,8 +150,7 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
     public func append(kFlat: Tensor, vFlat: Tensor) {
         precondition(kFlat.dtype == dtype && vFlat.dtype == dtype, "KVCache: dtype mismatch")
         lengthLock.withLock {
-            precondition(_length < maxSeq, "KVCache: capacity exhausted")
-            let pos = _length
+            let pos = _evictionState.reserveNextSlot()
             let bytesPerHead = headDim * dtype.byteSize
             let kSrc = kFlat.buffer.contents().advanced(by: kFlat.offset)
             let vSrc = vFlat.buffer.contents().advanced(by: vFlat.offset)
@@ -122,7 +162,6 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
                 kDst.copyMemory(from: kSrc.advanced(by: srcOffset), byteCount: bytesPerHead)
                 vDst.copyMemory(from: vSrc.advanced(by: srcOffset), byteCount: bytesPerHead)
             }
-            _length = pos + 1
         }
     }
 
@@ -136,19 +175,17 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
                             on cmd: MTLCommandBuffer) {
         precondition(kFlat.dtype == dtype && vFlat.dtype == dtype, "KVCache: dtype mismatch")
         lengthLock.withLock {
-            precondition(_length < maxSeq, "KVCache: capacity exhausted")
-            let pos = _length
+            let pos = _evictionState.reserveNextSlot()
             Ops.kvCacheUpdate(src: kFlat, into: kBuffer,
                               nKVHeads: nKVHeads, headDim: headDim,
                               maxSeq: maxSeq, position: pos, on: cmd)
             Ops.kvCacheUpdate(src: vFlat, into: vBuffer,
                               nKVHeads: nKVHeads, headDim: headDim,
                               maxSeq: maxSeq, position: pos, on: cmd)
-            _length = pos + 1
         }
     }
 
-    public func reset() { lengthLock.withLock { _length = 0 } }
+    public func reset() { lengthLock.withLock { _evictionState.reset() } }
 
     /// Raw cache exposes its storage buffers directly; no per-step
     /// work is needed before SDPA.
@@ -213,15 +250,34 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
     public let sharedWorkingK: Tensor   // [nKVHeads, maxSeq, headDim] T
     public let sharedWorkingV: Tensor
 
-    /// Lock-protected fill count. See `KVCache.lengthLock` for the
+    /// Lock-protected fill state. See `KVCache.lengthLock` for the
     /// rationale — same Phase-8 concurrent-decode prep.
     private let lengthLock = NSLock()
-    private var _length: Int = 0
-    public var length: Int { lengthLock.withLock { _length } }
+    private var _evictionState: KVEvictionState
+    public var length: Int { lengthLock.withLock { _evictionState.length } }
+    public var absolutePosition: Int { lengthLock.withLock { _evictionState.absolutePosition } }
+    public var eviction: KVEviction { _evictionState.policy }
+    public var effectiveMaxSize: Int {
+        switch _evictionState.policy {
+        case .unbounded: return maxSeq
+        case .window(let m, _): return m
+        }
+    }
+
+    public convenience init(nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
+                            bits: Int, groupSize: Int,
+                            sharedWorkingK: Tensor, sharedWorkingV: Tensor,
+                            device: Device = .shared) {
+        self.init(nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                  dtype: dtype, bits: bits, groupSize: groupSize,
+                  sharedWorkingK: sharedWorkingK, sharedWorkingV: sharedWorkingV,
+                  eviction: .unbounded, device: device)
+    }
 
     public init(nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
                 bits: Int, groupSize: Int,
                 sharedWorkingK: Tensor, sharedWorkingV: Tensor,
+                eviction: KVEviction,
                 device: Device = .shared) {
         precondition(bits == 4 || bits == 8,
                      "AffineQuantizedKVCache: bits must be 4 or 8 today (int6 is a Phase 5c follow-up)")
@@ -258,17 +314,18 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
         kWeights.zero(); vWeights.zero()
         kScales.zero(); vScales.zero()
         kBiases.zero(); vBiases.zero()
+
+        self._evictionState = KVEvictionState(policy: eviction, bufferCapacity: maxSeq)
     }
 
-    public func reset() { lengthLock.withLock { _length = 0 } }
+    public func reset() { lengthLock.withLock { _evictionState.reset() } }
 
     public func appendOnGPU(kFlat: Tensor, vFlat: Tensor,
                             on cmd: MTLCommandBuffer) {
         precondition(kFlat.dtype == dtype && vFlat.dtype == dtype,
                      "AffineQuantizedKVCache: dtype mismatch")
         lengthLock.withLock {
-            precondition(_length < maxSeq, "AffineQuantizedKVCache: capacity exhausted")
-            let pos = _length
+            let pos = _evictionState.reserveNextSlot()
             Ops.quantizeKVAffine(src: kFlat,
                                  weights: kWeights, scales: kScales, biases: kBiases,
                                  nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
@@ -277,7 +334,6 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
                                  weights: vWeights, scales: vScales, biases: vBiases,
                                  nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
                                  groupSize: groupSize, position: pos, bits: bits, on: cmd)
-            _length = pos + 1
         }
     }
 

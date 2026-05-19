@@ -173,7 +173,8 @@ public struct LlamaDense: LlamaVariant {
             hidden: hidden, nLayers: nLayers, nHeads: nHeads,
             nKVHeads: nKVHeads, headDim: headDim, vocab: vocab,
             maxSeq: maxSeq, ropeTheta: theta, dtype: activationDtype,
-            kvCacheKind: options.kvCache
+            kvCacheKind: options.kvCache,
+            kvEviction: options.kvEviction
         )
     }
 }
@@ -294,12 +295,14 @@ public final class LlamaModel: LanguageModel {
     /// Cache scheme to use when `makeLayerCaches(...)` is called. Set at
     /// construction time from `LoadOptions.kvCache`.
     public let kvCacheKind: KVCacheKind
+    public let kvEviction: KVEviction
 
     init(embedTokens: AnyEmbedding, layers: [LlamaLayer],
          finalNorm: RMSNorm, lmHead: AnyLinear,
          hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
          vocab: Int, maxSeq: Int, ropeTheta: Float, dtype: DType,
-         kvCacheKind: KVCacheKind = .raw) {
+         kvCacheKind: KVCacheKind = .raw,
+         kvEviction: KVEviction = .unbounded) {
         self.embedTokens = embedTokens
         self.layers = layers
         self.finalNorm = finalNorm
@@ -314,6 +317,7 @@ public final class LlamaModel: LanguageModel {
         self.ropeTheta = ropeTheta
         self.dtype = dtype
         self.kvCacheKind = kvCacheKind
+        self.kvEviction = kvEviction
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -335,11 +339,12 @@ public final class LlamaModel: LanguageModel {
     /// a shared working buffer pair) for `.affineQuantized`.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxSeq
+        let eviction = kvEviction
         switch kvCacheKind {
         case .raw:
             return (0..<nLayers).map { _ in
                 KVCache(nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
-                        dtype: dtype, device: device)
+                        dtype: dtype, eviction: eviction, device: device)
             }
         case .affineQuantized(let bits, let groupSize):
             // One shared working buffer pair across every layer's
@@ -354,6 +359,7 @@ public final class LlamaModel: LanguageModel {
                     nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
                     dtype: dtype, bits: bits, groupSize: groupSize,
                     sharedWorkingK: sharedK, sharedWorkingV: sharedV,
+                    eviction: eviction,
                     device: device
                 )
             }
@@ -391,6 +397,7 @@ public final class LlamaModel: LanguageModel {
                     kCodebook: kCodebook, kBoundaries: kBoundaries,
                     vCodebook: vCodebook, vBoundaries: vBoundaries,
                     sharedWorkingK: sharedK, sharedWorkingV: sharedV,
+                    eviction: eviction,
                     device: device
                 )
             }

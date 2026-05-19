@@ -36,6 +36,13 @@ public struct LoadOptions: Sendable {
     public var capabilities: Set<Capability>
     public var kvCache: KVCacheKind
     public var dispatchMode: DispatchMode
+    /// Per-layer KV cache eviction policy. `.unbounded` (default)
+    /// preserves the legacy growth-up-to-maxSeq behaviour. `.window`
+    /// caps the cache at `maxSize` positions with FIFO eviction past
+    /// that, with optional attention-sink retention via `keep`.
+    /// Applies uniformly to every attention layer in non-hybrid models
+    /// (hybrid families like GPT-OSS may override per-layer).
+    public var kvEviction: KVEviction
     /// Run prewarm() before transitioning to .ready. Default true.
     public var prewarm: Bool
     /// Allow runtime enable/disable of capabilities after load.
@@ -52,6 +59,7 @@ public struct LoadOptions: Sendable {
     public init(
         capabilities: Set<Capability> = Capability.textOnly,
         kvCache: KVCacheKind = .raw,
+        kvEviction: KVEviction = .unbounded,
         dispatchMode: DispatchMode = .eager,
         prewarm: Bool = true,
         lazyCapabilities: Bool = true,
@@ -60,6 +68,7 @@ public struct LoadOptions: Sendable {
     ) {
         self.capabilities = capabilities.union(Capability.textOnly)
         self.kvCache = kvCache
+        self.kvEviction = kvEviction
         self.dispatchMode = dispatchMode
         self.prewarm = prewarm
         self.lazyCapabilities = lazyCapabilities

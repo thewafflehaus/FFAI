@@ -70,11 +70,36 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
     public let sharedWorkingK: Tensor // [nKVHeads, maxSeq, headDim] dtype
     public let sharedWorkingV: Tensor
 
-    /// Lock-protected fill count. Same Phase-8 concurrent-decode prep
+    /// Lock-protected fill state. Same Phase-8 concurrent-decode prep
     /// reasoning as `KVCache.lengthLock` — see `Sources/FFAI/KVCache.swift`.
     private let lengthLock = NSLock()
-    private var _length: Int = 0
-    public var length: Int { lengthLock.withLock { _length } }
+    private var _evictionState: KVEvictionState
+    public var length: Int { lengthLock.withLock { _evictionState.length } }
+    public var absolutePosition: Int { lengthLock.withLock { _evictionState.absolutePosition } }
+    public var eviction: KVEviction { _evictionState.policy }
+    public var effectiveMaxSize: Int {
+        switch _evictionState.policy {
+        case .unbounded: return maxSeq
+        case .window(let m, _): return m
+        }
+    }
+
+    public convenience init(
+        nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
+        scheme: AURAScheme,
+        rotation: Tensor,
+        kCodebook: Tensor, kBoundaries: Tensor,
+        vCodebook: Tensor, vBoundaries: Tensor,
+        sharedWorkingK: Tensor, sharedWorkingV: Tensor,
+        device: Device = .shared
+    ) {
+        self.init(nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                  dtype: dtype, scheme: scheme, rotation: rotation,
+                  kCodebook: kCodebook, kBoundaries: kBoundaries,
+                  vCodebook: vCodebook, vBoundaries: vBoundaries,
+                  sharedWorkingK: sharedWorkingK, sharedWorkingV: sharedWorkingV,
+                  eviction: .unbounded, device: device)
+    }
 
     public init(
         nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
@@ -83,6 +108,7 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         kCodebook: Tensor, kBoundaries: Tensor,
         vCodebook: Tensor, vBoundaries: Tensor,
         sharedWorkingK: Tensor, sharedWorkingV: Tensor,
+        eviction: KVEviction,
         device: Device = .shared
     ) {
         precondition(rotation.shape == [headDim, headDim],
@@ -130,9 +156,11 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         // zero is a safe default.
         kPacked.zero(); vPacked.zero()
         kNorms.zero();  vNorms.zero()
+
+        self._evictionState = KVEvictionState(policy: eviction, bufferCapacity: maxSeq)
     }
 
-    public func reset() { lengthLock.withLock { _length = 0 } }
+    public func reset() { lengthLock.withLock { _evictionState.reset() } }
 
     /// Encode the current step's K + V into the compressed storage.
     /// `kFlat` and `vFlat` come in as [nKVHeads, headDim] in the model's
@@ -148,9 +176,16 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
                      "AURAQuantizedKVCache: vFlat shape mismatch")
 
         lengthLock.withLock {
-            precondition(_length < maxSeq,
-                         "AURAQuantizedKVCache: capacity exhausted")
-            let pos = _length
+            let pos = _evictionState.reserveNextSlot()
+            // AURA encode atomic_or-accumulates into `packed[pos]`,
+            // so on a rotated slot we MUST zero the prior contents
+            // before the encode runs, or stale bits will OR through.
+            // Cheap (one packed_width × u32 row per head per cache).
+            if case .window = _evictionState.policy,
+               _evictionState.absolutePosition > _evictionState.length {
+                zeroPackedSlot(packed: kPacked, packedWidth: kPackedWidth, pos: pos, on: cmd)
+                zeroPackedSlot(packed: vPacked, packedWidth: vPackedWidth, pos: pos, on: cmd)
+            }
             encodePerHead(
                 inputFlat: kFlat, packed: kPacked, norms: kNorms,
                 codebook: kCodebook, boundaries: kBoundaries,
@@ -161,8 +196,26 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
                 codebook: vCodebook, boundaries: vBoundaries,
                 packedWidth: vPackedWidth, bits: scheme.valueBits,
                 pos: pos, on: cmd)
-            _length = pos + 1
         }
+    }
+
+    /// Clear the packed-u32 row at `pos` across all heads, in
+    /// preparation for the atomic_or-accumulating encode kernel.
+    /// Called only when rotating into a previously-occupied slot.
+    private func zeroPackedSlot(
+        packed: Tensor, packedWidth: Int, pos: Int,
+        on cmd: MTLCommandBuffer
+    ) {
+        let packedBytesPerSlot = packedWidth * 4
+        let packedBytesPerHead = maxSeq * packedBytesPerSlot
+        guard let blit = cmd.makeBlitCommandEncoder() else { return }
+        for h in 0..<nKVHeads {
+            let off = packed.offset + h * packedBytesPerHead + pos * packedBytesPerSlot
+            blit.fill(buffer: packed.buffer,
+                      range: off..<(off + packedBytesPerSlot),
+                      value: 0)
+        }
+        blit.endEncoding()
     }
 
     /// Bulk-dequant the entire filled prefix of K and V into the shared
