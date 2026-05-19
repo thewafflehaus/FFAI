@@ -18,7 +18,7 @@ struct Mamba2IntegrationTests {
     func loadAndGenerate() async throws {
         let m: Model
         do {
-            m = try await Model.load("mlx-community/mamba2-130m")
+            m = try await ModelLoadLock.shared.loadSerially { try await Model.load("mlx-community/mamba2-130m") }
         } catch {
             print("Mamba 2 integration test skipped: \(error)")
             return

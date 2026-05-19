@@ -38,31 +38,42 @@ public final class MetalTileLibrary: @unchecked Sendable {
 
     /// Maximum number of in-flight (uncompleted) `MTLCommandBuffer`s the
     /// shared command queue keeps before `makeCommandBuffer()` blocks on
-    /// the next caller. Default 32.
+    /// the next caller. Default 16.
     ///
-    /// Why: with Swift Testing's default in-bundle parallelism, 35+ test
-    /// suites each spin up their own cmdbufs concurrently. Without an
-    /// explicit cap, Metal's command queue happily accepts hundreds of
-    /// cmdbufs in flight — which starves the WindowServer's compositor
-    /// of GPU time and (observed locally) eventually crashes WindowServer
-    /// and locks up the box. The same pile-up can happen in production
-    /// if many callers dispatch concurrently without their own backpressure.
+    /// Why a cap at all: Metal's default queue depth is effectively
+    /// unbounded. With many concurrent callers (e.g. Swift Testing's
+    /// default cross-suite parallelism), hundreds of cmdbufs can pile up
+    /// in flight, starving the WindowServer compositor of GPU time and
+    /// (observed locally) crashing WindowServer → system freeze. A small
+    /// cap forces backpressure at the Metal layer so the compositor can
+    /// always make progress.
+    ///
+    /// Why **16** specifically:
+    ///
+    ///   - Production decode is 1 cmdbuf / token (serial), so 16 is
+    ///     16× oversize for steady-state.
+    ///   - Hypothetical Phase-8 batched decode with 8 parallel streams
+    ///     would use ~8 cmdbufs simultaneously — 16 gives 2× headroom.
+    ///   - Apple's MTKView triple-buffering convention is 3 (for display
+    ///     smoothness); 16 is "compute-class headroom" but small enough
+    ///     that a runaway parallel caller hits backpressure before
+    ///     starving the compositor.
+    ///   - MLX itself never caps queue depth; they cap per-cmdbuf size
+    ///     instead (max_ops / max_mb_per_buffer auto-commit). We pick
+    ///     the orthogonal knob because our pattern is many small
+    ///     cmdbufs from many callers, not one large cmdbuf from one
+    ///     caller.
     ///
     /// Override at runtime via the `FFAI_MAX_COMMAND_BUFFERS` env var
     /// (positive integer). Useful when triaging perf-vs-stability
     /// tradeoffs without rebuilding.
-    ///
-    /// 32 was picked as a middle ground: high enough that decode-loop
-    /// pipelining still benefits from queue depth, low enough that a
-    /// runaway parallel test can't drown the compositor before
-    /// `waitUntilCompleted` drains in-flight work.
     public static let defaultMaxCommandBufferCount: Int = {
         if let raw = ProcessInfo.processInfo.environment["FFAI_MAX_COMMAND_BUFFERS"],
            let parsed = Int(raw), parsed > 0
         {
             return parsed
         }
-        return 32
+        return 16
     }()
 
     /// Process-wide singleton. Lazily initialized; throws on first access if

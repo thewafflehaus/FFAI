@@ -19,7 +19,7 @@ struct Quantized5bitIntegrationTests {
 
         let m: Model
         do {
-            m = try await Model.load(modelId)
+            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
         } catch {
             print("5-bit Qwen3 integration test skipped: \(error)")
             return

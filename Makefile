@@ -63,7 +63,7 @@ regenerate-kernels: ## run `tile build --emit all` to regenerate metallib + Swif
 #     bundle. Suite-level `.serialized` is what guarantees one-at-a-time.
 #
 #  2. `MetalTileLibrary.defaultMaxCommandBufferCount` (Sources/MetalTileSwift/
-#     MetalTileLibrary.swift) caps the shared command queue at 32 in-flight
+#     MetalTileLibrary.swift) caps the shared command queue at 16 in-flight
 #     command buffers via `makeCommandQueue(maxCommandBufferCount:)`. Belt-
 #     and-suspenders: even if anything bypasses suite-level serialization
 #     (production code, opt-in parallel tests, agent code, future test
@@ -71,6 +71,14 @@ regenerate-kernels: ## run `tile build --emit all` to regenerate metallib + Swif
 #     the queue saturates. Pre-mitigation observation: parallel unit tests
 #     piled hundreds of cmdbufs in flight, starved the WindowServer of GPU
 #     time, and (twice) crashed WindowServer → system freeze → hard reboot.
+#     Override at runtime via `FFAI_MAX_COMMAND_BUFFERS=N` env var.
+#
+#  3. `ModelLoadLock` (Tests/ModelTests/ModelLoadLock.swift) is a global
+#     async mutex around `Model.load(...)`. Necessary because `.serialized`
+#     is per-suite — multiple ModelTests suites can still race their
+#     model loads concurrently, spiking RAM + GPU memory + download IO.
+#     The lock makes Model.load() a global critical section so only one
+#     multi-GB checkpoint is loading at a time across the bundle.
 #
 # Why a `test-unit-parallel` opt-in still exists: to validate the
 # mitigations actually work (run the parallel version, confirm no freeze)

@@ -19,7 +19,7 @@ struct DeterminismSmokeTests {
     func forwardSampleIsDeterministic() async throws {
         let m: Model
         do {
-            m = try await Model.load("mlx-community/Qwen3-1.7B-bf16")
+            m = try await ModelLoadLock.shared.loadSerially { try await Model.load("mlx-community/Qwen3-1.7B-bf16") }
         } catch {
             print("determinism smoke skipped: \(error)")
             return
@@ -61,7 +61,7 @@ struct DeterminismSmokeTests {
     func multiTokenGenerateIsDeterministic() async throws {
         let m: Model
         do {
-            m = try await Model.load("mlx-community/Qwen3-1.7B-bf16")
+            m = try await ModelLoadLock.shared.loadSerially { try await Model.load("mlx-community/Qwen3-1.7B-bf16") }
         } catch {
             print("multi-token determinism smoke skipped: \(error)")
             return
@@ -92,7 +92,7 @@ struct DeterminismSmokeTests {
     func kvCacheIsDeterministic() async throws {
         let m: Model
         do {
-            m = try await Model.load("mlx-community/Qwen3-1.7B-bf16")
+            m = try await ModelLoadLock.shared.loadSerially { try await Model.load("mlx-community/Qwen3-1.7B-bf16") }
         } catch {
             print("KV-cache determinism smoke skipped: \(error)")
             return
