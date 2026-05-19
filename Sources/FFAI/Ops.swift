@@ -1686,4 +1686,53 @@ public enum Ops {
             fatalError("Ops.auraDequantRotated: unsupported (bits=\(bits), dtype=\(out.dtype))")
         }
     }
+
+    /// Apply a shared `[headDim, headDim]` rotation matrix to each
+    /// head's `[headDim]` slice of a flat `[nHeads * headDim]` tensor.
+    /// Used for AURA's Q post-RoPE rotation and the attention-output
+    /// un-rotation (see `AURAQuantizedKVCache` header).
+    ///
+    /// The rotation matrix is shared across heads within a layer; we
+    /// fan out one `Ops.gemv` dispatch per head with per-head buffer
+    /// views, so the cost is `nHeads` gemv launches per call. For Qwen3
+    /// 1.7B that's 16 dispatches per Q rotation × 2 calls per layer × 28
+    /// layers = 896 dispatches per token. Fine for correctness-first
+    /// Stage 1a; Stage 1b folds this work into the compressed-domain
+    /// `aura_flash_p1` / pass2 kernels which expect pre-rotated Q and
+    /// produce un-rotated output directly.
+    ///
+    /// Preconditions:
+    ///   * `x` is `[nHeads * headDim]`
+    ///   * `rotation` is `[headDim, headDim]`
+    ///   * `x.dtype == rotation.dtype` (gemv requires matched dtypes —
+    ///     the caller is expected to keep an activation-dtype copy of
+    ///     the rotation alongside the f32 copy required by `auraEncode`)
+    public static func auraRotatePerHead(
+        _ x: Tensor, rotation: Tensor,
+        nHeads: Int, headDim: Int,
+        on cmd: MTLCommandBuffer
+    ) -> Tensor {
+        precondition(x.elementCount == nHeads * headDim,
+                     "Ops.auraRotatePerHead: x has \(x.elementCount) elements, expected nHeads*headDim=\(nHeads * headDim)")
+        precondition(rotation.shape == [headDim, headDim],
+                     "Ops.auraRotatePerHead: rotation shape \(rotation.shape) must be [\(headDim), \(headDim)]")
+        precondition(rotation.dtype == x.dtype,
+                     "Ops.auraRotatePerHead: rotation dtype \(rotation.dtype) must match x dtype \(x.dtype) (gemv requires matched dtypes)")
+
+        let result = Tensor.empty(shape: [nHeads * headDim], dtype: x.dtype)
+        let bytesPerHead = headDim * x.dtype.byteSize
+
+        for h in 0..<nHeads {
+            let xView = Tensor(
+                buffer: x.buffer,
+                offset: x.offset + h * bytesPerHead,
+                shape: [headDim], dtype: x.dtype)
+            let outView = Tensor(
+                buffer: result.buffer,
+                offset: result.offset + h * bytesPerHead,
+                shape: [headDim], dtype: x.dtype)
+            _ = Ops.gemv(weight: rotation, input: xView, on: cmd, into: outView)
+        }
+        return result
+    }
 }

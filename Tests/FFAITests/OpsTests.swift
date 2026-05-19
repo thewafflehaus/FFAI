@@ -129,6 +129,85 @@ struct OpsTests {
         }
     }
 
+    @Test("auraRotatePerHead f32 — permutation matrix applied per head")
+    func auraRotatePerHeadPermutation() {
+        autoreleasepool {
+            // headDim = 4, nHeads = 3. Rotation is the cyclic permutation
+            // P[i, j] = 1 iff j == (i + 1) % 4, else 0; row-major.
+            // (P · v)[i] = v[(i+1) % 4]  — shifts each head's slice left
+            // by one, with wraparound. Use distinct values per head so a
+            // bug that crosses head boundaries surfaces immediately.
+            let headDim = 4
+            let nHeads = 3
+            var rot = [Float](repeating: 0, count: headDim * headDim)
+            for i in 0..<headDim {
+                rot[i * headDim + ((i + 1) % headDim)] = 1
+            }
+            let rotation = Tensor.empty(shape: [headDim, headDim], dtype: .f32)
+            rotation.copyIn(from: rot)
+
+            // Per-head input: [10,11,12,13, 20,21,22,23, 30,31,32,33].
+            var inVals = [Float]()
+            for h in 0..<nHeads {
+                for i in 0..<headDim {
+                    inVals.append(Float((h + 1) * 10 + i))
+                }
+            }
+            let x = Tensor.empty(shape: [nHeads * headDim], dtype: .f32)
+            x.copyIn(from: inVals)
+
+            var out: Tensor!
+            runAndWait { cb in
+                out = Ops.auraRotatePerHead(x, rotation: rotation,
+                                            nHeads: nHeads, headDim: headDim, on: cb)
+            }
+            let got = out.toArray(as: Float.self)
+
+            // Expected: each head's slice cyclically shifted left by one.
+            //   head 0: [10,11,12,13] → [11,12,13,10]
+            //   head 1: [20,21,22,23] → [21,22,23,20]
+            //   head 2: [30,31,32,33] → [31,32,33,30]
+            var expected = [Float]()
+            for h in 0..<nHeads {
+                for i in 0..<headDim {
+                    expected.append(Float((h + 1) * 10 + ((i + 1) % headDim)))
+                }
+            }
+            #expect(got == expected)
+        }
+    }
+
+    @Test("auraRotatePerHead f32 — identity rotation is a no-op")
+    func auraRotatePerHeadIdentity() {
+        autoreleasepool {
+            // Identity rotation must round-trip the input exactly; this
+            // pins the "no rotation" baseline path the AURA cache used
+            // pre-SRHT and matches what the AURARotation.identityMatrix
+            // helper emits.
+            let headDim = 8
+            let nHeads = 2
+            var rot = [Float](repeating: 0, count: headDim * headDim)
+            for i in 0..<headDim { rot[i * headDim + i] = 1 }
+            let rotation = Tensor.empty(shape: [headDim, headDim], dtype: .f32)
+            rotation.copyIn(from: rot)
+
+            let inVals: [Float] = (0..<(nHeads * headDim)).map { Float($0) * 0.5 - 1.25 }
+            let x = Tensor.empty(shape: [nHeads * headDim], dtype: .f32)
+            x.copyIn(from: inVals)
+
+            var out: Tensor!
+            runAndWait { cb in
+                out = Ops.auraRotatePerHead(x, rotation: rotation,
+                                            nHeads: nHeads, headDim: headDim, on: cb)
+            }
+            let got = out.toArray(as: Float.self)
+            for i in 0..<inVals.count {
+                #expect(abs(got[i] - inVals[i]) < 1e-5,
+                        "i=\(i) got \(got[i]) expected \(inVals[i])")
+            }
+        }
+    }
+
     @Test("rmsNorm f32 — y = x / rms(x) * weight")
     func rmsNormF32() {
         autoreleasepool {
