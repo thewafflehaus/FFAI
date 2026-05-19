@@ -656,8 +656,8 @@ public final class Gemma3Model: LanguageModel {
         let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
         let h0 = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
         var h = Ops.mul(h0, embedScale, on: workCmd)
-        tap.dumpLayerBoundary(h, label: "embed*scale", layer: -1,
-                              cmd: &workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(h, label: "embed*scale", layer: -1,
+                                        cmd: workCmd, device: device)
 
         // Per-layer forward. Tap fires at the OUTPUT of each layer.
         // The first layer's input is the embed dump above; every
@@ -667,15 +667,15 @@ public final class Gemma3Model: LanguageModel {
             h = layer.forward(h, position: position,
                               cache: caches[i] as! any KVCacheProtocol,
                               on: workCmd, device: device)
-            tap.dumpLayerBoundary(h, label: "layer_out", layer: i,
-                                  cmd: &workCmd, device: device)
+            workCmd = tap.dumpLayerBoundary(h, label: "layer_out", layer: i,
+                                            cmd: workCmd, device: device)
         }
         h = finalNorm(h, on: workCmd)
-        tap.dumpLayerBoundary(h, label: "final_norm", layer: -1,
-                              cmd: &workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(h, label: "final_norm", layer: -1,
+                                        cmd: workCmd, device: device)
         let logits = lmHead(h, on: workCmd)
-        tap.dumpLayerBoundary(logits, label: "logits", layer: -1,
-                              cmd: &workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(logits, label: "logits", layer: -1,
+                                        cmd: workCmd, device: device)
 
         // In tap-active mode the last tap committed + waited;
         // logits buffer holds valid data. The caller's cmd has no

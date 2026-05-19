@@ -437,7 +437,7 @@ public final class Qwen3Model: LanguageModel {
                         caches: [any LayerCacheProtocol],
                         on cmd: MTLCommandBuffer, device: Device) -> Tensor {
         // See Sources/FFAI/Inspect/InspectTap.swift — no-op when
-        // FFAI_INSPECT_TAP isn't set.
+        // FFAI_INSPECT isn't set.
         let tap = InspectTap.fromEnvironment
         var workCmd = tap.makeWorkCmd(from: cmd, device: device)
 
@@ -446,23 +446,23 @@ public final class Qwen3Model: LanguageModel {
         memcpy(tokenBuf.contents(), &tid, 4)
         let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
         var h = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
-        tap.dumpLayerBoundary(h, label: "embed", layer: -1,
-                              cmd: &workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(h, label: "embed", layer: -1,
+                                        cmd: workCmd, device: device)
 
         for (i, layer) in layers.enumerated() {
             h = layer.forward(h, position: position,
                               cache: caches[i] as! any KVCacheProtocol,
                               cmd: workCmd, device: device)
-            tap.dumpLayerBoundary(h, label: "layer_out", layer: i,
-                                  cmd: &workCmd, device: device)
+            workCmd = tap.dumpLayerBoundary(h, label: "layer_out", layer: i,
+                                            cmd: workCmd, device: device)
         }
 
         let normed = finalNorm(h, on: workCmd)
-        tap.dumpLayerBoundary(normed, label: "final_norm", layer: -1,
-                              cmd: &workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(normed, label: "final_norm", layer: -1,
+                                        cmd: workCmd, device: device)
         let logits = lmHead(normed, on: workCmd)
-        tap.dumpLayerBoundary(logits, label: "logits", layer: -1,
-                              cmd: &workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(logits, label: "logits", layer: -1,
+                                        cmd: workCmd, device: device)
 
         if tap.active {
             workCmd.commit()

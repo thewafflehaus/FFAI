@@ -64,7 +64,7 @@ struct InspectCommand: AsyncParsableCommand {
     var profiling: Int = 0
 
     @Flag(name: .long,
-          help: "Print per-layer intermediate-value stats (min/max/nan/inf + first 4 values) at every layer boundary during prefill. Slow — first-light debugging only. Sets FFAI_INSPECT_TAP=1.")
+          help: "Print per-layer intermediate-value stats (min/max/nan/inf + first 4 values) at every layer boundary during prefill. Slow — first-light debugging only. Sets FFAI_INSPECT=1.")
     var layerTrace: Bool = false
 
     @Option(name: .long,
@@ -79,13 +79,13 @@ struct InspectCommand: AsyncParsableCommand {
         Profile.shared.level = lvl
         Profile.shared.resetPhases()
 
-        // --layer-trace is a passthrough for FFAI_INSPECT_TAP — set
+        // --layer-trace is a passthrough for FFAI_INSPECT — set
         // the env var so every model.forward() the inspect command
         // triggers picks it up from `InspectTap.fromEnvironment`.
         if layerTrace {
-            setenv("FFAI_INSPECT_TAP", "1", 1)
+            setenv("FFAI_INSPECT", "1", 1)
             if let layers = traceLayers {
-                setenv("FFAI_INSPECT_TAP_LAYERS", layers, 1)
+                setenv("FFAI_INSPECT_LAYERS", layers, 1)
             }
         }
 

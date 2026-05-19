@@ -5,8 +5,8 @@
 // `GEMMA3_DEBUG_TAPS=1` pattern that found the Gemma 3 GELU NaN)
 // with a single uniform surface:
 //
-//   FFAI_INSPECT_TAP=1                 — turn on dumps
-//   FFAI_INSPECT_TAP_LAYERS=0,1,5      — optional layer filter
+//   FFAI_INSPECT=1                 — turn on dumps
+//   FFAI_INSPECT_LAYERS=0,1,5      — optional layer filter
 //
 // Every new model implementation calls `tap.dumpLayerBoundary(...)`
 // at the layer-input + layer-output boundaries inside
@@ -26,8 +26,25 @@ import Foundation
 import Metal
 
 /// Toggle + filter for layer-boundary intermediate dumps. Value
-/// type — every `forward(...)` captures it from the environment
-/// once and threads it through the layer loop.
+/// type — every `forward(...)` captures it from the cached env
+/// snapshot once and threads it through the layer loop.
+///
+/// ## Performance contract
+///
+/// Production paths (`FFAI_INSPECT` unset, the default) pay
+/// **zero** overhead per layer beyond a single bool compare:
+///
+///   1. `fromEnvironment` returns a process-wide cached snapshot;
+///      reading the env happens exactly once per process, on first
+///      access. Subsequent `forward()` calls are a static-load.
+///   2. `dumpLayerBoundary` is annotated `@inline(__always)` and
+///      forwards to a slow-path function only when `active` is
+///      true; in the inactive case the optimizer collapses the call
+///      to `if false { ... }` and removes it entirely. The `inout
+///      cmd` parameter is observed but never written on the inactive
+///      branch, so Swift's exclusivity tracking doesn't add cost.
+///   3. `makeWorkCmd` returns the caller's `cmd` unchanged in
+///      inactive mode (single branch + identity passthrough).
 public struct InspectTap: Sendable {
     public let active: Bool
     public let layerFilter: Set<Int>?
@@ -37,20 +54,31 @@ public struct InspectTap: Sendable {
         self.layerFilter = layerFilter
     }
 
-    /// Construct from `FFAI_INSPECT_TAP` + `FFAI_INSPECT_TAP_LAYERS`.
-    /// Returns an inactive tap when the env var is unset — every
-    /// `dumpLayerBoundary` call becomes a zero-cost no-op.
-    public static var fromEnvironment: InspectTap {
+    /// Read `FFAI_INSPECT` + `FFAI_INSPECT_LAYERS` from the
+    /// environment **once** at first call, then cache the result
+    /// for the lifetime of the process. Avoids paying the
+    /// `ProcessInfo.processInfo.environment` dict-allocation cost
+    /// on every `forward()` invocation.
+    ///
+    /// Setting these env vars after the cache is filled has no
+    /// effect — production callers shouldn't be toggling debug
+    /// state mid-process. Use the CLI's `--layer-trace` flag,
+    /// which calls `setenv(...)` *before* the model loads.
+    private static let cachedFromEnvironment: InspectTap = {
         let env = ProcessInfo.processInfo.environment
-        let active = env["FFAI_INSPECT_TAP"] == "1"
-        let filter: Set<Int>? = env["FFAI_INSPECT_TAP_LAYERS"]
+        let active = env["FFAI_INSPECT"] == "1"
+        let filter: Set<Int>? = env["FFAI_INSPECT_LAYERS"]
             .map { Set($0.split(separator: ",").compactMap { Int($0) }) }
         return InspectTap(active: active, layerFilter: filter)
-    }
+    }()
+
+    /// Process-wide cached tap state. See `cachedFromEnvironment`
+    /// for the lifetime contract.
+    public static var fromEnvironment: InspectTap { cachedFromEnvironment }
 
     /// True when the caller should pay the tap overhead for this
-    /// layer. Inlined into the hot path so non-active taps are a
-    /// single compare.
+    /// layer. Inlined into the hot path so non-active taps fold
+    /// into a single load + compare.
     @inline(__always)
     public func shouldDump(layer: Int) -> Bool {
         guard active else { return false }
@@ -59,19 +87,42 @@ public struct InspectTap: Sendable {
     }
 
     /// Synchronously read a tensor's contents to fp32 and print
-    /// shape + min/max/nan/inf/first-4. Commits the caller's
-    /// cmdbuf, waits, and *replaces* `cmd` with a freshly-allocated
-    /// cmdbuf so the caller continues queueing on a clean one.
+    /// shape + min/max/nan/inf/first-4. Commits the supplied
+    /// cmdbuf, waits, and returns a fresh cmdbuf the caller should
+    /// continue queueing on. When the tap is inactive, returns the
+    /// supplied `cmd` unchanged — `workCmd = tap.dumpLayerBoundary(...)`
+    /// collapses to `workCmd = workCmd`, which the compiler
+    /// optimizes away entirely.
+    ///
+    /// **Hot-path-cheap.** Annotated `@inline(__always)`; when the
+    /// tap is inactive, the call folds to a no-op identity return.
+    /// The cmdbuf is passed by value (MTLCommandBuffer is a class —
+    /// "by value" means by-reference under the hood), so there's no
+    /// `inout` exclusivity slot allocated on the caller's stack
+    /// frame.
     ///
     /// `layer` is the layer index for the printout (use `-1` for
     /// outside-layer dumps like the embed or final-norm tap).
     /// `label` describes what the tensor is — keep short for
     /// readability (`"h_in"`, `"layer_out"`, `"logits"`).
+    @inline(__always)
     public func dumpLayerBoundary(
         _ t: Tensor, label: String, layer: Int,
-        cmd: inout MTLCommandBuffer, device: Device
-    ) {
-        guard shouldDump(layer: layer) else { return }
+        cmd: MTLCommandBuffer, device: Device
+    ) -> MTLCommandBuffer {
+        if !shouldDump(layer: layer) { return cmd }
+        return dumpSlow(t, label: label, layer: layer, cmd: cmd, device: device)
+    }
+
+    /// Slow path — only called when a dump is actually requested.
+    /// `@inline(never)` to keep the inactive caller's instruction
+    /// footprint tiny: formatting + buffer-readback code lives in
+    /// this function alone and only runs during a debug session.
+    @inline(never)
+    private func dumpSlow(
+        _ t: Tensor, label: String, layer: Int,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> MTLCommandBuffer {
         cmd.commit()
         cmd.waitUntilCompleted()
 
@@ -91,8 +142,7 @@ public struct InspectTap: Sendable {
             for i in 0..<n { floats.append(bf16BitsToFloatForTest(p[i])) }
         default:
             print("[L\(layer) \(label)] (unsupported dtype \(t.dtype))")
-            cmd = device.makeCommandBuffer()
-            return
+            return device.makeCommandBuffer()
         }
 
         var nanCount = 0, infCount = 0
@@ -113,7 +163,7 @@ public struct InspectTap: Sendable {
         let prefix = layer < 0 ? "[\(label)]" : "[L\(layer) \(label)]"
         print("\(prefix) n=\(n) min=\(mnStr) max=\(mxStr) nan=\(nanCount) inf=\(infCount) first=[\(head)]")
 
-        cmd = device.makeCommandBuffer()
+        return device.makeCommandBuffer()
     }
 }
 
@@ -126,7 +176,8 @@ public extension InspectTap {
     /// no-op when taps are active.
     ///
     /// When the tap is inactive (production path), returns the
-    /// caller's cmd unchanged — zero overhead.
+    /// caller's cmd unchanged — single-branch identity passthrough.
+    @inline(__always)
     func makeWorkCmd(from callerCmd: MTLCommandBuffer, device: Device) -> MTLCommandBuffer {
         active ? device.makeCommandBuffer() : callerCmd
     }

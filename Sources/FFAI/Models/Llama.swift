@@ -417,7 +417,7 @@ public final class LlamaModel: LanguageModel {
     public func forward(tokenId: Int, position: Int,
                         caches: [any LayerCacheProtocol],
                         on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        // `InspectTap` is a no-op when FFAI_INSPECT_TAP isn't set
+        // `InspectTap` is a no-op when FFAI_INSPECT isn't set
         // (single bool compare per boundary). When enabled, it
         // runs everything on a private cmdbuf and prints per-layer
         // stats — see `Sources/FFAI/Inspect/InspectTap.swift`.
@@ -430,26 +430,28 @@ public final class LlamaModel: LanguageModel {
         memcpy(tokenBuf.contents(), &tid, 4)
         let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
         var h = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
-        tap.dumpLayerBoundary(h, label: "embed", layer: -1,
-                              cmd: &workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(h, label: "embed", layer: -1,
+                                        cmd: workCmd, device: device)
 
         // Layers — all queued on the same command buffer, no syncs.
-        // Tap fires at each layer's residual output.
+        // Tap fires at each layer's residual output. In production
+        // mode `dumpLayerBoundary` returns its `cmd` parameter
+        // unchanged (the optimizer folds the whole call to a no-op).
         for (i, layer) in layers.enumerated() {
             h = layer.forward(h, position: position,
                               cache: caches[i] as! any KVCacheProtocol,
                               cmd: workCmd, device: device)
-            tap.dumpLayerBoundary(h, label: "layer_out", layer: i,
-                                  cmd: &workCmd, device: device)
+            workCmd = tap.dumpLayerBoundary(h, label: "layer_out", layer: i,
+                                            cmd: workCmd, device: device)
         }
 
         // Final norm + lm head
         let normed = finalNorm(h, on: workCmd)
-        tap.dumpLayerBoundary(normed, label: "final_norm", layer: -1,
-                              cmd: &workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(normed, label: "final_norm", layer: -1,
+                                        cmd: workCmd, device: device)
         let logits = lmHead(normed, on: workCmd)
-        tap.dumpLayerBoundary(logits, label: "logits", layer: -1,
-                              cmd: &workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(logits, label: "logits", layer: -1,
+                                        cmd: workCmd, device: device)
 
         // Flush the private cmdbuf when taps are active. Caller's
         // cmd has no work in that case (fast no-op commit).

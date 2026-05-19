@@ -242,22 +242,27 @@ reference — `Sources/FFAI/Models/Llama.swift`):
 public func forward(tokenId: Int, position: Int,
                     caches: [any LayerCacheProtocol],
                     on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-    // 1. Pick up the env-driven tap state. No-op when
-    //    FFAI_INSPECT_TAP isn't set — single bool compare per
-    //    boundary, no overhead on the production hot path.
+    // 1. Pick up the env-driven tap state. Cached at the first
+    //    call site so subsequent forwards pay a static-load cost
+    //    only — no per-token env-dict allocation. No-op when
+    //    FFAI_INSPECT isn't set.
     let tap = InspectTap.fromEnvironment
 
     // 2. When taps are active, route work onto a *private* cmdbuf
     //    so per-op commit+wait sync points don't double-commit
     //    the caller's cmd. `makeWorkCmd` returns the caller's
-    //    cmd unchanged in production mode.
+    //    cmd unchanged in production mode (single branch, no
+    //    allocation).
     var workCmd = tap.makeWorkCmd(from: cmd, device: device)
 
     // 3. Embed lookup — tap fires at the residual stream that
-    //    feeds layer 0.
+    //    feeds layer 0. `dumpLayerBoundary` returns the cmdbuf
+    //    the caller should continue queueing on; production
+    //    mode collapses to `workCmd = workCmd` and the optimizer
+    //    folds the call out.
     var h = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
-    tap.dumpLayerBoundary(h, label: "embed", layer: -1,
-                          cmd: &workCmd, device: device)
+    workCmd = tap.dumpLayerBoundary(h, label: "embed", layer: -1,
+                                    cmd: workCmd, device: device)
 
     // 4. Per-layer forward — tap at the OUTPUT of each layer.
     //    The first layer's input is the embed dump above; every
@@ -267,17 +272,17 @@ public func forward(tokenId: Int, position: Int,
         h = layer.forward(h, position: position,
                           cache: caches[i] as! any KVCacheProtocol,
                           cmd: workCmd, device: device)
-        tap.dumpLayerBoundary(h, label: "layer_out", layer: i,
-                              cmd: &workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(h, label: "layer_out", layer: i,
+                                        cmd: workCmd, device: device)
     }
 
     // 5. Final norm + lm head — tap both.
     let normed = finalNorm(h, on: workCmd)
-    tap.dumpLayerBoundary(normed, label: "final_norm", layer: -1,
-                          cmd: &workCmd, device: device)
+    workCmd = tap.dumpLayerBoundary(normed, label: "final_norm", layer: -1,
+                                    cmd: workCmd, device: device)
     let logits = lmHead(normed, on: workCmd)
-    tap.dumpLayerBoundary(logits, label: "logits", layer: -1,
-                          cmd: &workCmd, device: device)
+    workCmd = tap.dumpLayerBoundary(logits, label: "logits", layer: -1,
+                                    cmd: workCmd, device: device)
 
     // 6. When taps are active, flush the private cmdbuf — the
     //    caller's cmd has no work queued so their commit() is a
