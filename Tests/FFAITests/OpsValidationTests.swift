@@ -61,30 +61,49 @@ struct OpsValidationTests {
 
     @Test("sdpaDecode accepts production shapes")
     func sdpaDecodeAcceptsLegal() {
-        // Llama 3.1 (32 q-heads, 8 kv-heads = 4x GQA).
+        // Llama 3.1 (32 q-heads, 8 kv-heads = 4x GQA, head_dim=128).
         #expect(OpsValidation.validateSdpaDecode(
             headDim: 128, nQHeads: 32, nKVHeads: 8,
             nKV: 100, kvStride: 4096) == nil)
-        // Qwen3 0.6B (16 q-heads, 8 kv-heads = 2x GQA).
+        // Qwen3 0.6B (16 q-heads, 8 kv-heads = 2x GQA, head_dim=128).
         #expect(OpsValidation.validateSdpaDecode(
             headDim: 128, nQHeads: 16, nKVHeads: 8,
             nKV: 0, kvStride: 1) == nil)
-        // No GQA (one kv-head per q-head).
+        // No GQA, head_dim=128.
         #expect(OpsValidation.validateSdpaDecode(
             headDim: 128, nQHeads: 8, nKVHeads: 8,
             nKV: 1024, kvStride: 4096) == nil)
+        // Llama 3.2 1B: head_dim=64, 32 q-heads, 8 kv-heads.
+        #expect(OpsValidation.validateSdpaDecode(
+            headDim: 64, nQHeads: 32, nKVHeads: 8,
+            nKV: 256, kvStride: 4096) == nil)
+        // GPT-OSS-20B sliding-window layers: head_dim=64, 64 q-heads,
+        // 8 kv-heads.
+        #expect(OpsValidation.validateSdpaDecode(
+            headDim: 64, nQHeads: 64, nKVHeads: 8,
+            nKV: 1, kvStride: 128) == nil)
     }
 
-    @Test("sdpaDecode rejects head_dim != 128")
+    @Test("sdpaDecode rejects head_dim outside {64, 128}")
     func sdpaDecodeRejectsBadHeadDim() {
-        // The 2026-05-19 GPU freeze trigger: head_dim=4 with the
-        // elementwise sizing helper → 4 threads → n_simd=0 → infinite loop.
-        for badHeadDim in [4, 32, 64, 96, 127, 129, 256] {
+        // 2026-05-19 GPU freeze trigger: head_dim=4 with the elementwise
+        // sizing helper → 4 threads → n_simd=0 → infinite loop. Also
+        // covers head_dim=256 (queued specialization, not yet emitted)
+        // and any non-{64, 128} value.
+        for badHeadDim in [4, 32, 96, 127, 129, 256, 512] {
             #expect(OpsValidation.validateSdpaDecode(
                 headDim: badHeadDim, nQHeads: 8, nKVHeads: 8,
                 nKV: 1, kvStride: 4) != nil,
                 "head_dim=\(badHeadDim) should be rejected")
         }
+    }
+
+    @Test("supportedSdpaHeadDims is what wrappers route to")
+    func supportedHeadDimsMatchKernels() {
+        // Pin the set so adding a new head_dim variant in metaltile
+        // requires updating both this set and the dispatch switch in
+        // Ops.sdpaDecode in the same commit.
+        #expect(OpsValidation.supportedSdpaHeadDims == [64, 128])
     }
 
     @Test("sdpaDecode rejects non-integer GQA fan-out")
@@ -280,9 +299,11 @@ struct OpsValidationTests {
         #expect(rmsMsg?.contains("100") == true)
         #expect(rmsMsg?.contains("128") == true)
 
+        // head_dim=256 is unsupported (Gemma variant queued). The message
+        // mentions the offending value + the supported set.
         let sdpaMsg = OpsValidation.validateSdpaDecode(
-            headDim: 64, nQHeads: 1, nKVHeads: 1, nKV: 0, kvStride: 1)
-        #expect(sdpaMsg?.contains("64") == true)
+            headDim: 256, nQHeads: 1, nKVHeads: 1, nKV: 0, kvStride: 1)
+        #expect(sdpaMsg?.contains("256") == true)
         #expect(sdpaMsg?.contains("128") == true)
 
         let auraMsg = OpsValidation.validateAuraEncode(rows: 1, dim: 33, bits: 4)

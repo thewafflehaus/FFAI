@@ -57,22 +57,32 @@ public enum OpsValidation {
     // ─── sdpaDecode ────────────────────────────────────────────────
     //
     // Kernel invariants (from `crates/metaltile-std/src/ffai/sdpa_decode.rs`
-    // §"DISPATCH INVARIANTS"):
-    //   1. `head_dim == 128`. Each lane owns 4 consecutive Q/K/V
-    //      elements; loads are unconditional. The 2026-05-19 GPU
-    //      freeze hit this — wrong head_dim → wrong TPG → infinite
-    //      loop in `for _t in range(sg, n_kv, ns=TPG/32)` when
-    //      `TPG < 32` makes `ns = 0`.
+    // + `sdpa_decode_d64.rs` §"DISPATCH INVARIANTS"):
+    //   1. `head_dim ∈ {64, 128}`. Each lane owns `head_dim / 32`
+    //      consecutive Q/K/V elements; loads are unconditional. Wrong
+    //      head_dim → wrong TPG → infinite loop in
+    //      `for _t in range(sg, n_kv, ns=TPG/32)` when `TPG < 32`
+    //      makes `ns = 0`. (See FFAI post-mortem 2026-05-19.)
+    //      head_dim=256 is queued; head_dim=128 covers Llama 3.2 3B+ /
+    //      Qwen3 / GPT-OSS full layers, head_dim=64 covers Llama 3.2 1B
+    //      and GPT-OSS sliding-window layers.
     //   2. `nQHeads % nKVHeads == 0` so GQA fan-out is integer.
     //   3. `n_kv ≤ kv_stride`. The kernel walks `[0, n_kv)` only;
     //      `kv_stride` is the pre-allocated maxSeq capacity.
+
+    /// head_dim values for which a kernel specialization currently
+    /// exists. Caller is responsible for routing to the matching
+    /// kernel; see `Ops.sdpaDecode`.
+    public static let supportedSdpaHeadDims: Set<Int> = [64, 128]
 
     public static func validateSdpaDecode(
         headDim: Int, nQHeads: Int, nKVHeads: Int,
         nKV: Int, kvStride: Int
     ) -> String? {
-        if headDim != 128 {
-            return "head_dim must be 128 (got \(headDim)); other specializations (64, 256) not yet emitted"
+        if !supportedSdpaHeadDims.contains(headDim) {
+            let supported = supportedSdpaHeadDims.sorted()
+                .map(String.init).joined(separator: ", ")
+            return "head_dim must be one of {\(supported)} (got \(headDim)); other specializations (e.g. 256) not yet emitted"
         }
         if nQHeads <= 0 {
             return "nQHeads must be positive (got \(nQHeads))"

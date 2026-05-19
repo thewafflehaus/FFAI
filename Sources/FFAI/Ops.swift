@@ -1284,12 +1284,14 @@ public enum Ops {
     /// capacity (maxSeq) and nKV is how many positions to attend to.
     /// Output: [n_q_heads, head_dim].
     ///
-    /// Dispatch invariants (see `crates/metaltile-std/src/ffai/sdpa_decode.rs`):
-    ///   * `head_dim == 128` — one threadgroup is 32 simdgroups × 32 lanes;
-    ///     each lane owns 4 consecutive Q/K/V elements (128 / 32 = 4).
-    ///     Other head-dim specializations (64, 256) are queued but not
-    ///     emitted yet — using a non-128 head_dim with this kernel
-    ///     reads OOB and pins the GPU.
+    /// Dispatch invariants (see `crates/metaltile-std/src/ffai/sdpa_decode.rs`
+    /// + `sdpa_decode_d64.rs`):
+    ///   * `head_dim ∈ {64, 128}` — one threadgroup is 32 simdgroups ×
+    ///     32 lanes; each lane owns `head_dim / 32` consecutive Q/K/V
+    ///     elements. 128 covers full attention heads on Llama 3.2 3B+ /
+    ///     Qwen3 / GPT-OSS full layers; 64 covers Llama 3.2 1B and
+    ///     GPT-OSS sliding-window layers. head_dim=256 (some Gemma
+    ///     configs) is queued but not yet emitted.
     ///   * 1 threadgroup per Q head, 1024 threads per threadgroup
     ///     (32 simdgroups × 32 lanes). `tgid_x = q_head`.
     public static func sdpaDecode(q: Tensor, k: Tensor, v: Tensor,
@@ -1315,45 +1317,83 @@ public enum Ops {
         let grid = MTLSize(width: nQHeads * threadsPerGroup, height: 1, depth: 1)
         let tg = MTLSize(width: threadsPerGroup, height: 1, depth: 1)
         let headsPerGroup = nQHeads / nKVHeads
-        switch q.dtype {
-        case .f32:
+
+        // Route to the head_dim-specialized kernel. Each variant has its
+        // own per-lane width baked into the kernel (head_dim=128 → 4
+        // elt/lane, head_dim=64 → 2 elt/lane). A generic kernel would
+        // either lose register efficiency or trip up the codegen's
+        // vectorize pass; per-head-dim variants keep both kernels fast.
+        switch (headDim, q.dtype) {
+        case (128, .f32):
             MetalTileKernels.ffai_sdpa_decode_f32(
                 q: q.buffer, qOffset: q.offset,
                 k: k.buffer, kOffset: k.offset,
                 v: v.buffer, vOffset: v.offset,
                 out: result.buffer, outOffset: result.offset,
-                head_dim: UInt32(headDim),
-                n_kv: UInt32(nKV),
+                head_dim: UInt32(headDim), n_kv: UInt32(nKV),
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .f16:
+        case (128, .f16):
             MetalTileKernels.ffai_sdpa_decode_f16(
                 q: q.buffer, qOffset: q.offset,
                 k: k.buffer, kOffset: k.offset,
                 v: v.buffer, vOffset: v.offset,
                 out: result.buffer, outOffset: result.offset,
-                head_dim: UInt32(headDim),
-                n_kv: UInt32(nKV),
+                head_dim: UInt32(headDim), n_kv: UInt32(nKV),
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .bf16:
+        case (128, .bf16):
             MetalTileKernels.ffai_sdpa_decode_bf16(
                 q: q.buffer, qOffset: q.offset,
                 k: k.buffer, kOffset: k.offset,
                 v: v.buffer, vOffset: v.offset,
                 out: result.buffer, outOffset: result.offset,
-                head_dim: UInt32(headDim),
-                n_kv: UInt32(nKV),
+                head_dim: UInt32(headDim), n_kv: UInt32(nKV),
+                kv_stride: UInt32(kvStride),
+                heads_per_group: UInt32(headsPerGroup),
+                scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (64, .f32):
+            MetalTileKernels.ffai_sdpa_decode_d64_f32(
+                q: q.buffer, qOffset: q.offset,
+                k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                out: result.buffer, outOffset: result.offset,
+                head_dim: UInt32(headDim), n_kv: UInt32(nKV),
+                kv_stride: UInt32(kvStride),
+                heads_per_group: UInt32(headsPerGroup),
+                scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (64, .f16):
+            MetalTileKernels.ffai_sdpa_decode_d64_f16(
+                q: q.buffer, qOffset: q.offset,
+                k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                out: result.buffer, outOffset: result.offset,
+                head_dim: UInt32(headDim), n_kv: UInt32(nKV),
+                kv_stride: UInt32(kvStride),
+                heads_per_group: UInt32(headsPerGroup),
+                scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (64, .bf16):
+            MetalTileKernels.ffai_sdpa_decode_d64_bf16(
+                q: q.buffer, qOffset: q.offset,
+                k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                out: result.buffer, outOffset: result.offset,
+                head_dim: UInt32(headDim), n_kv: UInt32(nKV),
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         default:
-            fatalError("Ops.sdpaDecode: unsupported dtype \(q.dtype)")
+            // OpsValidation rejected anything we don't have a kernel for;
+            // an unsupported dtype lands here.
+            fatalError("Ops.sdpaDecode: unsupported (head_dim=\(headDim), dtype=\(q.dtype))")
         }
         return result
     }
