@@ -110,7 +110,7 @@ struct OpsTests {
         }
     }
 
-    @Test("rope f32 at position 0 is identity (cos=1, sin=0)", .disabled("bisect"))
+    @Test("rope f32 at position 0 is identity (cos=1, sin=0)")
     func ropePos0Identity() {
         autoreleasepool {
             let qk = Tensor.empty(shape: [1, 4], dtype: .f32)
@@ -127,7 +127,7 @@ struct OpsTests {
         }
     }
 
-    @Test("rope f32 at position 1, head_dim=4, theta_base=10000", .disabled("bisect"))
+    @Test("rope f32 at position 1, head_dim=4, theta_base=10000")
     func ropePos1() {
         autoreleasepool {
             let qk = Tensor.empty(shape: [1, 4], dtype: .f32)
@@ -150,7 +150,7 @@ struct OpsTests {
         }
     }
 
-    @Test("sdpaDecode f32 — single position attends to itself", .disabled("bisect"))
+    @Test("sdpaDecode f32 — single position attends to itself")
     func sdpaSinglePosition() {
         autoreleasepool {
             // 1 q-head, 1 kv-head, head_dim=4, n_kv=1
