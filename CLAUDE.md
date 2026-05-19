@@ -117,6 +117,72 @@ Custom kernels (turbo / gated-delta / SSM / etc.) live on the **`alpha`** branch
 3. New AURA / GDN / SSM / sinks / sliding-window / vision / audio kernels start under `crates/metaltile-std/src/ffai/`. They graduate to `mlx/` once an MLX counterpart exists at the pinned `MLX_COMMIT`.
 4. Ensure metaltile's `MLX_COMMIT` is `ekryski/mlx@alpha` so `tile bench`'s side-by-side runner has a reference for our custom kernels. After each port, compare the metaltile-generated MSL against the corresponding kernel on the `alpha` branch.
 
+### Wrapping kernels in FFAI — dispatch invariants are MANDATORY
+
+> **Read [`papers/post-mortem-2026-05-19-dispatch-shape-gpu-freeze.md`](papers/post-mortem-2026-05-19-dispatch-shape-gpu-freeze.md) before writing your first `Ops` wrapper.** A wrong-dispatch wrapper froze the development machine for a full day; the prevention strategy is this section.
+
+Every Swift `Ops` wrapper that calls a metaltile kernel sits at the boundary between caller-supplied dimensions and the GPU. **Reduction-mode kernels** (anything that uses `simd_sum` / `simd_max` / `threadgroup_alloc` / `KernelMode::Reduction` in its `.rs` source, or has a fixed `tpg=` in its `BenchSpec`) have strict threadgroup-geometry contracts that the kernel cannot enforce at runtime. **The wrapper is the only thing standing between a bad caller and a system freeze.**
+
+#### The rule
+
+For every wrapper around a reduction-mode kernel:
+
+1. **Read the kernel's `## DISPATCH INVARIANTS` block** in its `.rs` source. Every reduction kernel must carry one (e.g. [`mlx/rms_norm.rs`](https://github.com/0xClandestine/metaltile/blob/dev/crates/metaltile-std/src/mlx/rms_norm.rs), [`ffai/sdpa_decode.rs`](https://github.com/0xClandestine/metaltile/blob/dev/crates/metaltile-std/src/ffai/sdpa_decode.rs), [`ffai/aura_encode.rs`](https://github.com/0xClandestine/metaltile/blob/dev/crates/metaltile-std/src/ffai/aura_encode.rs)). If the kernel you're wrapping doesn't have one, **add one in the same commit as the wrapper** — landing the wrapper without the kernel-side source of truth means the next reader has nothing to verify against.
+2. **Encode every invariant as a `precondition`** at the top of the wrapper, before any allocation or dispatch work. Reference the kernel source file in the message so a reader can verify alignment.
+3. **Compute the dispatch geometry from the invariants, not from `elementwiseGrid`.** `elementwiseGrid` is reserved for kernels whose dispatch is genuinely "one thread per output element" (Grid3D mode, no simdgroup arithmetic). Using it for a reduction kernel is the canonical class of bug.
+
+#### Two shapes the pattern takes
+
+**Fixed-TPG reduction (the `sdpaDecode` shape).** The kernel hard-codes a TPG (1024 for sdpa_decode; 256 for argmax / softmax_categorical_sample) baked into its `threadgroup_alloc` sizes and tree-reduction stage counts:
+
+```swift
+public static func sdpaDecode(q: Tensor, k: Tensor, v: Tensor,
+                              nQHeads: Int, nKVHeads: Int, headDim: Int,
+                              /* … */) -> Tensor {
+    // ── KERNEL INVARIANTS (from ffai/sdpa_decode.rs §"DISPATCH INVARIANTS") ──
+    precondition(headDim == 128,
+                 "Ops.sdpaDecode: head_dim must be 128 (got \(headDim))")
+    precondition(nQHeads % nKVHeads == 0,
+                 "Ops.sdpaDecode: nQHeads (\(nQHeads)) must be a multiple of nKVHeads (\(nKVHeads))")
+
+    // Dispatch derived from the invariants:
+    let threadsPerGroup = 1024              // 32 simdgroups × 32 lanes
+    let grid = MTLSize(width: nQHeads * threadsPerGroup, height: 1, depth: 1)
+    let tg = MTLSize(width: threadsPerGroup, height: 1, depth: 1)
+    // … dispatch …
+}
+```
+
+**Caller-scaled TPG (the `rmsNorm` shape).** The kernel's TPG scales with an input dimension via a fixed relation (`N = TPG * 4` for rms_norm). The wrapper asserts the relation and derives TPG from it:
+
+```swift
+public static func rmsNorm(_ x: Tensor, /* … */) -> Tensor {
+    let n = x.elementCount
+    // ── KERNEL INVARIANTS (from mlx/rms_norm.rs §"DISPATCH INVARIANTS") ──
+    // 1. N = TPG * 4 (each thread owns 4 elements)  →  TPG = n / 4
+    // 2. TPG multiple of 32 (cross-simdgroup reduce) → n multiple of 128
+    // 3. TPG ≤ 1024 (Apple TPG cap)                 → n ≤ 4096
+    precondition(n % 128 == 0,
+                 "rmsNorm: n=\(n) must be a multiple of 128 (32-lane simdgroup × 4 elements/thread)")
+    precondition(n / 4 <= 1024,
+                 "rmsNorm: n=\(n) > 4096 — exceeds the kernel's 1024-thread cap; use rmsNormRows")
+    let tgWidth = n / 4
+    let grid = MTLSize(width: tgWidth, height: 1, depth: 1)
+    let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+    // … dispatch …
+}
+```
+
+#### Wrapper review checklist (before requesting review)
+
+1. Is the underlying kernel reduction-mode? (`grep` its `.rs` for `simd_*` / `threadgroup_alloc` / `KernelMode::Reduction`.)
+2. If yes, does the kernel `.rs` have a `## DISPATCH INVARIANTS` block? If not, write one in this same commit.
+3. Does the wrapper precondition each invariant from that block, before any allocation or dispatch?
+4. Is the dispatch geometry derived from invariants (or constants), never from `elementwiseGrid`?
+5. Is there a unit test in `Tests/FFAITests/OpsTests.swift` that exercises the wrapper with a production-realistic shape (matching what real models use)?
+
+> **Why this matters and not just "good practice":** Metal kernel dispatches are non-preemptive. An infinite loop inside a Metal kernel — which is what happens when a reduction-mode kernel is given a degenerate TPG that produces `n_simd = TPG / 32 = 0` — does not get scheduled out by macOS. The WindowServer compositor starves, and the screen locks at the last rendered frame. Hard power-cycle is the only recovery. The wrapper preconditions are the only thing between a typo and that outcome. Treat them with the gravity that implies.
+
 ### Testing kernels
 
 Three layers, no overlap:
