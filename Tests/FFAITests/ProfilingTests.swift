@@ -5,7 +5,15 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Profiling")
+// .serialized — every test in this suite mutates `Profile.shared`
+// (sets `.level`, calls `resetPhases()`). Parallel within-suite tests
+// race on that shared state: one test's `resetPhases()` wipes another
+// test's recorded phases mid-assertion.
+//
+// The right long-term fix is to make Profile non-singleton (inject
+// a local instance per test). Until that lands, .serialized is the
+// cheap correct option.
+@Suite("Profiling", .serialized)
 struct ProfilingTests {
 
     @Test("ProfileLevel rawValue + ordering")
