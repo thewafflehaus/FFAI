@@ -84,13 +84,12 @@ struct OpsValidationTests {
             nKV: 1, kvStride: 128) == nil)
     }
 
-    @Test("sdpaDecode rejects head_dim outside {64, 128}")
+    @Test("sdpaDecode rejects head_dim outside {64, 128, 256}")
     func sdpaDecodeRejectsBadHeadDim() {
         // 2026-05-19 GPU freeze trigger: head_dim=4 with the elementwise
-        // sizing helper → 4 threads → n_simd=0 → infinite loop. Also
-        // covers head_dim=256 (queued specialization, not yet emitted)
-        // and any non-{64, 128} value.
-        for badHeadDim in [4, 32, 96, 127, 129, 256, 512] {
+        // sizing helper → 4 threads → n_simd=0 → infinite loop. The set
+        // also covers values we've never specialized.
+        for badHeadDim in [4, 32, 96, 127, 129, 192, 512] {
             #expect(OpsValidation.validateSdpaDecode(
                 headDim: badHeadDim, nQHeads: 8, nKVHeads: 8,
                 nKV: 1, kvStride: 4) != nil,
@@ -102,8 +101,9 @@ struct OpsValidationTests {
     func supportedHeadDimsMatchKernels() {
         // Pin the set so adding a new head_dim variant in metaltile
         // requires updating both this set and the dispatch switch in
-        // Ops.sdpaDecode in the same commit.
-        #expect(OpsValidation.supportedSdpaHeadDims == [64, 128])
+        // Ops.sdpaDecode in the same commit. Gemma 3 + Gemma 4 added
+        // head_dim=256 in the Phase 6 wave.
+        #expect(OpsValidation.supportedSdpaHeadDims == [64, 128, 256])
     }
 
     @Test("sdpaDecode rejects non-integer GQA fan-out")
@@ -299,11 +299,11 @@ struct OpsValidationTests {
         #expect(rmsMsg?.contains("100") == true)
         #expect(rmsMsg?.contains("128") == true)
 
-        // head_dim=256 is unsupported (Gemma variant queued). The message
+        // head_dim=192 is unsupported (no specialization). The message
         // mentions the offending value + the supported set.
         let sdpaMsg = OpsValidation.validateSdpaDecode(
-            headDim: 256, nQHeads: 1, nKVHeads: 1, nKV: 0, kvStride: 1)
-        #expect(sdpaMsg?.contains("256") == true)
+            headDim: 192, nQHeads: 1, nKVHeads: 1, nKV: 0, kvStride: 1)
+        #expect(sdpaMsg?.contains("192") == true)
         #expect(sdpaMsg?.contains("128") == true)
 
         let auraMsg = OpsValidation.validateAuraEncode(rows: 1, dim: 33, bits: 4)

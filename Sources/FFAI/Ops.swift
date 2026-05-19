@@ -118,6 +118,36 @@ public enum Ops {
         return result
     }
 
+    /// GELU (tanh-approximate, matching the math used by Gemma 3 / GPT-2
+    /// / etc.). out[i] = 0.5 * x[i] * (1 + tanh(sqrt(2/π) * (x[i] + 0.044715 * x[i]³))).
+    /// Wraps metaltile's `mt_gelu_*` element-wise kernel.
+    public static func gelu(_ x: Tensor, on cmd: MTLCommandBuffer,
+                            into out: Tensor? = nil) -> Tensor {
+        let result = out ?? Tensor.empty(shape: x.shape, dtype: x.dtype)
+        let n = x.elementCount
+        let (grid, tg) = elementwiseGrid(n)
+        switch x.dtype {
+        case .f32:
+            MetalTileKernels.mt_gelu_f32(
+                a: x.buffer, aOffset: x.offset,
+                out: result.buffer, outOffset: result.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_gelu_f16(
+                a: x.buffer, aOffset: x.offset,
+                out: result.buffer, outOffset: result.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_gelu_bf16(
+                a: x.buffer, aOffset: x.offset,
+                out: result.buffer, outOffset: result.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.gelu: unsupported dtype \(x.dtype)")
+        }
+        return result
+    }
+
     /// Softplus: out[i] = log(1 + exp(x[i])). Numerically stable across
     /// the full input range. Used by Mamba 2's `dt = softplus(dt_raw +
     /// dt_bias)` per-head time-step computation.
@@ -1381,6 +1411,39 @@ public enum Ops {
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (64, .bf16):
             MetalTileKernels.ffai_sdpa_decode_d64_bf16(
+                q: q.buffer, qOffset: q.offset,
+                k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                out: result.buffer, outOffset: result.offset,
+                head_dim: UInt32(headDim), n_kv: UInt32(nKV),
+                kv_stride: UInt32(kvStride),
+                heads_per_group: UInt32(headsPerGroup),
+                scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (256, .f32):
+            MetalTileKernels.ffai_sdpa_decode_d256_f32(
+                q: q.buffer, qOffset: q.offset,
+                k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                out: result.buffer, outOffset: result.offset,
+                head_dim: UInt32(headDim), n_kv: UInt32(nKV),
+                kv_stride: UInt32(kvStride),
+                heads_per_group: UInt32(headsPerGroup),
+                scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (256, .f16):
+            MetalTileKernels.ffai_sdpa_decode_d256_f16(
+                q: q.buffer, qOffset: q.offset,
+                k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                out: result.buffer, outOffset: result.offset,
+                head_dim: UInt32(headDim), n_kv: UInt32(nKV),
+                kv_stride: UInt32(kvStride),
+                heads_per_group: UInt32(headsPerGroup),
+                scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (256, .bf16):
+            MetalTileKernels.ffai_sdpa_decode_d256_bf16(
                 q: q.buffer, qOffset: q.offset,
                 k: k.buffer, kOffset: k.offset,
                 v: v.buffer, vOffset: v.offset,

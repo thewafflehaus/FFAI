@@ -73,7 +73,7 @@ public enum OpsValidation {
     /// head_dim values for which a kernel specialization currently
     /// exists. Caller is responsible for routing to the matching
     /// kernel; see `Ops.sdpaDecode`.
-    public static let supportedSdpaHeadDims: Set<Int> = [64, 128]
+    public static let supportedSdpaHeadDims: Set<Int> = [64, 128, 256]
 
     public static func validateSdpaDecode(
         headDim: Int, nQHeads: Int, nKVHeads: Int,
@@ -82,7 +82,7 @@ public enum OpsValidation {
         if !supportedSdpaHeadDims.contains(headDim) {
             let supported = supportedSdpaHeadDims.sorted()
                 .map(String.init).joined(separator: ", ")
-            return "head_dim must be one of {\(supported)} (got \(headDim)); other specializations (e.g. 256) not yet emitted"
+            return "head_dim must be one of {\(supported)} (got \(headDim)); other specializations not yet emitted"
         }
         if nQHeads <= 0 {
             return "nQHeads must be positive (got \(nQHeads))"

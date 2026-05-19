@@ -77,6 +77,14 @@ public enum ModelRegistry {
             return try loadLlama(config: config, weights: weights,
                                  options: options, device: device)
         }
+        if let arch = config.architecture, Gemma3.architectures.contains(arch) {
+            return try loadGemma3(config: config, weights: weights,
+                                  options: options, device: device)
+        }
+        if let mt = config.modelType, Gemma3.modelTypes.contains(mt) {
+            return try loadGemma3(config: config, weights: weights,
+                                  options: options, device: device)
+        }
         if let arch = config.architecture, Qwen3.architectures.contains(arch) {
             return try loadQwen3(config: config, weights: weights,
                                  options: options, device: device)
@@ -129,6 +137,19 @@ public enum ModelRegistry {
         options: LoadOptions, device: Device
     ) throws -> Loaded {
         let variant = try Phi.variant(for: config)
+        let engine = try variant.loadModel(
+            config: config, weights: weights,
+            options: options, device: device
+        )
+        return Loaded(engine: engine,
+                      defaultGenerationParameters: variant.defaultGenerationParameters)
+    }
+
+    public static func loadGemma3(
+        config: ModelConfig, weights: SafeTensorsBundle,
+        options: LoadOptions, device: Device
+    ) throws -> Loaded {
+        let variant = try Gemma3.variant(for: config)
         let engine = try variant.loadModel(
             config: config, weights: weights,
             options: options, device: device
