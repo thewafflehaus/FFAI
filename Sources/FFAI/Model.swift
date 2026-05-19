@@ -58,6 +58,20 @@ public enum ModelRegistry {
             return try loadLlama(config: config, weights: weights,
                                  options: options, device: device)
         }
+        // Llama-compatible families: SmolLM 1/2/3, OLMo 1/2, Granite,
+        // Yi, InternLM 2, Starcoder 2. Same weight layout + forward
+        // shape as Llama 3; optional QKV biases auto-detected by
+        // loadLinear. Each gets a six-line registry entry in
+        // Models/LlamaCompatibles.swift instead of its own family file
+        // (until / unless it diverges from the Llama-3 shape).
+        if let arch = config.architecture, LlamaCompatibles.architectures.contains(arch) {
+            return try loadLlama(config: config, weights: weights,
+                                 options: options, device: device)
+        }
+        if let mt = config.modelType, LlamaCompatibles.modelTypes.contains(mt) {
+            return try loadLlama(config: config, weights: weights,
+                                 options: options, device: device)
+        }
         if let arch = config.architecture, Phi.architectures.contains(arch) {
             return try loadPhi(config: config, weights: weights,
                                options: options, device: device)
