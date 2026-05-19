@@ -51,28 +51,54 @@ regenerate-kernels: ## run `tile build --emit all` to regenerate metallib + Swif
 
 # ─── Test ─────────────────────────────────────────────────────────────
 #
-# Test execution mirrors CI exactly (see .github/workflows/ci.yml +
-# release.yml). The split matters: ModelTests download multi-GB
-# HuggingFace snapshots and do real end-to-end inference per suite
-# (Llama / Qwen3 fp16 + x5 quants / Mamba 2), so running multiple
-# suites in parallel will OOM or stall on contention. Each individual
-# suite is already `.serialized` internally, but Swift Testing still
-# parallelizes *across* suites by default — so we cap workers to 1.
+# Test execution defaults to serialized (`--parallel --num-workers 1`)
+# for **both** the unit and integration suites. Backstory:
 #
-# - `make test-unit`        — fast (~minutes); FFAITests + MetalTileSwift
-#                             only. Safe to run in parallel.
-# - `make test-integration` — slow (tens of minutes); ModelTests with
-#                             `--parallel --num-workers 1` so only one
-#                             model is ever resident in GPU memory.
-# - `make test`             — both in sequence (unit gate, then full
-#                             integration). The CI release workflow
-#                             does the same.
+#   ModelTests download multi-GB HuggingFace snapshots and do real
+#   end-to-end inference per suite. CI for `make test-integration` has
+#   always serialized those.
+#
+#   `make test-unit` was originally parallel (matching ci.yml), but a
+#   local run on Apple Silicon froze the entire box — GPU pinned, UI
+#   unresponsive, hard recovery only. FFAITests + MetalTileSwiftTests
+#   each run real Metal dispatches; Swift Testing parallelizes across
+#   suites, and ~30 suites × multiple GPU tests each appears to
+#   saturate the GPU command queue and starve the WindowServer.
+#
+#   Until we diagnose root cause (memory leak in our Tensor / buffer
+#   pool? PSO compile thundering herd? specific kernel watchdog?
+#   ARC release timing under parallel Swift Testing?), we run unit
+#   tests **serialized too**. Cost: unit suite is slower locally; the
+#   freeze risk is gone. CI is unchanged — ci.yml still runs parallel
+#   because the GitHub-hosted M-series runners haven't reproduced the
+#   freeze (fewer cores → less effective parallelism → less GPU queue
+#   pressure).
+#
+# Targets:
+# - `make test-unit`            — FFAITests + MetalTileSwiftTests,
+#                                 serialized (safe default).
+# - `make test-unit-parallel`   — same suite but parallel. Opt-in;
+#                                 risks the freeze on the affected
+#                                 hardware. Useful when triaging.
+# - `make test-integration`     — ModelTests, serialized.
+# - `make test`                 — both in sequence.
 
 .PHONY: test
-test: regenerate-kernels test-unit test-integration ## run unit then integration test suites (mirrors release CI)
+test: regenerate-kernels test-unit test-integration ## run unit then integration test suites (serialized)
 
 .PHONY: test-unit
-test-unit: regenerate-kernels ## fast unit + Metal tests (parallel ok); matches ci.yml
+test-unit: regenerate-kernels ## unit + Metal tests, serialized (--num-workers 1) — safe local default
+	@# Serialized because parallel default has frozen Apple Silicon
+	@# locally on this branch. See header comment + planning notes for
+	@# the diagnostic plan. Swift PM rejects `--num-workers` without
+	@# `--parallel`, so we use the combo.
+	swift test --filter "FFAITests|MetalTileSwiftTests" --parallel --num-workers 1
+
+.PHONY: test-unit-parallel
+test-unit-parallel: regenerate-kernels ## OPT-IN unit + Metal tests, parallel — may freeze on some hardware
+	@echo "⚠️  Parallel unit tests have frozen the box on this branch."
+	@echo "   Use only when diagnosing GPU-queue / buffer-pool contention."
+	@echo ""
 	swift test --filter "FFAITests|MetalTileSwiftTests"
 
 .PHONY: test-integration
