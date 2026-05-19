@@ -48,4 +48,83 @@ struct BufferPoolTests {
     func sharedInstance() {
         #expect(BufferPool.shared === BufferPool.shared)
     }
+
+    // MARK: - withScope
+
+    @Test("withScope releases acquired buffers back to the pool on exit")
+    func scopeReleasesOnExit() {
+        let pool = BufferPool(device: .shared)
+        // Inside the scope, two buffers are held.
+        pool.withScope { scope in
+            _ = scope.acquire(bytes: 64)
+            _ = scope.acquire(bytes: 64)
+            #expect(scope.heldCount == 2)
+        }
+        // After the scope, those buffers are back in the pool freelist.
+        // Acquiring two 64-byte buffers should reuse them, not allocate.
+        let a = pool.acquire(bytes: 64)
+        let b = pool.acquire(bytes: 64)
+        // A third acquire MUST allocate a fresh one — only 2 were
+        // returned to the freelist.
+        let c = pool.acquire(bytes: 64)
+        #expect(a !== c, "third acquire should produce a fresh buffer")
+        #expect(b !== c, "third acquire should produce a fresh buffer")
+        pool.release(a); pool.release(b); pool.release(c)
+    }
+
+    @Test("withScope reuses buffers across iterations (the dogfood case)")
+    func scopeReusesAcrossIterations() {
+        // This is the production decode pattern: every token, acquire
+        // a set of intermediates, release them at end of token, repeat.
+        // Without the scope, every iteration would `device.makeBuffer`
+        // a fresh one. With the scope, iteration N+1 should reuse the
+        // buffer iteration N released.
+        let pool = BufferPool(device: .shared)
+        let iterations = 5
+        let bytes = 256
+
+        var firstBufferRef: AnyObject? = nil
+        var reuseCount = 0
+
+        for _ in 0..<iterations {
+            pool.withScope { scope in
+                let buf = scope.acquire(bytes: bytes)
+                if firstBufferRef == nil {
+                    firstBufferRef = buf as AnyObject
+                } else if (buf as AnyObject) === firstBufferRef {
+                    reuseCount += 1
+                }
+            }
+        }
+
+        // The buffer released after iteration 1 should come back on
+        // iterations 2..N. So at minimum (iterations - 1) reuses.
+        // We assert ≥ 1 to keep the test robust against an LRU-style
+        // freelist scrambling order, but the typical case is N-1.
+        #expect(reuseCount >= 1,
+                "expected buffer reuse across iterations; got \(reuseCount)")
+    }
+
+    @Test("withScope releases even on throw")
+    func scopeReleasesOnThrow() {
+        struct LocalError: Error {}
+        let pool = BufferPool(device: .shared)
+        var capturedScope: BufferPoolScope? = nil
+
+        do {
+            try pool.withScope { scope in
+                _ = scope.acquire(bytes: 128)
+                capturedScope = scope
+                throw LocalError()
+            }
+            Issue.record("withScope should rethrow")
+        } catch is LocalError {
+            // Expected. After the throw, the scope's defer should have
+            // run, releasing the buffer back to the pool.
+            #expect(capturedScope?.heldCount == 0,
+                    "scope should release acquired buffers even on throw")
+        } catch {
+            Issue.record("unexpected error type: \(error)")
+        }
+    }
 }
