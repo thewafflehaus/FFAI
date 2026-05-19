@@ -1363,6 +1363,12 @@ public enum Ops {
                 head_dim: UInt32(headDim), n_kv: UInt32(nKV),
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
+                // sink_end=0, window_start=0 → full attention. FFAI's
+                // sinks + sliding-window features manage the cache layer
+                // (FIFO eviction with sink-slot preservation), so SDPA
+                // sees a flat n_kv range. Kernel-level fast-path
+                // plumbing through Ops.sdpaDecode is a separate follow-up.
+                sink_end: 0, window_start: 0,
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (128, .f16):
@@ -1374,6 +1380,7 @@ public enum Ops {
                 head_dim: UInt32(headDim), n_kv: UInt32(nKV),
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
+                sink_end: 0, window_start: 0,  // see f32 case for rationale
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (128, .bf16):
@@ -1385,6 +1392,7 @@ public enum Ops {
                 head_dim: UInt32(headDim), n_kv: UInt32(nKV),
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
+                sink_end: 0, window_start: 0,  // see f32 case for rationale
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (64, .f32):
