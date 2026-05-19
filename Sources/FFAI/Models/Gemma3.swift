@@ -486,14 +486,26 @@ public final class Gemma3Layer: Module {
         // Per-head q_norm / k_norm sit between projection and RoPE.
         // q has shape [nHeads * headDim], rmsNormRows applies the
         // [headDim]-wide weight per row.
-        let qNorm2D = Ops.rmsNormRows(
-            q, weight: qNorm.weight, eps: qNorm.eps,
-            nRows: nHeads, rowSize: headDim, on: cmd
-        ).reshaped(to: [nHeads, headDim])
-        let kNorm2D = Ops.rmsNormRows(
-            k, weight: kNorm.weight, eps: kNorm.eps,
-            nRows: nKVHeads, rowSize: headDim, on: cmd
-        ).reshaped(to: [nKVHeads, headDim])
+        //
+        // GEMMA3_SKIP_QK_NORM=1 bypasses these for first-light
+        // debugging — see the integration test header for the open
+        // bug list.
+        let skipQKNorm = ProcessInfo.processInfo.environment["GEMMA3_SKIP_QK_NORM"] == "1"
+        let qNorm2D: Tensor
+        let kNorm2D: Tensor
+        if skipQKNorm {
+            qNorm2D = q.reshaped(to: [nHeads, headDim])
+            kNorm2D = k.reshaped(to: [nKVHeads, headDim])
+        } else {
+            qNorm2D = Ops.rmsNormRows(
+                q, weight: qNorm.weight, eps: qNorm.eps,
+                nRows: nHeads, rowSize: headDim, on: cmd
+            ).reshaped(to: [nHeads, headDim])
+            kNorm2D = Ops.rmsNormRows(
+                k, weight: kNorm.weight, eps: kNorm.eps,
+                nRows: nKVHeads, rowSize: headDim, on: cmd
+            ).reshaped(to: [nKVHeads, headDim])
+        }
 
         // RoPE on the normed q and k.
         let qRotated = Ops.rope(qNorm2D,

@@ -128,6 +128,47 @@ struct Gemma3WeightFoldTests {
         }
     }
 
+    @Test("bf16 Ops.mul against fillScalar(sqrt(hidden)) — embed-scale path round-trip")
+    func bf16EmbedScaleMul() {
+        let n = 1152
+        let device = Device.shared
+        let scalar = Float(Double(n).squareRoot())  // ≈ 33.94
+
+        // Build the embed-scale tensor exactly the way Gemma3Dense.loadModel does.
+        let embedScale = Tensor.empty(shape: [n], dtype: .bf16, device: device)
+        fillScalarForTest(embedScale, scalar: scalar, dtype: .bf16)
+
+        // Build a synthetic "h0" tensor with values 0.5 across the
+        // entire dim — typical magnitude after a Gemma-3 embedding
+        // gather is somewhere in [0.01, 0.2], but 0.5 keeps the
+        // arithmetic easy to verify.
+        let h0 = Tensor.empty(shape: [n], dtype: .bf16, device: device)
+        let h0Ptr = h0.buffer.contents().bindMemory(to: UInt16.self, capacity: n)
+        let halfBits = floatToBf16BitsForTest(0.5)
+        for i in 0..<n { h0Ptr[i] = halfBits }
+
+        // Multiply on the GPU exactly as Gemma3Model.forward does.
+        var product: Tensor!
+        let cmd = device.makeCommandBuffer()
+        product = Ops.mul(h0, embedScale, on: cmd)
+        cmd.commit()
+        cmd.waitUntilCompleted()
+
+        // Read back as fp32. Expected: 0.5 * 34 ≈ 17.0 across all slots.
+        let pPtr = product.buffer.contents()
+            .advanced(by: product.offset)
+            .bindMemory(to: UInt16.self, capacity: n)
+        let stored = bf16BitsToFloatForTest(embedScale.buffer.contents()
+            .bindMemory(to: UInt16.self, capacity: 1)[0])
+        let expected = 0.5 * stored
+        for i in 0..<n {
+            let v = bf16BitsToFloatForTest(pPtr[i])
+            #expect(v == expected,
+                    "embed-scale product slot \(i) = \(v), expected \(expected)")
+            #expect(v.isFinite, "embed-scale product slot \(i) = \(v) is non-finite")
+        }
+    }
+
     @Test("fillScalar writes the same value into every element (bf16)")
     func fillScalarBf16() {
         let device = Device.shared
