@@ -34,27 +34,55 @@ The sibling repo lives at `~/Development/personal/ai/metaltile`. Branch off its 
 
 - **Reference:** [metaltile contribution guidelines (0xClandestine gist)](https://gist.github.com/0xClandestine/45f26119c3ad97d941de630b34490a69). Follow the repo's `CONTRIBUTING.md` + PR / issue templates when opening upstream PRs.
 
-### CLI primer (`tile --help` for the full surface — clap-based as of [#36](https://github.com/0xClandestine/metaltile/pull/36))
+### CLI driver — always go through `make`
 
-- `tile build --emit all --out <FFAI/Sources/MetalTileSwift>` — codegen MSL + metallib + Swift wrappers + manifest. Run via `make regenerate-kernels` from the FFAI root. Add `-v` to print generated MSL per kernel for quick spot checks.
-- `tile build --time-passes` — print wall-clock per codegen pass over the full kernel set. Reach for this when a codegen change feels slow.
-- `tile bench [--filter <kernel>]` — MLX side-by-side bench (perf + `check_equiv` correctness). Only meaningful for kernels with non-empty `shapes` and a real `BenchDispatch` (mostly the `metaltile-std/src/mlx/` ones). `ffai/` kernels with `BenchDispatch::Generic` + empty `shapes` are skipped — they're validated end-to-end in FFAI's integration tests and in `crates/metaltile-std/tests/<kernel>_gpu_correctness.rs` (see "Testing kernels" below).
-- `tile bench -v` — adds an occupancy + register-pressure profile column per kernel (the *static* signal that `tile profile` used to print).
-- `tile bench -vv` — additionally prints GPU timing stats (median µs over the bench iterations, plus the bandwidth model). The variance smoothing in [#41](https://github.com/0xClandestine/metaltile/pull/41) makes these numbers stable enough to use as the perf-regression smoke when something's slow.
-- `tile inspect [<kernel>] [--all]` — print final MSL. `--ir` for raw IR before any passes, `--stats` for per-pass op-count deltas (catches over-eager DCE / fusion), `--pass <name>` to dump IR after a specific pass, `--dtype <f32|f16|bf16|i32|u32>` to pick the dtype variant, `--filter <substr>` to narrow by name when listing.
-- `tile snap` — save current bench results as a regression baseline. JSON output carries a kernel-correctness summary added in [#30](https://github.com/0xClandestine/metaltile/pull/30).
-- `tile diff` — compare current bench results against the snapshot baseline (not MSL source diffing — use `git diff` on the regenerated `Sources/MetalTileSwift/Resources/kernels/*.metal` for that).
-- `tile device` — show GPU device info + supported features. Useful for confirming Metal version / native bf16 support / Apple-family flag.
-- `tile build --emit all -o <dir>` doubles as a "does every kernel compile" check — failures from `xcrun metal` surface here without needing FFAI to regenerate.
+The metaltile repo's `Makefile` is the single, canonical entry point for the `tile` CLI. Bare `tile` / `cargo run -p metaltile-cli -- …` works but bypasses the project's conventions; agents + new devs should default to `make`. Run `make help` from the metaltile root for the live list. Two entry-point shapes, no overlap:
 
-There is no longer a `tile profile` subcommand — it folded into `tile bench -v` as part of [#36](https://github.com/0xClandestine/metaltile/pull/36). The `metaltile-interp` CPU interpreter crate was dropped earlier (PRs #16 / #17); correctness now comes from `tile bench`'s MLX side-by-side runner where a counterpart exists, from per-kernel GPU correctness tests under `crates/metaltile-std/tests/` (pattern below), and from FFAI integration tests against real models otherwise.
+**1. Universal passthrough** for any subcommand without flags:
+
+```sh
+make tile bench
+make tile snap
+make tile diff
+make tile device
+make tile inspect aura_encode_int4
+```
+
+For anything with flags (make's option parser eats `-…`), use the `ARGS` escape hatch:
+
+```sh
+make tile-args ARGS="bench -vv --filter sdpa_decode"
+make tile-args ARGS="inspect aura_encode_int4 --stats --dtype bf16"
+```
+
+**2. Named wrappers** for flag combos that aren't ergonomic via the passthrough:
+
+| make target | runs |
+|---|---|
+| `make bench-v` | `tile bench -v` (adds occupancy + register-pressure profile) |
+| `make bench-vv` | `tile bench -vv` (adds GPU timing stats — min µs + bandwidth) |
+| `make inspect-stats KERNEL=<name>` | `tile inspect <name> --stats` (per-pass op-count deltas) |
+| `make inspect-ir KERNEL=<name>` | `tile inspect <name> --ir` (raw IR before passes) |
+| `make inspect-list` | `tile inspect --all` (every registered kernel) |
+| `make time-passes` | `tile build --time-passes` (wall-clock per codegen pass) |
+| `make emit-all OUT=<dir>` | `tile build --emit all -o <dir>` (codegen for FFAI consumption — `make regenerate-kernels` from the FFAI root wraps this) |
+| `make snapshots` | `cargo test` (insta MSL snapshots fail on drift) |
+| `make snapshots-accept` | `cargo insta test --accept --workspace` (accept all pending) |
+| `make snapshots-pending` | `cargo insta pending-snapshots` (list pending without accepting) |
+
+> Kernel correctness comes from per-kernel GPU correctness tests under `crates/metaltile-std/tests/` (naive-CPU oracle, pattern below) and from `tile bench`'s MLX side-by-side runner where a counterpart exists. FFAI integration tests assert pipeline-level coherent output, not cross-impl token parity (see [`Tests/ModelTests/CoherentOutput.swift`](Tests/ModelTests/CoherentOutput.swift)).
+
+**`cargo` exceptions worth knowing.** Two cases where bare `cargo` is the right tool because make can't usefully wrap them:
+
+- `cargo insta review` — interactive. Walks each pending snapshot and prompts y/n. Can't be piped through make.
+- `cargo test --release -p metaltile-std --test <kernel>_gpu_correctness -- --ignored --nocapture` — runs a single kernel's perf bench. Per-kernel-specific test invocation; wrapping it would just hide the cargo arguments.
 
 ### Runtime primitives worth knowing
 
 The `metaltile-runtime` crate provides a few primitives that show up in production kernel dispatch and the new test pattern below:
 
 - **`Context::dispatch_with_grid(&kernel, &buffers, &constexprs, grid_xyz, threadgroup_xyz)`** — explicit-grid 3D dispatch. The canonical entry point for GPU correctness tests and the production dispatch path for `Reduction` / `Grid3D` kernel modes.
-- **`Context::dispatch_chain(...)`** — one command buffer per chain, auto-private staging, barriered between stages. The two-pass SDPA + AURA flash pipelines lower to this. Added with [#35](https://github.com/0xClandestine/metaltile/pull/35); cache key tightened in [#45](https://github.com/0xClandestine/metaltile/pull/45).
+- **`Context::dispatch_chain(...)`** — one command buffer per chain, auto-private staging, barriered between stages. The two-pass SDPA + AURA flash pipelines lower to this.
 - **`Context::upload_resident(...)`** + **`ResidentBuffer`** — pre-uploaded K/V slabs for streaming-decode patterns. Same PR family.
 - **Buffer pool** with `Arc<Retained<MTLBuffer>>` recycling — thread-local; the bench harness uses this to avoid allocator churn in the per-iteration loop.
 
@@ -62,8 +90,6 @@ The `metaltile-runtime` crate provides a few primitives that show up in producti
 
 - **Improve the compiler, don't hand-write MSL.** When the DSL can't express a kernel pattern, extend the codegen instead of bypassing it.
 - **Generics + macros for combinatorial variants** (bit widths, dtypes, group sizes). One generic `<T>` kernel beats five precision-specific copies. One `macro_rules!` body beats five hand-copied bit-width variants. Audit existing files for collapse opportunities whenever you touch them.
-
-  **Reference example:** [`thewafflehaus/metaltile#3`](https://github.com/thewafflehaus/metaltile/pull/3) consolidated five `ffai/` files from per-bit-width copies to shared macro bodies — removed ~980 lines, IR + MSL identical.
 
   **Do this:**
   ```rust
@@ -89,22 +115,22 @@ Custom kernels (turbo / gated-delta / SSM / etc.) live on the **`alpha`** branch
 1. Try existing metaltile DSL primitives + `#[kernel]` macros first.
 2. Missing primitive? Extend the DSL (body parser + IR + MSL codegen). Don't write raw MSL.
 3. New AURA / GDN / SSM / sinks / sliding-window / vision / audio kernels start under `crates/metaltile-std/src/ffai/`. They graduate to `mlx/` once an MLX counterpart exists at the pinned `MLX_COMMIT`.
-4. Switch metaltile's `MLX_COMMIT` to `ekryski/mlx@alpha` so `tile bench`'s side-by-side runner has a reference for our custom kernels. After each port, compare the metaltile-generated MSL against the corresponding kernel on the `alpha` branch.
+4. Ensure metaltile's `MLX_COMMIT` is `ekryski/mlx@alpha` so `tile bench`'s side-by-side runner has a reference for our custom kernels. After each port, compare the metaltile-generated MSL against the corresponding kernel on the `alpha` branch.
 
 ### Testing kernels
 
-Three layers, no overlap, no CPU oracle:
+Three layers, no overlap:
 
 **metaltile layer (1) — Rust DSL + codegen unit tests:**
 
-- **Rust DSL coverage target: 100%.** `cargo test --workspace` exercises every codegen pass, body-parser arm, IR variant, and emit path. New DSL primitives ship with a regression test in `crates/metaltile-codegen/src/msl/mod.rs`. The cargo-llvm-cov workflow added in [#24](https://github.com/0xClandestine/metaltile/pull/24) gates PRs on per-crate coverage; ratchet-blocking gates tightened in [#31](https://github.com/0xClandestine/metaltile/pull/31).
-- **Compile-fail tests via `trybuild`** (added in [#28](https://github.com/0xClandestine/metaltile/pull/28)) — assertions that the proc-macro rejects malformed kernels with a useful error message. Live under `crates/metaltile/tests/error/` and `crates/metaltile/tests/compile_fail.rs`. New error paths in `metaltile-macros` ship with a trybuild fixture in the same commit.
-- **Codegen smoke via `tile build --emit all`** — every registered kernel must produce MSL that `xcrun metal` accepts. The proc-macro errors on inner `macro_rules!` so silent-empty bodies can't recur (the regression from PR #19).
-- **Per-pass IR sanity via `tile inspect --stats`** — useful when a kernel regresses to confirm which pass changed op-counts.
+- **Rust DSL coverage target: 100%.** `make test` (in metaltile) exercises every codegen pass, body-parser arm, IR variant, and emit path. New DSL primitives ship with a regression test in `crates/metaltile-codegen/src/msl/mod.rs`. Use `make coverage` to run the `cargo-llvm-cov` workflow.
+- **Compile-fail tests via `trybuild`** assert that the proc-macro rejects malformed kernels with a useful error message. Live under `crates/metaltile/tests/error/` and `crates/metaltile/tests/compile_fail.rs`. New error paths in `metaltile-macros` ship with a trybuild fixture in the same commit.
+- **Codegen smoke via `make emit-all OUT=/tmp/mt-smoke`** — every registered kernel must produce MSL that `xcrun metal` accepts. The proc-macro errors on inner `macro_rules!` so silent-empty bodies can't recur (the regression from PR #19).
+- **Per-pass IR sanity via `make inspect-stats KERNEL=<name>`** — useful when a kernel regresses to confirm which pass changed op-counts.
 
 **metaltile layer (1.5) — Golden MSL snapshots via `insta`:**
 
-Pattern introduced by [TheTom in PR #25](https://github.com/0xClandestine/metaltile/pull/25) under `crates/metaltile-codegen/tests/msl_snapshots.rs`. Hand-built kernels (`vadd`, `cast_chain`, `bf16_param_only`, etc.) are run through `MslGenerator` and the full MSL output is pinned via `assert_snapshot!` into `crates/metaltile-codegen/tests/snapshots/*.snap`. Any codegen change — op lowering, preamble emission, scheduling, vectorization, fusion — surfaces as a reviewable text diff in PR review instead of having to be guessed at by grepping for substrings.
+Pattern introduced under `crates/metaltile-codegen/tests/msl_snapshots.rs`. Hand-built kernels (`vadd`, `cast_chain`, `bf16_param_only`, etc.) are run through `MslGenerator` and the full MSL output is pinned via `assert_snapshot!` into `crates/metaltile-codegen/tests/snapshots/*.snap`. Any codegen change — op lowering, preamble emission, scheduling, vectorization, fusion — surfaces as a reviewable text diff in PR review instead of having to be guessed at by grepping for substrings.
 
 Skeleton:
 
@@ -123,16 +149,16 @@ fn my_kernel_default_config() {
 Refresh workflow after an intentional codegen change:
 
 ```sh
-cargo insta test --accept --workspace      # accept all changed snapshots
-cargo insta review                          # interactive review (per snapshot)
-cargo insta pending-snapshots               # see what's pending without accepting
+make snapshots-accept     # accept all changed snapshots
+cargo insta review        # interactive review per snapshot (one of the cargo exceptions)
+make snapshots-pending    # see what's pending without accepting
 ```
 
-New DSL primitives + emit paths should land with a fixture that pins their MSL output. The fixtures aim to **exercise distinct emit paths**, not to be exhaustive — production kernel goldens come from `tile build --emit all` + GPU correctness tests below + bench-harness diffing. Add a fixture when a new emit path lands that the existing snapshots don't cover.
+New DSL primitives + emit paths should land with a fixture that pins their MSL output. The fixtures aim to **exercise distinct emit paths**, not to be exhaustive — production kernel goldens come from `make emit-all` + GPU correctness tests below + bench-harness diffing. Add a fixture when a new emit path lands that the existing snapshots don't cover.
 
 **metaltile layer (2) — GPU correctness + perf tests under `crates/metaltile-std/tests/`:**
 
-Pattern introduced by [TheTom in PR #35](https://github.com/0xClandestine/metaltile/pull/35) and adopted across the suite: every non-trivial `ffai/` or `mlx/` kernel ships a paired `<kernel>_gpu_correctness.rs` integration test that runs on the real Metal device and compares against a naive CPU reference. Shared helpers (`naive_*`, ramp init, dtype pack/unpack) live in `crates/metaltile-std/tests/common/mod.rs`.
+Every non-trivial `ffai/` or `mlx/` kernel ships a paired `<kernel>_gpu_correctness.rs` integration test that runs on the real Metal device and compares against a naive CPU reference. Shared helpers (`naive_*`, ramp init, dtype pack/unpack) live in `crates/metaltile-std/tests/common/mod.rs`.
 
 Skeleton:
 
@@ -165,15 +191,15 @@ fn <kernel>_perf_bench_f32() {
 
 When porting a new kernel, the integration test lands in the **same commit** as the kernel. The naive CPU reference is the contract — if the kernel and reference disagree, decide which is wrong before merging. The `#[ignore]`'d perf bench is the per-kernel signal for regressions and the source of the GB/s numbers in commit messages / PR bodies.
 
-**Kernel speed + side-by-side MLX correctness via `tile bench`** — orthogonal to the per-kernel tests above; runs only for kernels with non-empty `shapes` + a real `BenchDispatch`. The runner dispatches both the metaltile kernel and the MLX reference on identical buffers and compares via `check_equiv`. Perf regressions show in `tile diff` against the saved snapshot; the JSON output now carries a kernel-correctness summary (added in [#30](https://github.com/0xClandestine/metaltile/pull/30)).
+**Kernel speed + side-by-side MLX correctness via `make bench` (or `make bench-vv` for GPU timing)** — orthogonal to the per-kernel tests above; runs only for kernels with non-empty `shapes` + a real `BenchDispatch`. The runner dispatches both the metaltile kernel and the MLX reference on identical buffers and compares via `check_equiv`. Perf regressions show in `make tile diff` against the saved baseline; the JSON output carries a kernel-correctness summary.
 
 **FFAI layer — what gets tested in Swift:**
 
 - **Per-Op tests** in `Tests/FFAITests/OpsTests.swift` / `OpsDtypeTests.swift` / `QuantizedOpsTests.swift` — every `Ops.<fn>` against a small synthetic input + asserted output. New Ops land with a test in the same commit.
 - **Per-cache tests** in `Tests/FFAITests/{KV,SSM,Conv,…}StateCacheTests.swift` — append/slice/serialize round-trip plus multi-layer working-buffer sharing.
-- **Per-model forward-pass determinism** in `Tests/ModelTests/<Family>IntegrationTests.swift` — token-by-token match against a golden fixture captured from `mlx-lm` (or `mlx-vlm` for VLMs) via `Tools/capture-fixtures.py`. Fixtures live under `Tests/Fixtures/<model>/`. Loose "generates text" assertions are not acceptable — they let empty kernels ship invisibly.
-- **Per-config benchmark runs** for KV-cache variants (`raw` / `affine4` / `affine8` / `aura*`), speculative decoding (ngram / MTP / EAGLE), prefix cache, batched decode, etc. Each config gets a separate goldens entry — quantised variants are allowed to diverge from the fp16 baseline up to a documented tolerance, and tok/s + peak GPU memory are recorded as part of the assertion.
-- **`scripts/coverage.sh`** + `swift test --enable-code-coverage` → ≥ 80% line coverage on FFAI + MetalTileSwift Swift code. CI fails on regression.
+- **Determinism smoke** in `Tests/ModelTests/DeterminismSmokeTests.swift` — same-prompt + temp=0 produces the same output across 3 back-to-back runs. Catches nondeterminism regressions (the temp-default bug, KV-cache write-order races, etc.).
+- **Per-model coherent-output integration** in `Tests/ModelTests/<Family>IntegrationTests.swift` — load model, greedy-decode a fixed prompt, assert via `expectCoherentOutput(...)` ([Tests/ModelTests/CoherentOutput.swift](Tests/ModelTests/CoherentOutput.swift)): ≥ minTokens generated, no run of > maxConsecutiveRepeat identical tokens, unique-token ratio ≥ minUniqueRatio. **We do NOT compare to mlx-lm / mlx-vlm goldens** — cross-implementation parity got fragile as FFAI diverged in features + rounding choices, and per-kernel GPU correctness tests are a tighter signal anyway. The contract the integration tests own is "the model produces coherent text," not "the model matches the next implementation over."
+- **`make coverage`** → ≥ 80 % line coverage on FFAI + MetalTileSwift Swift code (unit suite only, mirrors `ci.yml`). CI fails on regression.
 
 **Promotion path:** new kernels start under `metaltile-std/src/ffai/` with `BenchDispatch::Generic` + empty `shapes` (no `tile bench` MLX side-by-side row, but a paired `crates/metaltile-std/tests/<kernel>_gpu_correctness.rs` lands in the same commit per the pattern above). Once verified by both the metaltile-side GPU correctness test and an FFAI integration test, backport the verified shapes (`head_dim`, `n_kv_heads`, `group_size`, `seq_len`, etc.) into metaltile so `tile bench` tracks them for regressions. Graduate to `mlx/` if/when an MLX counterpart ships at the pinned commit.
 
@@ -181,19 +207,27 @@ If a new kernel introduces a previously-untested emit path (a new DSL primitive,
 
 ### Tooling cheat-sheet — local dev loop
 
-| Step | Command | What it catches |
-|---|---|---|
-| Local DSL change | `cargo test --workspace` in metaltile | DSL/codegen regressions, trybuild compile-fail fixtures, MSL snapshot drift |
-| MSL snapshot drift | `cargo insta review` (interactive) or `cargo insta test --accept --workspace` | Accept intentional codegen changes; reject unintentional drift |
-| Kernel compiles | `tile build --emit all -o /tmp/mt-smoke` | `xcrun metal` rejects per-kernel; bad MSL surfaces before FFAI |
-| Pass-level diff | `tile inspect <kernel> --stats` | Which pass changed op counts when a kernel regressed |
-| Codegen time | `tile build --time-passes` | Wall-clock per pass when codegen feels slow |
-| Per-kernel GPU correctness | `cargo test -p metaltile-std --test <kernel>_gpu_correctness` | Numerical disagreement with naive CPU reference |
-| Per-kernel perf number | `cargo test --release -p metaltile-std --test <kernel>_gpu_correctness -- --ignored --nocapture` | Median GPU µs + GB/s; refresh on every perf-touching commit |
-| MLX side-by-side perf | `tile bench --filter <kernel> -vv` | MLX delta + occupancy / register pressure; honors PR #41 variance smoothing |
-| Bench regression snapshot | `tile snap` then `tile diff` | Reject perf regressions vs the saved baseline |
-| FFAI kernel refresh | `make regenerate-kernels` | Pulls metaltile worktree, emits MSL + Swift wrappers into `Sources/MetalTileSwift/` |
-| FFAI unit gate | `make test-unit` | Mirrors ci.yml — `FFAITests` + `MetalTileSwiftTests` only |
-| FFAI integration gate | `make test-integration` | Mirrors release.yml — `ModelTests` with `--parallel --num-workers 1` |
-| FFAI full gate | `make test` | Both in sequence |
-| FFAI coverage | `make coverage` | Unit suite coverage instrumentation (matches ci.yml's coverage step) |
+Run from each repo's root (metaltile vs FFAI rows distinguished in the table).
+
+| Where | Step | Command | What it catches |
+|---|---|---|---|
+| metaltile | Local DSL change | `make test` | DSL/codegen regressions, trybuild compile-fail fixtures, MSL snapshot drift |
+| metaltile | MSL snapshot review (interactive) | `cargo insta review` (cargo exception — interactive) | Accept intentional codegen changes per-snapshot |
+| metaltile | MSL snapshot accept-all | `make snapshots-accept` | Accept every pending snapshot in one shot |
+| metaltile | MSL snapshot pending list | `make snapshots-pending` | See what's pending without accepting |
+| metaltile | Kernel compiles | `make emit-all OUT=/tmp/mt-smoke` | `xcrun metal` rejects per-kernel; bad MSL surfaces before FFAI |
+| metaltile | Pass-level diff | `make inspect-stats KERNEL=<name>` | Which pass changed op counts when a kernel regressed |
+| metaltile | Raw IR before passes | `make inspect-ir KERNEL=<name>` | Pre-optimization IR for a kernel |
+| metaltile | Kernel listing | `make inspect-list` | Every registered kernel |
+| metaltile | Codegen pass time | `make time-passes` | Wall-clock per pass when codegen feels slow |
+| metaltile | Per-kernel GPU correctness | `cargo test -p metaltile-std --test <kernel>_gpu_correctness` (cargo exception — per-kernel) | Numerical disagreement with naive CPU reference |
+| metaltile | Per-kernel perf number | `cargo test --release -p metaltile-std --test <kernel>_gpu_correctness -- --ignored --nocapture` (cargo exception) | Median GPU µs + GB/s; refresh on every perf-touching commit |
+| metaltile | MLX side-by-side perf | `make bench-vv` (or `make tile-args ARGS="bench -vv --filter <kernel>"`) | MLX delta + occupancy / register pressure + GPU timing |
+| metaltile | Bench regression baseline | `make tile snap` then `make tile diff` | Reject perf regressions vs the saved baseline |
+| metaltile | GPU device info | `make tile device` | Confirm Metal version / native bf16 / Apple-family flag |
+| FFAI | Kernel refresh | `make regenerate-kernels` | Pulls metaltile worktree, emits MSL + Swift wrappers into `Sources/MetalTileSwift/` |
+| FFAI | Unit gate | `make test-unit` | `FFAITests` + `MetalTileSwiftTests`, serialized locally (see Makefile header on the GPU-freeze workaround) |
+| FFAI | Unit gate (parallel) | `make test-unit-parallel` | OPT-IN. May freeze the box on this hardware — for triage only |
+| FFAI | Integration gate | `make test-integration` | `ModelTests` with `--parallel --num-workers 1`; mirrors release.yml |
+| FFAI | Full gate | `make test` | Both in sequence |
+| FFAI | Coverage | `make coverage` | Unit suite coverage instrumentation (matches ci.yml's coverage step) |
