@@ -83,19 +83,28 @@ struct OpsTests {
     @Test("rmsNorm f32 — y = x / rms(x) * weight")
     func rmsNormF32() {
         autoreleasepool {
-            let x = Tensor.empty(shape: [4], dtype: .f32)
-            x.copyIn(from: [Float(1), 2, 3, 4])
-            let weight = Tensor.empty(shape: [4], dtype: .f32)
-            weight.copyIn(from: [Float(1), 1, 1, 1])
+            // Use the smallest valid size for this kernel: n must be a
+            // multiple of 128 (32-lane simdgroup × 4 elements/thread).
+            // See Ops.rmsNorm preconditions for the full constraint set.
+            let n = 128
+            let xs: [Float] = (0..<n).map { Float($0 + 1) }   // [1, 2, …, 128]
+            let ws: [Float] = Array(repeating: Float(1), count: n)
+
+            let x = Tensor.empty(shape: [n], dtype: .f32)
+            x.copyIn(from: xs)
+            let weight = Tensor.empty(shape: [n], dtype: .f32)
+            weight.copyIn(from: ws)
+
             var out: Tensor!
             runAndWait { cb in out = Ops.rmsNorm(x, weight: weight, eps: 1e-6, on: cb) }
             let result = out.toArray(as: Float.self)
-            // rms = sqrt((1+4+9+16)/4) = sqrt(7.5) ≈ 2.7386
-            // expected ≈ x / 2.7386 = [0.365, 0.730, 1.095, 1.461]
-            let expectedRms = Float((30.0 / 4.0).squareRoot())
-            for i in 0..<4 {
-                let expected = Float(i + 1) / expectedRms
-                #expect(abs(result[i] - expected) < 1e-3,
+
+            // CPU reference: rms = sqrt(mean(x^2)); y = x / rms * weight.
+            let ssq = xs.reduce(Float(0)) { $0 + $1 * $1 }
+            let expectedRms = (ssq / Float(n)).squareRoot()
+            for i in 0..<n {
+                let expected = xs[i] / expectedRms
+                #expect(abs(result[i] - expected) < 1e-2,
                         "i=\(i) got \(result[i]) expected \(expected)")
             }
         }

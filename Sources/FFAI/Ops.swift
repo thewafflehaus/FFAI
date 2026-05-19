@@ -255,13 +255,17 @@ public enum Ops {
 
         // The kernel processes 4 elements per thread (`N = TPG * 4`), so
         // the threadgroup width MUST be `n / 4`. Hardcoding `tgWidth = 256`
-        // makes the kernel read OOB when `n < 1024` (threads beyond `n/4`
-        // sum garbage into the SSQ reduction) and silently drop elements
-        // when `n > 1024`. Both yield a numerically-wrong RMS denominator.
-        // See crates/metaltile-std/src/mlx/rms_norm.rs lines 36-46 for the
-        // kernel-side `N = TPG * 4` invariant + the bench annotation
-        // `n=4096, tpg=1024` which respects it.
-        precondition(n % 4 == 0, "rmsNorm: n=\(n) must be a multiple of 4")
+        // makes the kernel read OOB when `n < 1024` and drop elements when
+        // `n > 1024`. See crates/metaltile-std/src/mlx/rms_norm.rs:36-46
+        // for the kernel-side `N = TPG * 4` invariant.
+        //
+        // The kernel also requires TPG be a multiple of 32 (one full Apple
+        // simdgroup). The generated MSL computes `n_simd = TPG / 32` for
+        // the cross-simdgroup combine; with TPG < 32 the combine reads
+        // zero everywhere and `tg_ssq` collapses to 0 — silent miscompute.
+        // Combined: **n must be a multiple of 128 (32 lanes × 4 elements)**
+        // and **n / 4 must be ≤ 1024** (Apple's TPG cap).
+        precondition(n % 128 == 0, "rmsNorm: n=\(n) must be a multiple of 128 (32-lane simdgroup × 4 elements/thread)")
         precondition(n / 4 <= 1024, "rmsNorm: n=\(n) > 4096 — exceeds the 1024-thread cap of this kernel; use rmsNormRows or a chunked variant for larger rows")
         let tgWidth = n / 4
         let grid = MTLSize(width: tgWidth, height: 1, depth: 1)
@@ -315,11 +319,11 @@ public enum Ops {
         let epsBuf = device.makeBuffer(length: 4)
         memcpy(epsBuf.contents(), &epsValue, 4)
 
-        // Reduction kernel: one threadgroup per row. The kernel's per-row
-        // invariant is `rowSize = TPG * 4`, so the threadgroup width MUST
-        // be `rowSize / 4` (not a hardcoded 256). See `Ops.rmsNorm` above
-        // for the longer-form explanation + the kernel-side reference.
-        precondition(rowSize % 4 == 0, "rmsNormRows: rowSize=\(rowSize) must be a multiple of 4")
+        // Reduction kernel: one threadgroup per row. Per-row invariant
+        // is `rowSize = TPG * 4` AND TPG must be a multiple of 32 (full
+        // Apple simdgroup) — see Ops.rmsNorm above for the kernel-MSL
+        // walkthrough + why TPG < 32 silently produces tg_ssq=0.
+        precondition(rowSize % 128 == 0, "rmsNormRows: rowSize=\(rowSize) must be a multiple of 128 (32-lane simdgroup × 4 elements/thread)")
         precondition(rowSize / 4 <= 1024, "rmsNormRows: rowSize=\(rowSize) > 4096 — exceeds the 1024-thread cap of this kernel")
         let tgWidth = rowSize / 4
         let grid = MTLSize(width: nRows * tgWidth, height: 1, depth: 1)
