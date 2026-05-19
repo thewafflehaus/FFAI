@@ -113,17 +113,38 @@ struct DeterminismSmokeTests {
             }
             // Hash each layer's K cache so we can see at which layer the
             // drift (if any) starts.
+            //
+            // KEY: hash only the WRITTEN portion of the cache, not the
+            // full pre-allocated capacity. KVCache.kBuffer is shape
+            // [nKVHeads, maxSeq, headDim] but `length` positions are
+            // filled. For Qwen3-1.7B with maxSeq=32K and 5 prefill
+            // tokens, hashing the whole 64 MB-per-layer buffer takes
+            // gigabytes of byte iteration in Swift debug mode — the
+            // test appeared to "hang" for tens of minutes. Hashing only
+            // `length` rows of each head reduces it to ~10 KB per layer
+            // and the assertion is unchanged (the unwritten suffix is
+            // pre-zeroed at init, identical across runs anyway).
             var perLayer: [UInt64] = []
             for cache in caches {
                 guard let kv = cache as? KVCache else {
                     perLayer.append(0); continue
                 }
-                let raw = kv.kBuffer.buffer.contents().bindMemory(
-                    to: UInt8.self, capacity: kv.kBuffer.byteCount)
+                let len = kv.length
+                let bytesPerRow = kv.headDim * kv.dtype.byteSize
+                let bytesPerHeadCapacity = kv.maxSeq * bytesPerRow
+                let raw = kv.kBuffer.buffer.contents()
+                    .advanced(by: kv.kBuffer.offset)
+                    .bindMemory(to: UInt8.self, capacity: kv.kBuffer.byteCount)
                 var h: UInt64 = 1469598103934665603  // FNV-1a 64-bit offset
-                for i in 0..<kv.kBuffer.byteCount {
-                    h ^= UInt64(raw[i])
-                    h &*= 1099511628211
+                // For each KV head, hash its filled prefix
+                // `[h * maxSeq + 0 ..< h * maxSeq + length]` rows.
+                for headIdx in 0..<kv.nKVHeads {
+                    let headStart = headIdx * bytesPerHeadCapacity
+                    let filledBytes = len * bytesPerRow
+                    for i in 0..<filledBytes {
+                        h ^= UInt64(raw[headStart + i])
+                        h &*= 1099511628211
+                    }
                 }
                 perLayer.append(h)
             }
