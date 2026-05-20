@@ -376,4 +376,54 @@ public enum OpsValidation {
         }
         return nil
     }
+
+    // ─── gatedDeltaStep ────────────────────────────────────────────
+    //
+    // Kernel invariants (from
+    // `crates/metaltile-std/src/ffai/gated_delta_step.rs`
+    // §"DISPATCH INVARIANTS"):
+    //   1. TPG = 32 (exactly one simdgroup). The wrapper hard-codes
+    //      this; the only caller-facing risk is the grid dimension.
+    //   2. `Dk % 32 == 0` — each lane owns `Dk / 32` state columns.
+    //   3. `Hv % Hk == 0` — the `hv → hk` GQA fan-out must be integer.
+    //   4. `(Dk, Dv, Hk, Hv)` baked into the kernel as compile-time
+    //      constants → only the emitted instantiations are dispatchable.
+    //
+    // The `(Dk, Dv, Hk, Hv)` tuples for which a kernel is emitted, as
+    // `keyHeadDim_valueHeadDim_numKeyHeads_numValueHeads`. Mirrors the
+    // `gated_delta_step_kernel!` instantiations in the kernel source.
+    public static let supportedGatedDeltaConfigs: Set<[Int]> = [
+        [192, 128, 4, 4],    // Qwen3.5-A3B
+        [128, 128, 8, 8],
+        [128, 128, 16, 16],  // Qwen3.5 dense 0.8B-9B
+        [128, 128, 16, 32],  // Qwen3.5-35B
+        [128, 128, 16, 48],  // Qwen3.5 dense 27B
+        [64, 64, 8, 8],      // Qwen3.5 small
+    ]
+
+    /// Validate the dimensions for `Ops.gatedDeltaStep`. The kernel is
+    /// reduction-mode and only the emitted `(Dk, Dv, Hk, Hv)` tuples
+    /// have a dispatchable specialization.
+    public static func validateGatedDeltaStep(
+        keyHeadDim: Int, valueHeadDim: Int,
+        numKeyHeads: Int, numValueHeads: Int
+    ) -> String? {
+        if keyHeadDim <= 0 || valueHeadDim <= 0 {
+            return "head dims must be positive (got Dk=\(keyHeadDim), Dv=\(valueHeadDim))"
+        }
+        if numKeyHeads <= 0 || numValueHeads <= 0 {
+            return "head counts must be positive (got Hk=\(numKeyHeads), Hv=\(numValueHeads))"
+        }
+        if !keyHeadDim.isMultiple(of: 32) {
+            return "keyHeadDim (\(keyHeadDim)) must be a multiple of 32 — each of the 32 lanes owns Dk/32 state columns"
+        }
+        if !numValueHeads.isMultiple(of: numKeyHeads) {
+            return "numValueHeads (\(numValueHeads)) must be a multiple of numKeyHeads (\(numKeyHeads)) for integer GQA fan-out"
+        }
+        let config = [keyHeadDim, valueHeadDim, numKeyHeads, numValueHeads]
+        if !supportedGatedDeltaConfigs.contains(config) {
+            return "no gated_delta_step kernel emitted for (Dk,Dv,Hk,Hv)=\(config); add the instantiation in gated_delta_step.rs"
+        }
+        return nil
+    }
 }

@@ -288,6 +288,57 @@ struct OpsValidationTests {
             scalesCount: 0, biasesCount: 0) != nil)
     }
 
+    // ─── gatedDeltaStep ────────────────────────────────────────────
+
+    @Test("validateGatedDeltaStep accepts every emitted config")
+    func gatedDeltaStepAcceptsEmittedConfigs() {
+        for config in OpsValidation.supportedGatedDeltaConfigs {
+            #expect(OpsValidation.validateGatedDeltaStep(
+                keyHeadDim: config[0], valueHeadDim: config[1],
+                numKeyHeads: config[2], numValueHeads: config[3]) == nil,
+                "config \(config) should be accepted")
+        }
+    }
+
+    @Test("validateGatedDeltaStep rejects non-emitted config")
+    func gatedDeltaStepRejectsUnknownConfig() {
+        // (96, 96, 8, 8): valid divisibility but no emitted kernel.
+        let msg = OpsValidation.validateGatedDeltaStep(
+            keyHeadDim: 96, valueHeadDim: 96,
+            numKeyHeads: 8, numValueHeads: 8)
+        #expect(msg != nil)
+        #expect(msg?.contains("96") == true)
+    }
+
+    @Test("validateGatedDeltaStep rejects keyHeadDim not multiple of 32")
+    func gatedDeltaStepRejectsBadKeyHeadDim() {
+        let msg = OpsValidation.validateGatedDeltaStep(
+            keyHeadDim: 100, valueHeadDim: 128,
+            numKeyHeads: 4, numValueHeads: 4)
+        #expect(msg != nil)
+        #expect(msg?.contains("32") == true)
+    }
+
+    @Test("validateGatedDeltaStep rejects non-integer GQA fan-out")
+    func gatedDeltaStepRejectsBadFanout() {
+        // Hv not a multiple of Hk → fractional fan-out.
+        let msg = OpsValidation.validateGatedDeltaStep(
+            keyHeadDim: 128, valueHeadDim: 128,
+            numKeyHeads: 6, numValueHeads: 16)
+        #expect(msg != nil)
+        #expect(msg?.contains("multiple") == true)
+    }
+
+    @Test("validateGatedDeltaStep rejects non-positive dimensions")
+    func gatedDeltaStepRejectsNonPositive() {
+        #expect(OpsValidation.validateGatedDeltaStep(
+            keyHeadDim: 0, valueHeadDim: 128,
+            numKeyHeads: 4, numValueHeads: 4) != nil)
+        #expect(OpsValidation.validateGatedDeltaStep(
+            keyHeadDim: 128, valueHeadDim: 128,
+            numKeyHeads: 0, numValueHeads: 4) != nil)
+    }
+
     // ─── Failure messages are useful ───────────────────────────────
 
     @Test("Failure messages reference the offending value")

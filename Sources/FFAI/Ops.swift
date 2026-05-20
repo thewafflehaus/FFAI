@@ -945,6 +945,138 @@ public enum Ops {
         }
     }
 
+    /// Gated Delta Net (GDN) recurrent single-token decode step.
+    ///
+    /// Computes, per decode step and per value head, the recurrence
+    ///   S_t = g_t · S_{t-1} + β_t · k_t · (v_t − k_tᵀ · S_{t-1})ᵀ
+    /// then the output `o_t = S_t · q_t`. The per-head state matrix
+    /// `S [Hv, Dv, Dk]` stays fp32 throughout — the gate + rank-1
+    /// update accumulate across many steps and bf16 drifts fast.
+    ///
+    /// The underlying kernel is **reduction-mode** with strict
+    /// dispatch-shape invariants (see
+    /// `crates/metaltile-std/src/ffai/gated_delta_step.rs`
+    /// §"DISPATCH INVARIANTS" and `OpsValidation.validateGatedDeltaStep`):
+    /// TPG = 32 (one simdgroup), one threadgroup per `(dv, n)` pair,
+    /// `Dk % 32 == 0`, `Hv % Hk == 0`, and `(Dk, Dv, Hk, Hv)` baked in
+    /// as compile-time constants.
+    ///
+    /// `q` / `k` are expected pre-normalised (the GDN block applies the
+    /// rmsNorm + scale before calling this — the standard, non-fused
+    /// kernel variant). The kernel reads `stateIn` and writes a distinct
+    /// `stateOut`; callers double-buffer via `GDNStateCache.swap()`.
+    ///
+    /// All tensors are f32 — the only emitted kernel dtype. `tSteps` is
+    /// the number of sequential recurrence steps packed into this call
+    /// (1 for pure decode; > 1 when replaying a short prompt chunk).
+    public static func gatedDeltaStep(
+        q: Tensor, k: Tensor, v: Tensor, g: Tensor, beta: Tensor,
+        stateIn: Tensor, into y: Tensor, stateOut: Tensor,
+        numKeyHeads: Int, numValueHeads: Int,
+        keyHeadDim: Int, valueHeadDim: Int,
+        tSteps: Int = 1,
+        on cmd: MTLCommandBuffer
+    ) {
+        // Kernel-invariant validation — see OpsValidation.swift. A bad
+        // dispatch shape on a reduction kernel ranges from silent
+        // miscompute to a non-preemptive GPU pin.
+        if let reason = OpsValidation.validateGatedDeltaStep(
+            keyHeadDim: keyHeadDim, valueHeadDim: valueHeadDim,
+            numKeyHeads: numKeyHeads, numValueHeads: numValueHeads
+        ) {
+            preconditionFailure("Ops.gatedDeltaStep: \(reason)")
+        }
+        precondition(q.dtype == .f32 && k.dtype == .f32 && v.dtype == .f32
+                     && g.dtype == .f32 && beta.dtype == .f32,
+                     "Ops.gatedDeltaStep: q/k/v/g/beta must be f32")
+        precondition(stateIn.dtype == .f32 && stateOut.dtype == .f32
+                     && y.dtype == .f32,
+                     "Ops.gatedDeltaStep: state + output tensors must be f32")
+        precondition(tSteps >= 1,
+                     "Ops.gatedDeltaStep: tSteps must be >= 1 (got \(tSteps))")
+
+        // Dispatch derived from the invariants: 32 threads per group
+        // (one simdgroup), one group per (dv_idx, n) pair. The kernel
+        // reads tid as the lane (dk_idx), tgid_x as dv_idx, tgid_y as n
+        // = batch·Hv + hv. Decode is single-batch so n ranges [0, Hv).
+        // Generated bindings use `dispatchThreads`, so the grid is
+        // counted in THREADS: width = Dv · 32, height = Hv.
+        let lanesPerGroup = 32
+        let grid = MTLSize(width: valueHeadDim * lanesPerGroup,
+                           height: numValueHeads, depth: 1)
+        let tg = MTLSize(width: lanesPerGroup, height: 1, depth: 1)
+
+        // Route to the (Dk, Dv, Hk, Hv)-specialized kernel — each tuple
+        // bakes its pointer strides in as compile-time constants.
+        switch (keyHeadDim, valueHeadDim, numKeyHeads, numValueHeads) {
+        case (192, 128, 4, 4):
+            MetalTileKernels.gated_delta_step_192_128_4_4_f32(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, g: g.buffer, gOffset: g.offset,
+                beta: beta.buffer, betaOffset: beta.offset,
+                state_in: stateIn.buffer, state_inOffset: stateIn.offset,
+                y: y.buffer, yOffset: y.offset,
+                state_out: stateOut.buffer, state_outOffset: stateOut.offset,
+                t_steps: UInt32(tSteps),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (128, 128, 8, 8):
+            MetalTileKernels.gated_delta_step_128_128_8_8_f32(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, g: g.buffer, gOffset: g.offset,
+                beta: beta.buffer, betaOffset: beta.offset,
+                state_in: stateIn.buffer, state_inOffset: stateIn.offset,
+                y: y.buffer, yOffset: y.offset,
+                state_out: stateOut.buffer, state_outOffset: stateOut.offset,
+                t_steps: UInt32(tSteps),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (128, 128, 16, 16):
+            MetalTileKernels.gated_delta_step_128_128_16_16_f32(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, g: g.buffer, gOffset: g.offset,
+                beta: beta.buffer, betaOffset: beta.offset,
+                state_in: stateIn.buffer, state_inOffset: stateIn.offset,
+                y: y.buffer, yOffset: y.offset,
+                state_out: stateOut.buffer, state_outOffset: stateOut.offset,
+                t_steps: UInt32(tSteps),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (128, 128, 16, 32):
+            MetalTileKernels.gated_delta_step_128_128_16_32_f32(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, g: g.buffer, gOffset: g.offset,
+                beta: beta.buffer, betaOffset: beta.offset,
+                state_in: stateIn.buffer, state_inOffset: stateIn.offset,
+                y: y.buffer, yOffset: y.offset,
+                state_out: stateOut.buffer, state_outOffset: stateOut.offset,
+                t_steps: UInt32(tSteps),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (128, 128, 16, 48):
+            MetalTileKernels.gated_delta_step_128_128_16_48_f32(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, g: g.buffer, gOffset: g.offset,
+                beta: beta.buffer, betaOffset: beta.offset,
+                state_in: stateIn.buffer, state_inOffset: stateIn.offset,
+                y: y.buffer, yOffset: y.offset,
+                state_out: stateOut.buffer, state_outOffset: stateOut.offset,
+                t_steps: UInt32(tSteps),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (64, 64, 8, 8):
+            MetalTileKernels.gated_delta_step_64_64_8_8_f32(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, g: g.buffer, gOffset: g.offset,
+                beta: beta.buffer, betaOffset: beta.offset,
+                state_in: stateIn.buffer, state_inOffset: stateIn.offset,
+                y: y.buffer, yOffset: y.offset,
+                state_out: stateOut.buffer, state_outOffset: stateOut.offset,
+                t_steps: UInt32(tSteps),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            // Unreachable — validateGatedDeltaStep already rejected any
+            // tuple without an emitted kernel.
+            fatalError("Ops.gatedDeltaStep: unsupported config "
+                       + "(\(keyHeadDim),\(valueHeadDim),\(numKeyHeads),\(numValueHeads))")
+        }
+    }
+
     public static func argmax(_ logits: Tensor, into out: Tensor,
                               on cmd: MTLCommandBuffer) {
         precondition(out.dtype == .u32, "Ops.argmax: output must be u32")
