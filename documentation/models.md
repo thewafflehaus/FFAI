@@ -25,6 +25,7 @@ For porting a new architecture, see
 | **FalconH1** | [`Models/FalconH1.swift`](../Sources/FFAI/Models/FalconH1.swift) | `falcon_h1` | `FalconH1ForCausalLM` | `FalconH1Hybrid` |
 | **NemotronH** | [`Models/NemotronH.swift`](../Sources/FFAI/Models/NemotronH.swift) | `nemotron_h` | `NemotronHForCausalLM` | `NemotronHHybrid` |
 | **GraniteMoeHybrid** | [`Models/GraniteMoeHybrid.swift`](../Sources/FFAI/Models/GraniteMoeHybrid.swift) | `granitemoehybrid` | `GraniteMoeHybridForCausalLM` | `GraniteMoeHybridHybrid` |
+| **Jamba** | [`Models/Jamba.swift`](../Sources/FFAI/Models/Jamba.swift) | `jamba` | `JambaForCausalLM` | `JambaHybrid` |
 
 **FalconH1** is FFAI's first *hybrid* family: every decoder layer runs
 BOTH a Mamba 2 selective-SSM mixer AND a grouped-query attention path
@@ -76,6 +77,29 @@ the final logits. The MoE feed-forward reuses the shared `MoELayer`
 MoE command-buffer contract end-to-end: `MoELayer.decode` commits the
 command buffer, so `GraniteMoeHybridModel.forward` allocates a fresh
 buffer after every MoE-bearing layer.
+
+**Jamba** is a *stack-interleaved* hybrid like NemotronH /
+GraniteMoeHybrid — a `layers_block_type` schedule (derived from
+`attn_layer_period` / `attn_layer_offset` when not given explicitly)
+assigns each decoder layer one mixer kind (`mamba` or `attention`), and
+every layer carries a feed-forward half: a dense SwiGLU MLP
+(`num_experts == 1`) or a block-sparse **MoE** block. Each layer is two
+pre-norm + residual blocks (`input_layernorm` → mixer,
+`pre_ff_layernorm` → FFN). Attention uses **no positional embedding**
+(no RoPE) like NemotronH. The structural delta vs every other FFAI
+hybrid: Jamba's mixer is the *original* **Mamba 1** selective SSM, not
+the Mamba 2 SSD form. Mamba 1's `A` is per-`(channel, state)` (a 2-D
+`A_log` of shape `[d_inner, d_state]`) and `dt` is per-channel, so the
+recurrence decay `exp(A·dt)` varies with the state index — which the
+shipped Mamba 2 `ssm_step` Metal kernel (one scalar `A`/`dt` per head)
+cannot express. Jamba therefore runs the selective-scan core on the
+**CPU** (the per-token cost is `d_inner · d_state` ≈ 82K MACs,
+negligible); the GPU still owns every projection, attention, and the
+MLP. Because the scan is host-side, every Jamba *mamba* layer commits
+the command buffer mid-`decode`, so `JambaModel.forward` refreshes the
+command buffer after each such layer — the same contract
+GraniteMoeHybrid's MoE layers use. The MoE feed-forward reuses the
+shared `MoELayer` (`.topKThenSoftmax` gating).
 
 Both Llama / Qwen 3 variants share the same Llama-shaped core: GQA
 attention with RoPE, RMSNorm, SwiGLU MLP. Qwen 3 adds per-head q_norm / k_norm
@@ -201,6 +225,31 @@ integration suite cannot exercise the MoE path on a small raw
 checkpoint. A Mamba layer whose `d_inner` is not a multiple of 128 or
 exceeds 4096 is rejected — the gated mixer RMSNorm uses the single-row
 `rmsNorm` reduction kernel.
+
+### Jamba
+
+| Repo | Size | Quant | Notes |
+|---|---|---|---|
+| `mlx-community/AI21-Jamba-Reasoning-3B-bf16` | 3B | bf16 | Integration-test baseline (dense FFN). |
+
+The integration suite uses AI21-Jamba-Reasoning-3B — the smallest
+published Jamba checkpoint that runs end-to-end without quantized-MoE
+expert slicing (28 layers, 26 Mamba 1 + 2 attention, `num_experts = 1`
+→ dense SwiGLU FFN on every layer). It exercises the heterogeneous
+`[any DecoderLayer]` decode loop, the per-index cache array
+(`JambaMambaLayerCache` / `KVCache`), the host-side Mamba 1 selective
+scan, the 2-D `A_log` handling, and no-RoPE attention.
+
+**Known gaps.** Only raw bf16 / f16 Jamba checkpoints are supported —
+quantized variants (the `-4bit` / `-6bit` conversions) are rejected
+with a clear error. The MoE feed-forward path (`num_experts > 1`,
+e.g. the original Jamba-v0.1's 16-expert blocks) is implemented and
+reuses the shared `MoELayer`, but every small raw Jamba checkpoint on
+mlx-community is dense, so the integration suite exercises only the
+dense FFN. The Mamba 1 selective scan runs on the CPU — the shipped
+Mamba 2 `ssm_step` kernel cannot express Mamba 1's per-`(channel,
+state)` decay — which makes every Jamba mamba layer commit the command
+buffer mid-decode.
 
 **Known gaps.** Only raw bf16 / f16 FalconH1 checkpoints are supported
 today — quantized (`-4bit` / `-8bit`) variants are rejected with a
