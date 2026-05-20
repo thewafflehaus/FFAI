@@ -73,42 +73,21 @@ struct KVCacheSchemeIntegrationTests {
     // activation space. See `AURAQuantizedKVCache` header for the math.
     //
     // Phase 5d.E Stage 1a landed the infrastructure (Ops.auraRotatePerHead
-    // + per-layer Π_l + Q/output rotation in Qwen3/Llama forward) and
-    // verified it kernel-by-kernel:
+    // + per-layer Π_l + Q/output rotation in Qwen3/Llama forward).
     //
-    //   * `Tests/FFAITests/AURASRHTRoundTripTests`
-    //     - `Π^T·(Π·x) ≈ x` at bf16, headDim=128 → max err < 0.05
-    //     - encode+dequant with SRHT Π reproduces `Π·input` → max err < 0.05
-    //   * `Tests/FFAITests/AURACodecRoundTripTests` still passes
-    //     (mean err 0.0004 / 0.008 at 8/4-bit).
-    //
-    // …and yet the end-to-end model output collapses on Qwen3 1.7B
-    // around index 50–55 (a run of identical tokens trips
-    // `expectCoherentOutput`). aura8v4 passes coherence at SRHT but is
-    // still gibberish text; the other three trip the consecutive-repeat
-    // detector.
-    //
-    // That points at the Stage 2 frontier the AURA paper calls out —
-    // DC-bias / codebook recalibration. SRHT is a necessary but not
-    // sufficient condition for fp-level reconstruction: the global
-    // Lloyd-Max table inlined in `AURACodebook` was calibrated on
-    // synthetic unit-norm Gaussian slices, but production Qwen3 K/V
-    // distributions have a non-zero DC component the global table can't
-    // capture without a per-(layer, head) DC-bias / scale pair.
-    // Identity rotation happens to mask this because Lloyd-Max
-    // mismatch + zero rotation still preserves most of the residual
-    // direction; SRHT shuffles the coordinates so any per-coordinate
-    // DC bias is now spread across the entire row, where Lloyd-Max
-    // can't latch onto it.
-    //
-    // The integration-level coherence checks for the AURA recipes are
-    // therefore disabled until Stage 2 lands. The codec, Q-rotation,
-    // and output-un-rotation paths are still exercised by the unit
-    // tests above so a kernel regression still gates CI.
+    // The earlier "coherent then collapse around index 50" failure was a
+    // dequant-kernel stride bug, not a codec / DC-bias / Stage-2 issue:
+    // `aura_dequant_rotated` keys all per-head offset arithmetic off its
+    // `tokens` constexpr, but `AURAQuantizedKVCache`'s buffers are laid
+    // out `[nKVHeads, maxSeq, …]`. `prepareForAttention` passed the fill
+    // count (`length`) as that constexpr, so every head past head 0 was
+    // dequanted at the wrong offset, with the error growing as the cache
+    // filled. Fix: `Ops.auraDequantRotated` now takes an explicit
+    // `cacheStride` (= `maxSeq`) for the kernel's stride arithmetic while
+    // the grid height stays the row count to process.
 
     @Test(
-        "auraQuantized aura4v4 (symmetric, SRHT rotation) produces coherent output",
-        .disabled("SRHT alone insufficient; Stage 2 (DC-bias + codebook recalibration) needed")
+        "auraQuantized aura4v4 (symmetric, SRHT rotation) produces coherent output"
     )
     func auraSymmetric4v4() async throws {
         guard let result = try await decode(.auraQuantized(scheme: .default)) else { return }
@@ -117,8 +96,7 @@ struct KVCacheSchemeIntegrationTests {
     }
 
     @Test(
-        "auraQuantized aura4v2 (asymmetric K/V, SRHT rotation) produces coherent output",
-        .disabled("SRHT alone insufficient; 2-bit V is the tightest precision floor (Stage 2 frontier)")
+        "auraQuantized aura4v2 (asymmetric K/V, SRHT rotation) produces coherent output"
     )
     func auraAsymmetric4v2() async throws {
         guard let result = try await decode(.auraQuantized(scheme: .aura4v2)) else { return }
@@ -129,10 +107,7 @@ struct KVCacheSchemeIntegrationTests {
     @Test("auraQuantized aura8v4 (asymmetric K/V, 8-bit K + 4-bit V) produces coherent output")
     func auraAsymmetric8v4() async throws {
         // aura8v4 — exercises the kb=8 path in aura_score and the
-        // vb=4 path in aura_value / aura_flash_p1 in one config. Still
-        // passes the (loose) coherence bar with SRHT; text output
-        // remains gibberish until Stage 2 lands. Keeps the kernel
-        // surface gated against catastrophic regressions.
+        // vb=4 path in aura_value / aura_flash_p1 in one config.
         let scheme = AURAScheme(keyBits: 8, valueBits: 4)
         guard let result = try await decode(.auraQuantized(scheme: scheme)) else { return }
         print("[KV=aura8v4] \(result.text)")
@@ -140,8 +115,7 @@ struct KVCacheSchemeIntegrationTests {
     }
 
     @Test(
-        "auraQuantized aura8v8 (symmetric 8-bit K/V, SRHT rotation) produces coherent output",
-        .disabled("SRHT alone insufficient; Stage 2 (DC-bias + codebook recalibration) needed")
+        "auraQuantized aura8v8 (symmetric 8-bit K/V, SRHT rotation) produces coherent output"
     )
     func auraSymmetric8v8() async throws {
         // aura8v8 — highest-precision AURA recipe; exercises kb=8 +

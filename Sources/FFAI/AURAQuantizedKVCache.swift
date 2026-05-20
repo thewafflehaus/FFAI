@@ -270,16 +270,22 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
     /// original activation space. See file header for the math.
     public func prepareForAttention(on cmd: MTLCommandBuffer) -> (k: Tensor, v: Tensor) {
         guard length > 0 else { return (sharedWorkingK, sharedWorkingV) }
+        // kPacked / kNorms / sharedWorkingK are all laid out
+        // [nKVHeads, maxSeq, …], so the dequant kernel must use `maxSeq`
+        // as the per-head row stride — `length` (the fill count) only
+        // sets how many rows to process. Passing `length` as the stride
+        // mis-offsets every head past head 0, with error growing as the
+        // cache fills (the AURA index-50 collapse).
         Ops.auraDequantRotated(
             packed: kPacked, norms: kNorms, codebook: kCodebook,
             into: sharedWorkingK,
             nKVHeads: nKVHeads, dim: headDim, packedWidth: kPackedWidth,
-            tokens: length, bits: scheme.keyBits, on: cmd)
+            tokens: length, bits: scheme.keyBits, cacheStride: maxSeq, on: cmd)
         Ops.auraDequantRotated(
             packed: vPacked, norms: vNorms, codebook: vCodebook,
             into: sharedWorkingV,
             nKVHeads: nKVHeads, dim: headDim, packedWidth: vPackedWidth,
-            tokens: length, bits: scheme.valueBits, on: cmd)
+            tokens: length, bits: scheme.valueBits, cacheStride: maxSeq, on: cmd)
         return (sharedWorkingK, sharedWorkingV)
     }
 

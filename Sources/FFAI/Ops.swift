@@ -1574,15 +1574,33 @@ public enum Ops {
     ///
     /// Grid: `(packed_width, tokens, B*H)` — `dispatchThreads` does
     /// not pad, so no per-thread bounds guards are needed.
+    /// Bulk-dequant AURA-packed K/V into `out`.
+    ///
+    /// `tokens` is the number of valid token rows to process (the
+    /// dispatch grid height). `cacheStride` is the per-head row stride
+    /// of the `packed` / `norms` / `out` buffers — i.e. the *allocated*
+    /// sequence capacity. The dequant kernel keys all per-head offset
+    /// arithmetic off its `tokens` constexpr, so for a buffer laid out
+    /// `[nKVHeads, maxSeq, …]` the kernel must be fed `cacheStride =
+    /// maxSeq`, NOT the fill count — otherwise heads 1…n read/write at
+    /// the wrong offset and the error grows with fill length (the AURA
+    /// "coherent then collapse" bug). `cacheStride` defaults to `tokens`
+    /// for callers whose buffers are exactly `[nKVHeads, tokens, …]`.
     public static func auraDequantRotated(
         packed: Tensor, norms: Tensor, codebook: Tensor,
         into out: Tensor,
         nKVHeads: Int, dim: Int, packedWidth: Int, tokens: Int, bits: Int,
+        cacheStride: Int? = nil,
         on cmd: MTLCommandBuffer
     ) {
         precondition(packed.dtype == .u32, "Ops.auraDequantRotated: packed must be u32")
         precondition(norms.dtype == .f32 && codebook.dtype == .f32,
                      "Ops.auraDequantRotated: norms/codebook must be f32")
+        let stride = cacheStride ?? tokens
+        precondition(stride >= tokens,
+                     "Ops.auraDequantRotated: cacheStride (\(stride)) must be >= tokens (\(tokens))")
+        // Grid height = rows to process (`tokens`); the kernel's `tokens`
+        // constexpr carries the per-head buffer stride (`stride`).
         let grid = MTLSize(width: packedWidth, height: tokens, depth: nKVHeads)
         let tg = MTLSize(width: packedWidth, height: 1, depth: 1)
         switch (bits, out.dtype) {
@@ -1592,7 +1610,7 @@ public enum Ops {
                 norms: norms.buffer, normsOffset: norms.offset,
                 codebook: codebook.buffer, codebookOffset: codebook.offset,
                 out: out.buffer, outOffset: out.offset,
-                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(stride),
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (2, .f16):
             MetalTileKernels.aura_dequant_rotated_int2_f16(
@@ -1600,7 +1618,7 @@ public enum Ops {
                 norms: norms.buffer, normsOffset: norms.offset,
                 codebook: codebook.buffer, codebookOffset: codebook.offset,
                 out: out.buffer, outOffset: out.offset,
-                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(stride),
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (2, .bf16):
             MetalTileKernels.aura_dequant_rotated_int2_bf16(
@@ -1608,7 +1626,7 @@ public enum Ops {
                 norms: norms.buffer, normsOffset: norms.offset,
                 codebook: codebook.buffer, codebookOffset: codebook.offset,
                 out: out.buffer, outOffset: out.offset,
-                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(stride),
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (3, .f32):
             MetalTileKernels.aura_dequant_rotated_int3_f32(
@@ -1616,7 +1634,7 @@ public enum Ops {
                 norms: norms.buffer, normsOffset: norms.offset,
                 codebook: codebook.buffer, codebookOffset: codebook.offset,
                 out: out.buffer, outOffset: out.offset,
-                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(stride),
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (3, .f16):
             MetalTileKernels.aura_dequant_rotated_int3_f16(
@@ -1624,7 +1642,7 @@ public enum Ops {
                 norms: norms.buffer, normsOffset: norms.offset,
                 codebook: codebook.buffer, codebookOffset: codebook.offset,
                 out: out.buffer, outOffset: out.offset,
-                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(stride),
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (3, .bf16):
             MetalTileKernels.aura_dequant_rotated_int3_bf16(
@@ -1632,7 +1650,7 @@ public enum Ops {
                 norms: norms.buffer, normsOffset: norms.offset,
                 codebook: codebook.buffer, codebookOffset: codebook.offset,
                 out: out.buffer, outOffset: out.offset,
-                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(stride),
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (4, .f32):
             MetalTileKernels.aura_dequant_rotated_int4_f32(
@@ -1640,7 +1658,7 @@ public enum Ops {
                 norms: norms.buffer, normsOffset: norms.offset,
                 codebook: codebook.buffer, codebookOffset: codebook.offset,
                 out: out.buffer, outOffset: out.offset,
-                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(stride),
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (4, .f16):
             MetalTileKernels.aura_dequant_rotated_int4_f16(
@@ -1648,7 +1666,7 @@ public enum Ops {
                 norms: norms.buffer, normsOffset: norms.offset,
                 codebook: codebook.buffer, codebookOffset: codebook.offset,
                 out: out.buffer, outOffset: out.offset,
-                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(stride),
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (4, .bf16):
             MetalTileKernels.aura_dequant_rotated_int4_bf16(
@@ -1656,7 +1674,7 @@ public enum Ops {
                 norms: norms.buffer, normsOffset: norms.offset,
                 codebook: codebook.buffer, codebookOffset: codebook.offset,
                 out: out.buffer, outOffset: out.offset,
-                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(stride),
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (8, .f32):
             MetalTileKernels.aura_dequant_rotated_int8_f32(
@@ -1664,7 +1682,7 @@ public enum Ops {
                 norms: norms.buffer, normsOffset: norms.offset,
                 codebook: codebook.buffer, codebookOffset: codebook.offset,
                 out: out.buffer, outOffset: out.offset,
-                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(stride),
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (8, .f16):
             MetalTileKernels.aura_dequant_rotated_int8_f16(
@@ -1672,7 +1690,7 @@ public enum Ops {
                 norms: norms.buffer, normsOffset: norms.offset,
                 codebook: codebook.buffer, codebookOffset: codebook.offset,
                 out: out.buffer, outOffset: out.offset,
-                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(stride),
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (8, .bf16):
             MetalTileKernels.aura_dequant_rotated_int8_bf16(
@@ -1680,7 +1698,7 @@ public enum Ops {
                 norms: norms.buffer, normsOffset: norms.offset,
                 codebook: codebook.buffer, codebookOffset: codebook.offset,
                 out: out.buffer, outOffset: out.offset,
-                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(tokens),
+                dim: UInt32(dim), packed_width: UInt32(packedWidth), tokens: UInt32(stride),
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         default:
             fatalError("Ops.auraDequantRotated: unsupported (bits=\(bits), dtype=\(out.dtype))")
