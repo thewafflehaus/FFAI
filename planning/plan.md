@@ -685,83 +685,59 @@ Follow-ups not yet done:
   step pays one extra dequant kernel dispatch. Fusing removes
   the working-buffer materialisation.
 
-### Phase 5d — AURA compressed-domain attention
+### Phase 5d — AURA compressed-domain attention ✅ Part 1 (correctness) SHIPPED
 
-The original motivator (TurboQuant in mlx-swift-lm; **renamed
-AURA** in FFAI — kernel names, env vars, CLI flags, and docs
-all use `aura*`). ~6-8× memory at `aura4v2`. Substantial
-research-grade codec port (many sessions).
+TurboQuant codec ported from mlx-swift-lm, **renamed AURA** in FFAI
+(kernels, env vars, CLI flags, docs all use `aura*`). Schemes are
+`aura{kb}v{vb}` (K-side / V-side bit widths); symmetric aliases
+`aura3` / `aura4` / `aura6` / `aura8`, asymmetric `aura8v4`,
+`aura4v2`, `aura3v2`. CLI: `--kv-cache aura4v2`. Codec lineage +
+design rationale: `papers/aura-compression-algorithm.md`.
 
-**KV scheme naming.** Schemes are named `aura{kb}v{vb}` where `kb`
-and `vb` are the K-side and V-side bit widths. Symmetric aliases
-(`aura3`, `aura4`, `aura6`, `aura8`) map to `aura3v3`, `aura4v4`, …
-Asymmetric examples: `aura8v4`, `aura4v2`, `aura3v2`. The CLI accepts
-the same strings: `--kv-cache aura4v2`. See `papers/aura-compression-algorithm.md`
-for the codec lineage and design rationale.
+**5d.A — metaltile DSL prerequisites ✅** — `simd_shuffle_xor` /
+`simd_broadcast`, atomic ops on threadgroup memory, the persistent
+state-buffer convention. All landed in `metaltile`.
 
-**Metaltile DSL prerequisites** (must land in `metaltile` first):
+**5d.B — AURA kernels ✅** — `aura_encode`, `aura_dequant_rotated`,
+`aura_score`, `aura_value`, `aura_flash_p1`, `aura_flash_pass2`
+under `crates/metaltile-std/src/ffai/`, bits ∈ {2,3,4,6,8}.
 
-- Sub-byte packed dtypes (`Packed4` — 4-bit, 2 per byte; `Packed2` —
-  2-bit, 4 per byte) with bit-unpack ops. Extend `DType` enum.
-- `simd_shuffle_xor` intrinsic (needed for FWHT butterfly).
-- Function-constant integration in the typed `launch` builder
-  (`#[constexpr]` already works; extend to typed launch).
-- Persistent state-buffer convention (in/out aliasing the same
-  `MTLBuffer`) — needed for the rotating index buffer.
-- Type-checked launch builder ("shape algebra" gap — closes
-  `metaltile-codegen::launch_builder`).
+**5d.C — FFAI integration ✅** — `AURAQuantizedKVCache`
+(`KVCacheProtocol`, per-layer compressed K/V, per-layer eviction),
+`LoadOptions.kvCache = .auraQuantized(scheme:)`, the `--kv-cache`
+flag + aliases, `Llama` / `Qwen3` `makeLayerCaches` wiring.
 
-**AURA kernels** (port from
-`Libraries/MLXLMCommon/TurboQuantKernels.swift` and
-`turbo_quant.metal` / `turbo_flash_sdpa.metal` upstream; the FFAI
-copies are renamed `aura*` and land under
-`crates/metaltile-std/src/ffai/` per metaltile PR #19):
+**5d.D — per-layer SRHT rotation (Stage 1a) ✅** —
+`Ops.auraRotatePerHead`, a per-layer SRHT rotation Π, Q rotated
+post-RoPE + the attention output un-rotated in the model forward.
+The "coherent-then-collapse around token 50" bug was a
+dequant-kernel stride mismatch — `aura_dequant_rotated` keyed
+per-head offsets off its `tokens` constexpr instead of the buffer's
+`maxSeq` stride; fixed by passing an explicit `cacheStride`. All
+four recipes (`aura4v4` / `aura4v2` / `aura8v4` / `aura8v8`) now
+produce coherent text on Qwen3-1.7B; `aura8v8` is near-lossless vs
+raw bf16.
 
-- `aura_encode_{kb}_{dim}` — dense rotation Π + Lloyd-Max +
-  bit-pack + norm correction.
-- `aura_encode_wht_{kb}_{dim}` — FWHT butterfly variant, no
-  correction.
-- `aura_bulk_dequant_rotated_{kb}_{dim}` — dequant into the
-  SDPA-ready layout.
-- `aura_score_{kb}_{dim}` + `aura_value_{vb}_{dim}` —
-  compressed-domain attention reductions.
-- `aura_flash_pass1_{kb}_{vb}_{dim}` + `aura_flash_pass2` (with
-  causal / NR0 variants).
-- `aura_flash_sdpa_v_{kb}_{vb}_{dim}` — single-dispatch fused, with
-  optional attention-sinks fold (consumed by Phase 5f).
-- MSE codec internals (`aura_mse_score`, `aura_mse_weighted_sum`)
-  for the rotation/codebook calibration path.
-- **DC-bias correction in the MSE codec.** Per-vector mean
-  subtraction baked into the encode path; recovers the structured
-  DC offset from `RMSNorm → Linear(bias=True)` flows that otherwise
-  blows up the residual energy after rotation.
+**5d.E — kernel test coverage ✅** — per-kernel GPU correctness
+tests (naive-CPU oracle) for every AURA kernel, including the
+non-identity SRHT rotation path; FFAI-side codec round-trip tests.
 
-**FFAI changes:**
+**Audit finding — do not re-litigate.** FFAI's `AURACodebook` is
+byte-identical to the working mlx-swift-lm reference, and that
+reference produces coherent Qwen3 output with `useBias: false`. The
+earlier "codebook recalibration / DC-bias correction needed"
+hypothesis was **refuted** — DC-bias is a GPT-OSS-only feature
+(`RMSNorm → Linear(bias=True)` projections), not a Qwen3
+requirement. Full audit: `planning/aura-audit-and-task-inventory-2026-05-19.md`.
 
-- `Sources/FFAI/AURAQuantizedKVCache.swift` — protocol conformance,
-  per-layer compressed K/V storage, rotating index buffer, two-phase
-  prefill+compress, dequant working-buffer pool shared across layers.
-- `LoadOptions.kvCache = .auraQuantized(scheme:)` where `scheme`
-  parses strings of the form `aura{kb}v{vb}` and the symmetric
-  aliases.
-- CLI flag `--kv-cache aura4v2` (and aliases `aura3`, `aura4`,
-  `aura6`, `aura8`, `aura8v4`, `aura3v2`).
-- `Sources/FFAI/Models/{Llama,Qwen3}.swift` cast `kvCacheKind` and
-  build `AURAQuantizedKVCache` in `makeLayerCaches`.
-- `documentation/kv-cache.md` — full scheme table + bench numbers.
-
-**Tests:**
-
-- `Tests/MetalTileSwiftTests/AURA*` — one file per kernel,
-  Swift-wrapper correctness against the FFAI-side reference (the
-  metaltile CPU interpreter is being dropped per the new metaltile
-  layout; correctness now comes from MLX side-by-side for `mlx/`
-  kernels or FFAI integration tests for `ffai/` kernels).
-- `Tests/FFAITests/AURAQuantizedKVCacheTests.swift` — encode/decode
-  round-trip, multi-layer shared working buffer, serialize/hydrate.
-- `Tests/ModelTests/AURAIntegrationTests.swift` —
-  `--kv-cache aura4v2` on Qwen 3 1.7B-4bit; coherent output +
-  measured memory savings.
+**AURA performance — deferred to Phase 6.3.** FFAI currently runs
+AURA through a dequant-then-`sdpaDecode` path with a persistent
+working buffer. Compressed-domain attention (`aura_flash_p1/p2`),
+two separate K/V codecs, two-phase prefill, the W_o offline fold,
+strided-output encode, and the cache-layout flip are all perf /
+architecture work — **correctness does not depend on any of them**.
+Picked up after the rest of Phase 5 + Phase 6. Spec:
+`planning/aura-stage1b-refactor-spec.md`.
 
 ### Phase 5e — SSM / GDN hybrid models
 
@@ -939,6 +915,66 @@ Each model gets:
   mlx-community + asserting coherent output.
 - Doc row updates in `documentation/models.md`,
   `documentation/capabilities.md`, `documentation/quantization.md`.
+
+---
+
+## Phase 6.1 — Sliding-window SDPA fast path
+
+Plumb `sink_end` + `window_start` (metaltile PR #50's
+`ffai_sdpa_decode` head_dim=128 constexprs) through `Ops.sdpaDecode`.
+Today FFAI passes both as 0 (full attention) and handles sinks +
+sliding window at the KV-cache layer via FIFO eviction with
+sink-slot preservation. Threading the real values takes the kernel's
+fast path — ~4× decode at 16K context, ~8× at 32K. Wire from
+`SlidingWindowKVCache` + the GPT-OSS attention-sinks path; verify the
+speedup.
+
+---
+
+## Phase 6.2 — AURA MSL snapshot tests
+
+Add `insta` MSL snapshot fixtures for the AURA kernels under
+`crates/metaltile-codegen/tests/msl_snapshots.rs` (the metaltile
+PR #25 pattern). Pins the emitted MSL so any codegen change to an
+AURA emit path surfaces as a reviewable text diff.
+
+---
+
+## Phase 6.3 — AURA performance
+
+Deferred from Phase 5d. **Correctness does not depend on any of
+this** — it is the architecture + perf pass. Full spec:
+`planning/aura-stage1b-refactor-spec.md`.
+
+**Stage 1b — compressed-domain attention.**
+
+- Two separate K/V codecs (independent SRHT seeds — decorrelated
+  quantization noise; matches the mlx-swift-lm reference).
+- Two-phase prefill — raw fp16 buffer during prefill, batch-compress
+  at the prefill→decode boundary, per-token encode after.
+- Compressed-domain attention via `aura_flash_p1` / `aura_flash_pass2`
+  as the **default** decode path — drop the persistent
+  `sharedWorkingK/V` mirror buffers.
+- Opt-in B-path — short-lived per-layer dequant buffer + `sdpaDecode`
+  for callers with the memory headroom who want matrix-engine SDPA.
+- W_o offline fold — replaces Stage 1a's runtime output un-rotation.
+
+**Stage 3 — encode + layout perf.**
+
+- Strided-output `aura_encode` — one dispatch writes all heads
+  (today: one dispatch per head).
+- Cache-layout flip to `[maxSeq, nKVHeads, packedWidth]` — makes the
+  decode-time append a single contiguous write.
+
+---
+
+## Phase 6.4 — Profile injectable
+
+Make `Profile` injectable instead of a `.shared` singleton — each
+`Model.generate(...)` takes `profile: Profile = .shared`.
+Prerequisite for per-sequence telemetry under the batched /
+continuous decode Phase 8 introduces (see the concurrency audit
+`papers/concurrency-and-cache-readiness-audit-2026-05-19.md` §2.D).
 
 ---
 
@@ -1164,6 +1200,14 @@ Sub-phases land in priority order per
   `(tile_dims, threads, unroll, simd_matrix, async_copy)`.
   Persist to `~/.cache/metaltile/tuning_cache.json`. CI: nightly
   autotune on a reference machine; commit results.
+- **Metaltile housekeeping** —
+  - Runtime dispatch-shape validator: reject degenerate threadgroup
+    geometry (the < 32-threads-per-group freeze class) before the
+    dispatch reaches the GPU.
+  - Codegen i32-signedness preservation through lowering (signed
+    operands currently widen to unsigned in some paths).
+  - Fix the flaky `matches_cpu_reference_f16_chained_resident_gqa`
+    GPU correctness test.
 
 **Done when:** generated kernels are within ≤2% of hand-tuned
 variants for representative shapes per kernel, and argument-buffer +
