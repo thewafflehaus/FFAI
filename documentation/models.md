@@ -1,7 +1,10 @@
 # Supported Models
 
-FFAI ships two architecture families today; both run real
+FFAI ships several architecture families today; all run real
 HuggingFace checkpoints end-to-end through `Model.load("org/repo")`.
+Beyond the dense transformer families (Llama, Qwen 3, Mistral, Phi,
+Gemma 3, …) the in-tree set now includes the dense SSM family Mamba 2
+and the first *hybrid* family, FalconH1 (Mamba 2 + attention).
 
 This page is the canonical landing for:
 
@@ -18,6 +21,20 @@ For porting a new architecture, see
 |---|---|---|---|---|
 | **Llama 3.x** | [`Models/Llama.swift`](../Sources/FFAI/Models/Llama.swift) | `llama` | `LlamaForCausalLM` | `LlamaDense` |
 | **Qwen 3** | [`Models/Qwen3.swift`](../Sources/FFAI/Models/Qwen3.swift) | `qwen3` | `Qwen3ForCausalLM` | `Qwen3Dense` |
+| **Mamba 2** | [`Models/Mamba2.swift`](../Sources/FFAI/Models/Mamba2.swift) | `mamba2` | `Mamba2ForCausalLM` | `Mamba2Dense` |
+| **FalconH1** | [`Models/FalconH1.swift`](../Sources/FFAI/Models/FalconH1.swift) | `falcon_h1` | `FalconH1ForCausalLM` | `FalconH1Hybrid` |
+
+**FalconH1** is FFAI's first *hybrid* family: every decoder layer runs
+BOTH a Mamba 2 selective-SSM mixer AND a grouped-query attention path
+on the same normalized input, sums their outputs into the residual,
+then applies a SwiGLU MLP. There is no layer-schedule interleave — all
+layers are identically shaped (the hybrid-ness is *within* the layer).
+It is the proving ground for the `DecoderLayer` protocol: the engine
+holds `[any DecoderLayer]` and walks it in lockstep with a per-layer
+`FalconH1LayerCache` bundling a Mamba SSM/conv state and an attention
+KV cache. FalconH1 reuses the shipped Mamba 2 SSM kernels (`ssm_step`,
+`conv1d_causal_step`) and the `sdpaDecode` attention path — no new
+kernels were needed.
 
 Both variants share the same Llama-shaped core: GQA attention with
 RoPE, RMSNorm, SwiGLU MLP. Qwen 3 adds per-head q_norm / k_norm
@@ -78,6 +95,33 @@ mlx_lm.convert --hf-path Qwen/Qwen3-1.7B \
                -q --q-bits 5 --q-group-size 64 \
                --upload-repo mlx-community/Qwen3-1.7B-5bit
 ```
+
+### FalconH1
+
+| Repo | Size | Quant | Notes |
+|---|---|---|---|
+| `mlx-community/Falcon-H1-Tiny-90M-Instruct-bf16` | 90M | bf16 | Integration-test baseline (~173 MB). |
+| `mlx-community/Falcon-H1-0.5B-Instruct-bf16` | 0.5B | bf16 | |
+| `mlx-community/Falcon-H1-1.5B-Instruct-bf16` | 1.5B | bf16 | |
+| `mlx-community/Falcon-H1-3B-Instruct-bf16` | 3B | bf16 | |
+| `mlx-community/Falcon-H1-7B-Instruct-bf16` | 7B | bf16 | |
+
+The integration suite uses Falcon-H1-Tiny-90M-Instruct — the smallest
+published FalconH1 checkpoint — so the hybrid decode path (dual
+Mamba+attention mixers, `FalconH1LayerCache`, the `DecoderLayer`
+protocol stack) is exercised at minimal download cost. The architecture
+is identical in shape across 0.5B / 1.5B / 3B / 7B.
+
+**Known gaps.** Only raw bf16 / f16 FalconH1 checkpoints are supported
+today — quantized (`-4bit` / `-8bit`) variants are rejected with a
+clear error (the µP scaling interacts with packed-weight dequant in a
+way that needs dedicated handling). `mamba_rms_norm=true` checkpoints
+(gated mixer RMSNorm) and `mamba_n_groups > 1` are likewise rejected;
+the shipped 90M / 0.5B / 1.5B all use `mamba_rms_norm=false` +
+`n_groups=1`. mlx-community checkpoints ship *pre-sanitized* (the
+scalar multipliers are already folded into the saved weights); the
+loader detects this via a conv1d-weight-shape probe and skips
+re-folding to avoid double-applying the multipliers.
 
 ## Quantization
 
