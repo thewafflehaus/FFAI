@@ -27,6 +27,7 @@ For porting a new architecture, see
 | **GraniteMoeHybrid** | [`Models/GraniteMoeHybrid.swift`](../Sources/FFAI/Models/GraniteMoeHybrid.swift) | `granitemoehybrid` | `GraniteMoeHybridForCausalLM` | `GraniteMoeHybridHybrid` |
 | **Jamba** | [`Models/Jamba.swift`](../Sources/FFAI/Models/Jamba.swift) | `jamba` | `JambaForCausalLM` | `JambaHybrid` |
 | **Qwen 3.5** | [`Models/Qwen35.swift`](../Sources/FFAI/Models/Qwen35.swift) | `qwen3_5`, `qwen3_5_moe` | `Qwen3_5ForConditionalGeneration`, `Qwen3_5MoeForConditionalGeneration` | `Qwen35Hybrid` |
+| **Gemma 4** | [`Models/Gemma4.swift`](../Sources/FFAI/Models/Gemma4.swift) | `gemma4`, `gemma4_text` | `Gemma4ForCausalLM`, `Gemma4ForConditionalGeneration` | `Gemma4Dense`, `Gemma4E`, `Gemma4MoE` |
 
 **FalconH1** is FFAI's first *hybrid* family: every decoder layer runs
 BOTH a Mamba 2 selective-SSM mixer AND a grouped-query attention path
@@ -129,6 +130,30 @@ GDN layer's cache is a composite `Qwen35GDNLayerCache` bundling a
 feed-forward reuses the shared `MoELayer` (`.softmaxThenTopK` gating)
 for the routed experts and applies the sigmoid-gated shared expert
 separately.
+
+**Gemma 4** is Google's Gemma 4 text decoder — three checkpoint shapes
+under the single `gemma4` model_type, picked from config by the family
+file: `Gemma4Dense` (31B, plain Gemma backbone), `Gemma4E` (E2B / E4B,
+adds *Per-Layer Embeddings*) and `Gemma4MoE` (26B-A4B, mixture-of-experts
+FFN). It keeps the Gemma 3 backbone — four per-block norms, the Gemma
+`(1 + weight)` RMSNorm fold, per-head q/k norms, `sqrt(hidden)` embed
+scale, GELU MLP, tied embeddings — and adds: **two attention
+geometries** (`layer_types` labels each layer `sliding_attention`,
+head_dim 256, or `full_attention`, `global_head_dim` 512), a scale-free
+**value RMSNorm**, SDPA scale `1.0`, a learned **per-layer scalar**,
+**ProportionalRoPE** on the global layers (only the first
+`partial_rotary_factor · 512` dims rotate, paired across the full head),
+**Per-Layer Embeddings** (Gemma4E mixes a second small embedding into
+every block) and **final logit soft-capping**. Sliding layers run the
+GPU `Ops.sdpaDecode` 256-wide kernel; the 512-wide global layers have no
+specialised kernel yet, so global-layer attention runs through a
+host-side single-token SDPA (`globalAttention`) — a bounded, deterministic
+readback in the one-token decode loop. A 512-wide `sdpaDecode`
+specialization is the perf follow-up. Each `Gemma4Layer` is
+self-contained (runs on its own command buffers, commits before
+returning) so the global-layer CPU SDPA and the MoE FFN's mid-layer
+commit compose cleanly. The MoE variant reuses the shared `MoELayer`
+(`.topKThenSoftmax` gating).
 
 Both Llama / Qwen 3 variants share the same Llama-shaped core: GQA
 attention with RoPE, RMSNorm, SwiGLU MLP. Qwen 3 adds per-head q_norm / k_norm
