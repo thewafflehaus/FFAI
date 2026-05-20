@@ -69,15 +69,34 @@ public enum OpsValidation {
     //   2. `nQHeads % nKVHeads == 0` so GQA fan-out is integer.
     //   3. `n_kv ≤ kv_stride`. The kernel walks `[0, n_kv)` only;
     //      `kv_stride` is the pre-allocated maxSeq capacity.
+    //   4. Sliding-window / sink fast path (head_dim=128 variants only,
+    //      added in metaltile PR #50): the kernel attends the sink
+    //      range `[0, sink_end)` plus the window range
+    //      `[window_start, n_kv)` and skips `[sink_end, window_start)`
+    //      at the loop-bound level. Caller contract:
+    //        * `0 ≤ sink_end ≤ window_start` — otherwise the sink and
+    //          window passes overlap and the online softmax
+    //          double-counts the intersection.
+    //        * `window_start ≤ n_kv` — the window pass walks
+    //          `[window_start, n_kv)`; a larger start would make the
+    //          range empty (harmless) but signals a caller bug.
+    //      Both default to 0, which is exactly dense full attention.
 
     /// head_dim values for which a kernel specialization currently
     /// exists. Caller is responsible for routing to the matching
     /// kernel; see `Ops.sdpaDecode`.
     public static let supportedSdpaHeadDims: Set<Int> = [64, 128, 256]
 
+    /// head_dim values whose kernel variant carries the `sink_end` /
+    /// `window_start` constexprs. The d64 / d256 variants are dense-only
+    /// — passing a non-zero sink/window to `Ops.sdpaDecode` with those
+    /// head dims is rejected.
+    public static let slidingWindowSdpaHeadDims: Set<Int> = [128]
+
     public static func validateSdpaDecode(
         headDim: Int, nQHeads: Int, nKVHeads: Int,
-        nKV: Int, kvStride: Int
+        nKV: Int, kvStride: Int,
+        sinkEnd: Int = 0, windowStart: Int = 0
     ) -> String? {
         if !supportedSdpaHeadDims.contains(headDim) {
             let supported = supportedSdpaHeadDims.sorted()
@@ -98,6 +117,26 @@ public enum OpsValidation {
         }
         if nKV > kvStride {
             return "nKV (\(nKV)) must not exceed kvStride (\(kvStride)) — kernel would read past cache"
+        }
+        // Sliding-window / sink fast-path contract (invariant 4).
+        if sinkEnd != 0 || windowStart != 0 {
+            if !slidingWindowSdpaHeadDims.contains(headDim) {
+                let supported = slidingWindowSdpaHeadDims.sorted()
+                    .map(String.init).joined(separator: ", ")
+                return "sinkEnd/windowStart are only supported for head_dim ∈ {\(supported)} (got \(headDim)); the d64/d256 kernels are dense-only"
+            }
+            if sinkEnd < 0 {
+                return "sinkEnd must be non-negative (got \(sinkEnd))"
+            }
+            if windowStart < 0 {
+                return "windowStart must be non-negative (got \(windowStart))"
+            }
+            if sinkEnd > windowStart {
+                return "sinkEnd (\(sinkEnd)) must not exceed windowStart (\(windowStart)) — overlapping sink + window ranges double-count in the online softmax"
+            }
+            if windowStart > nKV {
+                return "windowStart (\(windowStart)) must not exceed nKV (\(nKV)) — window pass walks [windowStart, nKV)"
+            }
         }
         return nil
     }

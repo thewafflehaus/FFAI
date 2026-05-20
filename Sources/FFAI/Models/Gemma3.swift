@@ -514,11 +514,17 @@ public final class Gemma3Layer: Module {
                           vFlat: v.reshaped(to: [nKVHeads, headDim]),
                           on: cmd)
         let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
+        // Sliding layers run a `.window` KV cache; the helper derives
+        // the kernel's sink/window fast-path bounds from the eviction
+        // policy (FFAI's ring buffer keeps live data contiguous, so
+        // this is (0, 0) today — see KVCacheProtocol.sdpaSinkWindow).
+        let (sinkEnd, windowStart) = cache.sdpaSinkWindow(nKV: cache.length)
         let attnOut = Ops.sdpaDecode(
             q: qRotated, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
             nKV: cache.length, kvStride: cache.maxSeq,
-            scale: scale, on: cmd)
+            scale: scale, on: cmd,
+            sinkEnd: sinkEnd, windowStart: windowStart)
 
         // o_proj → post_attention_layernorm → +residual.
         let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)

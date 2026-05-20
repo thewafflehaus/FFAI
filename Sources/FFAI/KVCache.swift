@@ -86,6 +86,30 @@ public extension KVCacheProtocol {
     var eviction: KVEviction { .unbounded }
     var effectiveMaxSize: Int { maxSeq }
     var absolutePosition: Int { length }
+
+    /// Sink + window bounds for `Ops.sdpaDecode`'s sliding-window fast
+    /// path, derived from the eviction policy. Returns
+    /// `(sinkEnd, windowStart)` for a cache whose live span is `nKV`
+    /// physical slots.
+    ///
+    /// FFAI's KV caches (raw / affine / AURA) all back a `.window`
+    /// policy with a ring buffer that keeps live data **contiguous** in
+    /// physical slots `[0, length)` — `length` saturates at `maxSize`,
+    /// and `KVEvictionState.reserveNextSlot()` writes sinks into
+    /// `[0, keep)` then rings within `[keep, maxSize)`. So the kernel
+    /// already sees a flat, gap-free `[0, nKV)` range and the dense
+    /// path `(0, 0)` is numerically exact. The sparse fast path only
+    /// pays off for a non-ring "grow-then-mask" layout (e.g. a future
+    /// paged / batched cache) where the live window is a sub-range of a
+    /// larger contiguous buffer — such a cache overrides this method.
+    ///
+    /// Returning `(0, 0)` here means windowed callers can unconditionally
+    /// thread `cache.sdpaSinkWindow(nKV:)` into `Ops.sdpaDecode` without
+    /// branching on the cache kind; the API is wired end-to-end and a
+    /// new cache layout only has to change this one method.
+    func sdpaSinkWindow(nKV: Int) -> (sinkEnd: Int, windowStart: Int) {
+        (sinkEnd: 0, windowStart: 0)
+    }
 }
 
 // MARK: - KVCache (raw fp16 / bf16)

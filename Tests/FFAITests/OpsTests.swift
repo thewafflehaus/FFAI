@@ -422,6 +422,88 @@ struct OpsTests {
         }
     }
 
+    @Test("sdpaDecode f32 — sinkEnd + windowStart skip the masked range")
+    func sdpaSlidingWindowAndSinks() {
+        autoreleasepool {
+            // head_dim=128 is the only variant carrying the sink/window
+            // constexprs. Four KV positions; the kernel attends
+            // [0, sinkEnd) ∪ [windowStart, nKV) and skips the gap.
+            let D = 128
+            let kvStride = 4
+            let nKV = 4
+            let nQHeads = 1
+            let nKVHeads = 1
+
+            let q = Tensor.empty(shape: [nQHeads, D], dtype: .f32)
+            let k = Tensor.empty(shape: [nKVHeads, kvStride, D], dtype: .f32)
+            let v = Tensor.empty(shape: [nKVHeads, kvStride, D], dtype: .f32)
+
+            // Q = e_0. Every K row is also e_0, so all four positions
+            // share the same score → softmax weights them equally over
+            // whatever subset the kernel actually attends.
+            var qData = [Float](repeating: 0, count: nQHeads * D)
+            qData[0] = 1
+            q.copyIn(from: qData)
+
+            var kData = [Float](repeating: 0, count: nKVHeads * kvStride * D)
+            for pos in 0..<kvStride { kData[pos * D + 0] = 1 }
+            k.copyIn(from: kData)
+
+            // V[pos] = constant vector of value `pos`. The attention
+            // output's first element is the mean of the attended `pos`
+            // values, which makes the attended set directly checkable.
+            var vData = [Float](repeating: 0, count: nKVHeads * kvStride * D)
+            for pos in 0..<kvStride {
+                for d in 0..<D { vData[pos * D + d] = Float(pos) }
+            }
+            v.copyIn(from: vData)
+
+            // windowStart=2, sinkEnd=0 → attends positions {2, 3} only.
+            // mean(2, 3) = 2.5.
+            var windowed: Tensor!
+            runAndWait { cb in
+                windowed = Ops.sdpaDecode(q: q, k: k, v: v,
+                                          nQHeads: nQHeads, nKVHeads: nKVHeads,
+                                          headDim: D, nKV: nKV, kvStride: kvStride,
+                                          scale: 1.0, on: cb,
+                                          sinkEnd: 0, windowStart: 2)
+            }
+            let wr = windowed.toArray(as: Float.self)
+            #expect(abs(wr[0] - 2.5) < 1e-4,
+                    "windowStart=2 should attend {2,3}: got \(wr[0]), expected 2.5")
+
+            // sinkEnd=1, windowStart=3 → attends {0} ∪ {3}.
+            // mean(0, 3) = 1.5.
+            var sinked: Tensor!
+            runAndWait { cb in
+                sinked = Ops.sdpaDecode(q: q, k: k, v: v,
+                                        nQHeads: nQHeads, nKVHeads: nKVHeads,
+                                        headDim: D, nKV: nKV, kvStride: kvStride,
+                                        scale: 1.0, on: cb,
+                                        sinkEnd: 1, windowStart: 3)
+            }
+            let sr = sinked.toArray(as: Float.self)
+            #expect(abs(sr[0] - 1.5) < 1e-4,
+                    "sinkEnd=1, windowStart=3 should attend {0,3}: got \(sr[0]), expected 1.5")
+
+            // sinkEnd=0, windowStart=0 → dense full attention {0,1,2,3}.
+            // mean(0,1,2,3) = 1.5 — same mean as above by coincidence,
+            // so cross-check that an explicit dense call equals the
+            // default-argument call.
+            var dense: Tensor!
+            runAndWait { cb in
+                dense = Ops.sdpaDecode(q: q, k: k, v: v,
+                                       nQHeads: nQHeads, nKVHeads: nKVHeads,
+                                       headDim: D, nKV: nKV, kvStride: kvStride,
+                                       scale: 1.0, on: cb,
+                                       sinkEnd: 0, windowStart: 0)
+            }
+            let dr = dense.toArray(as: Float.self)
+            #expect(abs(dr[0] - 1.5) < 1e-4,
+                    "dense attention over {0,1,2,3}: got \(dr[0]), expected 1.5")
+        }
+    }
+
     // MARK: - softmax_categorical_sample
 
     /// Helper: run the GPU sample once with a given uniform draw, return token id.

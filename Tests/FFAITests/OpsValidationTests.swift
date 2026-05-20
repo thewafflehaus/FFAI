@@ -138,6 +138,49 @@ struct OpsValidationTests {
             nKV: 4, kvStride: 4) == nil)
     }
 
+    @Test("sdpaDecode accepts legal sink/window bounds")
+    func sdpaDecodeAcceptsLegalSinkWindow() {
+        // Dense default — both zero.
+        #expect(OpsValidation.validateSdpaDecode(
+            headDim: 128, nQHeads: 8, nKVHeads: 8,
+            nKV: 64, kvStride: 256, sinkEnd: 0, windowStart: 0) == nil)
+        // Sink + window, well-ordered, window inside n_kv.
+        #expect(OpsValidation.validateSdpaDecode(
+            headDim: 128, nQHeads: 8, nKVHeads: 8,
+            nKV: 64, kvStride: 256, sinkEnd: 4, windowStart: 32) == nil)
+        // sinkEnd == windowStart (gap is empty) is fine.
+        #expect(OpsValidation.validateSdpaDecode(
+            headDim: 128, nQHeads: 8, nKVHeads: 8,
+            nKV: 64, kvStride: 256, sinkEnd: 8, windowStart: 8) == nil)
+    }
+
+    @Test("sdpaDecode rejects sink/window on dense-only head dims")
+    func sdpaDecodeRejectsSinkWindowOnD64D256() {
+        // d64 / d256 kernels carry no sink_end/window_start constexpr.
+        #expect(OpsValidation.validateSdpaDecode(
+            headDim: 64, nQHeads: 8, nKVHeads: 8,
+            nKV: 64, kvStride: 256, sinkEnd: 0, windowStart: 4) != nil)
+        #expect(OpsValidation.validateSdpaDecode(
+            headDim: 256, nQHeads: 8, nKVHeads: 8,
+            nKV: 64, kvStride: 256, sinkEnd: 2, windowStart: 2) != nil)
+    }
+
+    @Test("sdpaDecode rejects overlapping or out-of-range sink/window")
+    func sdpaDecodeRejectsBadSinkWindow() {
+        // sinkEnd > windowStart → online-softmax double-counts the gap.
+        #expect(OpsValidation.validateSdpaDecode(
+            headDim: 128, nQHeads: 8, nKVHeads: 8,
+            nKV: 64, kvStride: 256, sinkEnd: 32, windowStart: 8) != nil)
+        // windowStart > n_kv → window pass walks an inverted range.
+        #expect(OpsValidation.validateSdpaDecode(
+            headDim: 128, nQHeads: 8, nKVHeads: 8,
+            nKV: 16, kvStride: 256, sinkEnd: 0, windowStart: 32) != nil)
+        // Negative bounds rejected.
+        #expect(OpsValidation.validateSdpaDecode(
+            headDim: 128, nQHeads: 8, nKVHeads: 8,
+            nKV: 64, kvStride: 256, sinkEnd: -1, windowStart: 4) != nil)
+    }
+
     // ─── auraEncode ────────────────────────────────────────────────
 
     @Test("auraEncode accepts production shapes")

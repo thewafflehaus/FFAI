@@ -1635,17 +1635,33 @@ public enum Ops {
     ///     configs) is queued but not yet emitted.
     ///   * 1 threadgroup per Q head, 1024 threads per threadgroup
     ///     (32 simdgroups × 32 lanes). `tgid_x = q_head`.
+    ///
+    /// Sliding-window / attention-sink fast path (`head_dim = 128`
+    /// variants only — metaltile PR #50): when `sinkEnd` and/or
+    /// `windowStart` are non-zero the kernel attends `[0, sinkEnd)`
+    /// (the pinned attention sinks) plus `[windowStart, nKV)` (the
+    /// sliding window) and skips the masked range
+    /// `[sinkEnd, windowStart)` at the loop-bound level — no
+    /// per-position branching. Both default to 0, which is exactly
+    /// dense full attention over `[0, nKV)`. Callers with a windowed
+    /// KV cache derive these from the eviction policy: for a window of
+    /// `W` retained positions with `S` pinned sink slots,
+    /// `windowStart = max(0, nKV - W)` and `sinkEnd = S`. The d64 /
+    /// d256 kernel variants are dense-only — passing non-zero sink /
+    /// window with those head dims is a precondition failure.
     public static func sdpaDecode(q: Tensor, k: Tensor, v: Tensor,
                                   nQHeads: Int, nKVHeads: Int, headDim: Int,
                                   nKV: Int, kvStride: Int,
                                   scale: Float, on cmd: MTLCommandBuffer,
+                                  sinkEnd: Int = 0, windowStart: Int = 0,
                                   into out: Tensor? = nil) -> Tensor {
         // Kernel-invariant validation — see OpsValidation.swift for the
         // full reasoning + CI-runnable tests. The 2026-05-19 GPU freeze
         // came from this wrapper accepting head_dim=4 with no check.
         if let reason = OpsValidation.validateSdpaDecode(
             headDim: headDim, nQHeads: nQHeads, nKVHeads: nKVHeads,
-            nKV: nKV, kvStride: kvStride
+            nKV: nKV, kvStride: kvStride,
+            sinkEnd: sinkEnd, windowStart: windowStart
         ) {
             preconditionFailure("Ops.sdpaDecode: \(reason)")
         }
@@ -1674,12 +1690,11 @@ public enum Ops {
                 head_dim: UInt32(headDim), n_kv: UInt32(nKV),
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
-                // sink_end=0, window_start=0 → full attention. FFAI's
-                // sinks + sliding-window features manage the cache layer
-                // (FIFO eviction with sink-slot preservation), so SDPA
-                // sees a flat n_kv range. Kernel-level fast-path
-                // plumbing through Ops.sdpaDecode is a separate follow-up.
-                sink_end: 0, window_start: 0,
+                // Sliding-window / sink fast path. Both 0 → dense full
+                // attention over [0, n_kv); non-zero values let the
+                // kernel skip the masked range [sink_end, window_start)
+                // at the loop-bound level. See the doc comment above.
+                sink_end: UInt32(sinkEnd), window_start: UInt32(windowStart),
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (128, .f16):
@@ -1691,7 +1706,7 @@ public enum Ops {
                 head_dim: UInt32(headDim), n_kv: UInt32(nKV),
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
-                sink_end: 0, window_start: 0,  // see f32 case for rationale
+                sink_end: UInt32(sinkEnd), window_start: UInt32(windowStart),
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (128, .bf16):
@@ -1703,7 +1718,7 @@ public enum Ops {
                 head_dim: UInt32(headDim), n_kv: UInt32(nKV),
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
-                sink_end: 0, window_start: 0,  // see f32 case for rationale
+                sink_end: UInt32(sinkEnd), window_start: UInt32(windowStart),
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (64, .f32):
