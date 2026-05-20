@@ -1666,11 +1666,19 @@ public enum Ops {
             preconditionFailure("Ops.sdpaDecode: \(reason)")
         }
         let result = out ?? Tensor.empty(shape: [nQHeads, headDim], dtype: q.dtype)
-        // One threadgroup per q-head, 1024 threads per group. Reduction-mode
-        // kernel reads `tgid_x` as the q-head; we lay out a 1D thread grid
-        // of `nQHeads * 1024` threads so Metal slices it into `nQHeads`
-        // threadgroups of 1024.
-        let threadsPerGroup = 1024
+        // One threadgroup per q-head. Reduction-mode kernel reads `tgid_x`
+        // as the q-head; we lay out a 1D thread grid of
+        // `nQHeads * threadsPerGroup` threads so Metal slices it into
+        // `nQHeads` threadgroups.
+        //
+        // The d64/d128/d256 variants run 1024 threads (32 simdgroups).
+        // The d512 variant runs 512 (16 simdgroups): its 16-wide per-lane
+        // register footprint pushes the pipeline's
+        // maxTotalThreadsPerThreadgroup below 1024, and a 1024-thread
+        // dispatch silently no-ops (command buffer errors, output stays
+        // zero). The kernel body is parametric in `n_simd`, so 512 is
+        // correct — see sdpa_decode_d512.rs §"DISPATCH INVARIANTS".
+        let threadsPerGroup = headDim == 512 ? 512 : 1024
         let grid = MTLSize(width: nQHeads * threadsPerGroup, height: 1, depth: 1)
         let tg = MTLSize(width: threadsPerGroup, height: 1, depth: 1)
         let headsPerGroup = nQHeads / nKVHeads
@@ -1778,6 +1786,39 @@ public enum Ops {
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (256, .bf16):
             MetalTileKernels.ffai_sdpa_decode_d256_bf16(
+                q: q.buffer, qOffset: q.offset,
+                k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                out: result.buffer, outOffset: result.offset,
+                head_dim: UInt32(headDim), n_kv: UInt32(nKV),
+                kv_stride: UInt32(kvStride),
+                heads_per_group: UInt32(headsPerGroup),
+                scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (512, .f32):
+            MetalTileKernels.ffai_sdpa_decode_d512_f32(
+                q: q.buffer, qOffset: q.offset,
+                k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                out: result.buffer, outOffset: result.offset,
+                head_dim: UInt32(headDim), n_kv: UInt32(nKV),
+                kv_stride: UInt32(kvStride),
+                heads_per_group: UInt32(headsPerGroup),
+                scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (512, .f16):
+            MetalTileKernels.ffai_sdpa_decode_d512_f16(
+                q: q.buffer, qOffset: q.offset,
+                k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                out: result.buffer, outOffset: result.offset,
+                head_dim: UInt32(headDim), n_kv: UInt32(nKV),
+                kv_stride: UInt32(kvStride),
+                heads_per_group: UInt32(headsPerGroup),
+                scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (512, .bf16):
+            MetalTileKernels.ffai_sdpa_decode_d512_bf16(
                 q: q.buffer, qOffset: q.offset,
                 k: k.buffer, kOffset: k.offset,
                 v: v.buffer, vOffset: v.offset,

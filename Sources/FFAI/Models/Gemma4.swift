@@ -13,9 +13,13 @@
 //
 // ─── Architecture vs Gemma 3 ─────────────────────────────────────────
 //
-// Gemma 4 keeps Gemma 3's backbone shape — four per-block norms, the
-// Gemma `(1 + weight)` RMSNorm, per-head q/k norms, sqrt(hidden) embed
-// scale, GELU MLP, tied embeddings — and adds:
+// Gemma 4 keeps Gemma 3's backbone shape — four per-block norms,
+// per-head q/k norms, sqrt(hidden) embed scale, GELU MLP, tied
+// embeddings — and adds:
+//
+//   0. **Plain RMSNorm.** Gemma 4 drops the Gemma 1/2/3 `(1 + weight)`
+//      unit-offset convention: norm weight is initialised to ones and
+//      applied as a plain `x/rms(x) · weight` (no `+1` fold at load).
 //
 //   1. **Two attention geometries.** `layer_types` labels each layer
 //      `sliding_attention` or `full_attention`. Sliding layers use
@@ -44,16 +48,12 @@
 //      `softcap · tanh(logits / softcap)` (`final_logit_softcapping`,
 //      30.0 across the family).
 //
-// ─── First-light attention path ─────────────────────────────────────
+// ─── Attention path ─────────────────────────────────────────────────
 //
-// FFAI's `Ops.sdpaDecode` supports head_dim ∈ {64, 128, 256}. Sliding
-// layers (head_dim 256) take that fast GPU kernel. The global layers'
-// 512-wide head has no specialised kernel, so global-layer attention
-// runs through `globalAttentionCPU` — a host-side single-token SDPA
-// (ProportionalRoPE + score + softmax + V-weighted-sum). The decode
-// loop is one token at a time, so this is a bounded, deterministic
-// readback; a 512-wide `sdpaDecode` specialization is the perf
-// follow-up.
+// FFAI's `Ops.sdpaDecode` supports head_dim ∈ {64, 128, 256, 512}.
+// Sliding layers (head_dim 256) take the d256 GPU kernel; global layers
+// (head_dim 512) take the d512 specialization. Both attention paths are
+// pure-GPU single-token decode dispatches — no host readback.
 //
 // ─── KV sharing (Gemma4E) ────────────────────────────────────────────
 //
@@ -100,7 +100,7 @@ public enum Gemma4Error: Error, CustomStringConvertible {
         case .missingConfig(let f):
             return "Gemma4: required config field missing: \(f)"
         case .unsupportedHeadDim(let d):
-            return "Gemma4: sliding head_dim \(d) unsupported (Ops.sdpaDecode needs 64/128/256)"
+            return "Gemma4: head_dim \(d) unsupported (Ops.sdpaDecode needs 64/128/256/512)"
         case .unalignedNorm(let n):
             return "Gemma4: norm row size \(n) must be 128-aligned and ≤ 4096"
         }
@@ -303,17 +303,25 @@ enum Gemma4Loader {
         let prefix = resolvePrefix(weights)
         let quant = config.quantization
 
-        // q/k/v head-dim norms feed `rmsNormRows` — its row size must be
-        // 128-aligned and ≤ 4096. Sliding 256 + global 512 both qualify.
-        for d in [p.headDim, p.globalHeadDim] {
+        // Every RMSNorm row goes through the `rmsNorm` / `rmsNormRows`
+        // kernel, whose row size must be 128-aligned and ≤ 4096:
+        //   • q/k/v head-dim norms — `headDim` / `globalHeadDim`.
+        //   • the four per-block norms + final norm — `hidden`.
+        // Sliding 256 + global 512 qualify; `hidden` rules out the
+        // 31B variant (5376-wide), which would otherwise fatalError
+        // deep inside the prewarm forward instead of failing the load.
+        for d in [p.headDim, p.globalHeadDim, p.hidden] {
             if d % 128 != 0 || d > 4096 {
                 throw Gemma4Error.unalignedNorm(d)
             }
         }
-        // Sliding layers go through Ops.sdpaDecode — head_dim must be a
-        // kernel-supported specialization.
-        if !OpsValidation.supportedSdpaHeadDims.contains(p.headDim) {
-            throw Gemma4Error.unsupportedHeadDim(p.headDim)
+        // Both attention geometries go through Ops.sdpaDecode — the
+        // sliding head_dim and the global head_dim must each be a
+        // kernel-supported specialization (256 → d256, 512 → d512).
+        for d in [p.headDim, p.globalHeadDim] {
+            if !OpsValidation.supportedSdpaHeadDims.contains(d) {
+                throw Gemma4Error.unsupportedHeadDim(d)
+            }
         }
 
         let embedTokens = try loadEmbedding(
@@ -546,43 +554,21 @@ enum Gemma4Loader {
 /// in rotate-half pairs, so the count must be even.
 private func evenFloor(_ n: Int) -> Int { n - (n % 2) }
 
-// MARK: - Gemma 4 RMSNorm load (the (1 + weight) fold)
+// MARK: - Gemma 4 RMSNorm load (plain — NO (1 + weight) fold)
 
-/// Load a Gemma RMSNorm weight, folding the `(1 + weight)` offset into
-/// the tensor at load time so the stock `RMSNorm` kernel applies
-/// unchanged. Identical fold to `Gemma3.loadGemmaRMSNorm` — Gemma 4
-/// keeps the same norm convention.
+/// Load a Gemma 4 RMSNorm weight. Unlike Gemma 1/2/3, Gemma 4 dropped
+/// the `(1 + weight)` unit-offset convention: its norm weight is
+/// initialised to ones and the kernel applies a plain `x/rms(x) · weight`
+/// (the `RMSNormZeroShift` form — see `MLXLMCommon.Gemma4`). The
+/// checkpoint stores the weight already centred at 1.0, so it is loaded
+/// verbatim. Folding `+1` here (as Gemma 3 does) would double every
+/// norm scale and corrupt the residual stream.
 private func loadGemma4RMSNorm(
     base: String, in weights: SafeTensorsBundle, eps: Double
 ) throws -> RMSNorm {
     let raw = try weights.tensor(named: base)
     precondition(raw.shape.count == 1, "Gemma4 RMSNorm weight must be 1D, got \(raw.shape)")
-    let n = raw.elementCount
-    let foldedBuf = Device.shared.makeBuffer(length: raw.byteCount)
-    let folded = Tensor(buffer: foldedBuf, offset: 0, shape: raw.shape, dtype: raw.dtype)
-    let dstPtr = foldedBuf.contents()
-    let srcPtr = raw.buffer.contents().advanced(by: raw.offset)
-    switch raw.dtype {
-    case .f32:
-        let src = srcPtr.bindMemory(to: Float.self, capacity: n)
-        let dst = dstPtr.bindMemory(to: Float.self, capacity: n)
-        for i in 0..<n { dst[i] = src[i] + 1.0 }
-    case .f16:
-        let src = srcPtr.bindMemory(to: UInt16.self, capacity: n)
-        let dst = dstPtr.bindMemory(to: UInt16.self, capacity: n)
-        for i in 0..<n {
-            dst[i] = floatToHalfBitsForTest(halfBitsToFloatForTest(src[i]) + 1.0)
-        }
-    case .bf16:
-        let src = srcPtr.bindMemory(to: UInt16.self, capacity: n)
-        let dst = dstPtr.bindMemory(to: UInt16.self, capacity: n)
-        for i in 0..<n {
-            dst[i] = floatToBf16BitsForTest(bf16BitsToFloatForTest(src[i]) + 1.0)
-        }
-    default:
-        fatalError("Gemma4 RMSNorm: unsupported weight dtype \(raw.dtype)")
-    }
-    return RMSNorm(weight: folded, eps: Float(eps))
+    return RMSNorm(weight: raw, eps: Float(eps))
 }
 
 /// Fill a flat `[n]` tensor with a scalar (used for the embed-scale
@@ -831,13 +817,13 @@ public final class Gemma4Layer: Module {
         return out
     }
 
-    /// A sliding-attention + dense-FFN layer needs no mid-layer host
-    /// sync — it can run entirely on a shared command buffer batched
-    /// with its neighbours. Global layers (CPU SDPA) and MoE layers
-    /// (MoELayer host readback) must commit mid-layer, so they break
+    /// A dense-FFN layer needs no mid-layer host sync — it runs entirely
+    /// on a shared command buffer batched with its neighbours. Both the
+    /// sliding (head_dim 256) and global (head_dim 512) attention paths
+    /// are pure-GPU `Ops.sdpaDecode` dispatches. Only MoE layers
+    /// (`MoELayer` host readback) must commit mid-layer, so they break
     /// the batch.
     var batchable: Bool {
-        if isGlobal { return false }
         if case .moe = ffn { return false }
         return true
     }
@@ -870,8 +856,11 @@ public final class Gemma4Layer: Module {
                                 perLayerInput: Tensor?,
                                 cmd: MTLCommandBuffer) -> Tensor {
         let xNorm = inputNorm(h, on: cmd)
-        let attnOut = slidingAttentionBatched(xNorm, position: position,
-                                              cache: cache, cmd: cmd)
+        let attnOut = isGlobal
+            ? globalAttentionBatched(xNorm, position: position,
+                                     cache: cache, cmd: cmd)
+            : slidingAttentionBatched(xNorm, position: position,
+                                      cache: cache, cmd: cmd)
         let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
         let normedAttn = postAttnNorm(oOut, on: cmd)
         var hOut = Ops.add(h, normedAttn, on: cmd)
@@ -1022,124 +1011,45 @@ public final class Gemma4Layer: Module {
         return out
     }
 
-    /// Host-side single-token SDPA for the 512-wide global-attention
-    /// layers (`Ops.sdpaDecode` has no 512 specialization). Projects +
-    /// norms q/k/v, applies ProportionalRoPE, appends K/V to the cache
-    /// on the GPU, commits `cmd`, reads the full K/V slab back, and
-    /// computes `softmax(q·Kᵀ) · V` per head on the CPU. Returns the
-    /// resident `[nHeads, headDim]` attention output.
-    ///
-    /// The decode loop is one token at a time, so the readback is
-    /// `length · headDim` per head — bounded and deterministic. A 512
-    /// `sdpaDecode` kernel would replace this; see the file header.
-    private func globalAttention(
-        _ xNorm: Tensor, position: Int,
-        cache: any KVCacheProtocol, cmd: MTLCommandBuffer, device: Device
-    ) -> Tensor {
+    /// Global-layer (512-wide) attention queued onto a shared `cmd` —
+    /// ProportionalRoPE + GPU `sdpaDecode` (head_dim 512). Does NOT
+    /// commit; the caller batches and commits. Returns `[nHeads, headDim]`.
+    private func globalAttentionBatched(_ xNorm: Tensor, position: Int,
+                                        cache: any KVCacheProtocol,
+                                        cmd: MTLCommandBuffer) -> Tensor {
         let (q, k, v) = projectAndNorm(xNorm, on: cmd)
-        // 1. ProportionalRoPE on q and k. The kernel rotates pairs
-        //    `(i, i + headDim/2)` for `i ∈ [0, rotatedDim/2)` with
-        //    frequency `theta^(-2i/headDim)` — exactly Gemma 4's
-        //    ProportionalRoPE. `ropeProportional` drives the shared RoPE
-        //    kernel with a grid height of `rotatedDim/2`.
+        // ProportionalRoPE on q and k (in-place): rotates pairs
+        // `(i, i + headDim/2)` for `i ∈ [0, rotatedDim/2)` with frequency
+        // `theta^(-2i/headDim)`. The unrotated tail passes through.
         Gemma4Ops.ropeProportional(
             q, position: position, headDim: headDim, rotatedDim: rotatedDim,
             thetaBase: ropeTheta, on: cmd)
         Gemma4Ops.ropeProportional(
             k, position: position, headDim: headDim, rotatedDim: rotatedDim,
             thetaBase: ropeTheta, on: cmd)
-        // 2. Append the rotated K and the value-normed V to the cache.
         cache.appendOnGPU(kFlat: k, vFlat: v, on: cmd)
         let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
+        // Gemma 4 uses SDPA scale = 1.0 (pre-scaling lives in q_norm).
+        // head_dim 512 routes to the d512 `sdpaDecode` specialization.
+        return Ops.sdpaDecode(
+            q: q, k: cacheK, v: cacheV,
+            nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
+            nKV: cache.length, kvStride: cache.maxSeq,
+            scale: 1.0, on: cmd)
+    }
 
-        // 3. Sync so the host can read q, K and V.
+    /// Global attention that commits `cmd` and returns resident output
+    /// — used by a global + MoE layer whose MoE FFN needs the attention
+    /// result resident before its own host sync.
+    private func globalAttention(
+        _ xNorm: Tensor, position: Int,
+        cache: any KVCacheProtocol, cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        let out = globalAttentionBatched(xNorm, position: position,
+                                         cache: cache, cmd: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
-
-        let nKV = cache.length
-        let qHost = q.toFloatArray()                       // [nHeads, headDim]
-        let kHost = sliceCacheRows(cacheK, nKVHeads: nKVHeads,
-                                   maxSeq: cache.maxSeq, headDim: headDim, nKV: nKV)
-        let vHost = sliceCacheRows(cacheV, nKVHeads: nKVHeads,
-                                   maxSeq: cache.maxSeq, headDim: headDim, nKV: nKV)
-
-        // 4. Per-head SDPA on the host. GQA: q-head h reads KV head
-        //    `h / (nHeads / nKVHeads)`. Gemma 4 SDPA scale = 1.0.
-        let headsPerKV = nHeads / nKVHeads
-        var outHost = [Float](repeating: 0, count: nHeads * headDim)
-        for qh in 0..<nHeads {
-            let kvh = qh / headsPerKV
-            let qBase = qh * headDim
-            // scores[j] = Σ_d q[d] · K[kvh, j, d]
-            var scores = [Float](repeating: 0, count: nKV)
-            var maxScore = -Float.infinity
-            for j in 0..<nKV {
-                var s: Float = 0
-                let kBase = (kvh * nKV + j) * headDim
-                for d in 0..<headDim { s += qHost[qBase + d] * kHost[kBase + d] }
-                scores[j] = s
-                if s > maxScore { maxScore = s }
-            }
-            // softmax
-            var sum: Float = 0
-            for j in 0..<nKV {
-                let e = Foundation.exp(scores[j] - maxScore)
-                scores[j] = e
-                sum += e
-            }
-            let invSum = sum > 0 ? 1.0 / sum : 0
-            // out[d] = Σ_j prob[j] · V[kvh, j, d]
-            let outBase = qh * headDim
-            for j in 0..<nKV {
-                let p = scores[j] * invSum
-                let vBase = (kvh * nKV + j) * headDim
-                for d in 0..<headDim { outHost[outBase + d] += p * vHost[vBase + d] }
-            }
-        }
-
-        // 5. Upload the [nHeads, headDim] result in the model dtype.
-        let out = Tensor.empty(shape: [nHeads, headDim], dtype: q.dtype, device: device)
-        copyFloatsInto(out, floats: outHost)
         return out
-    }
-}
-
-/// Read the live `[nKVHeads, nKV, headDim]` rows out of a cache tensor
-/// laid out as `[nKVHeads, maxSeq, headDim]`. The cache stride is
-/// `maxSeq`; the live data occupies the first `nKV` positions of each
-/// head.
-private func sliceCacheRows(_ t: Tensor, nKVHeads: Int, maxSeq: Int,
-                            headDim: Int, nKV: Int) -> [Float] {
-    let full = t.toFloatArray()  // [nKVHeads * maxSeq * headDim]
-    var out = [Float](repeating: 0, count: nKVHeads * nKV * headDim)
-    for h in 0..<nKVHeads {
-        let srcHead = h * maxSeq * headDim
-        let dstHead = h * nKV * headDim
-        for j in 0..<nKV {
-            let src = srcHead + j * headDim
-            let dst = dstHead + j * headDim
-            for d in 0..<headDim { out[dst + d] = full[src + d] }
-        }
-    }
-    return out
-}
-
-/// Write a `[Float]` host array into a tensor in its native dtype.
-private func copyFloatsInto(_ t: Tensor, floats: [Float]) {
-    precondition(floats.count == t.elementCount, "copyFloatsInto: count mismatch")
-    let ptr = t.buffer.contents().advanced(by: t.offset)
-    switch t.dtype {
-    case .f32:
-        let p = ptr.bindMemory(to: Float.self, capacity: floats.count)
-        for i in 0..<floats.count { p[i] = floats[i] }
-    case .f16:
-        let p = ptr.bindMemory(to: UInt16.self, capacity: floats.count)
-        for i in 0..<floats.count { p[i] = floatToHalfBitsForTest(floats[i]) }
-    case .bf16:
-        let p = ptr.bindMemory(to: UInt16.self, capacity: floats.count)
-        for i in 0..<floats.count { p[i] = floatToBf16BitsForTest(floats[i]) }
-    default:
-        fatalError("Gemma4 copyFloatsInto: unsupported dtype \(t.dtype)")
     }
 }
 

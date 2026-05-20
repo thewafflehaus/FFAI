@@ -58,14 +58,15 @@ public enum OpsValidation {
     //
     // Kernel invariants (from `crates/metaltile-std/src/ffai/sdpa_decode.rs`
     // + `sdpa_decode_d64.rs` §"DISPATCH INVARIANTS"):
-    //   1. `head_dim ∈ {64, 128}`. Each lane owns `head_dim / 32`
-    //      consecutive Q/K/V elements; loads are unconditional. Wrong
-    //      head_dim → wrong TPG → infinite loop in
+    //   1. `head_dim ∈ {64, 128, 256, 512}`. Each lane owns
+    //      `head_dim / 32` consecutive Q/K/V elements; loads are
+    //      unconditional. Wrong head_dim → wrong TPG → infinite loop in
     //      `for _t in range(sg, n_kv, ns=TPG/32)` when `TPG < 32`
     //      makes `ns = 0`. (See FFAI post-mortem 2026-05-19.)
-    //      head_dim=256 is queued; head_dim=128 covers Llama 3.2 3B+ /
-    //      Qwen3 / GPT-OSS full layers, head_dim=64 covers Llama 3.2 1B
-    //      and GPT-OSS sliding-window layers.
+    //      head_dim=128 covers Llama 3.2 3B+ / Qwen3 / GPT-OSS full
+    //      layers, head_dim=64 covers Llama 3.2 1B and GPT-OSS
+    //      sliding-window layers, head_dim=256 covers Gemma 3 / Gemma 4
+    //      sliding layers, head_dim=512 covers Gemma 4 global layers.
     //   2. `nQHeads % nKVHeads == 0` so GQA fan-out is integer.
     //   3. `n_kv ≤ kv_stride`. The kernel walks `[0, n_kv)` only;
     //      `kv_stride` is the pre-allocated maxSeq capacity.
@@ -85,7 +86,7 @@ public enum OpsValidation {
     /// head_dim values for which a kernel specialization currently
     /// exists. Caller is responsible for routing to the matching
     /// kernel; see `Ops.sdpaDecode`.
-    public static let supportedSdpaHeadDims: Set<Int> = [64, 128, 256]
+    public static let supportedSdpaHeadDims: Set<Int> = [64, 128, 256, 512]
 
     /// head_dim values whose kernel variant carries the `sink_end` /
     /// `window_start` constexprs. The d64 / d256 variants are dense-only
