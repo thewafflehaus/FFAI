@@ -50,6 +50,34 @@ struct OpsTests {
         }
     }
 
+    @Test("relu f32 — out[i] = max(x[i], 0)")
+    func reluF32() {
+        autoreleasepool {
+            let x = Tensor.empty(shape: [5], dtype: .f32)
+            x.copyIn(from: [Float(0), 1, -1, 2, -3.5])
+            var out: Tensor!
+            runAndWait { cb in out = Ops.relu(x, on: cb) }
+            let result = out.toArray(as: Float.self)
+            #expect(result == [0, 1, 0, 2, 0])
+        }
+    }
+
+    @Test("squared-relu via relu + mul — NemotronH MLP activation")
+    func squaredReluF32() {
+        autoreleasepool {
+            let x = Tensor.empty(shape: [4], dtype: .f32)
+            x.copyIn(from: [Float(-2), 0, 1.5, 3])
+            var out: Tensor!
+            runAndWait { cb in
+                let r = Ops.relu(x, on: cb)
+                out = Ops.mul(r, r, on: cb)
+            }
+            let result = out.toArray(as: Float.self)
+            // relu(x)^2: negatives clamp to 0, positives square.
+            #expect(result == [0, 0, 2.25, 9])
+        }
+    }
+
     @Test("gelu f32 — out[i] = 0.5 * x * (1 + tanh(...))")
     func geluF32() {
         autoreleasepool {

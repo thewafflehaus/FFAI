@@ -118,6 +118,37 @@ public enum Ops {
         return result
     }
 
+    /// ReLU: out[i] = max(x[i], 0). Wraps metaltile's `mt_relu_*`
+    /// element-wise kernel. NemotronH's MLP / MoE feed-forward blocks
+    /// use squared-ReLU (`relu(x)^2`) as their activation; the squaring
+    /// is a follow-up `Ops.mul(relu, relu)` on the caller side.
+    public static func relu(_ x: Tensor, on cmd: MTLCommandBuffer,
+                            into out: Tensor? = nil) -> Tensor {
+        let result = out ?? Tensor.empty(shape: x.shape, dtype: x.dtype)
+        let n = x.elementCount
+        let (grid, tg) = elementwiseGrid(n)
+        switch x.dtype {
+        case .f32:
+            MetalTileKernels.mt_relu_f32(
+                a: x.buffer, aOffset: x.offset,
+                out: result.buffer, outOffset: result.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_relu_f16(
+                a: x.buffer, aOffset: x.offset,
+                out: result.buffer, outOffset: result.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_relu_bf16(
+                a: x.buffer, aOffset: x.offset,
+                out: result.buffer, outOffset: result.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.relu: unsupported dtype \(x.dtype)")
+        }
+        return result
+    }
+
     /// GELU (tanh-approximate, matching the math used by Gemma 3 / GPT-2
     /// / etc.). out[i] = 0.5 * x[i] * (1 + tanh(sqrt(2/π) * (x[i] + 0.044715 * x[i]³))).
     /// Wraps metaltile's `mt_gelu_*` element-wise kernel.
