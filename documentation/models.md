@@ -73,6 +73,51 @@ front-end, so it carries its own `SenseVoiceFrontEnd` CPU path. The
 FSMN memory block is a depthwise (per-channel) 1-D convolution — also a
 CPU path, since `Ops.audioConv1d` is a dense (non-grouped) conv.
 
+### Voice-activity-detection families (Phase 7)
+
+VAD models have a third contract — audio waveform in, per-frame
+speech-probability stream out — so they load through their own
+[`VADModelRegistry`](../Sources/FFAI/VADModelRegistry.swift) rather than
+`ModelRegistry` or `AudioModelRegistry`. Each family exposes
+`loadFromDirectory` / `fromPretrained` and a `detect(audio:sampleRate:)`
+returning a [`VADOutput`](../Sources/FFAI/VADOutput.swift).
+
+| Family | File | `model_type` | Notes |
+|---|---|---|---|
+| **SileroVAD** | [`Models/SileroVAD.swift`](../Sources/FFAI/Models/SileroVAD.swift) | `silero_vad` | Streaming VAD — STFT front-end + a small gated-conv encoder, 16 kHz and 8 kHz branch configs. |
+| **SmartTurn** | [`Models/SmartTurn.swift`](../Sources/FFAI/Models/SmartTurn.swift) | `smart_turn`, `smart_turn_v3` | Conversational endpoint / turn detection. |
+
+Sortformer (multi-speaker diarization) is recognized by the registry;
+its loader is a follow-on port.
+
+### Vision-language families (Phase 6.5)
+
+VL checkpoints store a text backbone under `language_model.` plus a
+vision tower; `SafeTensorsBundle.prefixed(_:)` lets the existing text
+loader run unchanged on the sub-tree, and [`VLModel`](../Sources/FFAI/VLModel.swift)
+splices the projected image tokens into the text stream.
+
+| Family | File | `architectures` | Notes |
+|---|---|---|---|
+| **Gemma 3 VL** | [`Models/Gemma3VL.swift`](../Sources/FFAI/Models/Gemma3VL.swift) | `Gemma3ForConditionalGeneration` | SigLIP ViT tower + multi-modal projector (patch-grid pool) + Gemma 3 text backbone. |
+| **Qwen 2.5-VL** | [`Models/Qwen25VL.swift`](../Sources/FFAI/Models/Qwen25VL.swift) | `Qwen2_5_VLForConditionalGeneration` | Dynamic-resolution windowed-attention ViT tower + the Qwen 2.x text backbone routed through the Llama dense engine (embedding-input forward). |
+
+Other VL families (Qwen 3-VL, Gemma 4-VL, Nemotron-VLM) are recognized
+by the registry with an actionable not-yet-integrated error.
+
+### Neural audio codecs (Phase 7)
+
+Codecs (encoder + quantizer + decoder) turn a waveform into discrete
+codes and back; the autoregressive TTS families (LlamaTTS, Marvis, …)
+emit codes that a codec renders to audio. They live under
+[`Sources/FFAI/Audio/`](../Sources/FFAI/Audio).
+
+| Codec | File | Notes |
+|---|---|---|
+| **SNAC** | [`Audio/SNAC.swift`](../Sources/FFAI/Audio/SNAC.swift) | Multi-scale residual-VQ codec — the waveform tail for Orpheus-style (LlamaTTS) synthesis. `encode(waveform:)` / `decode(codes:)`. |
+
+Mimi, Encodec, DAC-VAE, Vocos and BigVGAN are follow-on codec ports.
+
 **GPT-OSS** is OpenAI's GPT-OSS-20B — a 24-layer mixture-of-experts
 transformer (~20B total / ~3.6B active params). Three structural
 features distinguish it from the dense families: (1) an **alternating
