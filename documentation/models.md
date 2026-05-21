@@ -55,6 +55,7 @@ the audio `Capability` set.
 | **Qwen-Omni** | [`Models/QwenOmni.swift`](../Sources/FFAI/Models/QwenOmni.swift) | `qwen2_5_omni`, `qwen3_omni` | `omniAudio` | Audio-in path: a Whisper-style encoder projecting into the text backbone hidden dim. Vision path is the Qwen-VL port. |
 | **LlamaTTS** | [`Models/LlamaTTS.swift`](../Sources/FFAI/Models/LlamaTTS.swift) | `llama_tts`, `orpheus` | `textToSpeech` | Orpheus-style TTS on a Llama 3.x backbone (reuses the `LlamaModel` engine). Adds the Orpheus token protocol + autoregressive SNAC-code decode loop; `generateCodes` emits de-interleaved SNAC code planes. The SNAC neural codec (waveform tail) is a separate codec port. |
 | **Marvis** | [`Models/Marvis.swift`](../Sources/FFAI/Models/Marvis.swift) | `csm`, `marvis` | `textToSpeech` | Sesame CSM dual-transformer TTS — a backbone + depth-decoder (both built on FFAI's `LlamaLayer` blocks), embedding tables + per-codebook audio heads. `generateFrames` emits the `[K, nFrames]` Mimi code matrix. The Mimi neural codec (waveform tail) is a separate codec port. |
+| **Qwen3TTS** | [`Models/Qwen3TTS.swift`](../Sources/FFAI/Models/Qwen3TTS.swift) | `qwen3_tts` | `textToSpeech` | Qwen's four-part TTS (talker + code predictor + ECAPA speaker encoder + intrinsic speech-tokenizer codec). **Staged port** — stage 1 ships config decoding + family detection; the talker (Qwen3 stack + 3D mRoPE), code predictor and codec are follow-on stages. `synthesize` throws `synthesisNotWired` until then. |
 
 All three share the [`AudioEncoder`](../Sources/FFAI/AudioEncoder.swift)
 module (a Whisper-style conv stem + bidirectional transformer) and the
@@ -423,6 +424,7 @@ efficiency metric.
 | `Qwen/Qwen2.5-Omni-3B` | Qwen-Omni | Integration-test baseline — the audio-in encoder path. |
 | `mlx-community/orpheus-3b-0.1-ft-bf16` | LlamaTTS | Integration-test baseline — the Llama acoustic backbone + Orpheus SNAC-code decode loop. |
 | `Marvis-AI/marvis-tts-250m-v0.2-MLX-fp16` | Marvis (CSM) | Integration-test baseline — the CSM dual-transformer + Mimi frame-generation loop. |
+| `mlx-community/Qwen3-TTS-Flash-bf16` | Qwen3TTS | Integration-test baseline — stage-1 config decode + family detection. |
 
 The Whisper integration test verifies the audio encoder produces
 finite features, the decoder emits a non-degenerate logit distribution

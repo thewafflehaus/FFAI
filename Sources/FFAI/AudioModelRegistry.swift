@@ -19,6 +19,7 @@ public enum LoadedAudioModel: @unchecked Sendable {
     case qwenOmni(QwenOmniModel)
     case llamaTTS(LlamaTTSModel)
     case marvis(MarvisModel)
+    case qwen3TTS(Qwen3TTSModel)
 
     /// The capabilities this model exposes — `audioIn` for STT / omni,
     /// `audioOut` for TTS.
@@ -29,6 +30,7 @@ public enum LoadedAudioModel: @unchecked Sendable {
         case .qwenOmni: return Capability.omniAudio
         case .llamaTTS: return Capability.textToSpeech
         case .marvis: return Capability.textToSpeech
+        case .qwen3TTS: return Capability.textToSpeech
         }
     }
 }
@@ -45,6 +47,7 @@ public enum AudioModelRegistry {
             || QwenOmniModel.handles(config)
             || LlamaTTSModel.handles(config)
             || MarvisModel.handles(config)
+            || Qwen3TTSModel.handles(config)
     }
 
     /// The capability set a checkpoint at `directory` would expose,
@@ -62,6 +65,7 @@ public enum AudioModelRegistry {
     /// because an omni checkpoint nests a Whisper-style `audio_config`.
     public static func capabilities(for config: ModelConfig)
         -> Set<Capability>? {
+        if Qwen3TTSModel.handles(config) { return Capability.textToSpeech }
         if QwenOmniModel.handles(config) { return Capability.omniAudio }
         if WhisperModel.handles(config) { return Capability.speechToText }
         if KokoroModel.handles(config) { return Capability.textToSpeech }
@@ -79,6 +83,12 @@ public enum AudioModelRegistry {
     public static func load(directory: URL, device: Device = .shared)
         async throws -> LoadedAudioModel {
         let config = try ModelConfig.load(from: directory)
+        // Qwen3TTS is checked before QwenOmni: both are Qwen-family
+        // audio models, but Qwen3TTS's `talker_config` is its own marker.
+        if Qwen3TTSModel.handles(config) {
+            return .qwen3TTS(try Qwen3TTSModel.load(directory: directory,
+                                                    device: device))
+        }
         if QwenOmniModel.handles(config) {
             return .qwenOmni(try QwenOmniModel.load(directory: directory,
                                                     device: device))
