@@ -358,6 +358,20 @@ public enum ModelRegistry {
                                   options: options, device: device)
         }
 
+        // LFM2 — LiquidAI's stack-interleaved hybrid (short-conv /
+        // attention layers selected by `layer_types` / `full_attn_idxs`)
+        // with a SwiGLU or block-sparse-MoE feed-forward. Also serves the
+        // LFM2.5 collection (architecturally identical — same `lfm2`
+        // model_type).
+        if let arch = config.architecture, LFM2.architectures.contains(arch) {
+            return try loadLFM2(config: config, weights: weights,
+                                options: options, device: device)
+        }
+        if let mt = config.modelType, LFM2.modelTypes.contains(mt) {
+            return try loadLFM2(config: config, weights: weights,
+                                options: options, device: device)
+        }
+
         // Nemotron-Labs-Diffusion — tri-mode (AR / diffusion /
         // self-speculation) dense transformer. Distinct from the
         // NemotronH stack-interleaved hybrid family above.
@@ -530,6 +544,19 @@ public enum ModelRegistry {
                       defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
+    public static func loadLFM2(
+        config: ModelConfig, weights: SafeTensorsBundle,
+        options: LoadOptions, device: Device
+    ) throws -> Loaded {
+        let variant = try LFM2.variant(for: config)
+        let engine = try variant.loadModel(
+            config: config, weights: weights,
+            options: options, device: device
+        )
+        return Loaded(engine: engine,
+                      defaultGenerationParameters: variant.defaultGenerationParameters)
+    }
+
     public static func loadNemotronLabsDiffusion(
         config: ModelConfig, weights: SafeTensorsBundle,
         options: LoadOptions, device: Device
@@ -605,6 +632,9 @@ public final class Model: @unchecked Sendable {
 
     /// Convenience accessor for the GPT-OSS MoE engine.
     public var gptOSS: GPTOSSModel? { engine as? GPTOSSModel }
+
+    /// Convenience accessor for the LFM2 hybrid engine.
+    public var lfm2: LFM2Model? { engine as? LFM2Model }
 
     /// Convenience accessor for the Nemotron-Labs-Diffusion engine.
     public var nemotronLabsDiffusion: NemotronLabsDiffusionModel? {
