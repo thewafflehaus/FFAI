@@ -2915,13 +2915,31 @@ public enum Ops {
         // Slow path: pad X to mPadded with zero rows, dispatch into a
         // padded output, copy the first T rows back to `out`. The trailing
         // (mPadded - T) rows are dispatched but their outputs are discarded.
+        //
+        // Both the input → xPadded copy and the outPadded → out slice run
+        // as MTLBlit on `cmd`. Previously they were host `memcpy`s through
+        // `buffer.contents()`, which assumes the input tensor is RESIDENT
+        // — fine for chunked-prefill callers that hand it a pre-committed
+        // buffer, but UNSAFE for the batched-prefill caller chain where
+        // `input` is the in-flight output of an upstream kernel on the
+        // same `cmd`. Host-side memcpy of in-flight data reads stale
+        // memory and silently produces garbage projections. Blits on
+        // `cmd` get Metal hazard-tracking between the prior write and
+        // the copy.
         let xPadded = Tensor.empty(shape: [mPadded, kIn], dtype: input.dtype,
                                    device: device)
-        xPadded.zero()
-        let validBytes = t * kIn * input.dtype.byteSize
-        let src = input.buffer.contents().advanced(by: input.offset)
-        let dst = xPadded.buffer.contents().advanced(by: xPadded.offset)
-        dst.copyMemory(from: src, byteCount: validBytes)
+        let validInBytes = t * kIn * input.dtype.byteSize
+        let tailZeroBytes = (mPadded - t) * kIn * input.dtype.byteSize
+        let blit = cmd.makeBlitCommandEncoder()!
+        blit.copy(from: input.buffer, sourceOffset: input.offset,
+                  to: xPadded.buffer, destinationOffset: xPadded.offset,
+                  size: validInBytes)
+        if tailZeroBytes > 0 {
+            blit.fill(buffer: xPadded.buffer,
+                      range: (xPadded.offset + validInBytes)..<(xPadded.offset + validInBytes + tailZeroBytes),
+                      value: 0)
+        }
+        blit.endEncoding()
 
         let outPadded = Tensor.empty(shape: [mPadded, nOut], dtype: input.dtype,
                                      device: device)
@@ -2930,11 +2948,13 @@ public enum Ops {
                        m: mPadded, n: nOut, k: kIn, gsPerRow: gsPerRow,
                        on: cmd)
 
-        // Slice first T rows of outPadded → out.
+        // Slice first T rows of outPadded → out (MTLBlit on `cmd`).
         let validOutBytes = t * nOut * input.dtype.byteSize
-        let srcOut = outPadded.buffer.contents().advanced(by: outPadded.offset)
-        let dstOut = out.buffer.contents().advanced(by: out.offset)
-        dstOut.copyMemory(from: srcOut, byteCount: validOutBytes)
+        let outBlit = cmd.makeBlitCommandEncoder()!
+        outBlit.copy(from: outPadded.buffer, sourceOffset: outPadded.offset,
+                     to: out.buffer, destinationOffset: out.offset,
+                     size: validOutBytes)
+        outBlit.endEncoding()
     }
 
     /// Inner dispatcher for `dequantGemmDynamicM`. Grid is `[N/32, M/32, 1]`

@@ -1421,20 +1421,31 @@ public final class Qwen35AttentionMixer: Module {
         }
         kv.appendRangeOnGPU(kRows: kRows, vRows: vRows, on: cmd)
 
-        // ── Multi-query causal SDPA — one dispatch over T queries vs the
-        // full `[0, startPosition+T)` KV window. `baseKV` = startPosition
-        // makes the kernel select rows `[startPosition, startPosition+T)`
-        // for the per-query causal mask.
+        // ── SDPA — per-token loop over `sdpaDecode`. `Ops.sdpaMulti`
+        // would consolidate the T calls into one but it's head_dim-128
+        // only today; Qwen3.6 attention is head_dim-256. The per-token
+        // sdpaDecode loop preserves correctness; the projection and
+        // norm wins above still amortise. A future head_dim-256
+        // `sdpaMulti` variant (or transpose-to-prefill_mma) collapses
+        // these T launches into one.
         let (cacheK, cacheV) = kv.prepareForAttention(on: cmd)
-        let qMulti = qNormed.reshaped(to: [t, nHeads, headDim])
-        let attnOut = Ops.sdpaMulti(
-            q: qMulti, k: cacheK, v: cacheV,
-            nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            baseKV: startPosition, nQuery: t, kvStride: kv.maxSeq,
-            causal: true, scale: scale, on: cmd)
+        let attnAll = Tensor.empty(shape: [t * qDim], dtype: dt, device: device)
+        for r in 0..<t {
+            let qRow = Tensor(buffer: qNormed.buffer,
+                              offset: qNormed.offset + r * qDim * dtBytes,
+                              shape: [nHeads, headDim], dtype: dt)
+            let outRow = Tensor(buffer: attnAll.buffer,
+                                offset: attnAll.offset + r * qDim * dtBytes,
+                                shape: [nHeads, headDim], dtype: dt)
+            _ = Ops.sdpaDecode(
+                q: qRow, k: cacheK, v: cacheV,
+                nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
+                nKV: startPosition + r + 1, kvStride: kv.maxSeq,
+                scale: scale, on: cmd, into: outRow)
+        }
 
         // ── Gated output * o_proj ────────────────────────────────────────
-        var attnFlat = attnOut.reshaped(to: [t * qDim])
+        var attnFlat = attnAll
         if let gateFlat {
             attnFlat = Ops.mul(attnFlat, Ops.sigmoid(gateFlat, on: cmd), on: cmd)
         }
@@ -1606,12 +1617,15 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
             nRows: t, rowSize: hidden, on: cmd)
 
         // ── Batched attention mixer ─────────────────────────────────────
-        let mixerOut = mixer.forwardMany(
+        // mixer.forwardMany returns shape `[T, hidden]` (oProj.callMany's
+        // 2D shape). Flatten to match `hFlat` for the elementwise add.
+        let mixerOutFlat = mixer.forwardMany(
             xNormFlat, t: t, startPosition: startPosition,
-            cache: kv, cmd: cmd, device: device)
+            cache: kv, cmd: cmd, device: device
+        ).reshaped(to: [t * hidden])
 
         // ── Residual add — one Ops.add over T·hidden elements ───────────
-        let postMix = Ops.add(hFlat, mixerOut, on: cmd)
+        let postMix = Ops.add(hFlat, mixerOutFlat, on: cmd)
 
         // ── FFN half — per-row loop with the residual add writing
         // directly into outFlat[r] via `Ops.add(into:)`. Inlines
@@ -1949,8 +1963,6 @@ public final class Qwen35Model: LanguageModel {
         on cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
         let t = tokenIds.count
-        let dt = embedTokens.weight.dtype
-        let dtBytes = dt.byteSize
 
         // ── Embed all T tokens in one gather ─────────────────────────────
         let idsBuf = device.makeBuffer(length: t * 4)
@@ -1960,7 +1972,13 @@ public final class Qwen35Model: LanguageModel {
 
         var workCmd = device.makeCommandBuffer()
         var h = embedTokens(idsTensor, on: workCmd).reshaped(to: [t * hidden])
-        // h is `[T, hidden]` flat.
+        // h is `[T, hidden]` flat. Dtype follows the embedding output —
+        // for QuantizedEmbedding that's `scales.dtype` (model running
+        // dtype), NOT `weight.dtype` (which would be u32 packed). Read
+        // it off `h` directly to stay correct under both Embedding and
+        // QuantizedEmbedding variants.
+        let dt = h.dtype
+        let dtBytes = dt.byteSize
 
         for (i, layer) in layers.enumerated() {
             if let attn = layer as? Qwen35AttentionLayer {
