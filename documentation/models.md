@@ -122,8 +122,9 @@ emit codes that a codec renders to audio. They live under
 | **Mimi** | [`Audio/Mimi.swift`](../Sources/FFAI/Audio/Mimi.swift) | Kyutai's Mimi/Moshi codec — SEANet encoder/decoder, an 8-layer latent Transformer (traditional RoPE, LayerScale, windowed-causal attention), and a *split* residual-VQ (semantic codebook + acoustic residual stack). The waveform tail for Mimi-code TTS families (e.g. Marvis). Whole-utterance (non-streaming) port. `encode(waveform:)` / `decode(codes:)`. |
 | **Descript DAC** | [`Audio/DescriptDAC.swift`](../Sources/FFAI/Audio/DescriptDAC.swift) | The Descript Audio Codec — a high-fidelity single-scale residual-VQ codec (Snake-conv encoder/decoder, L2-normalized codebook lookup). Shares the proven `WeightNorm` conv path with SNAC. `encode(waveform:)` / `decode(codes:)`. |
 | **Vocos** | [`Audio/Vocos.swift`](../Sources/FFAI/Audio/Vocos.swift) | A *decode-only* vocoder — a ConvNeXt backbone plus an ISTFT head that turns a mel-spectrogram (or summed EnCodec embeddings) into a waveform. The backbone is CPU-native; the ISTFT head reuses the fused GPU `Ops.vocoderISTFT` kernel. `decode(features:)`. |
+| **BigVGAN** | [`Audio/BigVGAN.swift`](../Sources/FFAI/Audio/BigVGAN.swift) | NVIDIA's BigVGAN GAN vocoder — a *decode-only* mel→waveform model: `conv_pre`, transposed-conv upsample stages interleaved with multi-receptive-field "AMP" residual blocks, anti-aliased Snake/SnakeBeta activations (Kaiser-sinc up/downsampling). Shares the `WeightNorm` conv path with SNAC. `decode(mel:)`. |
 
-DAC-VAE and BigVGAN are follow-on codec ports.
+DAC-VAE is a follow-on codec port.
 
 **GPT-OSS** is OpenAI's GPT-OSS-20B — a 24-layer mixture-of-experts
 transformer (~20B total / ~3.6B active params). Three structural
