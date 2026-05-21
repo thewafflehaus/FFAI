@@ -80,15 +80,29 @@ public struct MoERouter: Sendable {
     /// construction).
     public let normTopKProb: Bool
 
+    /// Optional per-expert additive bias, applied to the post-softmax
+    /// gate values *before* top-K selection. This is LFM2-MoE's
+    /// load-balancing `expert_bias`: the biased value steers selection
+    /// AND becomes the combine weight. `nil` (the default) leaves every
+    /// other MoE family's routing byte-for-byte unchanged. Honoured only
+    /// for `.softmaxThenTopK`.
+    public let expertBias: [Float]?
+
     public init(nExperts: Int, topK: Int, gatingMode: MoEGatingMode,
-                normTopKProb: Bool = true) {
+                normTopKProb: Bool = true, expertBias: [Float]? = nil) {
         precondition(nExperts > 0, "MoERouter: nExperts must be positive")
         precondition(topK > 0 && topK <= nExperts,
                      "MoERouter: topK (\(topK)) must be in 1...nExperts (\(nExperts))")
+        if let bias = expertBias {
+            precondition(bias.count == nExperts,
+                         "MoERouter: expertBias has \(bias.count) entries, "
+                         + "nExperts is \(nExperts)")
+        }
         self.nExperts = nExperts
         self.topK = topK
         self.gatingMode = gatingMode
         self.normTopKProb = normTopKProb
+        self.expertBias = expertBias
     }
 
     /// Routing result: `indices[i]` is the i-th selected expert,
@@ -113,10 +127,19 @@ public struct MoERouter: Sendable {
         case .softmaxThenTopK:
             // 1. softmax over ALL experts (numerically stable).
             let probs = Self.softmax(logits)
-            // 2. top-K of the softmax probabilities.
-            let idx = Self.topKIndices(probs, k: topK)
-            var weights = idx.map { probs[$0] }
-            // 3. optional re-normalisation of the K picked probs.
+            // 2. optional per-expert additive bias (LFM2-MoE
+            //    `expert_bias`). With no bias `gated == probs`, so the
+            //    other softmaxThenTopK families are unaffected.
+            let gated: [Float]
+            if let bias = expertBias {
+                gated = zip(probs, bias).map { $0 + $1 }
+            } else {
+                gated = probs
+            }
+            // 3. top-K of the (biased) gate values.
+            let idx = Self.topKIndices(gated, k: topK)
+            var weights = idx.map { gated[$0] }
+            // 4. optional re-normalisation of the K picked weights.
             if normTopKProb {
                 let sum = weights.reduce(0, +)
                 if sum > 0 { weights = weights.map { $0 / sum } }
