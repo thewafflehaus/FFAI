@@ -29,6 +29,31 @@ For porting a new architecture, see
 | **Jamba** | [`Models/Jamba.swift`](../Sources/FFAI/Models/Jamba.swift) | `jamba` | `JambaForCausalLM` | `JambaHybrid` |
 | **Qwen 3.5** | [`Models/Qwen35.swift`](../Sources/FFAI/Models/Qwen35.swift) | `qwen3_5`, `qwen3_5_moe` | `Qwen3_5ForConditionalGeneration`, `Qwen3_5MoeForConditionalGeneration` | `Qwen35Hybrid` |
 | **Gemma 4** | [`Models/Gemma4.swift`](../Sources/FFAI/Models/Gemma4.swift) | `gemma4`, `gemma4_text` | `Gemma4ForCausalLM`, `Gemma4ForConditionalGeneration` | `Gemma4Dense`, `Gemma4E`, `Gemma4MoE` |
+| **GPT-OSS** | [`Models/GPTOSS.swift`](../Sources/FFAI/Models/GPTOSS.swift) | `gpt_oss` | `GptOssForCausalLM` | `GPTOSSMoEVariant` |
+
+**GPT-OSS** is OpenAI's GPT-OSS-20B — a 24-layer mixture-of-experts
+transformer (~20B total / ~3.6B active params). Three structural
+features distinguish it from the dense families: (1) an **alternating
+attention schedule** — `layer_types` assigns each layer
+`sliding_attention` or `full_attention`; sliding layers get a `.window`
+eviction KV cache (128-token cap), full layers stay unbounded; (2)
+**learned per-head attention sinks** — a `self_attn.sinks` logit vector
+folded into the softmax denominator. Because the `head_dim=64`
+`Ops.sdpaDecode` kernel has no native learned-sink support, GPT-OSS
+folds the sink as a per-head *post-hoc rescale* of the plain SDPA
+output (`O' = O · Z/(Z + exp(sink − M))`, with `M` / `Z` recovered by a
+CPU dot-product over the KV cache); (3) **bias-corrected** q/k/v/o
+projections (`attention_bias`). Every layer's feed-forward half is a
+32-expert block-sparse MoE with top-4 `topK-then-softmax` routing and a
+*clipped* SwiGLU expert activation. The published checkpoints ship the
+MoE experts **MXFP4**-quantized while the attention / router /
+embedding / lm_head tensors are mlx *affine*-quantized — a mixed-
+precision checkpoint; the loader transcodes the MXFP4 experts to FFAI's
+affine-int4 format ([`GPTOSSMoE.swift`](../Sources/FFAI/Models/GPTOSSMoE.swift)).
+The sink correction and the MoE router both need a CPU sync, so every
+GPT-OSS layer commits the command buffer mid-`decode` and
+`GPTOSSModel.forward` runs the layers on internal buffers, queuing only
+the final norm + lm_head onto the caller's `cmd` — the Jamba contract.
 
 **FalconH1** is FFAI's first *hybrid* family: every decoder layer runs
 BOTH a Mamba 2 selective-SSM mixer AND a grouped-query attention path

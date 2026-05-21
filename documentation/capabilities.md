@@ -50,6 +50,7 @@ Capability.textWithTools  // [.textIn, .textOut, .toolCalling]
 | `Jamba.JambaHybrid` | `[.textIn, .textOut]` |
 | `Qwen35.Qwen35Hybrid` | `[.textIn, .textOut]` |
 | `Gemma4.Gemma4Dense` / `Gemma4E` / `Gemma4MoE` | `[.textIn, .textOut]` |
+| `GPTOSS.GPTOSSMoEVariant` | `[.textIn, .textOut]` |
 
 When a family adds a capability (e.g. `Qwen35VL` adds `.visionIn`),
 the family file declares it and the loader allocates the

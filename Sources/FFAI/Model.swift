@@ -184,6 +184,19 @@ public enum ModelRegistry {
                                   options: options, device: device)
         }
 
+        // GPT-OSS — a mixture-of-experts transformer with an alternating
+        // sliding/full attention schedule, learned per-head attention
+        // sinks, and bias-corrected projections. Routes through its own
+        // family file.
+        if let arch = config.architecture, GPTOSS.architectures.contains(arch) {
+            return try loadGPTOSS(config: config, weights: weights,
+                                  options: options, device: device)
+        }
+        if let mt = config.modelType, GPTOSS.modelTypes.contains(mt) {
+            return try loadGPTOSS(config: config, weights: weights,
+                                  options: options, device: device)
+        }
+
         // Nemotron-Labs-Diffusion — tri-mode (AR / diffusion /
         // self-speculation) dense transformer. Distinct from the
         // NemotronH stack-interleaved hybrid family above.
@@ -343,6 +356,19 @@ public enum ModelRegistry {
                       defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
+    public static func loadGPTOSS(
+        config: ModelConfig, weights: SafeTensorsBundle,
+        options: LoadOptions, device: Device
+    ) throws -> Loaded {
+        let variant = try GPTOSS.variant(for: config)
+        let engine = try variant.loadModel(
+            config: config, weights: weights,
+            options: options, device: device
+        )
+        return Loaded(engine: engine,
+                      defaultGenerationParameters: variant.defaultGenerationParameters)
+    }
+
     public static func loadNemotronLabsDiffusion(
         config: ModelConfig, weights: SafeTensorsBundle,
         options: LoadOptions, device: Device
@@ -398,6 +424,9 @@ public final class Model: @unchecked Sendable {
 
     /// Convenience accessor for the Qwen3.5 hybrid engine.
     public var qwen35: Qwen35Model? { engine as? Qwen35Model }
+
+    /// Convenience accessor for the GPT-OSS MoE engine.
+    public var gptOSS: GPTOSSModel? { engine as? GPTOSSModel }
 
     /// Convenience accessor for the Nemotron-Labs-Diffusion engine.
     public var nemotronLabsDiffusion: NemotronLabsDiffusionModel? {
