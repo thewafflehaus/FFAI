@@ -940,6 +940,28 @@ public final class Qwen35GDNMixer: Module {
     let eps, invKeyScale: Float
     let dtype: DType
 
+    // ─── Fused `mt_gated_delta_prep_step` path constants (fp32) ───────
+    //
+    // The fused kernel takes its tensors all in a single dtype. The GDN
+    // recurrence state stays fp32 (see `GDNStateCache` header — bf16
+    // drift over long decodes is intolerable on this recurrence), so we
+    // run the fused step in fp32 and cast bf16 model activations
+    // (convAct / aRaw / bRaw) up to fp32 on the GPU before dispatch via
+    // `Ops.castToF32`.
+    //
+    // Layout / values are pinned to the kernel's contract — see
+    // `crates/metaltile-std/src/ffai/gated_delta_prep.rs`:
+    //   qNormWeightF32 : [Hk·Dk] fp32, filled with `invKeyScale²` —
+    //                    folds the per-head scale into the weight so
+    //                    the kernel runs the *unweighted*
+    //                    `perHeadRMSNorm` path while reusing its
+    //                    weighted-RMSNorm inner loop.
+    //   kNormWeightF32 : [Hk·Dk] fp32, filled with `invKeyScale`.
+    //   aLogTF32       : [Hv]    fp32.
+    //   dtBiasTF32     : [Hv]    fp32.
+    let qNormWeightF32, kNormWeightF32: Tensor
+    let aLogTF32, dtBiasTF32: Tensor
+
     init(inProjQKV: AnyLinear, inProjZ: AnyLinear,
          inProjB: AnyLinear, inProjA: AnyLinear, outProj: AnyLinear,
          convW: Tensor, convB: Tensor, mixerNorm: RMSNorm,
@@ -949,7 +971,8 @@ public final class Qwen35GDNMixer: Module {
          keyHeadDim: Int, valueHeadDim: Int,
          keyDim: Int, valueDim: Int, convDim: Int,
          convKernel: Int, eps: Float, invKeyScale: Float,
-         dtype: DType) {
+         dtype: DType,
+         device: Device = .shared) {
         self.inProjQKV = inProjQKV; self.inProjZ = inProjZ
         self.inProjB = inProjB; self.inProjA = inProjA; self.outProj = outProj
         self.convW = convW; self.convB = convB; self.mixerNorm = mixerNorm
@@ -961,6 +984,17 @@ public final class Qwen35GDNMixer: Module {
         self.convDim = convDim; self.convKernel = convKernel
         self.eps = eps; self.invKeyScale = invKeyScale
         self.dtype = dtype
+
+        // ── Pre-build the fused-path constant tensors (fp32) ────────
+        let hkDk = numKeyHeads * keyHeadDim
+        let qScale = invKeyScale * invKeyScale          // unweighted RMSNorm × invKeyScale²
+        let kScale = invKeyScale                        // unweighted RMSNorm × invKeyScale
+        self.qNormWeightF32 = makeF32Tensor35(
+            [Float](repeating: qScale, count: hkDk), device: device)
+        self.kNormWeightF32 = makeF32Tensor35(
+            [Float](repeating: kScale, count: hkDk), device: device)
+        self.aLogTF32 = makeF32Tensor35(aLog, device: device)
+        self.dtBiasTF32 = makeF32Tensor35(dtBias, device: device)
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -1005,61 +1039,116 @@ public final class Qwen35GDNMixer: Module {
             nChannels: convDim, kernelSize: convKernel, on: cmd)
         let convAct = Ops.silu(convOut, on: cmd)   // [conv_dim]
 
-        // Commit so the host can read convAct / z / aRaw / bRaw.
-        cmd.commit()
-        cmd.waitUntilCompleted()
+        // ── Fused GDN prep + recurrence path (opt-in) ─────────────────
+        //
+        // `FFAI_GDN_FUSED_PREP=1` routes through `mt_gated_delta_prep_step`,
+        // which absorbs the per-head q/k RMSNorm + scale + g / beta math
+        // + the recurrence kernel into ONE dispatch. Eliminates the
+        // phase-1 host commit+wait (the host no longer needs convAct /
+        // aRaw / bRaw) and folds the phase-2 dispatch into the same
+        // command buffer as phase 1 — so it costs **one** commit+wait per
+        // GDN layer instead of two.
+        //
+        // Tradeoff: the kernel takes all tensors in one dtype, so the
+        // cache state stays in `dtype` (bf16 for Qwen3.6) via the
+        // separate `gdn.currentBf16` / `nextBf16` slots. The legacy fp32
+        // state path is untouched. bf16 state precision drifts faster
+        // than fp32 over long decodes (per GDNStateCache header) — for a
+        // demo + bench this is acceptable; the proper fix (GPU cast
+        // kernel so the kernel runs fp32 against a bf16 model) is
+        // tracked on the roadmap.
+        let yT: Tensor
+        let fused = ProcessInfo.processInfo.environment["FFAI_GDN_FUSED_PREP"] != nil
+        if fused {
+            // GPU casts: bf16 activations → fp32 scratch, all on the
+            // same command buffer as phase 1. No host round-trip; the
+            // fused step runs the recurrence in fp32 against the
+            // existing fp32 state slots, matching the canonical
+            // precision of the legacy path.
+            let convActF32 = Tensor.empty(shape: [convDim], dtype: .f32, device: device)
+            let aRawF32 = Tensor.empty(shape: [numValueHeads], dtype: .f32, device: device)
+            let bRawF32 = Tensor.empty(shape: [numValueHeads], dtype: .f32, device: device)
+            Ops.castToF32(convAct, into: convActF32, on: cmd)
+            Ops.castToF32(aRaw, into: aRawF32, on: cmd)
+            Ops.castToF32(bRaw, into: bRawF32, on: cmd)
 
-        // ── Host phase: split q|k|v, q/k norm + scale, g / beta ───────
-        let convHost = convAct.toFloatArray()      // [conv_dim]
-        let aHost = aRaw.toFloatArray()            // [num_value_heads]
-        let bHost = bRaw.toFloatArray()            // [num_value_heads]
+            let yF32 = Tensor.empty(shape: [numValueHeads, valueHeadDim],
+                                    dtype: .f32, device: device)
+            Ops.gatedDeltaPrepStep(
+                convOut: convActF32,
+                aLog: aLogTF32, dtBias: dtBiasTF32,
+                aRaw: aRawF32, bRaw: bRawF32,
+                qNormWeight: qNormWeightF32, kNormWeight: kNormWeightF32,
+                stateIn: cache.gdn.current, stateOut: cache.gdn.next,
+                y: yF32,
+                batchSize: 1, dk: keyHeadDim, dv: valueHeadDim,
+                hv: numValueHeads, hk: numKeyHeads,
+                on: cmd)
+            // One commit+wait covers phase 1 + casts + the fused step.
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            cache.gdn.swap()
+            cache.advance()
+            yT = yF32
+        } else {
+            // ── Legacy path: host-prep + Ops.gatedDeltaStep ───────────
+            // Commit so the host can read convAct / z / aRaw / bRaw.
+            cmd.commit()
+            cmd.waitUntilCompleted()
 
-        // Split the conv output: q | k | v.
-        let qFlat = Array(convHost[0..<keyDim])
-        let kFlat = Array(convHost[keyDim..<(2 * keyDim)])
-        let vFlat = Array(convHost[(2 * keyDim)..<(2 * keyDim + valueDim)])
+            // ── Host phase: split q|k|v, q/k norm + scale, g / beta ───
+            let convHost = convAct.toFloatArray()      // [conv_dim]
+            let aHost = aRaw.toFloatArray()            // [num_value_heads]
+            let bHost = bRaw.toFloatArray()            // [num_value_heads]
 
-        // Per-head unweighted RMSNorm (eps 1e-6) of q / k, then scale.
-        // q ×invScale², k ×invScale  (invScale = key_head_dim^-0.5) —
-        // matches mlx-lm's qwen3_5 standard (non-fused) GDN path.
-        let qNormed = perHeadRMSNormScale35(
-            qFlat, nHeads: numKeyHeads, headDim: keyHeadDim,
-            scale: invKeyScale * invKeyScale)
-        let kNormed = perHeadRMSNormScale35(
-            kFlat, nHeads: numKeyHeads, headDim: keyHeadDim,
-            scale: invKeyScale)
+            // Split the conv output: q | k | v.
+            let qFlat = Array(convHost[0..<keyDim])
+            let kFlat = Array(convHost[keyDim..<(2 * keyDim)])
+            let vFlat = Array(convHost[(2 * keyDim)..<(2 * keyDim + valueDim)])
 
-        // Per-value-head gates:
-        //   g    = exp(-exp(A_log) · softplus(a + dt_bias))
-        //   beta = sigmoid(b)
-        var gHost = [Float](repeating: 0, count: numValueHeads)
-        var betaHost = [Float](repeating: 0, count: numValueHeads)
-        for hv in 0..<numValueHeads {
-            let dt = softplus35(aHost[hv] + dtBias[hv])
-            gHost[hv] = Foundation.exp(-Foundation.exp(aLog[hv]) * dt)
-            betaHost[hv] = sigmoid35(bHost[hv])
+            // Per-head unweighted RMSNorm (eps 1e-6) of q / k, then scale.
+            // q ×invScale², k ×invScale  (invScale = key_head_dim^-0.5) —
+            // matches mlx-lm's qwen3_5 standard (non-fused) GDN path.
+            let qNormed = perHeadRMSNormScale35(
+                qFlat, nHeads: numKeyHeads, headDim: keyHeadDim,
+                scale: invKeyScale * invKeyScale)
+            let kNormed = perHeadRMSNormScale35(
+                kFlat, nHeads: numKeyHeads, headDim: keyHeadDim,
+                scale: invKeyScale)
+
+            // Per-value-head gates:
+            //   g    = exp(-exp(A_log) · softplus(a + dt_bias))
+            //   beta = sigmoid(b)
+            var gHost = [Float](repeating: 0, count: numValueHeads)
+            var betaHost = [Float](repeating: 0, count: numValueHeads)
+            for hv in 0..<numValueHeads {
+                let dt = softplus35(aHost[hv] + dtBias[hv])
+                gHost[hv] = Foundation.exp(-Foundation.exp(aLog[hv]) * dt)
+                betaHost[hv] = sigmoid35(bHost[hv])
+            }
+
+            // ── GPU phase 2: gatedDeltaStep on a fresh command buffer ─
+            // All GDN-kernel tensors are fp32 (the only emitted dtype).
+            let phase2 = device.makeCommandBuffer()
+            let qT = makeF32Tensor35(qNormed, device: device)
+            let kT = makeF32Tensor35(kNormed, device: device)
+            let vTen = makeF32Tensor35(vFlat, device: device)
+            let gT = makeF32Tensor35(gHost, device: device)
+            let betaT = makeF32Tensor35(betaHost, device: device)
+            let yLegacy = Tensor.empty(shape: [numValueHeads, valueHeadDim],
+                                       dtype: .f32, device: device)
+            Ops.gatedDeltaStep(
+                q: qT, k: kT, v: vTen, g: gT, beta: betaT,
+                stateIn: cache.gdn.current, into: yLegacy, stateOut: cache.gdn.next,
+                numKeyHeads: numKeyHeads, numValueHeads: numValueHeads,
+                keyHeadDim: keyHeadDim, valueHeadDim: valueHeadDim,
+                on: phase2)
+            phase2.commit()
+            phase2.waitUntilCompleted()
+            cache.gdn.swap()
+            cache.advance()
+            yT = yLegacy
         }
-
-        // ── GPU phase 2: gatedDeltaStep on a fresh command buffer ─────
-        // All GDN-kernel tensors are fp32 (the only emitted dtype).
-        let phase2 = device.makeCommandBuffer()
-        let qT = makeF32Tensor35(qNormed, device: device)
-        let kT = makeF32Tensor35(kNormed, device: device)
-        let vT = makeF32Tensor35(vFlat, device: device)
-        let gT = makeF32Tensor35(gHost, device: device)
-        let betaT = makeF32Tensor35(betaHost, device: device)
-        let yT = Tensor.empty(shape: [numValueHeads, valueHeadDim],
-                              dtype: .f32, device: device)
-        Ops.gatedDeltaStep(
-            q: qT, k: kT, v: vT, g: gT, beta: betaT,
-            stateIn: cache.gdn.current, into: yT, stateOut: cache.gdn.next,
-            numKeyHeads: numKeyHeads, numValueHeads: numValueHeads,
-            keyHeadDim: keyHeadDim, valueHeadDim: valueHeadDim,
-            on: phase2)
-        phase2.commit()
-        phase2.waitUntilCompleted()
-        cache.gdn.swap()
-        cache.advance()
 
         // ── Host phase 2: gated mixer RMSNorm ─────────────────────────
         // `Qwen3NextRMSNormGated`: y = rmsNorm(y, weight) · silu(z), the

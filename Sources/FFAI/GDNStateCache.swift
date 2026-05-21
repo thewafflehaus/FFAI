@@ -47,6 +47,12 @@ public final class GDNStateCache: LayerCacheProtocol, @unchecked Sendable {
     /// The two recurrent-state buffers, each shape `[Hv, Dv, Dk]`, fp32.
     /// `current` is the live state (kernel input); `next` receives the
     /// kernel's output. `swap()` exchanges them after each step.
+    ///
+    /// Both the legacy `Ops.gatedDeltaStep` path and the fused
+    /// `Ops.gatedDeltaPrepStep` path share these slots: the fused
+    /// kernel runs in fp32 (against bf16 model activations cast to
+    /// fp32 on the GPU first) so the state precision matches the
+    /// canonical legacy path exactly.
     public private(set) var current: Tensor
     public private(set) var next: Tensor
 
@@ -77,8 +83,9 @@ public final class GDNStateCache: LayerCacheProtocol, @unchecked Sendable {
     }
 
     /// Exchange `current` and `next`. Call this after `Ops.gatedDeltaStep`
-    /// has written the updated state into `next`, so the next decode
-    /// step reads the fresh state via `current`.
+    /// or `Ops.gatedDeltaPrepStep` has written the updated state into
+    /// `next`, so the next decode step reads the fresh state via
+    /// `current`. Increments `length`.
     public func swap() {
         Swift.swap(&current, &next)
         length += 1

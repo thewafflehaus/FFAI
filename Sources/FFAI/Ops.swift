@@ -2763,10 +2763,16 @@ public enum Ops {
         precondition(hv % hk == 0,
                      "Ops.gatedDeltaPrepStep: hv \(hv) must be a multiple of hk \(hk) (GQA)")
 
-        let grid = MTLSize(width: dv,
+        // `dispatchThreads` counts TOTAL threads per axis, so the
+        // X axis is `dv` (TGs along X) × `tgWidth` (threads per TG).
+        // `tgid_x` inside the kernel therefore ranges 0..dv-1, matching
+        // the kernel's `dv_idx = tgid_x` contract. Y axis is one TG
+        // per (batch · Hv) slab.
+        let tgWidth = 32
+        let grid = MTLSize(width: dv * tgWidth,
                            height: batchSize * hv,
                            depth: 1)
-        let tg = MTLSize(width: 32, height: 1, depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
         let dkU = UInt32(dk)
         let dvU = UInt32(dv)
         let hvU = UInt32(hv)
@@ -2950,6 +2956,47 @@ public enum Ops {
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         default:
             fatalError("Ops.dequantGemmDynamicM: unsupported dtype \(input.dtype)")
+        }
+    }
+
+    // ─── GPU-side cast to fp32 ────────────────────────────────────────
+    //
+    // Wraps `mt_cast_to_f32_{bf16,f16,f32}`. Per-element copy with dtype
+    // promotion. Used to bridge bf16 / f16 model activations into kernels
+    // that require fp32 inputs (the fused GDN prep step is the immediate
+    // consumer — it runs against the fp32 recurrence state to avoid the
+    // 7-bit-mantissa drift that bf16 state would accumulate). f32→f32 is
+    // a memory copy on the GPU, retained for dispatch-table uniformity.
+    public static func castToF32(_ input: Tensor, into output: Tensor,
+                                 on cmd: MTLCommandBuffer) {
+        precondition(output.dtype == .f32,
+                     "Ops.castToF32: output dtype must be f32, got \(output.dtype)")
+        precondition(input.elementCount == output.elementCount,
+                     "Ops.castToF32: element count mismatch (\(input.elementCount) vs \(output.elementCount))")
+        let n = input.elementCount
+        // Pick a TG width that divides n evenly when possible; cap at
+        // 256 (well under the Apple TG limit of 1024).
+        let tgWidth = min(n, 256)
+        let grid = MTLSize(width: n, height: 1, depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+        switch input.dtype {
+        case .f32:
+            MetalTileKernels.mt_cast_to_f32_f32(
+                input: input.buffer, inputOffset: input.offset,
+                out: output.buffer, outOffset: output.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_cast_to_f32_f16(
+                input: input.buffer, inputOffset: input.offset,
+                out: output.buffer, outOffset: output.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_cast_to_f32_bf16(
+                input: input.buffer, inputOffset: input.offset,
+                out: output.buffer, outOffset: output.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.castToF32: unsupported input dtype \(input.dtype)")
         }
     }
 }
