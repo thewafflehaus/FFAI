@@ -1,14 +1,23 @@
 #!/bin/bash
 # coverage.sh
-# Run tests with coverage and print a summary.
+# Run unit tests with coverage and print a summary.
 # Excludes generated code, .build, and Tests themselves from the report.
+#
+# Scope is intentionally limited to the unit suite (FFAITests +
+# MetalTileSwiftTests). ModelTests download multi-GB HuggingFace
+# snapshots + do real end-to-end inference, which:
+#   (a) takes tens of minutes per run
+#   (b) hits memory contention if multiple suites parallelize
+#   (c) doesn't meaningfully contribute to *unit* coverage anyway
+# Matches .github/workflows/ci.yml's coverage step exactly. For
+# integration tests, see `make test-integration`.
 
 set -e
 
 cd "$(dirname "$0")/.."
 
-echo "Running tests with coverage enabled..."
-swift test --enable-code-coverage
+echo "Running unit tests with coverage enabled..."
+swift test --enable-code-coverage --filter "FFAITests|MetalTileSwiftTests"
 
 BIN_PATH=$(swift build --show-bin-path)
 PROF_DATA="$BIN_PATH/codecov/default.profdata"

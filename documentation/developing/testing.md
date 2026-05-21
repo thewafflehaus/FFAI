@@ -1,146 +1,163 @@
 # Testing
 
-122 tests across 31 suites; 80.8% line coverage at the Phase 4
-checkpoint. Every kernel, every Swift function, every model layer
-gets a unit test. CI gates on coverage + correctness.
+FFAI tests in three layers — kernel-wrapper correctness, Swift unit
+tests, and per-model integration tests — using **Swift Testing**
+(`@Suite` / `@Test` / `#expect`), not XCTest. CI gates on ≥ 80 % line
+coverage of the Swift surface plus a green integration sweep.
 
 ## Running tests
 
-```bash
-make test                                       # everything (~30s)
-swift test --filter FFAITests                   # one test target
-swift test --filter LlamaGenerateTests          # one suite
-swift test --filter Llama                       # pattern across suites
-```
-
-`make test` always runs `make regenerate-kernels` first so you're
-never testing against stale kernels.
-
-## Coverage
+**Go through `make` — do not run bare `swift test`.** Each
+`ModelTests` suite downloads a multi-GB checkpoint; an unconstrained
+parallel run loads several at once and OOMs the box (and can pin the
+GPU). The `make` targets cap parallelism correctly.
 
 ```bash
-make coverage                                    # tests + summary
+make test-unit          # FFAITests + MetalTileSwiftTests — fast, parallel-safe
+make test-integration   # ModelTests — serialized (--num-workers 1)
+make test               # both in sequence — the full local CI gate
+make coverage           # unit-suite line coverage (≥ 80 %)
+make test-stress        # production cap, uncapped parallelism — run after dispatch changes
 ```
 
-This runs `swift test --enable-code-coverage` and then drives
-`xcrun llvm-cov` to print a per-file table, excluding `.build/`,
-`Tests/`, and the generated `MetalTileKernels.swift`.
+`make test` runs `make regenerate-kernels` first, so you never test
+against stale kernels.
 
-The 100% target documented in [`planning/plan.md`](../../planning/plan.md)
-applies to the Swift surface (`Sources/FFAI/` + `Sources/MetalTileSwift/`).
-Current coverage is 80.8% — the gap is mostly defensive error paths
-(`fatalError` on programmer bugs, unreachable `default:` cases) that
-are excluded from the denominator with `// coverage:ignore` markers.
+### Filtering to one suite or test
+
+To iterate on a single suite, run `swift test` directly **but keep
+the memory cap** — `--parallel --num-workers 1` loads one model at a
+time:
+
+```bash
+swift test --parallel --num-workers 1 --filter Qwen3IntegrationTests
+swift test --parallel --num-workers 1 --filter ModelKVCacheMatrixIntegrationTests
+swift test --filter OpsTests          # unit suite — fast, no cap needed
+```
+
+`--filter` matches a regex against suite + test names.
 
 ## Test layout
 
 ```
 Tests/
-  MetalTileSwiftTests/   One test file per kernel. Numerical correctness
-                         vs CPU reference or fixed-input/fixed-output
-                         vectors, across fp32 / fp16 / bf16.
-
-  FFAITests/             Tensor, Module, Linear, BufferPool, KVCache,
-                         Sampling, ModelDownloader, ModelLifecycle,
-                         Capability, ModelConfig, SafeTensors, …
-
-  ModelTests/            One folder per model family.
-    Llama/               LlamaForwardTests + LlamaGenerateTests.
-    Qwen3/               Qwen3ForwardTests + Qwen3GenerateTests.
-
-  Fixtures/              Golden activations + token sequences captured
-                         from mlx-lm. Loaded at test time; never
-                         re-captured during `swift test`.
+  MetalTileSwiftTests/   One file per kernel wrapper — numerical
+                         correctness vs a CPU reference across
+                         fp32 / fp16 / bf16.
+  FFAITests/             Tensor, Module, Linear, BufferPool, the
+                         Ops* / *StateCache / KVCache / Layers /
+                         Sampling / Capability / ModelConfig units.
+  ModelTests/            Flat files — one <Family>IntegrationTests
+                         per model family, plus the cross-cutting
+                         suites (see below).
 ```
 
-## Golden fixtures (the testing reference convention)
+There are **no golden fixtures**. Cross-implementation token-parity
+vs mlx-lm proved to be a measure of rounding-mode alignment, not
+correctness — it was dropped. Numerical correctness now comes from
+the metaltile-side per-kernel GPU-correctness tests (compared to a
+naive CPU oracle); the FFAI integration tests assert that the model
+*pipeline* produces coherent text.
 
-Numerical references for tests are **golden fixtures**, not live
-Python invocations. This keeps `swift test` fully reproducible on a
-stock Apple Silicon CI runner with **zero Python dependency**.
+## Integration testing
 
+Every model family has a `Tests/ModelTests/<Family>IntegrationTests.swift`
+that downloads the smallest published checkpoint from mlx-community,
+greedy-decodes, and asserts `expectCoherentOutput(...)` (token-count
+floor, no degenerate repeat run, minimum token diversity). A
+checkpoint that can't be fetched (offline, gated repo) prints a skip
+line and **passes** — integration tests never hard-fail on a missing
+download.
+
+Cross-cutting suites:
+
+- `ModelKVCacheMatrixIntegrationTests` — the model family × weight
+  bitwidth × KV-cache scheme cross-product.
+- `Quantized{3,4,5,6,8}bitIntegrationTests` — the weight-bitwidth
+  ladder.
+- `DeterminismSmokeTests` — temp = 0 is stable across runs.
+
+### Not every model runs by default — env-gated tests
+
+The largest checkpoints are too heavy (or too slow) for the routine
+gate, so they are gated behind environment variables. With the var
+unset the test skips (and passes); set it to opt in:
+
+| Env var | Unlocks |
+|---|---|
+| `FFAI_BUILD_MACHINE` | The heavy generation checks — `GPTOSSIntegrationTests` (~20B MoE), the Gemma 4 31B / 26B-A4B decode in `Gemma4IntegrationTests` (load + shape checks still run unconditionally), and every non-smallest cell of `ModelKVCacheMatrixIntegrationTests`. Intended for a dedicated build machine. |
+| `FFAI_MATRIX_FAMILY=<family>` | Restricts `ModelKVCacheMatrixIntegrationTests` to one family's row (e.g. `FFAI_MATRIX_FAMILY=Gemma4`) — fast targeted re-runs. |
+
+```bash
+# Run the whole matrix incl. env-gated cells, on a build machine:
+FFAI_BUILD_MACHINE=1 swift test --parallel --num-workers 1 \
+    --filter ModelKVCacheMatrixIntegrationTests
+
+# Re-run just the Llama row of the matrix:
+FFAI_MATRIX_FAMILY=Llama swift test --parallel --num-workers 1 \
+    --filter ModelKVCacheMatrixIntegrationTests
 ```
-Tools/capture-fixtures.py     Python script — only used to GENERATE
-                              fixtures, never run during swift test.
-                              Uses mlx-lm for text-only models and
-                              mlx-vlm for vision-language models.
 
-Tests/Fixtures/<model>/       Captured activations + token sequences.
-  metadata.json               mlx-lm / mlx-vlm version + capture date
-                              for reproducibility.
-```
-
-`mlx-vlm` lists `mlx-lm` as a runtime dependency, so a single
-`pip install mlx-vlm` covers both backends. The capture script picks
-the right one per model based on whether the config declares a
-vision encoder.
-
-When a fixture needs regeneration:
-
-1. `pip install mlx-vlm` (also installs `mlx-lm`).
-2. Run `python Tools/capture-fixtures.py --model <repo> --output Tests/Fixtures/<name>/`.
-3. Commit the new files alongside the model change.
-4. Update `metadata.json` with the `mlx-lm` / `mlx-vlm` version + date.
+The default `make test-integration` runs only the always-on cells:
+the smallest checkpoint per family.
 
 ## Writing a test
 
-Layer tests live in `FFAITests/`:
-
 ```swift
-import XCTest
-import FFAI
-import Metal
+import Testing
+@testable import FFAI
 
-final class LinearTests: XCTestCase {
-    func testForwardMatchesCPUReference() throws {
-        let device = Device.shared
-        let weight = Tensor.from([[1, 2], [3, 4]], device: device)
-        let input = Tensor.from([1, 1], device: device)
-        let layer = Linear(weight: weight)
-        let out = layer.forward(input)
-        XCTAssertEqual(out.toCPU(), [3, 7], accuracy: 1e-5)
+@Suite("Ops.add")
+struct OpsAddTests {
+    @Test("elementwise add matches a CPU reference")
+    func addMatchesCPU() {
+        let a = Tensor.empty(shape: [4], dtype: .f32)
+        a.copyIn(from: [1, 2, 3, 4])
+        // … dispatch, then:
+        #expect(out.toArray(as: Float.self) == [2, 4, 6, 8])
     }
 }
 ```
 
-Model tests live in `ModelTests/<Family>/` and load the model + a
-golden fixture:
+A model integration test loads through `ModelLoadLock.shared`
+(serializes the multi-GB load across suites) and asserts coherence:
 
 ```swift
-final class LlamaGenerateTests: XCTestCase {
-    func testDeterministicGreedyGreedy() async throws {
-        let model = try await Model.load("unsloth/Llama-3.2-1B")
-        let result = try await model.generate(
+@Suite("Qwen3 integration", .serialized)
+struct Qwen3IntegrationTests {
+    @Test("load + greedy generate produces coherent output")
+    func loadAndGenerate() async throws {
+        let m: Model
+        do { m = try await ModelLoadLock.shared.loadSerially {
+                 try await Model.load("mlx-community/Qwen3-1.7B-bf16") } }
+        catch { print("skipped: \(error)"); return }
+        let r = try await m.generate(
             prompt: "Once upon a time",
-            options: GenerateOptions(maxNewTokens: 16)
-        )
-        let golden = try loadFixture("llama-3.2-1b-once-upon.json")
-        XCTAssertEqual(result.generatedTokens, golden.tokens)
+            parameters: GenerationParameters(maxTokens: 64, temperature: 0))
+        expectCoherentOutput(r.generatedTokens, label: "Qwen3-1.7B")
     }
 }
 ```
+
+A non-trivial kernel lands with a paired metaltile GPU-correctness
+test in the **same commit** (see metaltile `docs/testing.md`).
 
 ## CI
 
-`.github/workflows/ci.yml` runs on Apple Silicon, executes
-`swift test`, uploads the coverage report, and fails any PR that
-drops coverage below the configured threshold.
-
-`.github/workflows/auto-label.yml` applies conventional-commit PR
-labels (adapted from mlx-swift-lm).
+CI runs on Apple Silicon: the unit gate, then the serialized
+integration gate (matching `make test-integration`), and uploads the
+coverage report — a PR that drops Swift-surface coverage below the
+threshold fails.
 
 ## What we don't test
 
-- **Property / fuzz testing.** Out of scope for v0.1; revisit later.
-- **GPU mocking.** All tests run real Metal dispatches.
-- **Defensive `fatalError` on programmer bugs.** Excluded from
-  coverage via `// coverage:ignore`.
-- **Multi-GPU / Linux / CUDA.** Different project.
+- **Property / fuzz testing** — revisit post-v0.2.
+- **GPU mocking** — all tests run real Metal dispatches.
+- **Cross-implementation token parity** — dropped (see above).
+- **Multi-GPU / Linux / CUDA** — different project.
 
 ## See also
 
-- [Developing](developing.md) — the `make` workflow, kernel
-  regeneration.
-- [Adding a model](adding-a-model.md) — including which tests to add.
-- [Performance](../performance.md) — `Tests/PerfTests/` regression
-  thresholds.
+- [Developing](developing.md) — the `make` workflow, kernel regen.
+- [Adding a model](adding-a-model.md) — which tests a new family adds.
+- [Performance](../performance.md) — `Tests/PerfTests/` thresholds.

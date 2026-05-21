@@ -387,10 +387,18 @@ public final class Mamba2Model: LanguageModel {
         }
     }
 
+    /// Primitive: queue a single-token forward pass onto the caller's
+    /// command buffer. No commit. The `LanguageModel` default
+    /// extension composes this with the appropriate output kernel on
+    /// the same cmdbuf (argmax for forwardSample, softmax-categorical
+    /// for forwardSampleCategorical), giving Mamba 2 the 1-commit-per-
+    /// token path automatically — no hand-rolled overrides needed.
+    ///
+    /// Mamba 2 ignores `position` because the per-layer Mamba2LayerCache
+    /// already tracks recurrent state; the `_` underscore drops it.
     public func forward(tokenId: Int, position _: Int,
-                        caches: [any LayerCacheProtocol], device: Device) -> Tensor {
-        let cmd = device.makeCommandBuffer()
-
+                        caches: [any LayerCacheProtocol],
+                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
         let tokenBuf = device.makeBuffer(length: 4)
         var tid = UInt32(tokenId)
         memcpy(tokenBuf.contents(), &tid, 4)
@@ -403,39 +411,12 @@ public final class Mamba2Model: LanguageModel {
         }
 
         let normed = finalNorm(h, on: cmd)
-        let logits = lmHead(normed, on: cmd)
-
-        cmd.commit()
-        cmd.waitUntilCompleted()
-        return logits
+        return lmHead(normed, on: cmd)
     }
 
-    public func forwardSample(tokenId: Int, position: Int,
-                              caches: [any LayerCacheProtocol], device: Device) -> Int {
-        let cmd = device.makeCommandBuffer()
-
-        let tokenBuf = device.makeBuffer(length: 4)
-        var tid = UInt32(tokenId)
-        memcpy(tokenBuf.contents(), &tid, 4)
-        let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
-        var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
-
-        for (i, layer) in layers.enumerated() {
-            h = layer.forward(h, cache: caches[i] as! Mamba2LayerCache,
-                              cmd: cmd, device: device)
-        }
-
-        let normed = finalNorm(h, on: cmd)
-        let logits = lmHead(normed, on: cmd)
-
-        let outBuf = device.makeBuffer(length: 4)
-        let outTensor = Tensor(buffer: outBuf, offset: 0, shape: [1], dtype: .u32)
-        Ops.argmax(logits, into: outTensor, on: cmd)
-
-        cmd.commit()
-        cmd.waitUntilCompleted()
-        return Int(outBuf.contents().bindMemory(to: UInt32.self, capacity: 1).pointee)
-    }
+    // `forward`, `forwardSample`, `forwardSampleCategorical` come from
+    // LanguageModel's default extension — they wrap `forward(...on cmd:)`
+    // with a single command buffer and the appropriate output kernel.
 }
 
 // ─── Load-time host helpers ──────────────────────────────────────────

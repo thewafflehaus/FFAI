@@ -18,7 +18,7 @@ struct Mamba2IntegrationTests {
     func loadAndGenerate() async throws {
         let m: Model
         do {
-            m = try await Model.load("mlx-community/mamba2-130m")
+            m = try await ModelLoadLock.shared.loadSerially { try await Model.load("mlx-community/mamba2-130m") }
         } catch {
             print("Mamba 2 integration test skipped: \(error)")
             return
@@ -55,14 +55,21 @@ struct Mamba2IntegrationTests {
         // (all-equal) logits would indicate a forward-pass numerical bug.
         #expect(top[0].1 > top[4].1)
 
-        // Short greedy generation. We don't assert specific tokens
-        // (greedy on a tiny base LM is brittle across hardware) but
-        // verify generation runs without crashing and produces tokens.
+        // Greedy generation. Asserts the model produces coherent output
+        // (no stuck-at-one-token, no degenerate alternation cycles).
+        // Thresholds are relaxed because 130M base LMs are repetitive
+        // at greedy — minUniqueRatio drops to 0.15 from the default 0.2,
+        // and we accept 50 tokens instead of the default 50 floor.
         let result = try await m.generate(
             prompt: "The quick brown fox jumps over the",
-            parameters: GenerationParameters(maxTokens: 6, temperature: 0)
+            parameters: GenerationParameters(maxTokens: 50, temperature: 0)
         )
-        #expect(result.generatedTokens.count >= 1)
         #expect(result.tokensPerSecond > 0)
+        expectCoherentOutput(
+            result.generatedTokens,
+            minTokens: 32,
+            minUniqueRatio: 0.15,
+            label: "Mamba 2 130M"
+        )
     }
 }

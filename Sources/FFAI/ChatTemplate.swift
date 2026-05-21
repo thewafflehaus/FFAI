@@ -157,12 +157,13 @@ public extension Model {
     /// generate loop.
     func generate(messages: [ChatMessage],
                   templateOptions: ChatTemplateOptions = .init(),
-                  parameters: GenerationParameters? = nil) async throws -> GenerationResult {
+                  parameters: GenerationParameters? = nil,
+                  profile: Profile = .shared) async throws -> GenerationResult {
         let promptTokens = try renderChatTemplate(messages: messages,
                                                   options: templateOptions)
         let params = parameters ?? defaultGenerationParameters
         let stream = generateStreamInternal(promptTokens: promptTokens,
-                                            parameters: params)
+                                            parameters: params, profile: profile)
         return try await collectStream(stream, promptTokens: promptTokens)
     }
 
@@ -171,12 +172,13 @@ public extension Model {
     /// rendering `messages` through the tokenizer's chat template.
     func generateStream(messages: [ChatMessage],
                         templateOptions: ChatTemplateOptions = .init(),
-                        parameters: GenerationParameters? = nil)
+                        parameters: GenerationParameters? = nil,
+                        profile: Profile = .shared)
         throws -> AsyncThrowingStream<GenerationChunk, Error> {
         let promptTokens = try renderChatTemplate(messages: messages,
                                                   options: templateOptions)
         let params = parameters ?? defaultGenerationParameters
         return generateStreamInternal(promptTokens: promptTokens,
-                                      parameters: params)
+                                      parameters: params, profile: profile)
     }
 }

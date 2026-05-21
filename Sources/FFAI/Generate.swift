@@ -73,11 +73,18 @@ public extension Model {
     /// and returns the final result. Use this when you want the full
     /// text in one shot; use `generateStream` for token-by-token UI
     /// streaming.
+    /// - Parameter profile: telemetry sink for this generation. Defaults
+    ///   to the process-wide `Profile.shared`; pass a dedicated instance
+    ///   to accumulate phase timings + signposts independently (the
+    ///   prerequisite for per-sequence telemetry under Phase 8's batched
+    ///   decode, where one shared singleton would conflate sequences).
     func generate(prompt: String,
-                  parameters: GenerationParameters? = nil) async throws -> GenerationResult {
-        let promptTokens = tokenizer.encode(text: prompt)
+                  parameters: GenerationParameters? = nil,
+                  profile: Profile = .shared) async throws -> GenerationResult {
+        let promptTokens = encodePrompt(prompt)
         let params = parameters ?? defaultGenerationParameters
-        let stream = generateStreamInternal(promptTokens: promptTokens, parameters: params)
+        let stream = generateStreamInternal(promptTokens: promptTokens,
+                                            parameters: params, profile: profile)
         return try await collectStream(stream, promptTokens: promptTokens)
     }
 
@@ -86,12 +93,42 @@ public extension Model {
     /// full `GenerationStats`. Cancel the consuming `Task` to abort
     /// generation early — the producer task notices the cancellation at
     /// the next token boundary.
+    ///
+    /// - Parameter profile: telemetry sink for this generation. See
+    ///   `generate(prompt:parameters:profile:)` for the rationale.
     func generateStream(prompt: String,
-                        parameters: GenerationParameters? = nil)
+                        parameters: GenerationParameters? = nil,
+                        profile: Profile = .shared)
         -> AsyncThrowingStream<GenerationChunk, Error> {
-        let promptTokens = tokenizer.encode(text: prompt)
+        let promptTokens = encodePrompt(prompt)
         let params = parameters ?? defaultGenerationParameters
-        return generateStreamInternal(promptTokens: promptTokens, parameters: params)
+        return generateStreamInternal(promptTokens: promptTokens,
+                                      parameters: params, profile: profile)
+    }
+
+    // MARK: - Prompt encoding
+
+    /// Encode a raw prompt string to token ids, prepending the model's
+    /// `<bos>` token when the engine declares `requiresLeadingBOS` and
+    /// the tokenizer's post-processor did not already add one.
+    ///
+    /// Gemma 4 is the motivating case: it is BOS-critical, but its
+    /// `tokenizer.json` post-processor's `single` template is bare, so
+    /// `Tokenizer.encode` returns no leading BOS. Without this prefix
+    /// the model generates incoherent text. Gemma 3 and most other
+    /// families list `<bos>` in their post-processor and need no fixup
+    /// here. The guard against a BOS already being present keeps the
+    /// helper idempotent and safe for families whose post-processor
+    /// does add one.
+    internal func encodePrompt(_ prompt: String) -> [Int] {
+        var tokens = tokenizer.encode(text: prompt)
+        guard engine.requiresLeadingBOS,
+              let bos = tokenizer.bosTokenId ?? config.bosTokenId
+        else { return tokens }
+        if tokens.first != bos {
+            tokens.insert(bos, at: 0)
+        }
+        return tokens
     }
 
     // MARK: - Internal entry points (shared by chat overloads)
@@ -100,9 +137,10 @@ public extension Model {
     /// Used by both the `prompt:` and `messages:` public overloads so
     /// the tokenizer is invoked exactly once per call.
     internal func generateStreamInternal(promptTokens: [Int],
-                                         parameters params: GenerationParameters)
+                                         parameters params: GenerationParameters,
+                                         profile: Profile = .shared)
         -> AsyncThrowingStream<GenerationChunk, Error> {
-        runStream(promptTokens: promptTokens, parameters: params)
+        runStream(promptTokens: promptTokens, parameters: params, profile: profile)
     }
 
     /// Drain a generation stream into a buffered `GenerationResult`.
@@ -129,7 +167,8 @@ public extension Model {
     // MARK: - Core stream producer
 
     private func runStream(promptTokens: [Int],
-                           parameters params: GenerationParameters)
+                           parameters params: GenerationParameters,
+                           profile: Profile)
         -> AsyncThrowingStream<GenerationChunk, Error> {
         AsyncThrowingStream { continuation in
             // Capture the values we need on the producer task. `Model`
@@ -140,6 +179,7 @@ public extension Model {
                     try await model.driveGeneration(
                         promptTokens: promptTokens,
                         parameters: params,
+                        profile: profile,
                         continuation: continuation
                     )
                     continuation.finish()
@@ -155,6 +195,7 @@ public extension Model {
     private func driveGeneration(
         promptTokens: [Int],
         parameters params: GenerationParameters,
+        profile: Profile,
         continuation: AsyncThrowingStream<GenerationChunk, Error>.Continuation
     ) async throws {
         let caches = engine.makeLayerCaches()
@@ -210,7 +251,7 @@ public extension Model {
         // ─── Prefill ─────────────────────────────────────────────────
         let prefillStart = Date()
         var nextToken = 0
-        try Profile.signpost("prefill") {
+        try profile.signpost("prefill") {
             for (i, t) in promptTokens.enumerated() {
                 try Task.checkCancellation()
                 nextToken = sampleNext(tokenId: t, position: i)
@@ -219,8 +260,8 @@ public extension Model {
         }
         memTracker.endPrefill()
         let prefillTime = Date().timeIntervalSince(prefillStart)
-        Profile.shared.recordPhase("prefill", durationS: prefillTime)
-        Profile.event("ttft")
+        profile.recordPhase("prefill", durationS: prefillTime)
+        profile.event("ttft")
         Debug.log(.generate, String(format: "prefill done in %.3fs (%.1f tok/s)", prefillTime, Double(promptTokens.count) / max(prefillTime, 1e-9)))
 
         if promptTokens.isEmpty {
@@ -255,7 +296,7 @@ public extension Model {
                                                tokens: [nextToken],
                                                position: pos + 1, stats: nil))
             let priorToken = nextToken
-            nextToken = Profile.signpost("decode_step") {
+            nextToken = profile.signpost("decode_step") {
                 sampleNext(tokenId: priorToken, position: pos)
             }
             tokenHistory.append(priorToken)
@@ -267,9 +308,9 @@ public extension Model {
         }
         let decodeTime = Date().timeIntervalSince(decodeStart)
         memTracker.endDecode()
-        Profile.shared.recordPhase("ttft", durationS: ttftMs / 1000)
-        Profile.shared.recordPhase("decode", durationS: decodeTime)
-        Profile.shared.recordPhase("generation_total", durationS: prefillTime + decodeTime)
+        profile.recordPhase("ttft", durationS: ttftMs / 1000)
+        profile.recordPhase("decode", durationS: decodeTime)
+        profile.recordPhase("generation_total", durationS: prefillTime + decodeTime)
         Debug.log(.generate, String(format: "decode done: %d tokens in %.3fs (%.1f tok/s)", generated.count, decodeTime, Double(generated.count) / max(decodeTime, 1e-9)))
 
         let split = ThinkingSplit.split(tokens: generated, model: self)

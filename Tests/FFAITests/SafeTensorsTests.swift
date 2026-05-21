@@ -46,6 +46,32 @@ struct SafeTensorsTests {
         #expect(t.toArray(as: Float.self) == values)
     }
 
+    @Test("mmap is released at end of init (no VA leak)")
+    func mmapReleasedAfterInit() throws {
+        // Init copies each tensor's bytes into a new MTLBuffer; the
+        // source mmap has no callers after the copy loop, so init
+        // munmap's it eagerly. Previously the mapping was retained
+        // until deinit — for a 10 GB quantized checkpoint that's
+        // 10 GB of virtual address space held for the model's
+        // entire lifetime even though nothing reads from it.
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ffai-st-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = try Self.writeSyntheticFile(
+            directory: dir, tensorName: "weights",
+            shape: [4], values: [1, 2, 3, 4]
+        )
+
+        let f = try SafeTensorsFile(url: url)
+        #expect(f.isMmapRetained == false,
+                "init must munmap; otherwise we leak virtual address space")
+
+        // Tensor access still works — the bytes were copied into the
+        // MTLBuffer before munmap, so reads don't touch the mapping.
+        let t = try f.tensor(named: "weights")
+        #expect(t.toArray(as: Float.self) == [1, 2, 3, 4])
+    }
+
     @Test("missing tensor throws")
     func missingTensor() throws {
         let dir = FileManager.default.temporaryDirectory

@@ -29,7 +29,8 @@ public final class PSOCache: @unchecked Sendable {
     public static let shared = PSOCache(library: MetalTileLibrary.shared)
 
     private let library: MetalTileLibrary
-    private let lock = NSLock()
+    private let lock = NSLock()              // protects `cache` reads + writes
+    private let compileLock = NSLock()       // single-flight PSO compilation
     private var cache: [String: MTLComputePipelineState] = [:]
 
     public init(library: MetalTileLibrary) {
@@ -52,6 +53,30 @@ public final class PSOCache: @unchecked Sendable {
     }
 
     private func lookup(_ name: String) throws -> MTLComputePipelineState {
+        // Fast path: cache hit. Hold the lock only long enough to read.
+        lock.lock()
+        if let cached = cache[name] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        // Slow path: serialize PSO compilation through a dedicated lock.
+        // Compiling INSIDE the same `lock` would block all concurrent
+        // cache-hit readers; compiling OUTSIDE any lock (the pattern
+        // before this fix) lets two threads compile the same PSO
+        // concurrently, and the loser's PSO gets dropped on the
+        // second `cache[name] = ...` write. Concurrent
+        // `makeComputePipelineState` for the same function has also
+        // been observed (in unit tests with many parallel suites)
+        // to produce a PSO that runs the kernel on garbage instruction
+        // memory → NaN output. Single-flight via `compileLock` makes
+        // PSO compilation strictly serial, and the inner cache re-check
+        // means a waiter that arrived during compile gets the
+        // already-built PSO instead of starting a duplicate compile.
+        compileLock.lock()
+        defer { compileLock.unlock() }
+
         lock.lock()
         if let cached = cache[name] {
             lock.unlock()

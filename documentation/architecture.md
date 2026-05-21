@@ -220,4 +220,4 @@ Tests/
   the rationale for what's in / out of scope per phase.
 - [Models](models.md) — what's actually supported today.
 - [KV cache](kv-cache.md) — current cache and the planned
-  affine / TurboQuant / SSM variants.
+  affine / AURA / SSM variants.

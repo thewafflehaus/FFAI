@@ -58,4 +58,41 @@ struct ModelLifecycleTests {
             Issue.record("expected .loading state")
         }
     }
+
+    // MARK: - Model.events buffering policy
+
+    @Test("Model.eventsBufferCapacity is positive and bounded")
+    func eventsBufferCapacityIsBounded() {
+        // Sanity: not zero (would drop every event); not enormous
+        // (would defeat the whole point of bounding the buffer).
+        #expect(Model.eventsBufferCapacity > 0)
+        #expect(Model.eventsBufferCapacity <= 1024)
+    }
+
+    @Test("AsyncStream.bufferingNewest drops oldest events when buffer is full")
+    func bufferingNewestSemantic() async {
+        // Pins the AsyncStream contract that `Model.events` relies on.
+        // `Model` previously used the default `.unbounded` policy, which
+        // leaks unconsumed events forever. The fix routes through
+        // `.bufferingNewest(Model.eventsBufferCapacity)`; this test
+        // verifies the policy actually drops older items when full.
+        let cap = 4
+        let (stream, cont) = AsyncStream<Int>.makeStream(
+            bufferingPolicy: .bufferingNewest(cap)
+        )
+
+        // Yield 10 items with no consumer attached. Older 6 should be
+        // dropped; only the last 4 (6..9) retained.
+        for i in 0..<10 {
+            cont.yield(i)
+        }
+        cont.finish()
+
+        var received: [Int] = []
+        for await item in stream {
+            received.append(item)
+        }
+        #expect(received == [6, 7, 8, 9],
+                "bufferingNewest(\(cap)) should keep newest 4; got \(received)")
+    }
 }

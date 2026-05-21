@@ -29,7 +29,7 @@ every page in the tree so you can jump straight to a topic.
   `ChatTemplateOptions`, `enableThinking` / `reasoningEffort` hooks,
   per-family quirks (Qwen 3 / DeepSeek-R1 / GPT-OSS / Gemma).
 - [KV cache](kv-cache.md) — the raw fp16 / bf16 cache, GPU-side
-  `kv_cache_update` kernel, and what's coming (affine, TurboQuant,
+  `kv_cache_update` kernel, and what's coming (affine, AURA,
   SSM/GDN).
 - [Quantization](quantization.md) — mlx-format coverage (3 / 4 / 5 / 6
   / 8-bit), packing layout, sub-group split dispatch.

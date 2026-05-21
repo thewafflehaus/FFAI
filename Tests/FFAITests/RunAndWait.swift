@@ -1,0 +1,43 @@
+// Shared GPU-test helper: encode + commit + wait inside an
+// autoreleasepool.
+//
+// Why the pool: `commandQueue.makeCommandBuffer()` returns an
+// Objective-C bridged class. Under ARC the local `cb` reference is
+// released when the helper returns, but the underlying objc return
+// path autoreleases intermediates (the cmdbuf itself, transient
+// encoder refs, internal Metal driver objects). Without an explicit
+// `autoreleasepool { … }`, those autoreleased objects can sit around
+// until the surrounding scope ends — which under Swift Testing's
+// scheduler can be much wider than the test method. Across hundreds
+// of tests that accumulates into a real cmdbuf-retention problem:
+// observed locally as the GPU staying pinned at 100% with the OS
+// alternating between responsive and laggy.
+//
+// `autoreleasepool { … }` forces a deterministic drain at the end of
+// each call. Per Apple's Memory Management docs this is the standard
+// fix for objc-bridged code in tight loops.
+
+import Foundation
+import Metal
+@testable import FFAI
+
+/// Run `block` on a fresh `MTLCommandBuffer`, commit it, and wait for
+/// completion. Wrapped in an autoreleasepool so cmdbuf retention drains
+/// per call rather than accumulating across tests.
+///
+/// Standard pattern in every GPU-touching test:
+///
+///     @Test func someTest() {
+///         let a = Tensor.empty(shape: [4], dtype: .f32)
+///         var out: Tensor!
+///         runAndWait { cb in out = Ops.silu(a, on: cb) }
+///         #expect(...)
+///     }
+func runAndWait(_ block: (MTLCommandBuffer) -> Void) {
+    autoreleasepool {
+        let cb = Device.shared.makeCommandBuffer()
+        block(cb)
+        cb.commit()
+        cb.waitUntilCompleted()
+    }
+}

@@ -1,9 +1,0 @@
-# Tests/Fixtures/ holds golden reference outputs captured from mlx-lm /
-# mlx-vlm. Generated once via Tools/capture-fixtures.py and committed.
-# See planning/plan.md Phase 0 testing reference convention.
-#
-# Layout:
-#   <model-id>/
-#     forward_layer_<n>_seed<s>.npz
-#     generate_<prompt-hash>_seed<s>.json
-#     metadata.json   (mlx-lm version, capture date)

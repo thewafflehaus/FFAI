@@ -61,8 +61,25 @@ struct GenerateCommand: AsyncParsableCommand {
     @Option(name: .long, help: "PRNG seed for reproducible sampling.")
     var seed: UInt64?
 
-    @Option(name: .long, help: "KV cache scheme: \"raw\" (default fp16/bf16), \"affine8\" (~45% smaller), or \"affine4\" (~70% smaller).")
+    @Option(name: .long, help: "KV cache scheme: \"raw\" (default fp16/bf16), \"affine8\" (~45% smaller), \"affine4\" (~70% smaller), \"aura\" (Phase 5d default aura4v4 ~5x smaller), or any \"auraNvM\" recipe.")
     var kvCache: String?
+
+    @Option(name: .long, help: "Maximum positions retained per attention layer. Past this, the cache evicts in FIFO order with the first --kv-keep slots pinned. 0 / unset means unbounded (cap at model max_position_embeddings).")
+    var kvWindowSize: Int?
+
+    @Option(name: .long, help: "Number of initial positions kept across FIFO eviction (attention sinks). Default 0. Only meaningful when --kv-window-size is set.")
+    var kvWindowKeep: Int?
+
+    // ─── Nemotron-Labs-Diffusion tri-mode decoding ───────────────────
+
+    @Option(name: .long, help: "Decoding mode: \"ar\" (autoregressive, default), \"diffusion\" (block-wise parallel), or \"self-spec\" (diffusion draft + AR verify). diffusion / self-spec require a Nemotron-Labs-Diffusion model.")
+    var mode: String = "ar"
+
+    @Option(name: .long, help: "Block length for diffusion / self-spec decoding. Default 32.")
+    var blockLength: Int = 32
+
+    @Option(name: .long, help: "Confidence threshold for diffusion-mode denoising (0..1). Unset uses an even per-step transfer budget.")
+    var confidenceThreshold: Float?
 
     func run() async throws {
         // Apply --debug + --profiling before any FFAI work so the
@@ -78,20 +95,42 @@ struct GenerateCommand: AsyncParsableCommand {
         let loadStart = Date()
         // Build LoadOptions with the requested KV cache scheme.
         var loadOpts = LoadOptions()
-        switch (kvCache ?? "raw").lowercased() {
+        let rawKVKind = (kvCache ?? "raw").lowercased()
+        switch rawKVKind {
         case "raw":
             loadOpts.kvCache = .raw
         case "affine8":
             loadOpts.kvCache = .affineQuantized(bits: 8, groupSize: 64)
         case "affine4":
-            // group_size=32 at 4-bit — finer groups than affine8's 64
-            // to preserve enough precision; without it K/V loses too
-            // much discriminative power and decode degenerates into
-            // loops. TurboQuant-style rotation would let group_size=64
-            // work at 4-bit; that's Phase 5d.
-            loadOpts.kvCache = .affineQuantized(bits: 4, groupSize: 32)
+            // group_size=16 at 4-bit — much finer groups than affine8's
+            // 64. Affine min-max int4 has only 16 quant levels, so a
+            // single per-head outlier channel inflates a wide group's
+            // range and collapses the other dims onto 1-2 levels. At
+            // gs64 decode is fully degenerate ("a time, a time"); gs32
+            // is grammatical but loops; gs16 is the first group size
+            // that decodes coherently (measured on Qwen3-1.7B — see
+            // Tests/ModelTests/KVCacheSchemeIntegrationTests.swift).
+            // TurboQuant-style rotation would let group_size=64 work at
+            // 4-bit; that's Phase 5d (AURA).
+            loadOpts.kvCache = .affineQuantized(bits: 4, groupSize: 16)
+        case _ where rawKVKind.hasPrefix("aura"):
+            guard let scheme = AURAScheme.parse(rawKVKind) else {
+                throw ValidationError("Unknown AURA recipe \"\(rawKVKind)\". Try \"aura\", \"aura4\", \"aura4v2\", \"aura3\", \"aura8\".")
+            }
+            loadOpts.kvCache = .auraQuantized(scheme: scheme)
         default:
-            throw ValidationError("Unknown --kv-cache \"\(kvCache ?? "")\". Use \"raw\", \"affine8\", or \"affine4\".")
+            throw ValidationError("Unknown --kv-cache \"\(kvCache ?? "")\". Use \"raw\", \"affine8\", \"affine4\", or any \"auraNvM\" recipe.")
+        }
+
+        // Sliding-window / FIFO eviction. Translates the CLI pair
+        // (--kv-window-size, --kv-window-keep) into LoadOptions.kvEviction.
+        // Validation deferred to KVEvictionState's preconditions so the
+        // error site is colocated with the policy logic.
+        if let size = kvWindowSize, size > 0 {
+            let keep = kvWindowKeep ?? 0
+            loadOpts.kvEviction = .window(maxSize: size, keep: keep)
+        } else if (kvWindowKeep ?? 0) != 0 {
+            throw ValidationError("--kv-window-keep requires --kv-window-size to be set.")
         }
         let m = try await Model.load(model, options: loadOpts)
         print("loaded in \(String(format: "%.2f", Date().timeIntervalSince(loadStart)))s")
@@ -115,6 +154,47 @@ struct GenerateCommand: AsyncParsableCommand {
                     print("  \(id) (\(String(format: "%.4f", v)))  \"\(s)\"")
                 }
             }
+            return
+        }
+
+        // Non-autoregressive modes — block-wise diffusion or linear
+        // self-speculation (Nemotron-Labs-Diffusion only).
+        let genMode = mode.lowercased()
+        if genMode != "ar" {
+            guard genMode == "diffusion" || genMode == "self-spec" || genMode == "selfspec"
+            else {
+                throw ValidationError("Unknown --mode \"\(mode)\". Use ar, diffusion, or self-spec.")
+            }
+            guard m.nemotronLabsDiffusion != nil else {
+                throw ValidationError("--mode \(mode) requires a Nemotron-Labs-Diffusion model "
+                    + "(\(model) does not support it).")
+            }
+            let isDiffusion = genMode == "diffusion"
+            // Diffusion requires maxNewTokens to be a multiple of the
+            // block length; round down (min one block).
+            let requested = maxTokens ?? 128
+            let maxNew = isDiffusion
+                ? max(blockLength, (requested / blockLength) * blockLength)
+                : requested
+            let diffParams = DiffusionParameters(
+                maxNewTokens: maxNew, blockLength: blockLength,
+                confidenceThreshold: isDiffusion ? confidenceThreshold : nil)
+
+            print("---")
+            print(prompt)
+            let start = Date()
+            let result = isDiffusion
+                ? m.generateDiffusion(prompt: prompt, parameters: diffParams)
+                : m.generateSelfSpeculative(prompt: prompt, parameters: diffParams)
+            let elapsed = Date().timeIntervalSince(start)
+            print(result.text)
+            print("---")
+            let tps = Double(result.generatedTokens.count) / max(elapsed, 1e-9)
+            print("generated: \(result.generatedTokens.count) tokens in "
+                  + "\(String(format: "%.2f", elapsed))s "
+                  + "(\(String(format: "%.2f", tps)) tok/s, "
+                  + "\(result.forwardPasses) forward passes, "
+                  + "\(String(format: "%.2f", Double(result.generatedTokens.count) / Double(result.forwardPasses))) tokens/forward)")
             return
         }
 

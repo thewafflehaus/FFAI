@@ -95,4 +95,51 @@ struct DebugTests {
             #expect(sub.rawValue == raw)
         }
     }
+
+    @Test("Concurrent enable and isEnabled access survives without crash")
+    func concurrentAccessDoesNotCrash() {
+        // POSIX setenv/getenv are not thread-safe. Debug serializes its
+        // own access through an NSLock so concurrent FFAI-internal
+        // reads/writes can't dereference a freed `environ` pointer.
+        // This test exercises that lock contract: hammer Debug.enable
+        // and Debug.isAnyEnabled from many threads at once and assert
+        // no crash plus a deterministic final state.
+        //
+        // External setenv (test fixtures via the C API directly) is
+        // still racy against this lock and remains the caller's
+        // problem; that's not what this test verifies.
+        clearAllDebugEnv()
+        defer { clearAllDebugEnv() }
+
+        let iterations = 200
+        let workerCount = 8
+
+        // DispatchQueue.concurrentPerform is the simplest way to fan
+        // work across cores synchronously. The closure body is invoked
+        // once per `i ∈ [0, workerCount)`, in parallel, with the call
+        // blocking until every iteration completes — so the assertions
+        // below run on a stable post-state.
+        DispatchQueue.concurrentPerform(iterations: workerCount) { i in
+            for _ in 0..<iterations {
+                // Half the workers flip subsystems; half read.
+                // Both paths take Debug.lock.
+                if i % 2 == 0 {
+                    Debug.enable(.kernels)
+                    Debug.enable(.sampling)
+                } else {
+                    _ = Debug.isAnyEnabled
+                    _ = DebugSubsystem.kernels.isEnabled
+                    _ = DebugSubsystem.sampling.isEnabled
+                }
+            }
+        }
+
+        // After all workers finish, the writes from the even-indexed
+        // tasks have settled. .kernels + .sampling should be enabled;
+        // other subsystems should still be off (no other writers).
+        #expect(DebugSubsystem.kernels.isEnabled)
+        #expect(DebugSubsystem.sampling.isEnabled)
+        #expect(DebugSubsystem.loader.isEnabled == false)
+        #expect(DebugSubsystem.bench.isEnabled == false)
+    }
 }

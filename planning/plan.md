@@ -21,7 +21,7 @@ Backwards compatibility with `mlx-swift-lm`.
 Three layers, all in this repo except metaltile (sibling Rust repo,
 already forked at `~/Development/personal/ai/metaltile`):
 
-1. **metaltile** (Rust) — `#[kernel]` DSL, IR, MSL codegen, CPU interpreter.
+1. **metaltile** (Rust) — `#[kernel]` DSL, IR, MSL codegen.
    Ships a `tile` CLI (`metaltile-cli`) whose `build --emit all`
    subcommand produces `kernels.metallib`, `manifest.json`, and
    `MetalTileKernels.swift`. Historical note: Phase 0 originally
@@ -56,19 +56,31 @@ No JIT compilation at runtime. No Rust at runtime. No `MLX*` imports.
 
 ## Quality bar
 
-**Test coverage: 100% line coverage of FFAI + MetalTileSwift Swift code.**
-Measured via `swift test --enable-code-coverage` and the `xccov` /
-`llvm-cov` toolchain. CI fails any PR that drops coverage below the
-configured threshold. Phase 0 sets up the tooling; every subsequent
-phase adds tests alongside code, not after.
+**Test coverage: ≥ 80 % line coverage on FFAI + MetalTileSwift Swift
+code (was 100 % aspirational; the realised gate is the 80 % ratchet in
+ci.yml).** Measured via `swift test --enable-code-coverage` driven
+through `make coverage` / `scripts/coverage.sh` (matches ci.yml). CI
+fails any PR that drops coverage below the ratchet. Every phase adds
+tests alongside code, not after.
 
-**What "100%" means here:**
+**What the quality bar means here:**
 
 - Every public function: at least one happy-path test
 - Every branch in business logic: at least one test per side
-- Every kernel in metaltile: numerical correctness test (CPU
-  interpreter reference) + Swift wrapper integration test (fixed
-  inputs → fixed outputs)
+- Every kernel in metaltile: a paired GPU correctness test under
+  `crates/metaltile-std/tests/<kernel>_gpu_correctness.rs` comparing
+  against a naive CPU reference (pattern from
+  [TheTom PR #35](https://github.com/0xClandestine/metaltile/pull/35)),
+  **plus** an MLX side-by-side check when the kernel has an upstream
+  counterpart (kernels under `metaltile-std/src/mlx/`, via `tile bench`
+  + `check_equiv`), **plus** an FFAI integration test that exercises
+  the kernel on a real model (kernels under `metaltile-std/src/ffai/`
+  where there's no MLX upstream counterpart). The `metaltile-interp`
+  CPU interpreter crate is gone (dropped in PRs #16 / #17); GPU
+  correctness + MLX side-by-side are the two correctness paths now.
+- Every codegen emit path: `insta` MSL golden snapshot under
+  `crates/metaltile-codegen/tests/msl_snapshots.rs` (pattern from
+  [PR #25](https://github.com/0xClandestine/metaltile/pull/25)).
 - Every model: token-by-token determinism test against a reference
   for at least one prompt + seed combination
 
@@ -84,15 +96,23 @@ phase adds tests alongside code, not after.
 **Test layout:**
 
 ```
-Tests/
-  MetalTileSwiftTests/   # one test file per kernel
-  FFAITests/             # Tensor, Module, Linear, KVCache, Sampling, …
-  ModelTests/            # one folder per model (Llama, Qwen3, …) with
-                         # forward-pass determinism + token-output tests
+metaltile/
+  crates/metaltile-codegen/tests/msl_snapshots.rs   # insta MSL goldens
+  crates/metaltile-codegen/tests/snapshots/         # .snap files
+  crates/metaltile-std/tests/<kernel>_gpu_correctness.rs  # one per non-trivial kernel
+  crates/metaltile/tests/error/*.rs                 # trybuild compile-fail fixtures
+
+FFAI/
+  Tests/MetalTileSwiftTests/   # PSO manifest + per-kernel Swift wrapper smoke
+  Tests/FFAITests/             # Tensor, Module, Linear, KVCache, Sampling, … (parallel-safe)
+  Tests/ModelTests/            # one folder per model — forward-pass determinism
+                               # vs mlx-lm / mlx-vlm golden fixture (serialized)
 ```
 
 Every PR that adds production code without corresponding tests is
-rejected at review. CI publishes coverage diff per PR.
+rejected at review. CI publishes coverage diff per PR. See
+[`CLAUDE.md`](../CLAUDE.md#tooling-cheat-sheet--local-dev-loop) for the
+dev-loop cheat-sheet.
 
 ---
 
@@ -165,7 +185,7 @@ the GPU, (4) fused kernels for hot paths to minimize memory bandwidth.
 
 ---
 
-## Phase 0 — Plumbing (this repo + metaltile)
+## Phase 0 — Plumbing (this repo + metaltile) ✅ SHIPPED
 
 **Goal:** Round-trip a single trivial kernel from Rust `#[kernel]` to
 Swift dispatch, with the SPM build plugin auto-invoking the emit step.
@@ -219,8 +239,16 @@ Swift dispatch, with the SPM build plugin auto-invoking the emit step.
     Phase 0 surface; subsequent phases maintain it)
   - `scripts/coverage.sh` to print local coverage summary
 - **CI:**
-  - `.github/workflows/ci.yml` — Apple Silicon runner, runs `swift
-    test`, uploads coverage report, fails on coverage drop
+  - `.github/workflows/ci.yml` — Apple Silicon runner. Runs
+    `swift test --enable-code-coverage --filter "FFAITests|MetalTileSwiftTests"`
+    (unit suite only; mirrors `make test-unit`). Uploads coverage
+    report, fails on coverage drop. Integration tests are deliberately
+    excluded from PR CI — they download multi-GB HF snapshots and
+    OOM the 7 GB runner; release.yml runs them right before tagging.
+  - `.github/workflows/release.yml` — Apple Silicon runner. Runs both
+    `swift test … --filter "FFAITests|MetalTileSwiftTests"` and
+    `swift test … --filter "ModelTests" --parallel --num-workers 1`
+    (matches `make test-integration`) right before cutting a release.
   - `.github/workflows/auto-label.yml` — conventional-commit PR
     labeling (adapted from mlx-swift-lm)
   - `.github/release.yml` — release notes categorization
@@ -232,8 +260,12 @@ Swift dispatch, with the SPM build plugin auto-invoking the emit step.
   - `scripts/verify-docs.sh` — `swift package generate-documentation
     --warnings-as-errors` over each library target
   - `scripts/coverage.sh` — local coverage summary via `llvm-cov`
-  - `Makefile` — common targets: `build`, `test`, `clean`,
-    `regenerate-kernels`, `coverage`, `format`
+  - `Makefile` — common targets: `build`, `build-release`, `test`,
+    `test-unit`, `test-integration`, `clean`, `regenerate-kernels`,
+    `coverage`, `format`, `format-check`, `docs`. The `test-unit` /
+    `test-integration` split mirrors `.github/workflows/{ci,release}.yml`
+    — integration tests are gated to `--parallel --num-workers 1` so
+    only one HuggingFace snapshot is GPU-resident at a time.
   - `.swift-format` — copied verbatim from mlx-swift-lm
   - `.pre-commit-config.yaml` — copied verbatim
   - `.spi.yml` — Swift Package Index docs config, FFAI targets
@@ -278,7 +310,7 @@ MLX involved.
 
 ---
 
-## Phase 1 — Foundation kernels
+## Phase 1 — Foundation kernels ✅ SHIPPED
 
 **Goal:** Have enough kernels in metaltile + Swift wrappers to express a
 basic Llama-style forward pass without quantization.
@@ -332,7 +364,7 @@ at threshold.
 
 ---
 
-## Phase 2 — First model end-to-end (Llama 3.2 1B)
+## Phase 2 — First model end-to-end (Llama 3.2 1B) ✅ SHIPPED
 
 **Target model: Llama 3.2 1B.** ~1.2GB fp16, standard transformer
 (GQA + RoPE + RMSNorm + SwiGLU MLP). Maps 1:1 to the Phase 1 kernel
@@ -412,7 +444,8 @@ Do NOT copy:
 
 - All 56 model architectures (one is enough for Phase 2)
 - VLM / Embedders
-- TurboQuant / state-replay (Phase 4)
+- AURA / state-replay (Phase 5d/5e — TurboQuant in mlx-swift-lm
+  was renamed to AURA in FFAI)
 - Quantization (Phase 3)
 
 **Done when:** `ffai --model llama-3.2-1B --prompt "Hello"` produces
@@ -422,7 +455,7 @@ recorded as baseline.
 
 ---
 
-## Phase 2.5 — Second model (Qwen3 4B)
+## Phase 2.5 — Second model (Qwen3 4B) ✅ SHIPPED
 
 **Target model: Qwen3 4B.** Same kernel set as Llama plus one
 structural addition: per-head q_norm and k_norm RMSNorms applied to
@@ -461,13 +494,13 @@ for a fixed seed.
 infrastructure are stable. Adding a new model = porting its
 forward-pass shape from mlx-swift-lm and wiring it to existing
 kernels. New *model-specific* kernels (e.g. attention sinks for
-GPT-OSS, fused MoE expert kernels, GDN steps, TurboQuant codecs) get
+GPT-OSS, fused MoE expert kernels, GDN steps, AURA codecs) get
 added to the metaltile DSL as needed — driven by which model we want
 to support next, not speculatively.
 
 ---
 
-## Phase 3 — Quantization
+## Phase 3 — Quantization ✅ SHIPPED
 
 **Goal:** Match MLX's standard 4-bit / 8-bit affine quantization for
 weight-only quantized inference.
@@ -496,7 +529,7 @@ decode.
 
 ---
 
-## Phase 4 — Performance optimizations
+## Phase 4 — Performance optimizations ✅ SHIPPED
 
 **Goal:** Close the gap between Phase 0-3 correctness-first kernels
 and the M-series GPU's actual ceiling. The Phase 0-3 implementation
@@ -548,20 +581,21 @@ should support 80-200 tok/s on these workloads.
 - New `Tests/PerfTests/` measures tok/s at fixed seed; CI publishes
   the numbers per commit (regression-tracker)
 
-**Out of scope (deferred to Phase 7 autotuner):**
+**Deferred out of Phase 4:**
 
-- Per-shape kernel parameter selection
-- Argument buffer / ICB dispatch modes
-- Multi-token batched prefill
+- Per-shape kernel parameter selection → Phase 9 autotuner.
+- Argument-buffer / ICB dispatch modes → Phase 9.
+- Multi-token batched (chunked) prefill → Phase 6.6.
 
 ---
 
-## Phase 5 — Advanced kernels (sampling, TurboQuant, GDN, SSM)
+## Phase 5 — Advanced kernels (sampling, AURA, GDN, SSM)
 
 **Goal:** Port the high-value custom kernels currently in mlx-swift-lm
 plus close the user-visible sampling gap. The custom kernels were
 the original motivator for this project — the 4-repo dance to ship
-a new TurboQuant variant is the pain we're eliminating.
+a new AURA variant (TurboQuant in mlx-swift-lm, renamed to
+AURA in FFAI) is the pain we're eliminating.
 
 Phase 5 is now sub-divided since the full scope is many sessions.
 Each sub-phase ships independently with its own commit + verification.
@@ -651,31 +685,61 @@ Follow-ups not yet done:
   step pays one extra dequant kernel dispatch. Fusing removes
   the working-buffer materialisation.
 
-### Phase 5d — TurboQuant compressed-domain attention
+### Phase 5d — AURA compressed-domain attention ✅ Part 1 (correctness) SHIPPED
 
-The original motivator. ~6-8× memory at `turbo4v2`. Substantial
-research-grade codec port (many sessions). DSL prerequisites in
-metaltile (must land first):
+TurboQuant codec ported from mlx-swift-lm, **renamed AURA** in FFAI
+(kernels, env vars, CLI flags, docs all use `aura*`). Schemes are
+`aura{kb}v{vb}` (K-side / V-side bit widths); symmetric aliases
+`aura3` / `aura4` / `aura6` / `aura8`, asymmetric `aura8v4`,
+`aura4v2`, `aura3v2`. CLI: `--kv-cache aura4v2`. Codec lineage +
+design rationale: `papers/aura-compression-algorithm.md`.
 
-- Sub-byte packed dtypes (`Packed4`, `Packed2`) with bit-unpack ops
-- `simd_shuffle_xor` (needed for FWHT butterfly)
-- Function-constant integration in the `launch` builder
-- Persistent state-buffer convention (in/out aliasing the same MTLBuffer)
-- Type-checked launch builder (closes the v0.2 "shape algebra" gap)
+**5d.A — metaltile DSL prerequisites ✅** — `simd_shuffle_xor` /
+`simd_broadcast`, atomic ops on threadgroup memory, the persistent
+state-buffer convention. All landed in `metaltile`.
 
-TurboQuant kernels (port from
-`Libraries/MLXLMCommon/TurboQuantKernels.swift`):
+**5d.B — AURA kernels ✅** — `aura_encode`, `aura_dequant_rotated`,
+`aura_score`, `aura_value`, `aura_flash_p1`, `aura_flash_pass2`
+under `crates/metaltile-std/src/ffai/`, bits ∈ {2,3,4,6,8}.
 
-- `turbo_encode` (dense rotation Π + Lloyd-Max + bit-pack + norm correction)
-- `turbo_encode_wht` (FWHT butterfly variant)
-- `turbo_bulk_dequant_rotated`
-- `turbo_score`, `turbo_value` (compressed-domain attention)
-- `turbo_flash_pass1` / `turbo_flash_pass2` + causal/NR0 variants
-- `turbo_flash_sdpav` (single-dispatch fused)
+**5d.C — FFAI integration ✅** — `AURAQuantizedKVCache`
+(`KVCacheProtocol`, per-layer compressed K/V, per-layer eviction),
+`LoadOptions.kvCache = .auraQuantized(scheme:)`, the `--kv-cache`
+flag + aliases, `Llama` / `Qwen3` `makeLayerCaches` wiring.
 
-FFAI: `TurboQuantizedKVCache` (port the two-phase prefill+compress logic).
+**5d.D — per-layer SRHT rotation (Stage 1a) ✅** —
+`Ops.auraRotatePerHead`, a per-layer SRHT rotation Π, Q rotated
+post-RoPE + the attention output un-rotated in the model forward.
+The "coherent-then-collapse around token 50" bug was a
+dequant-kernel stride mismatch — `aura_dequant_rotated` keyed
+per-head offsets off its `tokens` constexpr instead of the buffer's
+`maxSeq` stride; fixed by passing an explicit `cacheStride`. All
+four recipes (`aura4v4` / `aura4v2` / `aura8v4` / `aura8v8`) now
+produce coherent text on Qwen3-1.7B; `aura8v8` is near-lossless vs
+raw bf16.
 
-### Phase 5e — SSM / GDN hybrid models
+**5d.E — kernel test coverage ✅** — per-kernel GPU correctness
+tests (naive-CPU oracle) for every AURA kernel, including the
+non-identity SRHT rotation path; FFAI-side codec round-trip tests.
+
+**Audit finding — do not re-litigate.** FFAI's `AURACodebook` is
+byte-identical to the working mlx-swift-lm reference, and that
+reference produces coherent Qwen3 output with `useBias: false`. The
+earlier "codebook recalibration / DC-bias correction needed"
+hypothesis was **refuted** — DC-bias is a GPT-OSS-only feature
+(`RMSNorm → Linear(bias=True)` projections), not a Qwen3
+requirement.
+
+**AURA performance — deferred to Phase 6.3.** FFAI currently runs
+AURA through a dequant-then-`sdpaDecode` path with a persistent
+working buffer. Compressed-domain attention (`aura_flash_p1/p2`),
+two separate K/V codecs, two-phase prefill, the W_o offline fold,
+strided-output encode, and the cache-layout flip are all perf /
+architecture work — **correctness does not depend on any of them**.
+Picked up after the rest of Phase 5 + Phase 6 — full scope in
+Phase 6.3 below.
+
+### Phase 5e — SSM / GDN hybrid models ✅ SHIPPED
 
 Unlocks Qwen 3.5 (GDN + attention), Mamba 2 families (NemotronH,
 GraniteMoeHybrid, FalconH1).
@@ -740,111 +804,455 @@ and `Models/Mamba2.swift` ships the end-to-end dense path.
   loads `mlx-community/mamba2-130m`, verifies shapes match config,
   runs greedy decode to completion (~130 tok/s on M-series).
 
-**Still planned for Mamba 2 / hybrid follow-ups (5e+):**
+**Shipped — Phase 5e complete.** The forward / decode path for all
+five hybrid families landed, each with a coherent-output integration
+test:
 
-- Chunked-prefill parallel-scan variant of `ssm_step` (today's
-  kernel is decode-only — usable but slow for long prompts).
-- `n_groups > 1` support (grouped B / C tensors; today only
-  `n_groups == 1` is wired through the kernel).
-- Hybrid family files (NemotronH, GraniteMoeHybrid, FalconH1)
-  that interleave Mamba 2 mixers with attention layers.
-- Qwen 3.5 hybrid (GDN + attention) — needs
-  `gated_delta_step` + `state_replay` kernels.
+- **GDN forward kernel** — `mt_gated_delta_step` (recurrence
+  `S_t = g_t·S_{t-1} + β_t·k_t·(v_t − k_tᵀ·S_{t-1})ᵀ`, fp32 state)
+  + `Ops.gatedDeltaStep` + `GDNStateCache` (forward-only, mirrors
+  `SSMStateCache`).
+- **MoE inference infrastructure** — `MoERouter` + `MoELayer`
+  (top-K router + per-expert SwiGLU dispatch).
+- **Per-layer mixer scaffolding** — the `DecoderLayer` protocol +
+  `StatelessLayerCache`, driving a heterogeneous `[any DecoderLayer]`
+  decode loop.
+- **Family files** — `Models/{FalconH1,NemotronH,GraniteMoeHybrid,
+  Jamba,Qwen35}.swift`, with `Jamba`'s 2D `A_log` selective scan
+  handled host-side (a GPU 2D-`A` `ssm_step` variant is a tracked
+  perf follow-up — see metaltile `docs/KERNEL_AUDIT.md`).
 
-**Phase 5 done when:** Qwen 3.5 (hybrid GDN+attention with
-TurboQuant KV) runs end-to-end with measured tokens/sec ≥ current
-mlx-swift-lm baseline.
+**Deferred out of 5e:**
 
----
+- **→ Phase 8 (speculative decoding):** the partial-accept rollback
+  infra — `gated_delta_step_record`, `state_replay`,
+  `ssm_step_record`, `ssm_replay` kernels; the `StateReplayCache`
+  protocol; `GDNStateCache.record()` / `.rollback(acceptedPrefix:)`.
+- **→ a perf pass:** chunked-prefill parallel-scan `ssm_step`;
+  `conv1d_causal_prefill` (the shipped decode-step variants cover
+  prefill, just slower).
+- **Conditional:** generalise `ssm_step` to `n_groups > 1` (grouped
+  B / C) only if a target checkpoint's `config.json` needs it.
 
-## Phase 6 — First multi-modal model (vision)
+### Phase 5f — Attention sinks + sliding window + GPT-OSS-20B ✅ SHIPPED
 
-**Goal:** Stress-test the Capability + lifecycle infrastructure with a
-real multi-modal model. Validate that disabled-by-default modalities
-genuinely don't allocate, that lazy `enable(.visionIn)` works, and
-that lifecycle events stream correctly to consumers.
+**Kernels:**
 
-**Target model:** Qwen2.5-VL or Qwen3.5-VL (decide closer to Phase 5
-based on what's most demanded; we don't need to commit now).
-
-**Kernels (new):**
-
-- Vision encoder primitives: 2D conv, patch embedding, vision
-  positional embedding (often just learned), vision-specific attention
-- Cross-modal token splicing (image tokens interleaved with text tokens)
-- Any vision-specific normalization layers
+- Symbolic sliding-window mask in SDPA decode + prefill (no buffer
+  allocation; computed per-step from `(seq_offset, window_size)`).
+- `aura_flash_sdpa_v` extension: attention-sinks fold via
+  numerically-stable softmax `max(scores)` clamping + dequant.
+- Hybrid sliding-FP16 layer policy (GPT-OSS-20B): full-attention
+  layers stay on `AURAQuantizedKVCache(useBias: true)`;
+  sliding-window layers cap at 128 tokens and stay raw FP16
+  (~1.5 MB total).
 
 **FFAI changes:**
 
-- New `VisionEncoder` module type
-- `Models/Qwen3.swift` gains `Qwen35VL` variant composing
-  `Qwen35HybridDense` (text backbone) + `VisionEncoder`
-- `Capability.visionIn` exercised end-to-end:
-  - Load with `[.textIn, .textOut]` only → no vision weights allocated
-  - `await model.enable(.visionIn)` → mmaps vision weights, builds
-    encoder, prewarms vision kernels, emits lifecycle events
-  - `await model.disable(.visionIn)` → releases MTLBuffer refs and
-    encoder, frees GPU residency
-- Image preprocessing pipeline (resize, normalize, patchify) — CPU
-  for now, can move to Metal later if it shows up in profiles
+- `Sources/FFAI/SlidingWindowMask.swift` — symbolic mask helper.
+- `Sources/FFAI/Models/GPTOSS.swift` — family file with the
+  alternating layer schedule + sinks parameter + bias-correcting
+  K/V projections.
+- `LoadOptions.kvCache = .auraQuantized(scheme:, sinks: true)`
+  plumbing.
+- `documentation/kv-cache.md`, `documentation/models.md` updated.
 
 **Tests:**
 
-- Capability matrix: every (textIn, textOut, visionIn) subset
-- Vision encoder forward correctness vs golden fixture (captured
-  from mlx-vlm)
-- Multi-modal generation (image + prompt → text) determinism
-- Memory footprint reported correctly per capability
+- `Tests/MetalTileSwiftTests/SlidingWindowMaskTests.swift`.
+- `Tests/ModelTests/GPTOSSIntegrationTests.swift` — coherent
+  `--kv-cache aura4v2` decode at 1k + 8k prompts.
 
 ---
 
-## Phase 7 — Autotuner
+## Phase 6 — Dense-text model wave ✅ SHIPPED
 
-Implement `metaltile-runtime`'s autotuner for real (currently stubbed):
+For each model: family file (consuming existing kernels), config-key
+plumbing, registry entry, one integration test, doc row update.
 
-- Grid search over `(tile_dims, threads, unroll, simd_matrix, async_copy)`
-- Persist to `~/.cache/metaltile/tuning_cache.json`
-- Shape-bucket lookup at emit time
-- CI: nightly autotune on a reference machine, commit results
+Shipped: Mistral, Phi, Gemma 3, Gemma 4 (`Gemma4Dense` / `Gemma4E` /
+`Gemma4MoE` — incl. the 26B-A4B MoE), Qwen 3.5 dense + MoE (via
+`Qwen35.swift`), and `NemotronLabsDiffusion` (NVIDIA Nemotron-Labs-
+Diffusion tri-mode text backbone). The `ModelKVCacheMatrixIntegrationTests`
+cross-product (model family × weight-bitwidth × KV-cache scheme) also
+landed in this wave.
 
-**Done when:** Generated kernels are within ≤2% of hand-tuned variants
-for representative shapes per kernel.
+- **Qwen3.5 / 3.6 dense** (0.8B, 2B, 4B, 9B, 27B) — `Qwen35Dense`
+  variant. Already partially scaffolded by Phase 5e for the hybrid
+  variants.
+- **Qwen3.5 / 3.6 MoE** (35B-A3B) — `Qwen35MoE` variant. Sparse
+  top-K gating + shared expert + per-expert dequant.
+- **Gemma 3** — `Gemma3Dense` variant. Reuses Llama-style backbone.
+- **Gemma 4 dense** (E2B, E4B, 31B) — `Gemma4Dense` and `Gemma4E`
+  variants. Soft-capped logits (`finalLogitSoftcapping`), per-layer
+  embedding (PLE: `hiddenSizePerLayerInput`, `vocabSizePerLayerInput`),
+  sliding window every other layer (reuses Phase 5f mask),
+  4096-token prefill chunk.
+- **Gemma 4 MoE** (26B-A4B) — `Gemma4MoE` variant.
+- **Nemotron Cascade 2** — `NemotronCascade2` variant inside
+  `NemotronH.swift` (the layer-type string makes the cascade
+  scheduling data-driven).
+- **Mistral** — single family file `Mistral.swift`; reuses
+  Llama-style GQA backbone.
+- **Phi** — single family file `Phi.swift`.
+
+Each model gets:
+
+- Family file in `Sources/FFAI/Models/`.
+- Registry entry in `ModelRegistry`.
+- `Tests/ModelTests/<Family>IntegrationTests.swift` downloading from
+  mlx-community + asserting coherent output.
+- Doc row updates in `documentation/models.md`,
+  `documentation/capabilities.md`, `documentation/quantization.md`.
 
 ---
 
-## Phase 8+ — Audio, more model families, polish
+## Phase 6.1 — Sliding-window SDPA fast path
 
-- Audio capability (`.audioIn` for STT like Whisper, `.audioOut` for
-  TTS) — first audio target TBD
-- Omni models (Qwen3.5-Omni or similar) — vision + audio simultaneously
-- Port additional model families as demanded (Mistral, Phi, Gemma,
-  GPT-OSS MoE, Bitnet, etc.) — each is a single new family file
-- Embedding-only models (`Qwen3Embedding`, etc.)
-- **gguf format support** (optional) — single-file format from
-  llama.cpp, embeds quantization (Q4_K_M, Q5_K_M, Q8_0, etc.) and
-  tokenizer. Different binary layout from safetensors and different
-  tensor naming conventions; needs a per-architecture name mapper.
-  Worth doing if community gguf quants are valuable to users. Skip
-  if all checkpoints we care about are mlx-format or safetensors.
-- Dispatch mode upgrades: ship `.argumentBuffers` and `.icb` modes
-  if Phase 5 profiling shows Mode 1 encoding cost is a real
-  bottleneck on larger models
-- Documentation, examples, distribution polish, perf benchmarking
-  vs MLX baseline across the model zoo
+Plumb `sink_end` + `window_start` (metaltile PR #50's
+`ffai_sdpa_decode` head_dim=128 constexprs) through `Ops.sdpaDecode`.
+Today FFAI passes both as 0 (full attention) and handles sinks +
+sliding window at the KV-cache layer via FIFO eviction with
+sink-slot preservation. Threading the real values takes the kernel's
+fast path — ~4× decode at 16K context, ~8× at 32K. Wire from
+`SlidingWindowKVCache` + the GPT-OSS attention-sinks path; verify the
+speedup.
 
 ---
 
-## Out of scope / deferred
+## Phase 6.2 — AURA MSL snapshot tests
 
-- **CoreML / ANE backend.** Realistic only for boring kernels (RMSNorm,
-  RoPE, layer norm, plain GEMV at fp16/int8). TurboQuant, FWHT, online
-  softmax, recurrent SSM/GDN do not fit ANE constraints. Add a `mil/`
-  codegen sibling to `msl/` in metaltile-codegen when v0.3 demand justifies it.
-- **Swift macro frontend** for kernel authoring. metaltile IR is
-  serde-serializable; a Swift `@kernel` macro emitting IR JSON could feed
-  the same backend later. Don't build it preemptively — wait for demand.
-- **Training / autograd.** Different project.
-- **CUDA / Linux backends.** Different project.
+Add `insta` MSL snapshot fixtures for the AURA kernels under
+`crates/metaltile-codegen/tests/msl_snapshots.rs` (the metaltile
+PR #25 pattern). Pins the emitted MSL so any codegen change to an
+AURA emit path surfaces as a reviewable text diff.
+
+---
+
+## Phase 6.3 — AURA performance
+
+Deferred from Phase 5d. **Correctness does not depend on any of
+this** — it is the architecture + perf pass. (The AURA index-50
+coherence collapse was a separate correctness bug — a stride
+mismatch in `aura_dequant_rotated` — and is already fixed; every
+AURA scheme decodes coherently in `ModelKVCacheMatrixIntegrationTests`.)
+
+**Stage 1b — compressed-domain attention.**
+
+- Two separate K/V codecs — independent SRHT seeds per layer
+  (e.g. `2·layerIdx` for K, `2·layerIdx+1` for V); Q rotated with
+  the K rotation (score cancellation), output un-rotated with the V
+  rotation. Decorrelated quantization noise; matches the
+  mlx-swift-lm reference.
+- Two-phase prefill — raw fp16 buffer during prefill, batch-compress
+  at the prefill→decode boundary, per-token encode after.
+- Compressed-domain attention via `aura_flash_p1` / `aura_flash_pass2`
+  as the **default** decode path — drop the persistent
+  `sharedWorkingK/V` mirror buffers.
+- Opt-in B-path — short-lived per-layer dequant buffer + `sdpaDecode`
+  for callers with the memory headroom who want matrix-engine SDPA.
+  The dequant buffer must be tight-scoped (one layer's worth resident
+  at a time, not a persistent `maxSeq`-sized mirror).
+- W_o offline fold — replaces Stage 1a's runtime output un-rotation.
+- Norm correction — keep FFAI's always-applied `‖x‖/‖recon‖`;
+  revisit only via an A/B test (PPL/KLD + speed) vs the reference's
+  raw-norm WHT path.
+
+**Stage 3 — encode + layout perf.**
+
+- Strided-output `aura_encode` — one dispatch writes all heads
+  (today: one dispatch per head).
+- Cache-layout flip to `[maxSeq, nKVHeads, packedWidth]` — makes the
+  decode-time append a single contiguous write.
+
+---
+
+## Phase 6.4 — Profile injectable
+
+Make `Profile` injectable instead of a `.shared` singleton — each
+`Model.generate(...)` takes `profile: Profile = .shared`.
+Prerequisite for per-sequence telemetry under the batched /
+continuous decode Phase 8 introduces (see the concurrency audit
+`papers/concurrency-and-cache-readiness-audit-2026-05-19.md` §2.D).
+
+---
+
+## Phase 6.5 — Vision (VLM)
+
+**Goal:** Stress-test the Capability + lifecycle infrastructure with
+real multi-modal models. Validate that disabled-by-default modalities
+genuinely don't allocate, that lazy `enable(.visionIn)` works, and
+that lifecycle events stream correctly to consumers.
+
+**Kernels (new in metaltile):**
+
+- `conv2d_{kh}_{kw}_{stride}` — fp16 / bf16. Im2col + tiled GEMM
+  (no fused depthwise variant for now; add if profiles show
+  patch-embed is the bottleneck).
+- `patch_embed_*` — combined unfold + linear.
+- Vision-specific RoPE 2D positional embedding.
+- Cross-modal token splice helper (CPU-fine; image tokens
+  interleaved with text tokens).
+
+**FFAI changes:**
+
+- `Sources/FFAI/VisionEncoder.swift` module type (declared in
+  Phase 2 for the capability API; lit up here).
+- `Sources/FFAI/ImagePreprocessing.swift` — resize / normalize /
+  patchify (CPU initially; Metal later if it shows up in profiles).
+- Family-level VL variants in their existing family files:
+  - `Qwen3.swift` → `Qwen25VL` and `Qwen35VL`.
+  - `Qwen35.swift` → `Qwen35VL` + `Qwen35VLMoE`.
+  - `Gemma3.swift` → `Gemma3VL`.
+  - `Gemma4.swift` → `Gemma4VL` (composes Gemma 4 backbone +
+    vision encoder).
+- `Capability.visionIn` exercised end-to-end (load with text-only,
+  `enable(.visionIn)`, `disable(.visionIn)`).
+
+**Tests:**
+
+- Capability matrix tests (every subset).
+- Vision encoder forward correctness vs `mlx-vlm`-captured fixture.
+- Multi-modal generation determinism on each VLM.
+
+---
+
+## Phase 6.6 — Chunked (batched) prefill
+
+Today FFAI prefills a prompt one token per dispatch (`Generate.swift`
+— `prefillStepSize` is a no-op placeholder). Batch the prompt into
+chunks so prefill processes N tokens per forward — a large TTFT win
+on long prompts.
+
+- Drive a multi-token forward — `forwardMulti(tokenIds:positions:
+  caches:)` — over a chunk of prompt tokens.
+- Chunk attention uses the existing
+  `ffai/sdpa_decode_batched_prefill` metaltile kernel; the KV-cache
+  append writes the whole chunk's K/V in one shot.
+- Honor `GenerationParameters.prefillStepSize` (Gemma 4's
+  4096-token prefill chunk becomes a real path, not a placeholder).
+- Hybrid families: chunked prefill for the attention layers; the
+  SSM/GDN recurrent layers still step per token (their recurrence is
+  inherently sequential) until the deferred chunked-scan kernels land.
+
+**Prioritized** — wanted before the Phase 6.5 Vision wave.
+`forwardMulti` is also the Phase 8.0 speculative-decoding prereq, so
+this de-risks Phase 8.
+
+**Tests:** prefill correctness (chunked vs per-token prefill produce
+identical logits) + a TTFT regression check.
+
+---
+
+## Phase 7 — Audio (STT + TTS + Omni)
+
+Audio modality is interleaved with vision rather than deferred:
+Whisper STT + Qwen-Omni audio + at least one TTS family
+(Kokoro or Bark) ship alongside the first VLM wave.
+
+**Kernels (new in metaltile):**
+
+- `mel_spectrogram_*` — log-Mel filterbank (fp32 / fp16 output).
+- `audio_conv1d_{kh}_{stride}` — wide-stride 1D conv for STT
+  patch embedding.
+- Reuse the existing SDPA / RMSNorm / RoPE for transformer stacks.
+
+**FFAI changes:**
+
+- `Sources/FFAI/AudioEncoder.swift` module type.
+- `Sources/FFAI/AudioPreprocessing.swift` — Mel computation + framing.
+- `Sources/FFAI/Models/Whisper.swift` — Whisper family
+  (tiny → large-v3) STT.
+- `Sources/FFAI/Models/Kokoro.swift` and/or `Bark.swift` (TTS).
+  Pick whichever has the cleaner mlx-audio-swift reference; can
+  ship one and queue the other.
+- `Sources/FFAI/Models/QwenOmni.swift` — Qwen3.5-Omni
+  (text + vision + audio). Uses `Capability.audioIn`, `.audioOut`.
+- `Capability.audioIn` + `.audioOut` exercised end-to-end.
+
+**Tests:**
+
+- `Tests/ModelTests/WhisperIntegrationTests.swift` — coherent
+  transcription on a known sample.
+- `Tests/ModelTests/KokoroIntegrationTests.swift` (or Bark) —
+  coherent generated speech (frame-by-frame deterministic with a
+  fixed seed).
+
+---
+
+## Phase 8 — Speculative + cache + serving wave (specs 013–043)
+
+Each sub-phase = one or more PRs + integration test + doc update.
+Sub-phases land in priority order per
+`~/Development/personal/ai/mlx-swift-lm/specs/IMPLEMENTATION-PLAN.md`.
+
+### 8.0 — Foundational infrastructure (specs 018, 023, 020)
+
+- `--method ngram-spot` / `ngram-sweep-summary` bench mode (spec 018).
+- Leviathan accept/reject sampling for non-greedy ngram (spec 023).
+- `StateReplayCache` protocol formalised (spec 020 — partly shipped
+  in 5e; this finalises the protocol surface).
+
+### 8.1 — n-gram speculative decoding (spec 013)
+
+- `NGramSpeculativeTokenIterator` port from
+  `Libraries/MLXLMCommon/NgramSpeculativeDecoding.swift`.
+- `NGramLookup` multi-size hash, min-hits filter, fallback.
+- `ngramRouteDecision()` eligibility predicate + env-var defaults
+  (`FFAI_NGRAM_ENABLED`, `ngramSize`, `maxNgramDraftTokens`).
+- Auto-disengage on regressive regimes.
+
+### 8.2 — Prefix KV cache (spec 017 — all phases incl. L2 disk)
+
+- `PrefixKVCache` + `PrefixKey` + LRU + stats.
+- Per-class `serialise()` / `hydrate(from:)` on every shipped cache:
+  `KVCache`, `AffineQuantizedKVCache`, `AURAQuantizedKVCache` (incl.
+  compressed-mode), `SSMStateCache`, `GDNStateCache`,
+  `Mamba2LayerCache`.
+- `LastAssistantOpenerPolicy` for Qwen / Gemma / GPT-OSS chat
+  templates.
+- L2 disk persistence (opt-in `FFAI_PREFIX_CACHE_DISK=1`) at
+  `~/.cache/ffai/prefix/`.
+- `generate(...)` wraps a stream that snapshots post-prefill.
+- Integration test verifies warm-turn TTFT speedup.
+
+### 8.3 — Compressed-domain prefix KV cache (spec 039)
+
+- Reuses `AURAQuantizedKVCache.fusedEncodeDispatch` for snapshot-time
+  batch encode. Bumps `PrefixKey.formatVersion` to 3.
+
+### 8.4 — Batched decoding (`generateBatched`)
+
+- `BatchedKVCache` flat `[B, kv_heads, max_seq, head_dim]`.
+- `BatchedHybridCache` for GDN + attention.
+- `generateBatched(...)` API + `BatchedGenerateCompletionInfo`.
+- Variable-length prompts + per-sequence EOS.
+- Continuous batching.
+
+### 8.5 — Cross-request n-gram cache (spec 016)
+
+- Three-tier (`nc_context` / `nc_dynamic` / `nc_static`) per
+  llama.cpp.
+- Registry + tiered cache.
+
+### 8.6 — Deterministic-stretch acceleration (spec 022)
+
+- `ChatTemplateGrammar` protocol + `BigramTable` + per-family
+  grammars.
+- Highest win on GPT-OSS harmony channel transitions.
+
+### 8.7 — Native MTP / EAGLE-3 draft heads (spec 030)
+
+- Variant A: stop stripping `mtp.*` in sanitize; ship
+  `MTPSelfSpeculativeTokenIterator` + `scripts/mtp_convert.py`.
+- Variant B: companion EAGLE-style assistant draft +
+  `AssistantDraftRegistry`.
+
+### 8.8 — Tree attention (spec 014, phase 1: K=2 root branches)
+
+### 8.9 — PLD+ attention-weighted span selection (spec 019)
+
+### 8.10 — DuoAttention retrieval / streaming head split (spec 036) + block-sparse SDPA (spec 033)
+
+- Calibration pass on synthetic NIAH.
+- Two-cache-per-layer dispatch.
+- Block-sparse SDPA Metal kernel (spec 033) consumed here.
+
+### 8.11 — Decode-side K-side top-k / Quest (spec 034) + spec 035 K_max/K_min refinement
+
+### 8.12 — TEAL activation thresholding (spec 037)
+
+- `threshold_and_mask` hook + `scripts/teal_calibrate.py`.
+- Block-sparse Metal kernel for `(masked_act, down_proj) → out`.
+
+### 8.13 — Sparse prefill (spec 031 vertical-slash + spec 032 speculative prefill)
+
+### 8.14 — KV cache write fusion (spec 024)
+
+- Eliminate the `copy_bfloat16` dispatches per decode token.
+
+### 8.15 — Profile-guided Morton-order expert reorder (spec 026)
+
+### 8.16 — Adaptive per-layer mixed-precision (spec 027)
+
+- Recipe-driven framework via JSON sidecar + glob-pattern matching.
+
+### 8.17 — Quadratic / chunkwise WY GDN prefill (spec 028)
+
+- Highest research bet. Could regress if it doesn't work.
+
+### 8.18 — DFlash on GPU (spec 015, phases 1–3)
+
+- Phase 2: draft model from `z-lab/Qwen3.5-*-DFlash`.
+- Phase 3: refactor onto `StateReplayCache` protocol.
+
+### 8.19 — Mirror SD (spec 021) + ANE concurrency primitives (spec 025)
+
+- ANE + GPU concurrency primitives (spec 025) land first.
+- Then `MirrorSpeculativeLoop` glue.
+- Decision point: ANE + GPU truly concurrent on Apple Silicon?
+  Failure here kills 021 + spec 029. Document and pivot.
+
+### 8.20 — ANE-offloaded LM head + Gemma 4 PLE projection (spec 029)
+
+- Blocked on spec 025 + Mirror SD measurement.
+
+### 8.21 — Active KV cache SSD offload (spec 038)
+
+- Long-context memory reduction. Multi-month. Only justified if
+  long-context single-request use cases matter.
+
+### 8.22 — Flash-quantized SDPA + Metal kernel SIMD audit (specs 041, 042)
+
+- Spec 041: drop-in Flash-tiled fused kernel for the affine
+  quantized SDPA path.
+- Spec 042: cross-kernel SIMD audit — convert AURAFlash + affine
+  flash + `aura_dequant_rotated` + `mse_*` to
+  `simdgroup_matrix_multiply_accumulate` MMAs.
+
+### 8.23 — AURAFlash decode-time kernel uplift (spec 043)
+
+- Renamed from TurboFlash. Per-simdgroup bit-unpack reuse + bf16
+  V accumulator + headDim-aware tile autotune + bias-aware kernel.
+
+---
+
+## Phase 9 — Performance / dispatch modes / autotuner
+
+- **Argument-buffer dispatch mode** (Mode 2 in
+  `architecture.md §4a`).
+- **ICB dispatch mode** (Mode 3).
+- **Metaltile autotuner** — grid search over
+  `(tile_dims, threads, unroll, simd_matrix, async_copy)`.
+  Persist to `~/.cache/metaltile/tuning_cache.json`. CI: nightly
+  autotune on a reference machine; commit results.
+- **Metaltile housekeeping** —
+  - Runtime dispatch-shape validator: reject degenerate threadgroup
+    geometry (the < 32-threads-per-group freeze class) before the
+    dispatch reaches the GPU.
+  - Codegen i32-signedness preservation through lowering (signed
+    operands currently widen to unsigned in some paths).
+  - Fix the flaky `matches_cpu_reference_f16_chained_resident_gqa`
+    GPU correctness test.
+
+**Done when:** generated kernels are within ≤2% of hand-tuned
+variants for representative shapes per kernel, and argument-buffer +
+ICB modes are selectable via `LoadOptions.dispatchMode` behind the
+same Model API.
+
+---
+
+## Phase 10 — Polish
+
+- **gguf format support** — per-architecture name mapper. Single-file
+  format from llama.cpp, embeds quantization (Q4_K_M, Q5_K_M, Q8_0,
+  etc.) and tokenizer. Worth doing if community gguf quants are
+  valuable to users; skip if all target checkpoints are mlx-format
+  or safetensors.
+- **Distribution** — Homebrew formula for the `tile` binary, SPM
+  consumer instructions.
+- **Benchmarks** — full sweep vs MLX baseline across the model zoo.
+- **Documentation site polish.**
 
 ---
 

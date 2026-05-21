@@ -89,13 +89,7 @@ let package = Package(
         .testTarget(
             name: "ModelTests",
             dependencies: ["FFAI"],
-            path: "Tests/ModelTests",
-            resources: [
-                // Golden fixtures captured from mlx-lm. See
-                // Tools/capture-fixtures.py and planning/plan.md Phase 0
-                // testing reference convention.
-                .copy("../Fixtures"),
-            ]
+            path: "Tests/ModelTests"
         ),
     ]
 )

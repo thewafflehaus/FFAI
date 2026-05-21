@@ -78,4 +78,50 @@ public struct Tensor: @unchecked Sendable {
     public func zero() {
         memset(buffer.contents().advanced(by: offset), 0, byteCount)
     }
+
+    /// Read all elements as `[Float]`, converting from the tensor's
+    /// dtype. Handles `f32` / `f16` / `bf16` — the three floating dtypes
+    /// FFAI activations use. CPU↔GPU sync point: the caller must ensure
+    /// any pending GPU writes to this tensor have completed.
+    public func toFloatArray() -> [Float] {
+        switch dtype {
+        case .f32:
+            return toArray(as: Float.self)
+        case .f16:
+            return toArray(as: Float16.self).map { Float($0) }
+        case .bf16:
+            // bf16 is the top 16 bits of an IEEE-754 f32; reconstitute
+            // by shifting back into the high half of a 32-bit pattern.
+            return toArray(as: UInt16.self).map {
+                Float(bitPattern: UInt32($0) << 16)
+            }
+        default:
+            fatalError("Tensor.toFloatArray: unsupported dtype \(dtype)")
+        }
+    }
+
+    /// Build a tensor of `shape` whose every element equals `value`,
+    /// stored in `dtype`. Used to broadcast a CPU scalar into an
+    /// element-wise op (e.g. an MoE combine weight). Only the floating
+    /// dtypes are supported.
+    public static func filled(_ value: Float, shape: [Int], dtype: DType,
+                              device: Device = .shared) -> Tensor {
+        let t = Tensor.empty(shape: shape, dtype: dtype, device: device)
+        let n = t.elementCount
+        switch dtype {
+        case .f32:
+            t.copyIn(from: [Float](repeating: value, count: n))
+        case .f16:
+            t.copyIn(from: [Float16](repeating: Float16(value), count: n))
+        case .bf16:
+            // Round-to-nearest by adding the bf16 rounding bias before
+            // truncating the low 16 bits of the f32 bit pattern.
+            let bits = value.bitPattern
+            let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
+            t.copyIn(from: [UInt16](repeating: UInt16(rounded >> 16), count: n))
+        default:
+            fatalError("Tensor.filled: unsupported dtype \(dtype)")
+        }
+        return t
+    }
 }

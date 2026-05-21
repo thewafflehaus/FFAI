@@ -10,18 +10,36 @@ import Metal
 public final class Linear: Module {
     /// weight shape [out_features, in_features], row-major.
     public let weight: Tensor
+    /// Optional bias shape [out_features]. `nil` means no bias (the
+    /// 3-series + Mistral7B default). Qwen 2.x, BLOOM, some Falcon and
+    /// older variants ship biases on the QKV projections.
+    public let bias: Tensor?
 
-    public init(weight: Tensor) {
+    public init(weight: Tensor, bias: Tensor? = nil) {
         precondition(weight.shape.count == 2, "Linear: weight must be 2D")
+        if let b = bias {
+            precondition(b.shape == [weight.shape[0]],
+                         "Linear: bias shape \(b.shape) must match output features \([weight.shape[0]])")
+            precondition(b.dtype == weight.dtype,
+                         "Linear: bias dtype must match weight dtype")
+        }
         self.weight = weight
+        self.bias = bias
     }
 
     public func parameters() -> [(String, Tensor)] {
-        [("weight", weight)]
+        if let b = bias {
+            return [("weight", weight), ("bias", b)]
+        }
+        return [("weight", weight)]
     }
 
     public func callAsFunction(_ x: Tensor, on cmd: MTLCommandBuffer) -> Tensor {
-        Ops.gemv(weight: weight, input: x, on: cmd)
+        let y = Ops.gemv(weight: weight, input: x, on: cmd)
+        if let b = bias {
+            return Ops.add(y, b, on: cmd)
+        }
+        return y
     }
 }
 
@@ -91,24 +109,70 @@ public final class AnyLinear: Module {
     }
 }
 
+/// Derive the affine-quantization bit-width of one mlx-quantized tensor
+/// from its packed shapes, instead of trusting the global `bits` in
+/// `config.json`.
+///
+/// MLX affine quantization packs `32 / bits` weight values into each
+/// uint32 lane, so a linear with `inFeatures` inputs stores its packed
+/// `weight` with `inFeatures * bits / 32` columns and its `scales` with
+/// `inFeatures / groupSize` columns. Eliminating `inFeatures` gives
+///
+///     bits = 32 * weightPackedCols / (scaleCols * groupSize)
+///
+/// Mixed-precision checkpoints (e.g. `mlx-community/gemma-4-26b-a4b-it-4bit`)
+/// carry a single global `bits` plus per-tensor overrides in `config.json`;
+/// the global value is wrong for every overridden tensor, which would
+/// dequantize as garbage. Deriving from the shapes is exact and
+/// per-tensor, so the load path needs no per-key config plumbing.
+/// `groupSize` is assumed uniform across the checkpoint — the global
+/// `quantization.group_size` — which holds for every published mlx
+/// affine conversion.
+public func deriveAffineQuantBits(
+    weightPackedCols: Int, scaleCols: Int, groupSize: Int
+) -> Int {
+    let inFeatures = scaleCols * groupSize
+    precondition(inFeatures > 0,
+                 "deriveAffineQuantBits: non-positive in-features "
+                 + "(scaleCols=\(scaleCols), groupSize=\(groupSize))")
+    precondition((32 * weightPackedCols) % inFeatures == 0,
+                 "deriveAffineQuantBits: \(weightPackedCols) packed weight "
+                 + "columns are inconsistent with \(inFeatures) in-features "
+                 + "at group size \(groupSize) — shapes do not describe an "
+                 + "mlx affine-quantized tensor")
+    return (32 * weightPackedCols) / inFeatures
+}
+
 /// Build the right Linear variant for a weight at `<base>.weight` —
 /// QuantizedLinear if the bundle has matching `.scales`/`.biases` and
-/// the config quantization block specifies a supported bit-width
-/// (4 or 8), regular Linear otherwise.
+/// the per-tensor bit-width derived from the shapes is supported
+/// (3/4/5/6/8), regular Linear otherwise. The bit-width is derived per
+/// tensor — not read from the global config — so mixed-precision
+/// checkpoints load correctly (see `deriveAffineQuantBits`).
 public func loadLinear(
     base: String, in bundle: SafeTensorsBundle,
     quantization: ModelConfig.QuantizationConfig?
 ) throws -> AnyLinear {
-    if let q = quantization, [3, 4, 5, 6, 8].contains(q.bits),
-       bundle.isQuantized(base)
-    {
+    if let q = quantization, bundle.isQuantized(base) {
         let t = try bundle.quantizedTriplet(base)
-        return AnyLinear(QuantizedLinear(
-            weight: t.weight, scales: t.scales, biases: t.biases,
-            bits: q.bits, groupSize: q.groupSize
-        ))
+        let bits = deriveAffineQuantBits(
+            weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
+            scaleCols: t.scales.shape[t.scales.shape.count - 1],
+            groupSize: q.groupSize)
+        if [3, 4, 5, 6, 8].contains(bits) {
+            return AnyLinear(QuantizedLinear(
+                weight: t.weight, scales: t.scales, biases: t.biases,
+                bits: bits, groupSize: q.groupSize
+            ))
+        }
     }
-    return AnyLinear(Linear(weight: try bundle.tensor(named: "\(base).weight")))
+    let weight = try bundle.tensor(named: "\(base).weight")
+    // Bias is optional — present on Qwen 2.x QKV projections, BLOOM,
+    // older Falcon, etc. Absent on the 3-series + Mistral7B + Phi-3.
+    let bias = bundle.has("\(base).bias")
+        ? try bundle.tensor(named: "\(base).bias")
+        : nil
+    return AnyLinear(Linear(weight: weight, bias: bias))
 }
 
 // ─── Embedding ───────────────────────────────────────────────────────
@@ -199,14 +263,18 @@ public func loadEmbedding(
     base: String, in bundle: SafeTensorsBundle,
     hidden: Int, quantization: ModelConfig.QuantizationConfig?
 ) throws -> AnyEmbedding {
-    if let q = quantization, [3, 4, 5, 6, 8].contains(q.bits),
-       bundle.isQuantized(base)
-    {
+    if let q = quantization, bundle.isQuantized(base) {
         let t = try bundle.quantizedTriplet(base)
-        return AnyEmbedding(QuantizedEmbedding(
-            weight: t.weight, scales: t.scales, biases: t.biases,
-            hidden: hidden, bits: q.bits, groupSize: q.groupSize
-        ))
+        let bits = deriveAffineQuantBits(
+            weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
+            scaleCols: t.scales.shape[t.scales.shape.count - 1],
+            groupSize: q.groupSize)
+        if [3, 4, 5, 6, 8].contains(bits) {
+            return AnyEmbedding(QuantizedEmbedding(
+                weight: t.weight, scales: t.scales, biases: t.biases,
+                hidden: hidden, bits: bits, groupSize: q.groupSize
+            ))
+        }
     }
     return AnyEmbedding(Embedding(weight: try bundle.tensor(named: "\(base).weight")))
 }
@@ -229,5 +297,37 @@ public final class RMSNorm: Module {
 
     public func callAsFunction(_ x: Tensor, on cmd: MTLCommandBuffer) -> Tensor {
         Ops.rmsNorm(x, weight: weight, eps: eps, on: cmd)
+    }
+}
+
+// ─── LayerNorm ───────────────────────────────────────────────────────
+
+/// Standard LayerNorm with learned scale + shift — the normalization
+/// vision-transformer encoders (SigLIP / CLIP) use instead of RMSNorm.
+/// `callAsFunction` treats `x` as a single `[rowSize]` row; multi-row
+/// callers (the vision encoder, processing all patch tokens at once)
+/// call `Ops.layerNorm` directly with an explicit `nRows`.
+public final class LayerNorm: Module {
+    /// weight shape [n] — per-channel scale (`gamma`).
+    public let weight: Tensor
+    /// bias shape [n] — per-channel shift (`beta`).
+    public let bias: Tensor
+    public let eps: Float
+
+    public init(weight: Tensor, bias: Tensor, eps: Float) {
+        precondition(weight.shape == bias.shape,
+                     "LayerNorm: weight/bias shape mismatch")
+        self.weight = weight
+        self.bias = bias
+        self.eps = eps
+    }
+
+    public func parameters() -> [(String, Tensor)] {
+        [("weight", weight), ("bias", bias)]
+    }
+
+    public func callAsFunction(_ x: Tensor, on cmd: MTLCommandBuffer) -> Tensor {
+        Ops.layerNorm(x, weight: weight, bias: bias, eps: eps,
+                      nRows: 1, rowSize: x.elementCount, on: cmd)
     }
 }

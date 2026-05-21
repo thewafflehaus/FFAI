@@ -1,7 +1,8 @@
-// Slow integration test: downloads (or hits cache) the real Llama 3.2 1B
-// checkpoint and runs end-to-end greedy generation. Asserts the model is
-// loaded, forward produces non-zero/non-NaN logits, and Sampling.argmax
-// returns a sensible answer for a fact-style prompt.
+// Slow integration test for Llama 3.2 1B. Asserts:
+//   1. Model loads + shapes match the published config.
+//   2. A single-token forward pass yields finite, non-zero logits.
+//   3. Greedy decode produces coherent output (not stuck / not
+//      degenerate — see CoherentOutput.swift for the contract).
 //
 // Skipped automatically if the network/checkpoint isn't available.
 
@@ -12,43 +13,44 @@ import Testing
 @Suite("Llama 3.2 1B integration", .serialized)
 struct LlamaIntegrationTests {
 
-    @Test("load + greedy generate produces coherent text")
+    @Test("load + greedy generate produces coherent output")
     func loadAndGenerate() async throws {
+        let modelId = "unsloth/Llama-3.2-1B"
+        let prompt = "Once upon a time, in a quiet village"
+        let maxTokens = 64
+        let bosTokenId = 128_000
+
         let m: Model
         do {
-            // unsloth/Llama-3.2-1B is an ungated mirror that doesn't need an HF token.
-            m = try await Model.load("unsloth/Llama-3.2-1B")
+            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
         } catch {
             print("Llama integration test skipped: \(error)")
             return
         }
 
-        // Sanity: shapes match the published config
+        // Sanity: shapes match the published config.
         #expect(m.engine.hidden == 2048)
         #expect(m.engine.nLayers == 16)
         #expect(m.engine.nHeads == 32)
         #expect(m.engine.nKVHeads == 8)
         #expect(m.engine.headDim == 64)
-        #expect(m.engine.vocab == 128256)
-        #expect(m.llama != nil, "expected the engine to be a LlamaModel")
+        #expect(m.engine.vocab == 128_256)
+        #expect(m.llama != nil, "expected engine to be a LlamaModel")
 
-        // Forward one token (BOS) and check we get finite, non-zero logits.
+        // Single-token forward: BOS → finite, non-zero logits.
         let caches = m.engine.makeLayerCaches()
-        let logits = m.engine.forward(tokenId: 128000, position: 0, caches: caches)
-        let topByOneToken = Sampling.topN(logits, n: 5)
-        #expect(topByOneToken.count == 5)
-        #expect(topByOneToken[0].1.isFinite)
-        #expect(topByOneToken[0].1 != 0)
+        let logits = m.engine.forward(tokenId: bosTokenId, position: 0, caches: caches)
+        let top = Sampling.topN(logits, n: 5)
+        #expect(top.count == 5)
+        #expect(top[0].1.isFinite)
+        #expect(top[0].1 != 0)
 
-        // Run a short greedy generation. We can't pin a specific token output
-        // (sampling reproducibility depends on hardware) but we expect the
-        // generated text to be non-empty and decode without crashing.
+        // Greedy decode of the prompt → coherent output.
         let result = try await m.generate(
-            prompt: "The capital of France is",
-            parameters: GenerationParameters(maxTokens: 4)
+            prompt: prompt,
+            parameters: GenerationParameters(maxTokens: maxTokens, temperature: 0)
         )
-        #expect(result.generatedTokens.count >= 1)
-        #expect(!result.text.isEmpty)
         #expect(result.tokensPerSecond > 0)
+        expectCoherentOutput(result.generatedTokens, label: "Llama 3.2 1B fp16")
     }
 }

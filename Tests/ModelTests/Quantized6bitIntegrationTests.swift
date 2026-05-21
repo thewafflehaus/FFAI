@@ -1,8 +1,8 @@
-// End-to-end test: download mlx-community/Qwen3-1.7B-6bit and
-// generate. Skipped if network/checkpoint isn't available.
+// End-to-end test: download mlx-community/Qwen3-1.7B-6bit and assert
+// FFAI's greedy decode produces coherent output. Exercises the
+// dequant_gemv_int6 kernel end-to-end on Qwen3 1.7B.
 //
-// 1.7B (vs 4B) for fast CI; the per-bit-width quantization paths
-// don't depend on model size.
+// Skipped if network/checkpoint isn't available.
 
 import Foundation
 import Testing
@@ -11,30 +11,41 @@ import Testing
 @Suite("Qwen3 1.7B 6-bit integration", .serialized)
 struct Quantized6bitIntegrationTests {
 
-    @Test("6-bit Qwen3 1.7B generates coherent text")
+    @Test("load + greedy generate produces coherent output")
     func loadAndGenerate() async throws {
+        let modelId = "mlx-community/Qwen3-1.7B-6bit"
+        let prompt = "Once upon a time, in a quiet village"
+        let maxTokens = 64
+
         let m: Model
         do {
-            m = try await Model.load("mlx-community/Qwen3-1.7B-6bit")
+            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
         } catch {
             print("6-bit Qwen3 integration test skipped: \(error)")
             return
         }
+
         #expect(m.config.quantization?.bits == 6)
+        #expect(m.config.quantization?.groupSize == 64)
         #expect(m.qwen3 != nil)
 
-        // Architecture matches Qwen3 1.7B
         #expect(m.engine.hidden == 2048)
         #expect(m.engine.nLayers == 28)
         #expect(m.engine.nHeads == 16)
         #expect(m.engine.nKVHeads == 8)
         #expect(m.engine.headDim == 128)
 
+        let caches = m.engine.makeLayerCaches()
+        let logits = m.engine.forward(tokenId: 0, position: 0, caches: caches)
+        let top = Sampling.topN(logits, n: 5)
+        #expect(top.count == 5)
+        #expect(top[0].1.isFinite)
+
         let result = try await m.generate(
-            prompt: "The capital of France is",
-            parameters: GenerationParameters(maxTokens: 4)
+            prompt: prompt,
+            parameters: GenerationParameters(maxTokens: maxTokens, temperature: 0)
         )
-        #expect(result.generatedTokens.count >= 1)
-        #expect(!result.text.isEmpty)
+        #expect(result.tokensPerSecond > 0)
+        expectCoherentOutput(result.generatedTokens, label: "Qwen3 1.7B 6-bit")
     }
 }

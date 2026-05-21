@@ -5,6 +5,16 @@ import Foundation
 import Testing
 @testable import FFAI
 
+// .serialized — most tests in this suite mutate `Profile.shared`
+// (set `.level`, call `resetPhases()`). Parallel within-suite tests
+// race on that shared state: one test's `resetPhases()` wipes another
+// test's recorded phases mid-assertion.
+//
+// `Profile` is now injectable (`init()` is public) — see
+// `independentInstancesDoNotShareState` for the per-instance pattern.
+// New tests should prefer a fresh `Profile()` over `Profile.shared`;
+// the suite stays `.serialized` for the legacy singleton-mutating
+// tests until they're all migrated.
 @Suite("Profiling", .serialized)
 struct ProfilingTests {
 
@@ -97,5 +107,49 @@ struct ProfilingTests {
         let r2 = await Profile.signpostAsync("b") { 12 }
         #expect(r1 == 11)
         #expect(r2 == 12)
+    }
+
+    @Test("Independent Profile instances accumulate phases separately")
+    func independentInstancesDoNotShareState() {
+        // Two freshly-constructed instances — the injectable surface
+        // for Phase 8 per-sequence telemetry. Each owns its own level
+        // and phase accumulator; neither touches Profile.shared.
+        let a = Profile()
+        let b = Profile()
+        a.level = .wallclock
+        b.level = .wallclock
+
+        // Record disjoint phases on each instance.
+        a.recordPhase("a-prefill", durationS: 0.5)
+        a.recordPhase("a-decode", durationS: 1.5)
+        b.recordPhase("b-decode", durationS: 2.0)
+
+        // a sees only its own two phases.
+        #expect(a.phases.entries.count == 2)
+        #expect(a.phases.entries.map(\.name) == ["a-prefill", "a-decode"])
+        // b sees only its own one phase — a's records did not leak in.
+        #expect(b.phases.entries.count == 1)
+        #expect(b.phases.entries.first?.name == "b-decode")
+        #expect(b.phases.entries.first?.durationS == 2.0)
+
+        // Resetting one instance leaves the other untouched.
+        a.resetPhases()
+        #expect(a.phases.entries.isEmpty)
+        #expect(b.phases.entries.count == 1)
+
+        // Levels are independent too — flipping b's level off does not
+        // gate a, and neither instance disturbs Profile.shared.
+        b.level = .off
+        b.recordPhase("b-ignored", durationS: 9.9)
+        #expect(b.phases.entries.count == 1)   // gated, not recorded
+        a.recordPhase("a-kept", durationS: 0.1)
+        #expect(a.phases.entries.count == 1)   // a still at .wallclock
+
+        // The instance time(...) / signpost(...) helpers run against
+        // the instance, not the singleton.
+        let timed = a.time("a-timed") { 99 }
+        #expect(timed == 99)
+        #expect(a.phases.entries.contains { $0.name == "a-timed" })
+        #expect(!b.phases.entries.contains { $0.name == "a-timed" })
     }
 }

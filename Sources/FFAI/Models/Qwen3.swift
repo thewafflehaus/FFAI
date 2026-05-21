@@ -176,12 +176,15 @@ public struct Qwen3Dense: Qwen3Variant {
         let lmHead: AnyLinear
         if !tieEmbed, weights.has("lm_head.weight") {
             lmHead = try loadLinear(base: "lm_head", in: weights, quantization: quant)
-        } else if let q = quant, [3, 4, 5, 6, 8].contains(q.bits),
-                  weights.isQuantized("model.embed_tokens") {
+        } else if let q = quant, weights.isQuantized("model.embed_tokens") {
             let t = try weights.quantizedTriplet("model.embed_tokens")
+            let bits = deriveAffineQuantBits(
+                weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
+                scaleCols: t.scales.shape[t.scales.shape.count - 1],
+                groupSize: q.groupSize)
             lmHead = AnyLinear(QuantizedLinear(
                 weight: t.weight, scales: t.scales, biases: t.biases,
-                bits: q.bits, groupSize: q.groupSize
+                bits: bits, groupSize: q.groupSize
             ))
         } else {
             lmHead = AnyLinear(Linear(weight: embedTokens.weight))
@@ -202,7 +205,8 @@ public struct Qwen3Dense: Qwen3Variant {
             hidden: hidden, nLayers: nLayers, nHeads: nHeads,
             nKVHeads: nKVHeads, headDim: headDim, vocab: vocab,
             maxSeq: maxSeq, ropeTheta: theta, dtype: activationDtype,
-            kvCacheKind: options.kvCache
+            kvCacheKind: options.kvCache,
+            kvEviction: options.kvEviction
         )
     }
 }
@@ -285,13 +289,42 @@ public final class Qwen3Layer: Module {
                           vFlat: v.reshaped(to: [nKVHeads, headDim]),
                           on: cmd)
 
+        // AURA cache stores K and V in Π-rotated space, so for the
+        // scores to cancel out we apply Π to Q before SDPA and Π^T to
+        // the attention output before oProj. RoPE doesn't commute with
+        // arbitrary orthogonal rotations, so the per-token order is
+        // strictly project → RMSNorm → RoPE → Π·. Raw / affine caches
+        // skip this entirely.
+        let qForSdpa: Tensor
+        if let auraCache = cache as? AURAQuantizedKVCache {
+            qForSdpa = Ops.auraRotatePerHead(
+                qRotated.reshaped(to: [nHeads * headDim]),
+                rotation: auraCache.rotationDtype,
+                nHeads: nHeads, headDim: headDim, on: cmd
+            ).reshaped(to: [nHeads, headDim])
+        } else {
+            qForSdpa = qRotated
+        }
+
         let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
         let attnOut = Ops.sdpaDecode(
-            q: qRotated, k: cacheK, v: cacheV,
+            q: qForSdpa, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
             nKV: cache.length, kvStride: cache.maxSeq,
             scale: scale, on: cmd)
-        let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
+
+        let attnReadyForOProj: Tensor
+        if let auraCache = cache as? AURAQuantizedKVCache {
+            // attnOut is in Π-rotated space; Π^T puts it back in the
+            // original activation space oProj expects.
+            attnReadyForOProj = Ops.auraRotatePerHead(
+                attnOut.reshaped(to: [nHeads * headDim]),
+                rotation: auraCache.rotationDtypeT,
+                nHeads: nHeads, headDim: headDim, on: cmd)
+        } else {
+            attnReadyForOProj = attnOut.reshaped(to: [nHeads * headDim])
+        }
+        let oOut = oProj(attnReadyForOProj, on: cmd)
         let postAttn = Ops.add(h, oOut, on: cmd)
 
         // MLP — SwiGLU
@@ -329,12 +362,14 @@ public final class Qwen3Model: LanguageModel {
     public let ropeTheta: Float
     public let dtype: DType
     public let kvCacheKind: KVCacheKind
+    public let kvEviction: KVEviction
 
     init(embedTokens: AnyEmbedding, layers: [Qwen3Layer],
          finalNorm: RMSNorm, lmHead: AnyLinear,
          hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
          vocab: Int, maxSeq: Int, ropeTheta: Float, dtype: DType,
-         kvCacheKind: KVCacheKind = .raw) {
+         kvCacheKind: KVCacheKind = .raw,
+         kvEviction: KVEviction = .unbounded) {
         self.embedTokens = embedTokens
         self.layers = layers
         self.finalNorm = finalNorm
@@ -343,6 +378,7 @@ public final class Qwen3Model: LanguageModel {
         self.nKVHeads = nKVHeads; self.headDim = headDim; self.vocab = vocab
         self.maxSeq = maxSeq; self.ropeTheta = ropeTheta; self.dtype = dtype
         self.kvCacheKind = kvCacheKind
+        self.kvEviction = kvEviction
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -360,11 +396,12 @@ public final class Qwen3Model: LanguageModel {
 
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxSeq
+        let eviction = kvEviction
         switch kvCacheKind {
         case .raw:
             return (0..<nLayers).map { _ in
                 KVCache(nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
-                        dtype: dtype, device: device)
+                        dtype: dtype, eviction: eviction, device: device)
             }
         case .affineQuantized(let bits, let groupSize):
             let sharedK = Tensor.empty(shape: [nKVHeads, cap, headDim],
@@ -376,112 +413,135 @@ public final class Qwen3Model: LanguageModel {
                     nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
                     dtype: dtype, bits: bits, groupSize: groupSize,
                     sharedWorkingK: sharedK, sharedWorkingV: sharedV,
+                    eviction: eviction,
+                    device: device
+                )
+            }
+        case .auraQuantized(let scheme):
+            // Codebooks are shared across layers (Lloyd-Max levels are
+            // dim-only — no per-layer statistics baked in yet). Rotations
+            // are per-layer: each Π_l is an SRHT matrix seeded by the
+            // layer index, matching the AURA paper's "fresh rotation per
+            // tensor" recipe for de-correlating activation statistics.
+            let kCodebookData = AURACodebook.centroids(dim: headDim, bits: scheme.keyBits)
+            let kBoundariesData = AURACodebook.boundaries(dim: headDim, bits: scheme.keyBits)
+            let vCodebookData = AURACodebook.centroids(dim: headDim, bits: scheme.valueBits)
+            let vBoundariesData = AURACodebook.boundaries(dim: headDim, bits: scheme.valueBits)
+
+            let kCodebook = Tensor.empty(shape: [kCodebookData.count], dtype: .f32, device: device)
+            kCodebook.copyIn(from: kCodebookData)
+            let kBoundaries = Tensor.empty(shape: [kBoundariesData.count], dtype: .f32, device: device)
+            kBoundaries.copyIn(from: kBoundariesData)
+            let vCodebook = Tensor.empty(shape: [vCodebookData.count], dtype: .f32, device: device)
+            vCodebook.copyIn(from: vCodebookData)
+            let vBoundaries = Tensor.empty(shape: [vBoundariesData.count], dtype: .f32, device: device)
+            vBoundaries.copyIn(from: vBoundariesData)
+
+            // Shared working buffers — same pattern as affineQuantized:
+            // bulk-dequant target shared across all layers.
+            let sharedK = Tensor.empty(shape: [nKVHeads, cap, headDim],
+                                       dtype: dtype, device: device)
+            let sharedV = Tensor.empty(shape: [nKVHeads, cap, headDim],
+                                       dtype: dtype, device: device)
+            return (0..<nLayers).map { i in
+                let rot = AURAQuantizedKVCacheRotations.build(
+                    headDim: headDim, layerIndex: i,
+                    activationDtype: dtype, device: device)
+                return AURAQuantizedKVCache(
+                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    dtype: dtype, scheme: scheme,
+                    rotation: rot.rotation, rotationT: rot.rotationT,
+                    rotationDtype: rot.rotationDtype, rotationDtypeT: rot.rotationDtypeT,
+                    kCodebook: kCodebook, kBoundaries: kBoundaries,
+                    vCodebook: vCodebook, vBoundaries: vBoundaries,
+                    sharedWorkingK: sharedK, sharedWorkingV: sharedV,
+                    eviction: eviction,
                     device: device
                 )
             }
         }
     }
 
+    /// Primitive: queue a single-token forward pass onto the caller's
+    /// command buffer. No commit. The `LanguageModel` default
+    /// extension composes this with the appropriate output kernel
+    /// (`argmax` for forwardSample, `softmax_categorical_sample` for
+    /// forwardSampleCategorical) on the same cmdbuf.
     public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol], device: Device) -> Tensor {
-        let cmd = device.makeCommandBuffer()
+                        caches: [any LayerCacheProtocol],
+                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        // See Sources/FFAI/Inspect/InspectTap.swift — no-op when
+        // FFAI_INSPECT isn't set.
+        let tap = InspectTap.fromEnvironment
+        var workCmd = tap.makeWorkCmd(from: cmd, device: device)
 
         let tokenBuf = device.makeBuffer(length: 4)
         var tid = UInt32(tokenId)
         memcpy(tokenBuf.contents(), &tid, 4)
         let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
-        var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
+        var h = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
+        workCmd = tap.dumpLayerBoundary(h, label: "embed", layer: -1,
+                                        cmd: workCmd, device: device)
 
         for (i, layer) in layers.enumerated() {
             h = layer.forward(h, position: position,
                               cache: caches[i] as! any KVCacheProtocol,
-                              cmd: cmd, device: device)
+                              cmd: workCmd, device: device)
+            workCmd = tap.dumpLayerBoundary(h, label: "layer_out", layer: i,
+                                            cmd: workCmd, device: device)
         }
 
-        let normed = finalNorm(h, on: cmd)
-        let logits = lmHead(normed, on: cmd)
+        let normed = finalNorm(h, on: workCmd)
+        workCmd = tap.dumpLayerBoundary(normed, label: "final_norm", layer: -1,
+                                        cmd: workCmd, device: device)
+        let logits = lmHead(normed, on: workCmd)
+        workCmd = tap.dumpLayerBoundary(logits, label: "logits", layer: -1,
+                                        cmd: workCmd, device: device)
 
-        cmd.commit()
-        cmd.waitUntilCompleted()
+        if tap.active {
+            workCmd.commit()
+            workCmd.waitUntilCompleted()
+        }
         return logits
     }
 
-    public func forwardSample(tokenId: Int, position: Int,
-                              caches: [any LayerCacheProtocol], device: Device) -> Int {
-        let cmd = device.makeCommandBuffer()
+    /// Embedding-input forward — the VLM splice path. Identical to
+    /// `forward(tokenId:...)` minus the embedding gather: the `[hidden]`
+    /// row is supplied directly (a vision-encoder token, or a text-token
+    /// embedding the VL model looked up itself).
+    public var supportsEmbeddingInput: Bool { true }
 
-        let tokenBuf = device.makeBuffer(length: 4)
-        var tid = UInt32(tokenId)
-        memcpy(tokenBuf.contents(), &tid, 4)
-        let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
-        var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
-
+    public func forward(inputEmbedding: Tensor, position: Int,
+                        caches: [any LayerCacheProtocol],
+                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(inputEmbedding.elementCount == hidden,
+                     "Qwen3Model.forward(inputEmbedding:): expected [\(hidden)], "
+                     + "got \(inputEmbedding.shape)")
+        var h = inputEmbedding.reshaped(to: [hidden])
         for (i, layer) in layers.enumerated() {
             h = layer.forward(h, position: position,
                               cache: caches[i] as! any KVCacheProtocol,
                               cmd: cmd, device: device)
         }
-
         let normed = finalNorm(h, on: cmd)
-        let logits = lmHead(normed, on: cmd)
-
-        let outBuf = device.makeBuffer(length: 4)
-        let outTensor = Tensor(buffer: outBuf, offset: 0, shape: [1], dtype: .u32)
-        Ops.argmax(logits, into: outTensor, on: cmd)
-
-        cmd.commit()
-        cmd.waitUntilCompleted()
-
-        let result = outBuf.contents().bindMemory(to: UInt32.self, capacity: 1).pointee
-        return Int(result)
+        return lmHead(normed, on: cmd)
     }
 
-    /// Forward + GPU softmax-categorical-sample fused into one command
-    /// buffer. Same structure as `forwardSample` but uses
-    /// `softmax_categorical_sample` instead of argmax. Overrides the
-    /// LanguageModel default impl that runs forward + sample on two
-    /// cmdbufs — fusing them is the perf win for the `gpu-categorical`
-    /// path Generate selects when T > 0 with no filters.
-    public func forwardSampleCategorical(
-        tokenId: Int, position: Int, caches: [any LayerCacheProtocol],
-        temperature: Float, uniformDraw: Float,
-        device: Device
-    ) -> Int {
+    /// Raw embedding-table lookup for one text token.
+    public func textEmbedding(tokenId: Int, device: Device) -> Tensor {
         let cmd = device.makeCommandBuffer()
-
         let tokenBuf = device.makeBuffer(length: 4)
         var tid = UInt32(tokenId)
         memcpy(tokenBuf.contents(), &tid, 4)
         let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
-        var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
-
-        for (i, layer) in layers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              cmd: cmd, device: device)
-        }
-
-        let normed = finalNorm(h, on: cmd)
-        let logits = lmHead(normed, on: cmd)
-
-        let tBuf = device.makeBuffer(length: 4)
-        var tVal = temperature
-        memcpy(tBuf.contents(), &tVal, 4)
-        let temperatureT = Tensor(buffer: tBuf, offset: 0, shape: [1], dtype: .f32)
-
-        let uBuf = device.makeBuffer(length: 4)
-        var uVal = uniformDraw
-        memcpy(uBuf.contents(), &uVal, 4)
-        let uniformT = Tensor(buffer: uBuf, offset: 0, shape: [1], dtype: .f32)
-
-        let outBuf = device.makeBuffer(length: 4)
-        let outTensor = Tensor(buffer: outBuf, offset: 0, shape: [1], dtype: .u32)
-        Ops.softmaxCategoricalSample(logits, into: outTensor,
-                                     temperature: temperatureT,
-                                     uniform: uniformT, on: cmd)
-
+        let embed = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
         cmd.commit()
         cmd.waitUntilCompleted()
-        return Int(outBuf.contents().bindMemory(to: UInt32.self, capacity: 1).pointee)
+        return embed
     }
+
+    // `forward`, `forwardSample`, `forwardSampleCategorical` come from
+    // LanguageModel's default extension — they wrap `forward(...on cmd:)`
+    // above with a 1-commit-per-token cmdbuf and the appropriate
+    // output kernel.
 }
