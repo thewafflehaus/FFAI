@@ -115,8 +115,9 @@ emit codes that a codec renders to audio. They live under
 | Codec | File | Notes |
 |---|---|---|
 | **SNAC** | [`Audio/SNAC.swift`](../Sources/FFAI/Audio/SNAC.swift) | Multi-scale residual-VQ codec — the waveform tail for Orpheus-style (LlamaTTS) synthesis. `encode(waveform:)` / `decode(codes:)`. |
+| **Encodec** | [`Audio/Encodec.swift`](../Sources/FFAI/Audio/Encodec.swift) | Meta's EnCodec — SEANet encoder/decoder with a 2-layer LSTM bottleneck and a residual-VQ quantizer. Bandwidth-selectable codebook count; optional per-utterance normalization. Single-frame (no-chunking) path. `encode(waveform:)` / `decode(codes:)`. |
 
-Mimi, Encodec, DAC-VAE, Vocos and BigVGAN are follow-on codec ports.
+Mimi, DAC-VAE, Vocos and BigVGAN are follow-on codec ports.
 
 **GPT-OSS** is OpenAI's GPT-OSS-20B — a 24-layer mixture-of-experts
 transformer (~20B total / ~3.6B active params). Three structural
