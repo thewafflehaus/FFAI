@@ -22,30 +22,11 @@ import Accelerate
 
 // ─── Tensor host-readback ────────────────────────────────────────────
 
-extension Tensor {
-    /// Read the tensor's contents into a host `[Float]`, converting from
-    /// whatever storage dtype it uses. VAD weight tensors are small;
-    /// this runs once per weight at load time.
-    func toFloatArray() -> [Float] {
-        switch dtype {
-        case .f32:
-            return toArray(as: Float.self)
-        case .f16:
-            return toArray(as: Float16.self).map { Float($0) }
-        case .bf16:
-            let bits = toArray(as: UInt16.self)
-            return bits.map { Float(bitPattern: UInt32($0) << 16) }
-        case .i32:
-            return toArray(as: Int32.self).map { Float($0) }
-        case .u32:
-            return toArray(as: UInt32.self).map { Float($0) }
-        case .i8:
-            return toArray(as: Int8.self).map { Float($0) }
-        case .u8:
-            return toArray(as: UInt8.self).map { Float($0) }
-        }
-    }
-}
+// `Tensor.toFloatArray()` — covering every dtype, including the integer
+// ones VAD weight readback needs — lives in `Tensor.swift`. A duplicate
+// `extension Tensor { toFloatArray() }` previously sat here and caused
+// an `invalid redeclaration` build error; it was removed and its
+// integer-dtype cases folded into the canonical `Tensor` version.
 
 // ─── Activations ─────────────────────────────────────────────────────
 

@@ -528,8 +528,11 @@ struct EncodecResidualVQ {
         self.codebookSize = config.codebookSize
         self.frameRate = config.frameRate
         let maxBandwidth = config.targetBandwidths.max() ?? 24.0
-        let numQuantizers = Int(1000.0 * maxBandwidth
-                                / Double(frameRate * 10))
+        // Split into explicitly-typed sub-expressions — the inline
+        // mixed-literal form overwhelmed the type-checker.
+        let bandwidthScaled = Double(maxBandwidth) * 1000.0
+        let quantizerDenom = Double(frameRate * 10)
+        let numQuantizers = Int(bandwidthScaled / quantizerDenom)
         var cbs: [EncodecVQCodebook] = []
         for i in 0..<max(numQuantizers, 1) {
             cbs.append(try EncodecVQCodebook(

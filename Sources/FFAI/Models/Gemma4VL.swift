@@ -447,8 +447,11 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
             func lin(_ name: String) throws -> Linear {
                 // Gemma 4 vision linears are wrapped in a clippable
                 // module — the projection weight is `.linear.weight`.
-                let w = (try? vt.tensor(named: "\(p).\(name).linear.weight"))
-                    ?? (try vt.tensor(named: "\(p).\(name).weight"))
+                // The leading `try` covers the whole `??` — the RHS
+                // `vt.tensor(...)` throws, so the operator expression
+                // must be marked `try` at its start.
+                let w = try (try? vt.tensor(named: "\(p).\(name).linear.weight"))
+                    ?? vt.tensor(named: "\(p).\(name).weight")
                 let b = (try? vt.tensor(named: "\(p).\(name).linear.bias"))
                     ?? (try? vt.tensor(named: "\(p).\(name).bias"))
                 return Linear(weight: w, bias: b)

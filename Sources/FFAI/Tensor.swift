@@ -95,8 +95,14 @@ public struct Tensor: @unchecked Sendable {
             return toArray(as: UInt16.self).map {
                 Float(bitPattern: UInt32($0) << 16)
             }
-        default:
-            fatalError("Tensor.toFloatArray: unsupported dtype \(dtype)")
+        case .i32:
+            return toArray(as: Int32.self).map { Float($0) }
+        case .u32:
+            return toArray(as: UInt32.self).map { Float($0) }
+        case .i8:
+            return toArray(as: Int8.self).map { Float($0) }
+        case .u8:
+            return toArray(as: UInt8.self).map { Float($0) }
         }
     }
 

@@ -109,7 +109,7 @@ struct SenseVoiceIntegrationTests {
             try await locator.resolve(
                 idOrPath: "mlx-community/SenseVoiceSmall")
         }
-        let loaded = try AudioModelRegistry.load(directory: dir)
+        let loaded = try await AudioModelRegistry.load(directory: dir)
         guard case .senseVoice = loaded else {
             Issue.record("AudioModelRegistry did not route to SenseVoice")
             return
