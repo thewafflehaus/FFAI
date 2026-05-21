@@ -30,13 +30,17 @@ struct Gemma4IntegrationTests {
     @Test("Gemma4E (E2B): load + greedy generate produces coherent output")
     func loadAndGenerateE2B() async throws {
         let modelId = "mlx-community/gemma-4-e2b-it-bf16"
-        // Short prompt + a modest token budget keep the run bounded:
-        // the 512-wide global-attention layers run a host-side SDPA
-        // whose cost grows with the KV length, so a long generation is
-        // expensive. 24 tokens still exercises every architectural path
-        // (sliding + global attention, PLE, soft-capping) and is enough
-        // for the coherence checker.
-        let prompt = "The capital of France is"
+        // Open-ended prompt: a short factual question ("The capital of
+        // France is") elicits a 2-token answer ("Paris.") and the model
+        // correctly stops, which can't exercise the coherence checker's
+        // `minTokens` budget. A story opener keeps the model generating
+        // sustained prose across every architectural path (sliding +
+        // global attention, PLE, KV sharing, soft-capping).
+        //
+        // A modest token budget keeps the run bounded: the 512-wide
+        // global-attention layers run a host-side SDPA whose cost grows
+        // with the KV length, so a long generation is expensive.
+        let prompt = "Once upon a time, in a quiet village"
         let maxTokens = 24
 
         let m: Model

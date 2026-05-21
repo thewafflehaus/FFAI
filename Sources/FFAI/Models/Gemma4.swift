@@ -221,6 +221,45 @@ struct Gemma4Params {
 
     /// Layer `i` is a global (full-attention) layer.
     func isGlobal(_ i: Int) -> Bool { layerTypes[i] == "full_attention" }
+
+    /// First layer index that shares KV with an earlier donor. Layers
+    /// `[0, firstKvSharedIdx)` compute their own K/V; layers
+    /// `[firstKvSharedIdx, nLayers)` reuse a donor's. Equals `nLayers`
+    /// (no sharing) when `numKvSharedLayers == 0`.
+    var firstKvSharedIdx: Int { nLayers - numKvSharedLayers }
+
+    /// KV-sharing donor map: `previousKVs[i]` is the layer index whose
+    /// K/V layer `i` reuses. `previousKVs[i] == i` means layer `i`
+    /// computes its own K/V.
+    ///
+    /// Gemma 4's `num_kv_shared_layers` makes the final `numKvSharedLayers`
+    /// layers reuse an earlier layer's K/V instead of projecting their
+    /// own. The donor is the **last** non-shared layer of the *same
+    /// attention geometry* (`sliding_attention` / `full_attention`) —
+    /// a sliding shared layer reuses the last sliding donor, a global
+    /// shared layer the last global donor. Matches `mlx_lm`'s
+    /// `gemma4_text.py` `previous_kvs` construction.
+    ///
+    /// The shared layers' `k_proj` / `v_proj` / `k_norm` weights still
+    /// ship in the checkpoint but are **dead** — the reference model
+    /// (and `mlx_lm`) does not instantiate them. Projecting K/V from
+    /// those dead weights instead of reusing the donor's cached K/V
+    /// corrupts attention for every shared layer.
+    var previousKVs: [Int] {
+        var mapping = Array(0..<nLayers)
+        guard numKvSharedLayers > 0 else { return mapping }
+        // Last non-shared layer of each attention type.
+        var lastDonorByType: [String: Int] = [:]
+        for i in 0..<firstKvSharedIdx {
+            lastDonorByType[layerTypes[i]] = i
+        }
+        for j in firstKvSharedIdx..<nLayers {
+            if let donor = lastDonorByType[layerTypes[j]] {
+                mapping[j] = donor
+            }
+        }
+        return mapping
+    }
 }
 
 // MARK: - Variant protocol
@@ -430,6 +469,7 @@ enum Gemma4Loader {
                 ffn: ffn, layerScalar: layerScalar, ple: plePerLayer,
                 hidden: p.hidden, nHeads: p.nHeads, nKVHeads: layerKVHeads,
                 headDim: layerHeadDim, isGlobal: isGlobal, kEqV: kEqV,
+                isKvShared: isKvShared,
                 ropeTheta: ropeTheta, rotatedDim: rotatedDim, eps: Float(p.eps),
                 device: device))
         }
@@ -778,6 +818,12 @@ public final class Gemma4Layer: Module {
     public let isGlobal: Bool
     /// V := K (attention_k_eq_v on global layers).
     let kEqV: Bool
+    /// True if this layer reuses a donor layer's K/V (Gemma 4
+    /// `num_kv_shared_layers`). A shared layer projects only Q, applies
+    /// RoPE to it, and runs SDPA against the donor's cache slab — it
+    /// never projects or caches its own K/V. Its `kProj` / `vProj` /
+    /// `kNorm` are the checkpoint's dead weights and go unused.
+    public let isKvShared: Bool
     let ropeTheta: Float
     /// ProportionalRoPE rotated-dim count (== headDim for sliding layers,
     /// `partial_rotary_factor · globalHeadDim` for global layers).
@@ -794,7 +840,8 @@ public final class Gemma4Layer: Module {
          preFFNorm: RMSNorm, postFFNorm: RMSNorm,
          ffn: Gemma4FFN, layerScalar: Tensor?, ple: Gemma4LayerPLE?,
          hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         isGlobal: Bool, kEqV: Bool, ropeTheta: Float, rotatedDim: Int,
+         isGlobal: Bool, kEqV: Bool, isKvShared: Bool,
+         ropeTheta: Float, rotatedDim: Int,
          eps: Float, device: Device) {
         self.qProj = qProj; self.kProj = kProj; self.vProj = vProj
         self.oProj = oProj
@@ -806,6 +853,7 @@ public final class Gemma4Layer: Module {
         self.ple = ple
         self.hidden = hidden; self.nHeads = nHeads; self.nKVHeads = nKVHeads
         self.headDim = headDim; self.isGlobal = isGlobal; self.kEqV = kEqV
+        self.isKvShared = isKvShared
         self.ropeTheta = ropeTheta; self.rotatedDim = rotatedDim; self.eps = eps
         // Value RMSNorm uses a unit weight (scale-free).
         self.vNormWeight = Tensor.filled(1.0, shape: [headDim],
@@ -852,20 +900,29 @@ public final class Gemma4Layer: Module {
     /// `perLayerInput` is this layer's PLE row (`[hiddenSizePerLayerInput]`),
     /// nil for dense / MoE variants. `cmd` is the caller's work buffer.
     ///
+    /// `donorCache` is non-nil iff this is a KV-shared layer
+    /// (`isKvShared`): it is the donor layer's cache, already updated
+    /// with the current token by the time this layer runs. The shared
+    /// layer reads K/V from it and never touches its own `cache`.
+    ///
     /// Returns `(h, committed)`. A `batchable` layer queues onto `cmd`
     /// and returns `committed == false` — the caller keeps batching.
     /// A global / MoE layer commits internally (host readback) and
     /// returns `committed == true` — the caller must refresh its buffer.
     func forward(_ h: Tensor, position: Int, cache: any KVCacheProtocol,
                  perLayerInput: Tensor?, cmd: MTLCommandBuffer,
-                 device: Device) -> (h: Tensor, committed: Bool) {
+                 device: Device,
+                 donorCache: (any KVCacheProtocol)? = nil)
+        -> (h: Tensor, committed: Bool) {
         if batchable {
             return (forwardBatched(h, position: position, cache: cache,
-                                   perLayerInput: perLayerInput, cmd: cmd),
+                                   perLayerInput: perLayerInput, cmd: cmd,
+                                   donorCache: donorCache),
                     false)
         }
         return (forwardCommitting(h, position: position, cache: cache,
-                                  perLayerInput: perLayerInput, device: device),
+                                  perLayerInput: perLayerInput, device: device,
+                                  donorCache: donorCache),
                 true)
     }
 
@@ -874,10 +931,13 @@ public final class Gemma4Layer: Module {
     private func forwardBatched(_ h: Tensor, position: Int,
                                 cache: any KVCacheProtocol,
                                 perLayerInput: Tensor?,
-                                cmd: MTLCommandBuffer) -> Tensor {
+                                cmd: MTLCommandBuffer,
+                                donorCache: (any KVCacheProtocol)? = nil)
+        -> Tensor {
         let xNorm = inputNorm(h, on: cmd)
         let attnOut = slidingAttentionBatched(xNorm, position: position,
-                                              cache: cache, cmd: cmd)
+                                              cache: cache, cmd: cmd,
+                                              donorCache: donorCache)
         let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
         let normedAttn = postAttnNorm(oOut, on: cmd)
         var hOut = Ops.add(h, normedAttn, on: cmd)
@@ -897,19 +957,22 @@ public final class Gemma4Layer: Module {
     private func forwardCommitting(_ h: Tensor, position: Int,
                                    cache: any KVCacheProtocol,
                                    perLayerInput: Tensor?,
-                                   device: Device) -> Tensor {
+                                   device: Device,
+                                   donorCache: (any KVCacheProtocol)? = nil)
+        -> Tensor {
         let attnCmd = device.makeCommandBuffer()
         let xNorm = inputNorm(h, on: attnCmd)
         let attnOut: Tensor
         if isGlobal {
             attnOut = globalAttention(xNorm, position: position, cache: cache,
-                                      cmd: attnCmd, device: device)
+                                      cmd: attnCmd, device: device,
+                                      donorCache: donorCache)
             // `globalAttention` already committed `attnCmd`.
         } else {
             // MoE layer with a sliding attention: run attention on its
             // own buffer (committed here) so the MoE FFN can sync.
             attnOut = slidingAttention(xNorm, position: position, cache: cache,
-                                       cmd: attnCmd)
+                                       cmd: attnCmd, donorCache: donorCache)
         }
 
         let postCmd = device.makeCommandBuffer()
@@ -994,12 +1057,44 @@ public final class Gemma4Layer: Module {
         return (qNormed, kNormed, vNormed)
     }
 
+    /// Project + RMSNorm only the query, leaving K/V untouched. Used by
+    /// KV-shared layers, which reuse a donor's cached K/V and so never
+    /// project their own. Returns `[nHeads, headDim]`.
+    private func projectAndNormQuery(_ xNorm: Tensor, on cmd: MTLCommandBuffer)
+        -> Tensor {
+        let q = qProj(xNorm, on: cmd)
+        return Ops.rmsNormRows(
+            q, weight: qNorm.weight, eps: eps,
+            nRows: nHeads, rowSize: headDim, on: cmd
+        ).reshaped(to: [nHeads, headDim])
+    }
+
     /// Sliding-layer attention queued onto a shared `cmd` — standard
     /// full RoPE + GPU `sdpaDecode` (head_dim 256). Does NOT commit;
     /// the caller batches and commits. Returns `[nHeads, headDim]`.
+    ///
+    /// `donorCache` is non-nil for a KV-shared layer: the donor layer
+    /// (run earlier this token) has already appended the current K/V to
+    /// `donorCache`, so the shared layer only projects Q, applies RoPE
+    /// to it, and runs SDPA against the donor's slab — no K/V projection
+    /// and no cache append.
     private func slidingAttentionBatched(_ xNorm: Tensor, position: Int,
                                          cache: any KVCacheProtocol,
-                                         cmd: MTLCommandBuffer) -> Tensor {
+                                         cmd: MTLCommandBuffer,
+                                         donorCache: (any KVCacheProtocol)? = nil)
+        -> Tensor {
+        if let donorCache {
+            // KV-shared layer: reuse the donor's already-updated slab.
+            let q = projectAndNormQuery(xNorm, on: cmd)
+            let qRotated = Ops.rope(q, position: position, headDim: headDim,
+                                    thetaBase: ropeTheta, scaling: .none, on: cmd)
+            let (cacheK, cacheV) = donorCache.prepareForAttention(on: cmd)
+            return Ops.sdpaDecode(
+                q: qRotated, k: cacheK, v: cacheV,
+                nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
+                nKV: donorCache.length, kvStride: donorCache.maxSeq,
+                scale: 1.0, on: cmd)
+        }
         let (q, k, v) = projectAndNorm(xNorm, on: cmd)
         let qRotated = Ops.rope(q, position: position, headDim: headDim,
                                 thetaBase: ropeTheta, scaling: .none, on: cmd)
@@ -1020,9 +1115,12 @@ public final class Gemma4Layer: Module {
     /// needs the attention result resident before its own host sync).
     private func slidingAttention(_ xNorm: Tensor, position: Int,
                                   cache: any KVCacheProtocol,
-                                  cmd: MTLCommandBuffer) -> Tensor {
+                                  cmd: MTLCommandBuffer,
+                                  donorCache: (any KVCacheProtocol)? = nil)
+        -> Tensor {
         let out = slidingAttentionBatched(xNorm, position: position,
-                                          cache: cache, cmd: cmd)
+                                          cache: cache, cmd: cmd,
+                                          donorCache: donorCache)
         cmd.commit()
         cmd.waitUntilCompleted()
         return out
@@ -1038,30 +1136,50 @@ public final class Gemma4Layer: Module {
     /// The decode loop is one token at a time, so the readback is
     /// `length · headDim` per head — bounded and deterministic. A 512
     /// `sdpaDecode` kernel would replace this; see the file header.
+    ///
+    /// `donorCache` is non-nil for a KV-shared global layer: it projects
+    /// only Q, applies ProportionalRoPE to Q, and runs the host-side
+    /// SDPA against the donor's already-updated slab — no K/V projection
+    /// and no cache append.
     private func globalAttention(
         _ xNorm: Tensor, position: Int,
-        cache: any KVCacheProtocol, cmd: MTLCommandBuffer, device: Device
+        cache: any KVCacheProtocol, cmd: MTLCommandBuffer, device: Device,
+        donorCache: (any KVCacheProtocol)? = nil
     ) -> Tensor {
-        let (q, k, v) = projectAndNorm(xNorm, on: cmd)
-        // 1. ProportionalRoPE on q and k. The kernel rotates pairs
-        //    `(i, i + headDim/2)` for `i ∈ [0, rotatedDim/2)` with
-        //    frequency `theta^(-2i/headDim)` — exactly Gemma 4's
-        //    ProportionalRoPE. `ropeProportional` drives the shared RoPE
-        //    kernel with a grid height of `rotatedDim/2`.
-        Gemma4Ops.ropeProportional(
-            q, position: position, headDim: headDim, rotatedDim: rotatedDim,
-            thetaBase: ropeTheta, on: cmd)
-        Gemma4Ops.ropeProportional(
-            k, position: position, headDim: headDim, rotatedDim: rotatedDim,
-            thetaBase: ropeTheta, on: cmd)
-        // 2. Append the rotated K and the value-normed V to the cache.
-        cache.appendOnGPU(kFlat: k, vFlat: v, on: cmd)
-        let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
+        let q: Tensor
+        let attnCache: any KVCacheProtocol
+        if let donorCache {
+            // KV-shared layer: project + RoPE only the query.
+            q = projectAndNormQuery(xNorm, on: cmd)
+            Gemma4Ops.ropeProportional(
+                q, position: position, headDim: headDim, rotatedDim: rotatedDim,
+                thetaBase: ropeTheta, on: cmd)
+            attnCache = donorCache
+        } else {
+            let (qOwn, k, v) = projectAndNorm(xNorm, on: cmd)
+            // 1. ProportionalRoPE on q and k. The kernel rotates pairs
+            //    `(i, i + headDim/2)` for `i ∈ [0, rotatedDim/2)` with
+            //    frequency `theta^(-2i/headDim)` — exactly Gemma 4's
+            //    ProportionalRoPE. `ropeProportional` drives the shared
+            //    RoPE kernel with a grid height of `rotatedDim/2`.
+            Gemma4Ops.ropeProportional(
+                qOwn, position: position, headDim: headDim, rotatedDim: rotatedDim,
+                thetaBase: ropeTheta, on: cmd)
+            Gemma4Ops.ropeProportional(
+                k, position: position, headDim: headDim, rotatedDim: rotatedDim,
+                thetaBase: ropeTheta, on: cmd)
+            // 2. Append the rotated K and the value-normed V to the cache.
+            cache.appendOnGPU(kFlat: k, vFlat: v, on: cmd)
+            q = qOwn
+            attnCache = cache
+        }
+        let (cacheK, cacheV) = attnCache.prepareForAttention(on: cmd)
 
         // 3. Sync so the host can read q, K and V.
         cmd.commit()
         cmd.waitUntilCompleted()
 
+        let cache = attnCache
         let nKV = cache.length
         let qHost = q.toFloatArray()                       // [nHeads, headDim]
         let kHost = sliceCacheRows(cacheK, nKVHeads: nKVHeads,
@@ -1287,6 +1405,12 @@ public final class Gemma4Model: LanguageModel {
     /// (`.window`); global layers stay `.unbounded`. Each layer's cache
     /// is sized to that layer's own head dim / KV-head count, because
     /// sliding (256) and global (512) layers differ.
+    ///
+    /// KV-shared layers (`num_kv_shared_layers`) reuse a donor layer's
+    /// cache at decode time and never append to their own slot, so
+    /// their cache is allocated at `maxSeq = 1` — just a placeholder to
+    /// keep the per-layer array index aligned. The real K/V lives in
+    /// the donor's cache (`params.previousKVs`).
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxSeq
         guard kvCacheKind == .raw else {
@@ -1296,11 +1420,15 @@ public final class Gemma4Model: LanguageModel {
         var caches: [any LayerCacheProtocol] = []
         caches.reserveCapacity(nLayers)
         for (i, layer) in layers.enumerated() {
+            // A KV-shared layer never appends to its own cache — give it
+            // a 1-slot placeholder so the array stays index-aligned
+            // without allocating a full unused slab.
+            let layerCap = layer.isKvShared ? 1 : cap
             let eviction: KVEviction = layer.isGlobal
                 ? .unbounded
-                : .window(maxSize: min(params.slidingWindow, cap), keep: 0)
+                : .window(maxSize: min(params.slidingWindow, layerCap), keep: 0)
             caches.append(KVCache(
-                nKVHeads: layer.nKVHeads, headDim: layer.headDim, maxSeq: cap,
+                nKVHeads: layer.nKVHeads, headDim: layer.headDim, maxSeq: layerCap,
                 dtype: dtype, eviction: eviction, device: device))
             _ = i
         }
@@ -1353,6 +1481,12 @@ public final class Gemma4Model: LanguageModel {
         // `workCmd` is started after. `batchPending` tracks whether
         // `workCmd` carries un-committed, un-waited layer work whose
         // output `h` the next consumer must wait for.
+        // KV-sharing donor map: `donorMap[i]` is the layer whose cache
+        // layer `i` reuses (== i for non-shared layers). Layers run in
+        // index order, so a shared layer's donor (always an earlier
+        // index) has already appended the current token's K/V to its
+        // cache by the time the shared layer reads it.
+        let donorMap = params.previousKVs
         var workCmd = device.makeCommandBuffer()
         var batchPending = false
         for (i, layer) in layers.enumerated() {
@@ -1367,10 +1501,17 @@ public final class Gemma4Model: LanguageModel {
                 workCmd.waitUntilCompleted()
                 batchPending = false
             }
+            // KV-shared layer: hand it the donor's cache so it reuses
+            // the donor's K/V instead of projecting its own.
+            let donorCache: (any KVCacheProtocol)? =
+                layer.isKvShared
+                ? (caches[donorMap[i]] as? any KVCacheProtocol)
+                : nil
             let (newH, committed) = layer.forward(
                 h, position: position,
                 cache: caches[i] as! any KVCacheProtocol,
-                perLayerInput: pli, cmd: workCmd, device: device)
+                perLayerInput: pli, cmd: workCmd, device: device,
+                donorCache: donorCache)
             h = newH
             if committed {
                 // The layer ran on its own buffers and left `h`
