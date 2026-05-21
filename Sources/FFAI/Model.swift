@@ -57,6 +57,21 @@ public enum VisionLanguageArchitectures {
     }
 }
 
+/// True if `config` is a Nemotron Nano VL checkpoint — a VL checkpoint
+/// (`vision_config` present) whose text backbone is a NemotronH hybrid
+/// (its `text_config.model_type` is `nemotron_h`). The Nemotron Nano VL
+/// conversion does not carry a single canonical top-level architecture
+/// string, so the text backbone's `model_type` is the reliable signal.
+func isNemotronVisionLanguage(_ config: ModelConfig) -> Bool {
+    guard config.nested("vision_config") != nil,
+          let tc = config.nested("text_config")
+    else { return false }
+    let textModelType = (tc["model_type"] as? String) ?? ""
+    if NemotronH.modelTypes.contains(textModelType) { return true }
+    let textArch = (tc["architectures"] as? [String])?.first ?? ""
+    return NemotronH.architectures.contains(textArch)
+}
+
 /// Routes a config to the right family file. Family files declare which
 /// architecture / model_type strings they handle. Add a new family by
 /// extending `dispatchAndLoad` here.
@@ -161,12 +176,26 @@ public enum ModelRegistry {
                     availableCapabilities: Capability.textOnly.union([.visionIn]),
                     vlModel: vlm)
             }
-            // Other VL families (Nemotron-VLM, …) — the FFAI vision
-            // foundation (VisionEncoder, ImagePreprocessing, VLModel
-            // splice, conv2d/patch_embed/rope_2d Ops) is in tree, but
-            // these towers are not yet wired to a checkpoint loader.
-            // Fail with an actionable error rather than a generic
-            // "unsupported".
+            // Nemotron-VLM — NVIDIA's Nemotron Nano VL: a ViT tower +
+            // multi-modal projector + the NemotronH stack-interleaved
+            // hybrid text backbone. Detected by a `text_config` whose
+            // `model_type` is `nemotron_h` (the VL conversion does not
+            // carry a single canonical top-level architecture string).
+            if isNemotronVisionLanguage(config) {
+                let vlm = try NemotronVL.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: NemotronHHybrid.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    vlModel: vlm)
+            }
+            // Other VL families — the FFAI vision foundation
+            // (VisionEncoder, ImagePreprocessing, VLModel splice,
+            // conv2d/patch_embed/rope_2d Ops) is in tree, but these
+            // towers are not yet wired to a checkpoint loader. Fail with
+            // an actionable error rather than a generic "unsupported".
             throw ModelError.visionModelNotIntegrated(
                 config.architecture ?? config.modelType ?? "<unknown>")
         }

@@ -104,9 +104,10 @@ splices the projected image tokens into the text stream.
 | **Qwen 3-VL** | [`Models/Qwen3VL.swift`](../Sources/FFAI/Models/Qwen3VL.swift) | `Qwen3VLForConditionalGeneration` | Dynamic-resolution full-attention ViT tower (LayerNorm pre-norms, GELU MLP, learned position table) + the Qwen 3 dense text backbone (embedding-input forward). |
 | **Qwen 3-VL-MoE** | [`Models/Qwen3VLMoe.swift`](../Sources/FFAI/Models/Qwen3VLMoe.swift) | `Qwen3VLMoeForConditionalGeneration` | The Qwen3-VL ViT tower + the Qwen 3.5 mixture-of-experts hybrid text backbone (Gated Delta Net ↔ attention, block-sparse MoE FFN), embedding-input forward. |
 | **Gemma 4 VL** | [`Models/Gemma4VL.swift`](../Sources/FFAI/Models/Gemma4VL.swift) | `Gemma4ForConditionalGeneration` (+ `vision_config`) | Bespoke Gemma 4 ViT tower (RoPE attention with multi-dimensional positions, q/k/v RMSNorms, four per-block GemmaRMSNorms, attention-pooling head) + multi-modal embedder + Gemma 4 text backbone (embedding-input forward). |
+| **Nemotron-VLM** | [`Models/NemotronVL.swift`](../Sources/FFAI/Models/NemotronVL.swift) | VL checkpoint whose `text_config.model_type` is `nemotron_h` | ViT tower (shared SigLIP-shaped `VisionEncoder`) + two-layer GELU-MLP projector + the NemotronH stack-interleaved hybrid text backbone (Mamba 2 / attention / dense-MLP, embedding-input forward). |
 
-Other VL families (Nemotron-VLM) are recognized by the registry with an
-actionable not-yet-integrated error.
+All VL families recognized by `ModelRegistry` are now wired to a
+checkpoint loader.
 
 ### Neural audio codecs (Phase 7)
 
