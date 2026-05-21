@@ -495,4 +495,42 @@ public final class LlamaModel: LanguageModel {
     // `LanguageModel`'s default extension — they compose
     // `forward(...on cmd:)` above with the appropriate output kernel on
     // the same command buffer. No family-specific override needed.
+
+    /// Embedding-input forward — the VLM splice path. Identical to
+    /// `forward(tokenId:...)` minus the embedding gather: the `[hidden]`
+    /// row is supplied directly (a vision-encoder token, or a text-token
+    /// embedding the VL model looked up itself). Qwen 2 / 2.5 VL route
+    /// their text backbone through the Llama dense engine, so the VL
+    /// splice needs this primitive on `LlamaModel`.
+    public var supportsEmbeddingInput: Bool { true }
+
+    public func forward(inputEmbedding: Tensor, position: Int,
+                        caches: [any LayerCacheProtocol],
+                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(inputEmbedding.elementCount == hidden,
+                     "LlamaModel.forward(inputEmbedding:): expected [\(hidden)], "
+                     + "got \(inputEmbedding.shape)")
+        var h = inputEmbedding.reshaped(to: [hidden])
+        for (i, layer) in layers.enumerated() {
+            h = layer.forward(h, position: position,
+                              cache: caches[i] as! any KVCacheProtocol,
+                              cmd: cmd, device: device)
+        }
+        let normed = finalNorm(h, on: cmd)
+        return lmHead(normed, on: cmd)
+    }
+
+    /// Raw embedding-table lookup for one text token — the text-token
+    /// half of the VLM splice stream.
+    public func textEmbedding(tokenId: Int, device: Device) -> Tensor {
+        let cmd = device.makeCommandBuffer()
+        let tokenBuf = device.makeBuffer(length: 4)
+        var tid = UInt32(tokenId)
+        memcpy(tokenBuf.contents(), &tid, 4)
+        let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
+        let embed = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return embed
+    }
 }

@@ -104,12 +104,26 @@ public enum ModelRegistry {
                     availableCapabilities: Capability.textOnly.union([.visionIn]),
                     vlModel: vlm)
             }
-            // Other VL families (Qwen 2.5/3.5-VL, …) — the FFAI vision
+            // Qwen 2.5-VL — dynamic-resolution windowed-attention ViT
+            // tower + the Qwen 2.x text backbone (routed through the
+            // Llama dense engine, which now supports embedding-input
+            // forward for the VLM splice).
+            if config.architecture == "Qwen2_5_VLForConditionalGeneration" {
+                let vlm = try Qwen25VL.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: LlamaDense.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    vlModel: vlm)
+            }
+            // Other VL families (Qwen 3-VL, …) — the FFAI vision
             // foundation (VisionEncoder, ImagePreprocessing, VLModel
             // splice, conv2d/patch_embed/rope_2d Ops) is in tree, but
-            // these towers need windowed attention / dynamic resolution
-            // / M-RoPE not yet wired to a checkpoint loader. Fail with
-            // an actionable error rather than a generic "unsupported".
+            // these towers are not yet wired to a checkpoint loader.
+            // Fail with an actionable error rather than a generic
+            // "unsupported".
             throw ModelError.visionModelNotIntegrated(
                 config.architecture ?? config.modelType ?? "<unknown>")
         }
