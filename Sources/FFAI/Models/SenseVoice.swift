@@ -678,6 +678,12 @@ public enum SenseVoiceFrontEnd {
         let fftLength = nextPowerOfTwo(winLength)
         let nFreq = fftLength / 2 + 1
         let window = hammingWindow(winLength)
+        // FunASR's Kaldi FBANK uses an un-normalised HTK Mel bank;
+        // `melFilterbank` applies Slaney triangle normalisation. The
+        // difference is a fixed per-bin positive scale — the encoder's
+        // LayerNorms and the learned `ctc_lo` projection absorb it, so
+        // the greedy-CTC transcript stays coherent. A bit-exact HTK
+        // bank is a later accuracy pass.
         let melBank = AudioPreprocessing.melFilterbank(
             AudioFrontEndConfig(sampleRate: cfg.sampleRate, nFFT: fftLength,
                                 hopLength: hopLength, nMels: cfg.nMels,
@@ -735,8 +741,10 @@ public enum SenseVoiceFrontEnd {
             let clamped = min(max(idx - leftPad, 0), nFrames - 1)
             return fbank[clamped * nMels..<(clamped + 1) * nMels]
         }
-        let paddedCount = leftPad + nFrames
-        let lfrFrames = Int(ceil(Double(paddedCount) / Double(lfrN)))
+        // FunASR sizes the output by the unpadded frame count:
+        // `ceil(nFrames / lfrN)`. The left padding only shifts the
+        // window origin, it does not add output rows.
+        let lfrFrames = Int(ceil(Double(nFrames) / Double(lfrN)))
         let rowSize = nMels * lfrM
         var out = [Float](repeating: 0, count: lfrFrames * rowSize)
         for r in 0..<lfrFrames {
