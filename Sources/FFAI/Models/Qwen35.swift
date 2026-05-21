@@ -1332,6 +1332,115 @@ public final class Qwen35AttentionMixer: Module {
         }
         return oProj(attnFlat, on: cmd)
     }
+
+    /// T-batched attention forward. `xNormFlat` is `[T, hidden]` flat
+    /// (T·hidden elements). `startPosition` is the position of `xNorm[0]`;
+    /// `xNorm[t]` runs at `startPosition + t`. KV cache is appended for all
+    /// T tokens in order. Returns `[T, hidden]` flat (the post-o_proj
+    /// contribution; residual add belongs to the enclosing layer).
+    ///
+    /// Architecture: all four projections + the gate-split gather + per-
+    /// head Q/K norm fan through a single dispatch each (vs T serial
+    /// dispatches in `forward`). RoPE + KV append still loop T times but
+    /// dispatch onto the same `cmd` — no host commit/wait. SDPA uses
+    /// `sdpaMulti` (one causal-batched dispatch over `[T, nHeads, headDim]`
+    /// queries vs the existing `[startPos, startPos+T)` window plus the
+    /// just-appended KV rows).
+    ///
+    /// The "many" wins: 1 gemm per projection vs T gemv calls, 1 gather vs
+    /// T gathers, 1 rmsNormRows vs T rmsNormRows, 1 sdpaMulti vs T
+    /// sdpaDecode, 1 oProj.gemm vs T oProj.gemv. Per-token kernels (RoPE,
+    /// KV append) keep their counts but ride the same in-flight buffer.
+    ///
+    /// All work queued on `cmd`; no commit inside.
+    func forwardMany(_ xNormFlat: Tensor, t: Int, startPosition: Int,
+                     cache kv: KVCache,
+                     cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(t > 0, "Qwen35AttentionMixer.forwardMany: T must be positive")
+        let dt = xNormFlat.dtype
+        let dtBytes = dt.byteSize
+        let qDim = nHeads * headDim
+        let kvDim = nKVHeads * headDim
+
+        // ── Projections — one gemm/qmm each, T-batched ───────────────────
+        let qOut = qProj.callMany(xNormFlat, t: t, on: cmd, device: device)
+        let kOut = kProj.callMany(xNormFlat, t: t, on: cmd, device: device)
+        let vOut = vProj.callMany(xNormFlat, t: t, on: cmd, device: device)
+
+        // ── Gate split — one gather (vs T) when attnOutputGate ───────────
+        let queriesFlat: Tensor   // `[T, nHeads, headDim]` flat
+        let gateFlat: Tensor?     // `[T, nHeads, headDim]` flat
+        if attnOutputGate {
+            let q2T = qOut.reshaped(to: [t, nHeads, 2 * headDim])
+            queriesFlat = sliceHeadHalvesMany35(
+                q2T, t: t, nHeads: nHeads, headDim: headDim, takeFirst: true,
+                on: cmd, device: device)
+            gateFlat = sliceHeadHalvesMany35(
+                q2T, t: t, nHeads: nHeads, headDim: headDim, takeFirst: false,
+                on: cmd, device: device)
+        } else {
+            queriesFlat = qOut
+            gateFlat = nil
+        }
+
+        // ── Q/K norm — one rmsNormRows over (T*nHeads) and (T*nKVHeads)
+        // rows. rmsNormRows is already row-wise, so the T-batched form is
+        // a count change, not a kernel change.
+        let qNormed = Ops.rmsNormRows(
+            queriesFlat, weight: qNorm.weight, eps: qNorm.eps,
+            nRows: t * nHeads, rowSize: headDim, on: cmd)
+        let kNormed = Ops.rmsNormRows(
+            kOut, weight: kNorm.weight, eps: kNorm.eps,
+            nRows: t * nKVHeads, rowSize: headDim, on: cmd)
+
+        // ── RoPE per token + KV append — T dispatches each, all on `cmd`.
+        // The single-token RoPE kernel grids `[nHeads, halfRotary]` —
+        // small enough that T launches at T≤256 cost less than one big
+        // qmm. KV append uses appendRangeOnGPU for the single length-lock
+        // path; each step is one Ops.kvCacheUpdate dispatch.
+        var kRows: [Tensor] = []; kRows.reserveCapacity(t)
+        var vRows: [Tensor] = []; vRows.reserveCapacity(t)
+        for r in 0..<t {
+            let qRow = Tensor(buffer: qNormed.buffer,
+                              offset: qNormed.offset + r * qDim * dtBytes,
+                              shape: [qDim], dtype: dt)
+            let kRow = Tensor(buffer: kNormed.buffer,
+                              offset: kNormed.offset + r * kvDim * dtBytes,
+                              shape: [kvDim], dtype: dt)
+            let vRow = Tensor(buffer: vOut.buffer,
+                              offset: vOut.offset + r * kvDim * dtBytes,
+                              shape: [kvDim], dtype: dt)
+            Ops.ropePartial(qRow, position: startPosition + r,
+                            headDim: headDim, rotaryDim: rotaryDim,
+                            thetaBase: ropeTheta, on: cmd)
+            Ops.ropePartial(kRow, position: startPosition + r,
+                            headDim: headDim, rotaryDim: rotaryDim,
+                            thetaBase: ropeTheta, on: cmd)
+            kRows.append(kRow.reshaped(to: [nKVHeads, headDim]))
+            vRows.append(vRow.reshaped(to: [nKVHeads, headDim]))
+        }
+        kv.appendRangeOnGPU(kRows: kRows, vRows: vRows, on: cmd)
+
+        // ── Multi-query causal SDPA — one dispatch over T queries vs the
+        // full `[0, startPosition+T)` KV window. `baseKV` = startPosition
+        // makes the kernel select rows `[startPosition, startPosition+T)`
+        // for the per-query causal mask.
+        let (cacheK, cacheV) = kv.prepareForAttention(on: cmd)
+        let qMulti = qNormed.reshaped(to: [t, nHeads, headDim])
+        let attnOut = Ops.sdpaMulti(
+            q: qMulti, k: cacheK, v: cacheV,
+            nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
+            baseKV: startPosition, nQuery: t, kvStride: kv.maxSeq,
+            causal: true, scale: scale, on: cmd)
+
+        // ── Gated output * o_proj ────────────────────────────────────────
+        var attnFlat = attnOut.reshaped(to: [t * qDim])
+        if let gateFlat {
+            attnFlat = Ops.mul(attnFlat, Ops.sigmoid(gateFlat, on: cmd), on: cmd)
+        }
+        let attnRows = attnFlat.reshaped(to: [t, qDim])
+        return oProj.callMany(attnRows, t: t, on: cmd, device: device)
+    }
 }
 
 // ─── Qwen35GDNLayer — a "linear_attention" layer ─────────────────────
