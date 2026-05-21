@@ -962,6 +962,11 @@ public final class Qwen35GDNMixer: Module {
     let qNormWeightF32, kNormWeightF32: Tensor
     let aLogTF32, dtBiasTF32: Tensor
 
+    /// fp32 epsilon as a 1-element buffer for `Ops.gatedMixerNorm`.
+    /// Built once in init so the GPU-side phase-2 path doesn't pay an
+    /// allocation per token.
+    let epsBufFused: Tensor
+
     init(inProjQKV: AnyLinear, inProjZ: AnyLinear,
          inProjB: AnyLinear, inProjA: AnyLinear, outProj: AnyLinear,
          convW: Tensor, convB: Tensor, mixerNorm: RMSNorm,
@@ -995,6 +1000,7 @@ public final class Qwen35GDNMixer: Module {
             [Float](repeating: kScale, count: hkDk), device: device)
         self.aLogTF32 = makeF32Tensor35(aLog, device: device)
         self.dtBiasTF32 = makeF32Tensor35(dtBias, device: device)
+        self.epsBufFused = makeF32Tensor35([eps], device: device)
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -1084,12 +1090,17 @@ public final class Qwen35GDNMixer: Module {
                 batchSize: 1, dk: keyHeadDim, dv: valueHeadDim,
                 hv: numValueHeads, hk: numKeyHeads,
                 on: cmd)
-            // One commit+wait covers phase 1 + casts + the fused step.
-            cmd.commit()
-            cmd.waitUntilCompleted()
             cache.gdn.swap()
             cache.advance()
             yT = yF32
+            // NOTE: no commit + wait here. The fused branch keeps phase
+            // 1 + the fused step + the upcoming gatedMixerNorm + out_proj
+            // all on `cmd`. Metal serialises dispatches inside a single
+            // command buffer in submission order — `out_proj` reads the
+            // gated-norm output, gated-norm reads `yT`, the kernel reads
+            // the cast outputs of phase 1. One commit at the bottom of
+            // this function covers everything; the caller waits naturally
+            // when it next commits its own work after this mixer.
         } else {
             // ── Legacy path: host-prep + Ops.gatedDeltaStep ───────────
             // Commit so the host can read convAct / z / aRaw / bRaw.
@@ -1150,36 +1161,56 @@ public final class Qwen35GDNMixer: Module {
             yT = yLegacy
         }
 
-        // ── Host phase 2: gated mixer RMSNorm ─────────────────────────
-        // `Qwen3NextRMSNormGated`: y = rmsNorm(y, weight) · silu(z), the
-        // RMSNorm taken per value-head row (`value_head_dim`). The GDN
-        // kernel emits `y` in fp32; there is no GPU cast kernel, so the
-        // (tiny: `Hv · Dv` ≈ 8K) norm + gate runs host-side and writes
-        // the result back in the activation dtype for `out_proj`.
-        let yHost = yT.toFloatArray()              // [value_dim] fp32
-        let zHost = z.toFloatArray()               // [value_dim] activation
-        let normW = readFloats35(mixerNorm.weight) // [value_head_dim]
-        var yGatedHost = [Float](repeating: 0, count: valueDim)
-        for hv in 0..<numValueHeads {
-            let base = hv * valueHeadDim
-            var sumSq: Float = 0
-            for i in 0..<valueHeadDim {
-                let v = yHost[base + i]; sumSq += v * v
+        // ── Phase 2: gated mixer RMSNorm — GPU (fused) or host (legacy) ─
+        //
+        // Fused: `Ops.gatedMixerNorm` computes `out = rms_norm(y, w) · silu(z)`
+        // per `[Hv, Dv]` row in a single dispatch on the SAME command
+        // buffer as phase 1 + the fused step. Eliminates the host
+        // round-trip + the per-token `Tensor.filled` allocation, recovering
+        // ~30 host commit+waits per Qwen3.6-A3B decode token (one per GDN
+        // layer). `out_proj` runs on the same `cmd` afterwards; Metal
+        // serialises in submission order so no fence is needed.
+        //
+        // Legacy: keep the per-element host loop. The GDN kernel emits
+        // `y` in fp32 and the host needs `silu(z) · norm(y, w)` to feed
+        // `out_proj` — same shape it has always been. A new command
+        // buffer (`phase3`) is required because the legacy phase-2 was
+        // committed.
+        let result: Tensor
+        if fused {
+            let yGatedT = Tensor.empty(shape: [valueDim], dtype: dtype, device: device)
+            Ops.gatedMixerNorm(
+                y: yT, z: z, weight: mixerNorm.weight,
+                epsBuf: epsBufFused,
+                into: yGatedT,
+                numValueHeads: numValueHeads, valueHeadDim: valueHeadDim,
+                on: cmd)
+            result = outProj(yGatedT, on: cmd)
+            cmd.commit()
+        } else {
+            let yHost = yT.toFloatArray()              // [value_dim] fp32
+            let zHost = z.toFloatArray()               // [value_dim] activation
+            let normW = readFloats35(mixerNorm.weight) // [value_head_dim]
+            var yGatedHost = [Float](repeating: 0, count: valueDim)
+            for hv in 0..<numValueHeads {
+                let base = hv * valueHeadDim
+                var sumSq: Float = 0
+                for i in 0..<valueHeadDim {
+                    let v = yHost[base + i]; sumSq += v * v
+                }
+                let inv = 1.0 / (sumSq / Float(valueHeadDim) + eps).squareRoot()
+                for i in 0..<valueHeadDim {
+                    let normed = yHost[base + i] * inv * normW[i]
+                    yGatedHost[base + i] = normed * siluScalar35(zHost[base + i])
+                }
             }
-            let inv = 1.0 / (sumSq / Float(valueHeadDim) + eps).squareRoot()
-            for i in 0..<valueHeadDim {
-                let normed = yHost[base + i] * inv * normW[i]
-                yGatedHost[base + i] = normed * siluScalar35(zHost[base + i])
-            }
+            let phase3 = device.makeCommandBuffer()
+            let yGatedT = Tensor.empty(shape: [valueDim], dtype: dtype, device: device)
+            writeFloats35(yGatedHost, into: yGatedT)
+            result = outProj(yGatedT, on: phase3)
+            phase3.commit()
+            phase3.waitUntilCompleted()
         }
-
-        // ── GPU phase 3: out_proj on a fresh command buffer ───────────
-        let phase3 = device.makeCommandBuffer()
-        let yGatedT = Tensor.empty(shape: [valueDim], dtype: dtype, device: device)
-        writeFloats35(yGatedHost, into: yGatedT)
-        let result = outProj(yGatedT, on: phase3)
-        phase3.commit()
-        phase3.waitUntilCompleted()
         return result
     }
 }

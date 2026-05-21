@@ -2999,4 +2999,85 @@ public enum Ops {
             fatalError("Ops.castToF32: unsupported input dtype \(input.dtype)")
         }
     }
+
+    // ─── Fused gated mixer norm ───────────────────────────────────────
+    //
+    // Wraps `mt_gated_mixer_norm_{f32,f16,bf16}`. Computes
+    // `out = rms_norm(y, w) · silu(z)` per row across `[Hv, Dv]` in a
+    // single dispatch. Used by FFAI's Qwen3.5 / Qwen3.6 GDN mixer to
+    // eliminate the phase-2 host round-trip the legacy path needed
+    // for the gated norm + silu math — 30 host commit+waits per
+    // Qwen3.6-A3B decode token recovered (one per GDN layer).
+    //
+    // Tensor contracts (matching the kernel sig):
+    //   y       [Hv, Dv]  fp32     — recurrence output (fp32 state)
+    //   z       [Hv, Dv]  T        — gate, in model dtype
+    //   w       [Dv]      T        — `mixer.norm.weight`, in model dtype
+    //   out     [Hv, Dv]  T        — gated output, in model dtype
+    //   eps_buf [1]       fp32     — epsilon as a 1-element buffer
+    // Constexpr:
+    //   n = Dv (must be a multiple of 4 — kernel reads 4 elts/thread)
+    // Dispatch:
+    //   grid = [Hv * (Dv/4), 1, 1] threads (Hv TGs × Dv/4 threads per TG)
+    //   tg   = [Dv/4, 1, 1] threads
+    public static func gatedMixerNorm(
+        y: Tensor, z: Tensor, weight: Tensor,
+        epsBuf: Tensor,
+        into out: Tensor,
+        numValueHeads: Int, valueHeadDim: Int,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(y.dtype == .f32,
+                     "Ops.gatedMixerNorm: y must be f32 (got \(y.dtype))")
+        precondition(z.dtype == weight.dtype && weight.dtype == out.dtype,
+                     "Ops.gatedMixerNorm: z / weight / out must share dtype")
+        precondition(epsBuf.dtype == .f32,
+                     "Ops.gatedMixerNorm: epsBuf must be f32")
+        precondition(valueHeadDim.isMultiple(of: 4),
+                     "Ops.gatedMixerNorm: valueHeadDim (\(valueHeadDim)) must be multiple of 4")
+        precondition(y.elementCount == numValueHeads * valueHeadDim,
+                     "Ops.gatedMixerNorm: y has \(y.elementCount) elements, expected \(numValueHeads * valueHeadDim)")
+        precondition(z.elementCount == numValueHeads * valueHeadDim,
+                     "Ops.gatedMixerNorm: z has \(z.elementCount) elements, expected \(numValueHeads * valueHeadDim)")
+        precondition(weight.elementCount == valueHeadDim,
+                     "Ops.gatedMixerNorm: weight has \(weight.elementCount) elements, expected \(valueHeadDim)")
+        precondition(out.elementCount == numValueHeads * valueHeadDim,
+                     "Ops.gatedMixerNorm: out has \(out.elementCount) elements, expected \(numValueHeads * valueHeadDim)")
+
+        // One thread per 4 consecutive Dv elements → tpg = Dv / 4.
+        // `dispatchThreads` counts total threads per axis, so grid.x =
+        // numValueHeads × tpg (Hv TGs × tpg threads per TG).
+        let tpg = valueHeadDim / 4
+        let grid = MTLSize(width: numValueHeads * tpg, height: 1, depth: 1)
+        let tg = MTLSize(width: tpg, height: 1, depth: 1)
+        let nU = UInt32(valueHeadDim)
+        switch out.dtype {
+        case .f32:
+            MetalTileKernels.mt_gated_mixer_norm_f32(
+                y: y.buffer, yOffset: y.offset,
+                z: z.buffer, zOffset: z.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                out: out.buffer, outOffset: out.offset,
+                eps_buf: epsBuf.buffer, eps_bufOffset: epsBuf.offset,
+                n: nU, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_gated_mixer_norm_f16(
+                y: y.buffer, yOffset: y.offset,
+                z: z.buffer, zOffset: z.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                out: out.buffer, outOffset: out.offset,
+                eps_buf: epsBuf.buffer, eps_bufOffset: epsBuf.offset,
+                n: nU, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_gated_mixer_norm_bf16(
+                y: y.buffer, yOffset: y.offset,
+                z: z.buffer, zOffset: z.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                out: out.buffer, outOffset: out.offset,
+                eps_buf: epsBuf.buffer, eps_bufOffset: epsBuf.offset,
+                n: nU, gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.gatedMixerNorm: unsupported out dtype \(out.dtype)")
+        }
+    }
 }
