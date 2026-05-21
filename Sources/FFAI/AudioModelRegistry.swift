@@ -18,6 +18,7 @@ public enum LoadedAudioModel: @unchecked Sendable {
     case kokoro(KokoroModel)
     case qwenOmni(QwenOmniModel)
     case llamaTTS(LlamaTTSModel)
+    case marvis(MarvisModel)
 
     /// The capabilities this model exposes — `audioIn` for STT / omni,
     /// `audioOut` for TTS.
@@ -27,6 +28,7 @@ public enum LoadedAudioModel: @unchecked Sendable {
         case .kokoro: return Capability.textToSpeech
         case .qwenOmni: return Capability.omniAudio
         case .llamaTTS: return Capability.textToSpeech
+        case .marvis: return Capability.textToSpeech
         }
     }
 }
@@ -42,6 +44,7 @@ public enum AudioModelRegistry {
             || KokoroModel.handles(config)
             || QwenOmniModel.handles(config)
             || LlamaTTSModel.handles(config)
+            || MarvisModel.handles(config)
     }
 
     /// The capability set a checkpoint at `directory` would expose,
@@ -62,6 +65,7 @@ public enum AudioModelRegistry {
         if QwenOmniModel.handles(config) { return Capability.omniAudio }
         if WhisperModel.handles(config) { return Capability.speechToText }
         if KokoroModel.handles(config) { return Capability.textToSpeech }
+        if MarvisModel.handles(config) { return Capability.textToSpeech }
         if LlamaTTSModel.handles(config) { return Capability.textToSpeech }
         return nil
     }
@@ -78,6 +82,10 @@ public enum AudioModelRegistry {
         if QwenOmniModel.handles(config) {
             return .qwenOmni(try QwenOmniModel.load(directory: directory,
                                                     device: device))
+        }
+        if MarvisModel.handles(config) {
+            return .marvis(try await MarvisModel.load(
+                directory: directory, device: device))
         }
         if LlamaTTSModel.handles(config) {
             return .llamaTTS(try await LlamaTTSModel.load(
