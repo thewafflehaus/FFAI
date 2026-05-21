@@ -41,6 +41,10 @@ public enum VisionLanguageArchitectures {
         "Qwen2VLForConditionalGeneration",
         "Qwen3VLForConditionalGeneration",
         "Qwen3VLMoeForConditionalGeneration",
+        // Note: `Gemma4ForConditionalGeneration` is intentionally NOT
+        // listed — it is shared by text-only Gemma 4 checkpoints. The
+        // `vision_config`-presence check below distinguishes the VL
+        // conversion, which the dispatch routes to `Gemma4VL.load`.
     ]
 
     /// True if `config` describes a VL checkpoint — by architecture
@@ -144,7 +148,20 @@ public enum ModelRegistry {
                     availableCapabilities: Capability.textOnly.union([.visionIn]),
                     vlModel: vlm)
             }
-            // Other VL families (Gemma 4-VL, …) — the FFAI vision
+            // Gemma 4 VL — the bespoke Gemma 4 ViT tower (RoPE attention,
+            // q/k/v norms, attention-pooling head) + multi-modal embedder
+            // + the Gemma 4 text backbone, joined by the splice.
+            if config.architecture == "Gemma4ForConditionalGeneration" {
+                let vlm = try Gemma4VL.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: Gemma4Dense.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    vlModel: vlm)
+            }
+            // Other VL families (Nemotron-VLM, …) — the FFAI vision
             // foundation (VisionEncoder, ImagePreprocessing, VLModel
             // splice, conv2d/patch_embed/rope_2d Ops) is in tree, but
             // these towers are not yet wired to a checkpoint loader.
