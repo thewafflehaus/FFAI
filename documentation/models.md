@@ -121,8 +121,9 @@ emit codes that a codec renders to audio. They live under
 | **Encodec** | [`Audio/Encodec.swift`](../Sources/FFAI/Audio/Encodec.swift) | Meta's EnCodec — SEANet encoder/decoder with a 2-layer LSTM bottleneck and a residual-VQ quantizer. Bandwidth-selectable codebook count; optional per-utterance normalization. Single-frame (no-chunking) path. `encode(waveform:)` / `decode(codes:)`. |
 | **Mimi** | [`Audio/Mimi.swift`](../Sources/FFAI/Audio/Mimi.swift) | Kyutai's Mimi/Moshi codec — SEANet encoder/decoder, an 8-layer latent Transformer (traditional RoPE, LayerScale, windowed-causal attention), and a *split* residual-VQ (semantic codebook + acoustic residual stack). The waveform tail for Mimi-code TTS families (e.g. Marvis). Whole-utterance (non-streaming) port. `encode(waveform:)` / `decode(codes:)`. |
 | **Descript DAC** | [`Audio/DescriptDAC.swift`](../Sources/FFAI/Audio/DescriptDAC.swift) | The Descript Audio Codec — a high-fidelity single-scale residual-VQ codec (Snake-conv encoder/decoder, L2-normalized codebook lookup). Shares the proven `WeightNorm` conv path with SNAC. `encode(waveform:)` / `decode(codes:)`. |
+| **Vocos** | [`Audio/Vocos.swift`](../Sources/FFAI/Audio/Vocos.swift) | A *decode-only* vocoder — a ConvNeXt backbone plus an ISTFT head that turns a mel-spectrogram (or summed EnCodec embeddings) into a waveform. The backbone is CPU-native; the ISTFT head reuses the fused GPU `Ops.vocoderISTFT` kernel. `decode(features:)`. |
 
-DAC-VAE, Vocos and BigVGAN are follow-on codec ports.
+DAC-VAE and BigVGAN are follow-on codec ports.
 
 **GPT-OSS** is OpenAI's GPT-OSS-20B — a 24-layer mixture-of-experts
 transformer (~20B total / ~3.6B active params). Three structural
