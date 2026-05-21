@@ -124,8 +124,7 @@ emit codes that a codec renders to audio. They live under
 | **Descript DAC** | [`Audio/DescriptDAC.swift`](../Sources/FFAI/Audio/DescriptDAC.swift) | The Descript Audio Codec — a high-fidelity single-scale residual-VQ codec (Snake-conv encoder/decoder, L2-normalized codebook lookup). Shares the proven `WeightNorm` conv path with SNAC. `encode(waveform:)` / `decode(codes:)`. |
 | **Vocos** | [`Audio/Vocos.swift`](../Sources/FFAI/Audio/Vocos.swift) | A *decode-only* vocoder — a ConvNeXt backbone plus an ISTFT head that turns a mel-spectrogram (or summed EnCodec embeddings) into a waveform. The backbone is CPU-native; the ISTFT head reuses the fused GPU `Ops.vocoderISTFT` kernel. `decode(features:)`. |
 | **BigVGAN** | [`Audio/BigVGAN.swift`](../Sources/FFAI/Audio/BigVGAN.swift) | NVIDIA's BigVGAN GAN vocoder — a *decode-only* mel→waveform model: `conv_pre`, transposed-conv upsample stages interleaved with multi-receptive-field "AMP" residual blocks, anti-aliased Snake/SnakeBeta activations (Kaiser-sinc up/downsampling). Shares the `WeightNorm` conv path with SNAC. `decode(mel:)`. |
-
-DAC-VAE is a follow-on codec port.
+| **DACVAE** | [`Audio/DACVAE.swift`](../Sources/FFAI/Audio/DACVAE.swift) | The VAE-style Descript Audio Codec used by SAM-Audio — a *continuous* (no residual-VQ) codec: a Snake-conv encoder produces a VAE `mean` latent, a mirrored decoder reconstructs the waveform. Conv weights are transposed from MLX `[Cout,K,Cin]` to PyTorch layout at load; shares the `WeightNorm` conv path with SNAC. Standard (non-watermark) path only. `encode(waveform:)` → latent, `decode(latents:)` → waveform. |
 
 **GPT-OSS** is OpenAI's GPT-OSS-20B — a 24-layer mixture-of-experts
 transformer (~20B total / ~3.6B active params). Three structural
