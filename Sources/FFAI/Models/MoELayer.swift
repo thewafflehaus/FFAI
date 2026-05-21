@@ -189,18 +189,76 @@ public final class MoELayer: Module, DecoderLayer {
     public let router: MoERouter
     public let hidden: Int
 
+    /// Stacked-expert weight handles for the batched gather BGEMM fast
+    /// path. When set, `decode` dispatches `mt_moe_gather_qmm_mma_int4_bm16`
+    /// instead of running `topK` sequential per-expert SwiGLU triplets —
+    /// 3 kernel launches per token instead of `3 * topK` (24 → 3 at
+    /// `topK=8`). Populated by the host model's MoE builder when (a) the
+    /// checkpoint is mlx int4-quantized, (b) the stacked weight tensors
+    /// are intact (not sliced away by the per-expert wrapper path), and
+    /// (c) the moeIntermediate / hidden shapes satisfy the bm16 kernel's
+    /// `N % 32 == 0` and `K % 32 == 0` tile contract. Left nil for
+    /// everyone else — the legacy serial-expert loop still runs.
+    public struct StackedInt4Experts: Sendable {
+        /// `[numExperts, moeIntermediate, hidden/8]` u32 packed.
+        public let gateWeight: Tensor
+        /// `[numExperts, moeIntermediate, hidden/groupSize]` in `dtype`.
+        public let gateScales: Tensor
+        public let gateBiases: Tensor
+        /// `[numExperts, moeIntermediate, hidden/8]` u32 packed.
+        public let upWeight: Tensor
+        public let upScales: Tensor
+        public let upBiases: Tensor
+        /// `[numExperts, hidden, moeIntermediate/8]` u32 packed.
+        public let downWeight: Tensor
+        public let downScales: Tensor
+        public let downBiases: Tensor
+        public let numExperts: Int
+        public let moeIntermediate: Int
+        public let hidden: Int
+        public let groupSize: Int
+        /// Activation dtype the scales / biases / activations all use.
+        public let dtype: DType
+
+        public init(gateWeight: Tensor, gateScales: Tensor, gateBiases: Tensor,
+                    upWeight: Tensor, upScales: Tensor, upBiases: Tensor,
+                    downWeight: Tensor, downScales: Tensor, downBiases: Tensor,
+                    numExperts: Int, moeIntermediate: Int, hidden: Int,
+                    groupSize: Int, dtype: DType) {
+            self.gateWeight = gateWeight
+            self.gateScales = gateScales
+            self.gateBiases = gateBiases
+            self.upWeight = upWeight
+            self.upScales = upScales
+            self.upBiases = upBiases
+            self.downWeight = downWeight
+            self.downScales = downScales
+            self.downBiases = downBiases
+            self.numExperts = numExperts
+            self.moeIntermediate = moeIntermediate
+            self.hidden = hidden
+            self.groupSize = groupSize
+            self.dtype = dtype
+        }
+    }
+    public let stackedInt4Experts: StackedInt4Experts?
+
     /// - gate: hidden → nExperts router projection.
     /// - gateProj/upProj/downProj: `nExperts`-long arrays of per-expert
     ///   SwiGLU projections, index-aligned with the expert id.
     /// - sharedGate/Up/DownProj: optional shared-expert SwiGLU; pass all
     ///   three or none.
     /// - router: the top-K + gating-math configuration.
+    /// - stackedInt4Experts: optional batched-BGEMM fast path. Per-expert
+    ///   arrays above remain the source of truth for `parameters()`
+    ///   (checkpoint binding) and the fallback decode path.
     public init(gate: AnyLinear,
                 gateProj: [AnyLinear], upProj: [AnyLinear], downProj: [AnyLinear],
                 sharedGateProj: AnyLinear? = nil,
                 sharedUpProj: AnyLinear? = nil,
                 sharedDownProj: AnyLinear? = nil,
-                router: MoERouter, hidden: Int) {
+                router: MoERouter, hidden: Int,
+                stackedInt4Experts: StackedInt4Experts? = nil) {
         precondition(gateProj.count == router.nExperts,
                      "MoELayer: gateProj has \(gateProj.count) experts, router expects \(router.nExperts)")
         precondition(upProj.count == router.nExperts,
@@ -220,6 +278,15 @@ public final class MoELayer: Module, DecoderLayer {
         self.sharedDownProj = sharedDownProj
         self.router = router
         self.hidden = hidden
+        if let s = stackedInt4Experts {
+            precondition(s.numExperts == router.nExperts,
+                         "MoELayer: stackedInt4Experts.numExperts \(s.numExperts) ≠ router.nExperts \(router.nExperts)")
+            precondition(s.hidden == hidden,
+                         "MoELayer: stackedInt4Experts.hidden \(s.hidden) ≠ MoELayer.hidden \(hidden)")
+            precondition(s.moeIntermediate % 32 == 0 && hidden % 32 == 0,
+                         "MoELayer: stackedInt4Experts shape (moeIntermediate=\(s.moeIntermediate), hidden=\(hidden)) violates bm16 N%32 / K%32 tile contract")
+        }
+        self.stackedInt4Experts = stackedInt4Experts
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -278,20 +345,42 @@ public final class MoELayer: Module, DecoderLayer {
         // contribute zero — skipping them is the same result, cheaper).
         let work = device.makeCommandBuffer()
         var accumulator: Tensor?
-        for (slot, expertId) in routing.indices.enumerated() {
-            // Broadcast the CPU combine weight into a [hidden] constant
-            // tensor so the element-wise `Ops.mul` can scale the expert
-            // output — avoids a dedicated scalar-multiply kernel.
-            let weightTensor = Tensor.filled(routing.weights[slot],
-                                             shape: [hidden], dtype: h.dtype,
-                                             device: device)
-            let expertOut = swiGLU(h,
-                                   gateProj: gateProj[expertId],
-                                   upProj: upProj[expertId],
-                                   downProj: downProj[expertId],
-                                   on: work)
-            let scaled = Ops.mul(expertOut, weightTensor, on: work)
-            accumulator = accumulator.map { Ops.add($0, scaled, on: work) } ?? scaled
+        // Batched gather-BGEMM fast path is opt-in via FFAI_MOE_BGEMM=1.
+        // At T=1 decode with topK=8 / m_total=8 it currently regresses
+        // vs the sequential per-expert matvec path on M5 Max — the
+        // bm16 tile pads to 16 rows but only 8 commit, so the kernel
+        // pays full weight-reload bandwidth for 50% useful work. Real
+        // win shape is prefill (m_total scales with T, more rows share
+        // each expert's weight tile) or NAX (FFAI_MOE_BGEMM_MPP=1).
+        // Path is wired + correctness-verified — flip the default once
+        // the m_total<16 regression is closed (likely via either a
+        // dedicated bm8 kernel emit or by promoting prefill to use
+        // this path first).
+        let enableBGEMM = ProcessInfo.processInfo.environment["FFAI_MOE_BGEMM"] != nil
+        if let stacked = stackedInt4Experts, stacked.dtype == h.dtype, enableBGEMM {
+            // Fast path: one batched gather BGEMM per projection. The
+            // kernel expects rows of activations sorted by expert id; we
+            // sort the topK indices ascending and replicate `h` into the
+            // gathered row order. The per-row expert assignment goes in
+            // an int32 indices buffer.
+            accumulator = batchedSwiGLU(h, stacked: stacked, routing: routing,
+                                        on: work, device: device)
+        } else {
+            for (slot, expertId) in routing.indices.enumerated() {
+                // Broadcast the CPU combine weight into a [hidden] constant
+                // tensor so the element-wise `Ops.mul` can scale the expert
+                // output — avoids a dedicated scalar-multiply kernel.
+                let weightTensor = Tensor.filled(routing.weights[slot],
+                                                 shape: [hidden], dtype: h.dtype,
+                                                 device: device)
+                let expertOut = swiGLU(h,
+                                       gateProj: gateProj[expertId],
+                                       upProj: upProj[expertId],
+                                       downProj: downProj[expertId],
+                                       on: work)
+                let scaled = Ops.mul(expertOut, weightTensor, on: work)
+                accumulator = accumulator.map { Ops.add($0, scaled, on: work) } ?? scaled
+            }
         }
 
         // ── 5. Optional always-on shared expert ──────────────────────
@@ -305,6 +394,110 @@ public final class MoELayer: Module, DecoderLayer {
         work.commit()
         work.waitUntilCompleted()
         return result
+    }
+
+    /// Batched gather BGEMM fast path. T=1 decode: `mTotal = topK`. Each
+    /// row of the gathered batch holds the same `[hidden]` activation
+    /// vector but is paired with a different expert id via `indices`.
+    /// The kernel walks rows in tile order — boundary masking lets it
+    /// process the trailing partial tile when `mTotal < BM`. One
+    /// dispatch per projection replaces `topK` sequential per-expert
+    /// SwiGLU triplets:
+    ///   24 (topK=8) dispatches → 3 dispatches (gate / up / down) plus
+    ///   element-wise SiLU + mul + scaled scatter-sum (~6 small ops).
+    /// Outputs are scaled by the router's combine weights on the CPU
+    /// (the same `Tensor.filled([hidden])` trick the serial path uses,
+    /// but only once per topK slot — still tiny vs the BGEMM cost).
+    ///
+    /// Tile selection:
+    ///   - `FFAI_MOE_BGEMM_BM8=1` + `topK ≤ 8` → bm8 MPP kernel
+    ///     (BM=8 fills the tile exactly at Qwen3.6-A3B topK=8 decode;
+    ///     bm16 would waste 50 % of the trailing tile rows).
+    ///     Requires Apple10+ GPU (M5 Max) + macOS 26.2+.
+    ///   - otherwise → bm16 path (Ops.moeGatherDequantGemmInt4),
+    ///     which itself respects `FFAI_MOE_BGEMM_MPP=1` for the
+    ///     MPP/NAX variant at larger m_total.
+    private func batchedSwiGLU(_ h: Tensor,
+                               stacked: StackedInt4Experts,
+                               routing: MoERouter.Routing,
+                               on cmd: MTLCommandBuffer,
+                               device: Device) -> Tensor {
+        let topK = routing.indices.count
+        let moeIntermediate = stacked.moeIntermediate
+        let groupSize = stacked.groupSize
+        let dtype = stacked.dtype
+        let useBm8 = topK <= 8
+            && ProcessInfo.processInfo.environment["FFAI_MOE_BGEMM_BM8"] != nil
+
+        // ── Sort topK by expert id ascending (kernel contract) ──
+        // Track the original slot so we can apply the right combine
+        // weight after the BGEMM. The slot mapping never goes through
+        // the GPU, so sorting on the host is cheap.
+        let sorted = routing.indices.enumerated().sorted { $0.element < $1.element }
+        let sortedExperts = sorted.map { UInt32($0.element) }
+        let sortedSlots = sorted.map { $0.offset }
+
+        // ── Materialise the [topK, hidden] activation gather + indices ──
+        let xGathered = Tensor.empty(shape: [topK, hidden], dtype: dtype, device: device)
+        let inputBytes = hidden * dtype.byteSize
+        // h is the same vector for every row at T=1 decode. memcpy from
+        // host backing — Tensors here are storage-shared.
+        let src = h.buffer.contents().advanced(by: h.offset)
+        let dst = xGathered.buffer.contents().advanced(by: xGathered.offset)
+        for r in 0..<topK {
+            dst.advanced(by: r * inputBytes)
+                .copyMemory(from: src, byteCount: inputBytes)
+        }
+        let indices = Tensor.empty(shape: [topK], dtype: .u32, device: device)
+        indices.copyIn(from: sortedExperts)
+
+        // ── Gate / up projections: [topK, moeIntermediate] ──
+        let gateOut = Tensor.empty(shape: [topK, moeIntermediate], dtype: dtype, device: device)
+        let upOut = Tensor.empty(shape: [topK, moeIntermediate], dtype: dtype, device: device)
+        let bgemm = useBm8 ? Ops.moeGatherDequantGemmInt4Bm8 : Ops.moeGatherDequantGemmInt4
+        bgemm(
+            xGathered,
+            stacked.gateWeight, stacked.gateScales, stacked.gateBiases,
+            indices,
+            topK, moeIntermediate, hidden,
+            groupSize, cmd, gateOut)
+        bgemm(
+            xGathered,
+            stacked.upWeight, stacked.upScales, stacked.upBiases,
+            indices,
+            topK, moeIntermediate, hidden,
+            groupSize, cmd, upOut)
+
+        // ── SwiGLU activation: silu(gate) * up, in place on [topK, M] ──
+        let inner = Ops.mul(Ops.silu(gateOut, on: cmd), upOut, on: cmd)
+
+        // ── Down projection: [topK, hidden] ──
+        let downOut = Tensor.empty(shape: [topK, hidden], dtype: dtype, device: device)
+        bgemm(
+            inner,
+            stacked.downWeight, stacked.downScales, stacked.downBiases,
+            indices,
+            topK, hidden, moeIntermediate,
+            groupSize, cmd, downOut)
+
+        // ── Weighted scatter-sum back to a single [hidden] vector ──
+        // For each routed slot, scale the corresponding row of downOut
+        // by `routing.weights[slot]` and accumulate. The Tensor.filled
+        // broadcast scalar trick mirrors the serial path's per-slot
+        // weight application.
+        var acc: Tensor?
+        for (sortedIdx, originalSlot) in sortedSlots.enumerated() {
+            // Row view into downOut at the sorted position.
+            let row = Tensor(
+                buffer: downOut.buffer,
+                offset: downOut.offset + sortedIdx * hidden * dtype.byteSize,
+                shape: [hidden], dtype: dtype)
+            let w = Tensor.filled(routing.weights[originalSlot],
+                                  shape: [hidden], dtype: dtype, device: device)
+            let scaled = Ops.mul(row, w, on: cmd)
+            acc = acc.map { Ops.add($0, scaled, on: cmd) } ?? scaled
+        }
+        return acc!
     }
 
     /// One SwiGLU FFN: down(silu(gate(x)) * up(x)).

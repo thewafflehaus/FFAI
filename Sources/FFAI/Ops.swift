@@ -2819,4 +2819,137 @@ public enum Ops {
             fatalError("Ops.gatedDeltaPrepStep: unsupported dtype \(convOut.dtype)")
         }
     }
+
+    // ─── Dynamic-M batched-prefill int4 qmm ───────────────────────────
+    //
+    // Host-side driver around `mt_qmm_mma`. The kernel's dispatch grid is
+    // `[N/32, ceil(M/32), 1]` × tg `[128, 1, 1]` — M is purely grid-Y
+    // sized at runtime, so any `M % 32 == 0` is a clean dispatch. The
+    // driver pads ragged `T → mPadded = ceil(T/32) * 32` with zero rows
+    // and slices the first `T` output rows on return; zero-row contributions
+    // collapse to `0` at every valid output column (`s · Σ q·x + b · Σ x`
+    // with `x ≡ 0`).
+    //
+    // The Rust-side metaltile-ffai counterpart lives in
+    // `crates/metaltile-std/src/mlx/quantized_mma_dynamic_m.rs` and has
+    // 7/7 GPU correctness cells including the bf16 T=4096 N=K=2048 Qwen3.6
+    // production shape (cos 0.999999). This Swift wrapper is the host-side
+    // equivalent — same padding contract, same dispatch geometry, dispatched
+    // through the regenerated `MetalTileKernels.mt_qmm_mma_*` bindings.
+    //
+    // Use this when `T > 1` (the batched-prefill case). For T=1 the regular
+    // per-token dequant path is faster (the mma kernel pays full weight-tile
+    // load cost regardless of how many valid rows are in the M tile).
+    public static func dequantGemmDynamicM(
+        input: Tensor,
+        weight: Tensor, scales: Tensor, biases: Tensor,
+        t: Int, nOut: Int, kIn: Int,
+        groupSize: Int,
+        on cmd: MTLCommandBuffer,
+        device: Device,
+        into out: Tensor
+    ) {
+        precondition(weight.dtype == .u32,
+                     "Ops.dequantGemmDynamicM: weight must be u32 packed (got \(weight.dtype))")
+        precondition(input.dtype == scales.dtype && scales.dtype == biases.dtype,
+                     "Ops.dequantGemmDynamicM: input/scales/biases must share dtype")
+        precondition(out.dtype == input.dtype,
+                     "Ops.dequantGemmDynamicM: out dtype must match input (got \(out.dtype) vs \(input.dtype))")
+        precondition(input.elementCount == t * kIn,
+                     "Ops.dequantGemmDynamicM: input has \(input.elementCount) elements, expected t*kIn = \(t * kIn)")
+        precondition(out.elementCount == t * nOut,
+                     "Ops.dequantGemmDynamicM: out has \(out.elementCount) elements, expected t*nOut = \(t * nOut)")
+        precondition(nOut % 32 == 0,
+                     "Ops.dequantGemmDynamicM: nOut (\(nOut)) must be multiple of 32 (BN tile)")
+        precondition(kIn % 32 == 0,
+                     "Ops.dequantGemmDynamicM: kIn (\(kIn)) must be multiple of 32 (BK tile)")
+
+        let mPadded = ((t + 31) / 32) * 32
+        let gsPerRow = kIn / groupSize
+
+        // Fast path: T already multiple of 32 — dispatch directly without
+        // padding. The hot-loop case for Qwen3.6 prefill (T = 32, 256, 1024,
+        // 4096, 32768 are all naturally aligned).
+        if t == mPadded {
+            dispatchQmmMma(weight: weight, scales: scales, biases: biases,
+                           input: input, output: out,
+                           m: mPadded, n: nOut, k: kIn, gsPerRow: gsPerRow,
+                           on: cmd)
+            return
+        }
+
+        // Slow path: pad X to mPadded with zero rows, dispatch into a
+        // padded output, copy the first T rows back to `out`. The trailing
+        // (mPadded - T) rows are dispatched but their outputs are discarded.
+        let xPadded = Tensor.empty(shape: [mPadded, kIn], dtype: input.dtype,
+                                   device: device)
+        xPadded.zero()
+        let validBytes = t * kIn * input.dtype.byteSize
+        let src = input.buffer.contents().advanced(by: input.offset)
+        let dst = xPadded.buffer.contents().advanced(by: xPadded.offset)
+        dst.copyMemory(from: src, byteCount: validBytes)
+
+        let outPadded = Tensor.empty(shape: [mPadded, nOut], dtype: input.dtype,
+                                     device: device)
+        dispatchQmmMma(weight: weight, scales: scales, biases: biases,
+                       input: xPadded, output: outPadded,
+                       m: mPadded, n: nOut, k: kIn, gsPerRow: gsPerRow,
+                       on: cmd)
+
+        // Slice first T rows of outPadded → out.
+        let validOutBytes = t * nOut * input.dtype.byteSize
+        let srcOut = outPadded.buffer.contents().advanced(by: outPadded.offset)
+        let dstOut = out.buffer.contents().advanced(by: out.offset)
+        dstOut.copyMemory(from: srcOut, byteCount: validOutBytes)
+    }
+
+    /// Inner dispatcher for `dequantGemmDynamicM`. Grid is `[N/32, M/32, 1]`
+    /// × tg `[128, 1, 1]` (4 SGs WM=WN=2 per the canonical `mt_qmm_mma`).
+    /// `dispatchThreads` counts total threads per axis, so grid.x = N/32·128.
+    private static func dispatchQmmMma(
+        weight: Tensor, scales: Tensor, biases: Tensor,
+        input: Tensor, output: Tensor,
+        m: Int, n: Int, k: Int, gsPerRow: Int,
+        on cmd: MTLCommandBuffer
+    ) {
+        let tgWidth = 128
+        let grid = MTLSize(width: (n / 32) * tgWidth,
+                           height: m / 32,
+                           depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+        let kU = UInt32(k)
+        let nU = UInt32(n)
+        let gsU = UInt32(gsPerRow)
+        switch input.dtype {
+        case .f32:
+            MetalTileKernels.mt_qmm_mma_f32(
+                w: weight.buffer, wOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                x: input.buffer, xOffset: input.offset,
+                out: output.buffer, outOffset: output.offset,
+                k: kU, n: nU, gs_per_row: gsU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_qmm_mma_f16(
+                w: weight.buffer, wOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                x: input.buffer, xOffset: input.offset,
+                out: output.buffer, outOffset: output.offset,
+                k: kU, n: nU, gs_per_row: gsU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_qmm_mma_bf16(
+                w: weight.buffer, wOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                x: input.buffer, xOffset: input.offset,
+                out: output.buffer, outOffset: output.offset,
+                k: kU, n: nU, gs_per_row: gsU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.dequantGemmDynamicM: unsupported dtype \(input.dtype)")
+        }
+    }
 }
