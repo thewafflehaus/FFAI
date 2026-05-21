@@ -28,15 +28,17 @@ public enum OpsValidation {
 
     // ─── rmsNorm + rmsNormRows ─────────────────────────────────────
     //
-    // Kernel invariants (from `crates/metaltile-std/src/mlx/rms_norm.rs`
-    // §"DISPATCH INVARIANTS"):
-    //   1. `N = TPG * 4` — each thread owns 4 consecutive elements.
-    //      The wrapper computes `TPG = n / 4`.
-    //   2. `TPG` must be a multiple of 32 (cross-simdgroup reduction).
-    //      Combined with (1): `n` must be a multiple of 128.
-    //   3. `TPG ≤ 1024` (Apple's max-threads-per-threadgroup cap).
-    //      Combined with (1): `n ≤ 4096`. Larger rows need
-    //      `rmsNormRows` chunked dispatch (forthcoming).
+    // `Ops.dispatchRmsNorm` routes by row width across two metaltile
+    // kernels (`crates/metaltile-std/src/mlx/rms_norm.rs`):
+    //   • `n ≤ 4096` → `mt_rms_norm`. `N = TPG * 4` (4 elements per
+    //     thread), `TPG = n / 4`, `TPG` a multiple of 32 ⇒ `n` a
+    //     multiple of 128, `TPG ≤ 1024` ⇒ `n ≤ 4096`.
+    //   • `n > 4096` → `mt_rms_norm_wide`. Each thread strides over
+    //     the row, so there is no upper bound; `TPG` is fixed at 1024.
+    //
+    // The only row-width invariant common to both — and the one the
+    // wrapper must enforce — is the 128-element (simdgroup × 4)
+    // granularity. Every real model hidden size satisfies it.
 
     /// Validate the row-width parameter for `Ops.rmsNorm` and
     /// `Ops.rmsNormRows`. The single-row and multi-row dispatches
@@ -47,9 +49,6 @@ public enum OpsValidation {
         }
         if !n.isMultiple(of: 128) {
             return "n=\(n) must be a multiple of 128 (32-lane simdgroup × 4 elements/thread)"
-        }
-        if n / 4 > 1024 {
-            return "n=\(n) > 4096 — exceeds the 1024-thread cap of this kernel; use rmsNormRows or a chunked variant for larger rows"
         }
         return nil
     }

@@ -97,16 +97,16 @@ struct Gemma4IntegrationTests {
         let modelId = "mlx-community/gemma-4-31b-it-4bit"
         let prompt = "Once upon a time, in a quiet village"
 
-        // The 31B variant is hidden_size 5376 — wider than the
-        // `rmsNorm` kernel's 4096-row cap — so `Model.load` throws a
-        // `Gemma4Error.unalignedNorm` even when the checkpoint is
-        // present. Guard-skip on any load failure (missing checkpoint
-        // or the width limit) until a chunked large-row norm lands.
+        // Guard-skip if the 31B checkpoint isn't cached locally — it is
+        // large (4-bit ~17 GB) and not in the default test set. The
+        // 5376-wide hidden state exercises the wide-row RMSNorm kernel
+        // during the prewarm forward, so a successful load already
+        // proves that path.
         let m: Model
         do {
             m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
         } catch {
-            print("Gemma 4 31B integration test skipped: \(error)")
+            print("Gemma 4 31B integration test skipped (checkpoint not available): \(error)")
             return
         }
         let gemma4 = m.engine as? Gemma4Model
@@ -128,5 +128,45 @@ struct Gemma4IntegrationTests {
         )
         expectCoherentOutput(result.generatedTokens, minTokens: 48,
                              label: "Gemma 4 31B-it 4bit")
+    }
+
+    @Test("Gemma4MoE (26B-A4B): load + greedy generate produces coherent output")
+    func loadAndGenerateMoE() async throws {
+        // 26B-A4B is the mixture-of-experts variant: every layer runs a
+        // shared dense MLP and an 8-of-128 routed expert mixture in
+        // parallel, each branch with its own pre/post norm, plus the
+        // Gemma 4 router (input RMSNorm + per-expert scale). The 8-bit
+        // checkpoint is uniformly quantised, so it loads with the global
+        // quantization config; the 4-bit checkpoint mixes 4-/8-bit per
+        // layer and needs per-layer quantization support (not yet wired).
+        let modelId = "mlx-community/gemma-4-26b-a4b-it-8bit"
+        let prompt = "The capital of France is"
+
+        let m: Model
+        do {
+            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
+        } catch {
+            print("Gemma 4 26B-A4B integration test skipped (checkpoint not available): \(error)")
+            return
+        }
+        let gemma4 = m.engine as? Gemma4Model
+        #expect(gemma4 != nil, "expected Gemma4Model engine")
+        // 26B-A4B has hidden_size_per_layer_input = 0 → MoE, not PLE.
+        #expect(gemma4?.ple == nil, "26B-A4B is the MoE (non-PLE) variant")
+
+        // Generation gated behind `GEMMA4_RUN_GENERATION`: the 26B
+        // checkpoint is large (8-bit ~28 GB) and slow to greedy-decode.
+        guard ProcessInfo.processInfo.environment["GEMMA4_RUN_GENERATION"] == "1" else {
+            print("Gemma 4 26B-A4B generation coherence check skipped " +
+                  "(set GEMMA4_RUN_GENERATION=1 to run).")
+            return
+        }
+        let result = try await m.generate(
+            prompt: prompt,
+            parameters: GenerationParameters(maxTokens: 24, temperature: 0)
+        )
+        #expect(result.tokensPerSecond > 0)
+        expectCoherentOutput(result.generatedTokens, minTokens: 24,
+                             label: "Gemma 4 26B-A4B-it 8bit")
     }
 }

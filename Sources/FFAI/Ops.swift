@@ -343,47 +343,13 @@ public enum Ops {
         let result = out ?? Tensor.empty(shape: x.shape, dtype: x.dtype)
         let n = x.elementCount
 
-        // eps as 1-element f32 buffer
-        var epsValue = eps
-        let epsBuf = device.makeBuffer(length: 4)
-        memcpy(epsBuf.contents(), &epsValue, 4)
-
         // Kernel-invariant validation. See OpsValidation.swift for the
         // full reasoning + a CI-runnable test of each precondition.
         if let reason = OpsValidation.validateRmsNorm(n: n) {
             preconditionFailure("Ops.rmsNorm: \(reason)")
         }
-        let tgWidth = n / 4
-        let grid = MTLSize(width: tgWidth, height: 1, depth: 1)
-        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
-        switch x.dtype {
-        case .f32:
-            MetalTileKernels.mt_rms_norm_f32(
-                x: x.buffer, xOffset: x.offset,
-                w: weight.buffer, wOffset: weight.offset,
-                out: result.buffer, outOffset: result.offset,
-                eps_buf: epsBuf, eps_bufOffset: 0,
-                n: UInt32(n),
-                gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .f16:
-            MetalTileKernels.mt_rms_norm_f16(
-                x: x.buffer, xOffset: x.offset,
-                w: weight.buffer, wOffset: weight.offset,
-                out: result.buffer, outOffset: result.offset,
-                eps_buf: epsBuf, eps_bufOffset: 0,
-                n: UInt32(n),
-                gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .bf16:
-            MetalTileKernels.mt_rms_norm_bf16(
-                x: x.buffer, xOffset: x.offset,
-                w: weight.buffer, wOffset: weight.offset,
-                out: result.buffer, outOffset: result.offset,
-                eps_buf: epsBuf, eps_bufOffset: 0,
-                n: UInt32(n),
-                gridSize: grid, threadgroupSize: tg, on: cmd)
-        default:
-            fatalError("Ops.rmsNorm: unsupported dtype \(x.dtype)")
-        }
+        dispatchRmsNorm(x: x, weight: weight, result: result,
+                        eps: eps, n: n, nRows: 1, on: cmd)
         return result
     }
 
@@ -401,48 +367,84 @@ public enum Ops {
         precondition(x.dtype == weight.dtype, "rmsNormRows: dtype mismatch")
         let result = out ?? Tensor.empty(shape: x.shape, dtype: x.dtype)
 
-        var epsValue = eps
-        let epsBuf = device.makeBuffer(length: 4)
-        memcpy(epsBuf.contents(), &epsValue, 4)
-
         // Reduction kernel: one threadgroup per row. Per-row invariant
         // is the same as the single-row dispatch — see OpsValidation
         // for the full reasoning and CI-runnable tests.
         if let reason = OpsValidation.validateRmsNorm(n: rowSize) {
             preconditionFailure("Ops.rmsNormRows: \(reason)")
         }
-        let tgWidth = rowSize / 4
+        dispatchRmsNorm(x: x, weight: weight, result: result,
+                        eps: eps, n: rowSize, nRows: nRows, on: cmd)
+        return result
+    }
+
+    /// Shared RMSNorm dispatch for `rmsNorm` (nRows = 1) and
+    /// `rmsNormRows`. Routes by row width:
+    ///   • `n ≤ 4096` → `mt_rms_norm`, 4 elements per thread,
+    ///     TPG = n / 4 (the fast straight-line kernel).
+    ///   • `n > 4096` → `mt_rms_norm_wide`, whose strided loop covers
+    ///     any width at a fixed TPG of 1024 (large-hidden models such
+    ///     as Gemma 4 31B, hidden 5376).
+    /// One threadgroup per row in both cases.
+    private static func dispatchRmsNorm(
+        x: Tensor, weight: Tensor, result: Tensor,
+        eps: Float, n: Int, nRows: Int, on cmd: MTLCommandBuffer
+    ) {
+        // eps as a 1-element f32 buffer.
+        var epsValue = eps
+        let epsBuf = device.makeBuffer(length: 4)
+        memcpy(epsBuf.contents(), &epsValue, 4)
+
+        let useWide = n > 4096
+        let tgWidth = useWide ? 1024 : n / 4
         let grid = MTLSize(width: nRows * tgWidth, height: 1, depth: 1)
         let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
-        switch x.dtype {
-        case .f32:
+        switch (useWide, x.dtype) {
+        case (false, .f32):
             MetalTileKernels.mt_rms_norm_f32(
                 x: x.buffer, xOffset: x.offset,
                 w: weight.buffer, wOffset: weight.offset,
                 out: result.buffer, outOffset: result.offset,
-                eps_buf: epsBuf, eps_bufOffset: 0,
-                n: UInt32(rowSize),
+                eps_buf: epsBuf, eps_bufOffset: 0, n: UInt32(n),
                 gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .f16:
+        case (false, .f16):
             MetalTileKernels.mt_rms_norm_f16(
                 x: x.buffer, xOffset: x.offset,
                 w: weight.buffer, wOffset: weight.offset,
                 out: result.buffer, outOffset: result.offset,
-                eps_buf: epsBuf, eps_bufOffset: 0,
-                n: UInt32(rowSize),
+                eps_buf: epsBuf, eps_bufOffset: 0, n: UInt32(n),
                 gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .bf16:
+        case (false, .bf16):
             MetalTileKernels.mt_rms_norm_bf16(
                 x: x.buffer, xOffset: x.offset,
                 w: weight.buffer, wOffset: weight.offset,
                 out: result.buffer, outOffset: result.offset,
-                eps_buf: epsBuf, eps_bufOffset: 0,
-                n: UInt32(rowSize),
+                eps_buf: epsBuf, eps_bufOffset: 0, n: UInt32(n),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (true, .f32):
+            MetalTileKernels.mt_rms_norm_wide_f32(
+                x: x.buffer, xOffset: x.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                out: result.buffer, outOffset: result.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0, n: UInt32(n),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (true, .f16):
+            MetalTileKernels.mt_rms_norm_wide_f16(
+                x: x.buffer, xOffset: x.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                out: result.buffer, outOffset: result.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0, n: UInt32(n),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (true, .bf16):
+            MetalTileKernels.mt_rms_norm_wide_bf16(
+                x: x.buffer, xOffset: x.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                out: result.buffer, outOffset: result.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0, n: UInt32(n),
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         default:
-            fatalError("Ops.rmsNormRows: unsupported dtype \(x.dtype)")
+            fatalError("Ops.rmsNorm: unsupported dtype \(x.dtype)")
         }
-        return result
     }
 
     /// Llama-3-style RoPE with frequency-band scaling. Pass `scaleFactor=1`

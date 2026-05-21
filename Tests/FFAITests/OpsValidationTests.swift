@@ -25,11 +25,16 @@ struct OpsValidationTests {
     func rmsNormAcceptsLegal() {
         // Smallest legal n: 128 (one full simdgroup × 4 elts/thread).
         #expect(OpsValidation.validateRmsNorm(n: 128) == nil)
-        // Common Llama hidden dims, all multiples of 128 ≤ 4096.
+        // Common Llama hidden dims (≤ 4096 → mt_rms_norm).
         #expect(OpsValidation.validateRmsNorm(n: 256) == nil)
         #expect(OpsValidation.validateRmsNorm(n: 1024) == nil)
         #expect(OpsValidation.validateRmsNorm(n: 2048) == nil)
         #expect(OpsValidation.validateRmsNorm(n: 4096) == nil)
+        // Wide rows (> 4096 → mt_rms_norm_wide): Gemma 4 31B hidden
+        // 5376 and beyond. No upper bound — the strided kernel covers
+        // any 128-aligned width.
+        #expect(OpsValidation.validateRmsNorm(n: 5376) == nil)
+        #expect(OpsValidation.validateRmsNorm(n: 8192) == nil)
     }
 
     @Test("rmsNorm rejects n=0 and negative")
@@ -50,11 +55,14 @@ struct OpsValidationTests {
         #expect(OpsValidation.validateRmsNorm(n: 129) != nil)
     }
 
-    @Test("rmsNorm rejects n above 4096 (TPG cap)")
-    func rmsNormRejectsTooLargeN() {
-        // n / 4 > 1024 → TPG exceeds Apple's max-threads-per-threadgroup.
-        #expect(OpsValidation.validateRmsNorm(n: 4224) != nil)  // 4224/4 = 1056
-        #expect(OpsValidation.validateRmsNorm(n: 8192) != nil)
+    @Test("rmsNorm accepts wide rows (routed to mt_rms_norm_wide)")
+    func rmsNormAcceptsWideRows() {
+        // Rows past the 4096 cap of mt_rms_norm route to the strided
+        // mt_rms_norm_wide kernel, which has no upper bound. Before the
+        // wide kernel these `n / 4 > 1024` widths were rejected.
+        #expect(OpsValidation.validateRmsNorm(n: 4224) == nil)  // 4224/4 = 1056
+        #expect(OpsValidation.validateRmsNorm(n: 5376) == nil)  // Gemma 4 31B
+        #expect(OpsValidation.validateRmsNorm(n: 16384) == nil)
     }
 
     // ─── sdpaDecode ────────────────────────────────────────────────

@@ -102,7 +102,7 @@ public enum Gemma4Error: Error, CustomStringConvertible {
         case .unsupportedHeadDim(let d):
             return "Gemma4: head_dim \(d) unsupported (Ops.sdpaDecode needs 64/128/256/512)"
         case .unalignedNorm(let n):
-            return "Gemma4: norm row size \(n) must be 128-aligned and ≤ 4096"
+            return "Gemma4: norm row size \(n) must be 128-aligned"
         }
     }
 }
@@ -304,14 +304,13 @@ enum Gemma4Loader {
         let quant = config.quantization
 
         // Every RMSNorm row goes through the `rmsNorm` / `rmsNormRows`
-        // kernel, whose row size must be 128-aligned and ≤ 4096:
+        // kernels, whose only row-width invariant is 128-alignment
+        // (simdgroup granularity); rows wider than 4096 route to the
+        // wide-row kernel automatically. Checked dims:
         //   • q/k/v head-dim norms — `headDim` / `globalHeadDim`.
         //   • the four per-block norms + final norm — `hidden`.
-        // Sliding 256 + global 512 qualify; `hidden` rules out the
-        // 31B variant (5376-wide), which would otherwise fatalError
-        // deep inside the prewarm forward instead of failing the load.
         for d in [p.headDim, p.globalHeadDim, p.hidden] {
-            if d % 128 != 0 || d > 4096 {
+            if d % 128 != 0 {
                 throw Gemma4Error.unalignedNorm(d)
             }
         }
@@ -479,37 +478,73 @@ enum Gemma4Loader {
             kvCacheKind: options.kvCache, device: device)
     }
 
-    /// Build a Gemma 4 MoE feed-forward block from the stacked expert
-    /// tensors. Gemma 4 stores experts as `[numExperts, outDim, inDim]`
-    /// stacks under `experts.{gate,up,down}_proj`.
+    /// Build a Gemma 4 MoE feed-forward block (26B-A4B). A MoE layer
+    /// runs a shared dense MLP and a routed expert mixture in parallel,
+    /// each with its own pre/post norm, then sums them. Experts ship as
+    /// `[numExperts, outDim, inDim]` stacks under `experts.{gate,up,down}_proj`.
     private static func buildMoE(
         prefix lp: String, weights: SafeTensorsBundle, p: Gemma4Params,
         quant: ModelConfig.QuantizationConfig?
     ) throws -> Gemma4MoEFFN {
-        let gate = try loadLinear(base: "\(lp).router.proj",
-                                  in: weights, quantization: quant)
+        // Shared dense GELU MLP — the `h1` branch, runs every token.
+        let sharedGate = try loadLinear(base: "\(lp).mlp.gate_proj",
+                                        in: weights, quantization: quant)
+        let sharedUp = try loadLinear(base: "\(lp).mlp.up_proj",
+                                      in: weights, quantization: quant)
+        let sharedDown = try loadLinear(base: "\(lp).mlp.down_proj",
+                                        in: weights, quantization: quant)
+        let sharedMLP = Gemma4DenseMLP(
+            gateProj: sharedGate, upProj: sharedUp, downProj: sharedDown,
+            intermediate: p.intermediate)
+
+        // Router: logit projection + the learned input-norm scale +
+        // the per-expert combine-weight scale.
+        let routerProj = try loadLinear(base: "\(lp).router.proj",
+                                        in: weights, quantization: quant)
+        let routerScale = try weights.tensor(named: "\(lp).router.scale")
+        let perExpertScale = try weights.tensor(named: "\(lp).router.per_expert_scale")
+
+        // Stacked experts → per-expert GELU-SwiGLU projections. Raw
+        // Gemma 4 checkpoints key the expert stacks under
+        // `experts.switch_glu.{gate,up,down}_proj` (mlx-lm strips the
+        // `switch_glu` segment in its sanitize step; FFAI loads the raw
+        // key directly).
         let gateProj = try sliceStacked(
-            base: "\(lp).experts.gate_proj", in: weights,
+            base: "\(lp).experts.switch_glu.gate_proj", in: weights,
             numExperts: p.numExperts, outDim: p.moeIntermediate, inDim: p.hidden,
             quant: quant)
         let upProj = try sliceStacked(
-            base: "\(lp).experts.up_proj", in: weights,
+            base: "\(lp).experts.switch_glu.up_proj", in: weights,
             numExperts: p.numExperts, outDim: p.moeIntermediate, inDim: p.hidden,
             quant: quant)
         let downProj = try sliceStacked(
-            base: "\(lp).experts.down_proj", in: weights,
+            base: "\(lp).experts.switch_glu.down_proj", in: weights,
             numExperts: p.numExperts, outDim: p.hidden, inDim: p.moeIntermediate,
             quant: quant)
-        // Gemma 4 gating: softmax over the top-K logits (top-K then
-        // softmax), as in `gemma4_text.py`. The plain MoELayer with
-        // `.topKThenSoftmax` matches this.
+
+        // The MoE block's three extra norms (plain Gemma 4 RMSNorm).
+        let preNorm2 = try loadGemma4RMSNorm(
+            base: "\(lp).pre_feedforward_layernorm_2.weight", in: weights, eps: p.eps)
+        let postNorm1 = try loadGemma4RMSNorm(
+            base: "\(lp).post_feedforward_layernorm_1.weight", in: weights, eps: p.eps)
+        let postNorm2 = try loadGemma4RMSNorm(
+            base: "\(lp).post_feedforward_layernorm_2.weight", in: weights, eps: p.eps)
+
+        // Gemma 4 gating: top-K of the router logits, then softmax over
+        // just those K (gemma4_text.py).
         let router = MoERouter(
             nExperts: p.numExperts, topK: p.topKExperts,
             gatingMode: .topKThenSoftmax)
-        let moe = MoELayer(
-            gate: gate, gateProj: gateProj, upProj: upProj, downProj: downProj,
-            router: router, hidden: p.hidden)
-        return Gemma4MoEFFN(moe: moe)
+
+        return Gemma4MoEFFN(
+            sharedMLP: sharedMLP,
+            gateProj: gateProj, upProj: upProj, downProj: downProj,
+            routerProj: routerProj, routerScale: routerScale,
+            rootSize: Float(pow(Double(p.hidden), -0.5)),
+            routerEps: Float(p.eps), perExpertScale: perExpertScale,
+            router: router,
+            preNorm2: preNorm2, postNorm1: postNorm1, postNorm2: postNorm2,
+            hidden: p.hidden)
     }
 
     /// Slice a stacked `[numExperts, outDim, inDim]` expert tensor into
@@ -709,35 +744,143 @@ public final class Gemma4DenseMLP: Module {
     }
 }
 
-/// MoE feed-forward (Gemma4MoE). Thin wrapper over `MoELayer`.
-/// `MoELayer.decode` commits the command buffer it is given — the host
-/// layer / model must refresh the work buffer afterward.
+/// Gemma 4 MoE feed-forward block (26B-A4B). A MoE layer runs a shared
+/// dense GELU MLP and a routed expert mixture *in parallel* — each
+/// branch with its own pre/post RMSNorm — and sums them:
+///
+///   h1 = post_ffn_norm_1(sharedMLP(pre_ffn_norm(h)))
+///   h2 = post_ffn_norm_2( Σ wₑ · expertₑ(pre_ffn_norm_2(h)) )
+///   ffnOut = h1 + h2
+///
+/// The router normalises its input with a learned `scale · hidden^(-0.5)`
+/// weight, picks the top-K experts, softmaxes their logits, and scales
+/// the combine weights by a learned per-expert factor. Mirrors
+/// `gemma4_text.py`.
+///
+/// `forward` commits internally (the router needs its logits on the
+/// host for top-K), so the caller must refresh its command buffer.
 public final class Gemma4MoEFFN: Module {
-    let moe: MoELayer
+    /// Shared dense MLP — the `h1` branch.
+    let sharedMLP: Gemma4DenseMLP
+    /// Per-expert GELU-SwiGLU projections (index-aligned with expert id).
+    let gateProj, upProj, downProj: [AnyLinear]
+    /// Router logit projection: hidden → numExperts.
+    let routerProj: AnyLinear
+    /// Router input-norm weight (the learned `router.scale`, [hidden]).
+    let routerScale: Tensor
+    /// `hidden^(-0.5)` — folded into the router logits. A positive
+    /// scalar, so it leaves the top-K selection unchanged but sets the
+    /// softmax temperature, matching the reference's `scale · hidden^-0.5`
+    /// input norm.
+    let rootSize: Float
+    let routerEps: Float
+    /// Per-expert combine-weight scale (`router.per_expert_scale`,
+    /// [numExperts]).
+    let perExpertScale: Tensor
+    /// Top-K + softmax routing math.
+    let router: MoERouter
+    /// The MoE block's three extra norms.
+    let preNorm2, postNorm1, postNorm2: RMSNorm
+    let hidden: Int
 
-    init(moe: MoELayer) { self.moe = moe }
+    init(sharedMLP: Gemma4DenseMLP,
+         gateProj: [AnyLinear], upProj: [AnyLinear], downProj: [AnyLinear],
+         routerProj: AnyLinear, routerScale: Tensor, rootSize: Float,
+         routerEps: Float, perExpertScale: Tensor, router: MoERouter,
+         preNorm2: RMSNorm, postNorm1: RMSNorm, postNorm2: RMSNorm,
+         hidden: Int) {
+        self.sharedMLP = sharedMLP
+        self.gateProj = gateProj; self.upProj = upProj; self.downProj = downProj
+        self.routerProj = routerProj; self.routerScale = routerScale
+        self.rootSize = rootSize; self.routerEps = routerEps
+        self.perExpertScale = perExpertScale; self.router = router
+        self.preNorm2 = preNorm2; self.postNorm1 = postNorm1
+        self.postNorm2 = postNorm2; self.hidden = hidden
+    }
 
     public func parameters() -> [(String, Tensor)] {
-        // MoELayer emits flat `gate.*` / `experts.<e>.*` names; Gemma 4
-        // checkpoints key the router as `router.proj` and the experts
-        // as stacked `experts.{gate,up,down}_proj`. Re-key for round-trip.
         var out: [(String, Tensor)] = []
-        for (k, v) in moe.parameters() {
-            if k.hasPrefix("gate.") {
-                out.append(("router.proj." + k.dropFirst("gate.".count), v))
-            } else {
-                out.append((k, v))
-            }
+        out.append(contentsOf: sharedMLP.parameters())
+        for (e, proj) in gateProj.enumerated() {
+            for (k, v) in proj.parameters() { out.append(("experts.\(e).gate_proj.\(k)", v)) }
+        }
+        for (e, proj) in upProj.enumerated() {
+            for (k, v) in proj.parameters() { out.append(("experts.\(e).up_proj.\(k)", v)) }
+        }
+        for (e, proj) in downProj.enumerated() {
+            for (k, v) in proj.parameters() { out.append(("experts.\(e).down_proj.\(k)", v)) }
+        }
+        for (k, v) in routerProj.parameters() { out.append(("router.proj.\(k)", v)) }
+        out.append(("router.scale", routerScale))
+        out.append(("router.per_expert_scale", perExpertScale))
+        for (k, v) in preNorm2.parameters() {
+            out.append(("pre_feedforward_layernorm_2.\(k)", v))
+        }
+        for (k, v) in postNorm1.parameters() {
+            out.append(("post_feedforward_layernorm_1.\(k)", v))
+        }
+        for (k, v) in postNorm2.parameters() {
+            out.append(("post_feedforward_layernorm_2.\(k)", v))
         }
         return out
     }
 
-    /// Run the MoE FFN. Commits `cmd` (via `MoELayer.decode`); returns a
-    /// fully-resident tensor.
-    func forward(_ xNorm: Tensor, position: Int,
+    /// Run the Gemma 4 MoE FFN.
+    /// - `preFFNormed`: `preFeedforwardLayerNorm(h)` — the shared-MLP
+    ///   branch input.
+    /// - `h`: the post-attention residual — the router and expert-branch
+    ///   input (each applies its own norm).
+    /// Returns `ffnOut = h1 + h2`; the caller adds `postFeedforwardLayerNorm`
+    /// + the residual. Commits internally, so the caller must refresh its
+    /// command buffer.
+    func forward(preFFNormed: Tensor, h: Tensor,
                  cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        moe.decode(xNorm, position: position,
-                   cache: StatelessLayerCache(), cmd: cmd, device: device)
+        // ── Router: rmsNorm(h, router.scale) → proj → logits ─────────
+        let routerNormed = Ops.rmsNorm(h, weight: routerScale,
+                                       eps: routerEps, on: cmd)
+        let logitsTensor = routerProj(routerNormed, on: cmd)
+        cmd.commit()
+        cmd.waitUntilCompleted()
+
+        // Fold hidden^(-0.5) into the logits — the reference normalises
+        // the router input by `scale · hidden^-0.5`; `proj` is linear and
+        // the factor is a positive scalar, so applying it to the logits
+        // is equivalent and sets the softmax temperature.
+        let logits = logitsTensor.toFloatArray().map { $0 * rootSize }
+        let routing = router.route(logits: logits)
+        let perExpert = perExpertScale.toFloatArray()
+        // Combine weight = softmax weight × per-expert scale.
+        let weights = routing.indices.enumerated().map { slot, expertId in
+            routing.weights[slot] * perExpert[expertId]
+        }
+
+        // ── Both branches on a private command buffer ────────────────
+        let work = device.makeCommandBuffer()
+
+        // h1: shared dense MLP.
+        var h1 = sharedMLP.forward(preFFNormed, on: work)
+        h1 = postNorm1(h1, on: work)
+
+        // h2: weighted sum of the selected experts (GELU-SwiGLU).
+        let expertInput = preNorm2(h, on: work)
+        var h2acc: Tensor?
+        for (slot, expertId) in routing.indices.enumerated() {
+            let g = gateProj[expertId](expertInput, on: work)
+            let u = upProj[expertId](expertInput, on: work)
+            let inner = Ops.mul(Ops.gelu(g, on: work), u, on: work)
+            let expertOut = downProj[expertId](inner, on: work)
+            let wTensor = Tensor.filled(weights[slot], shape: [hidden],
+                                        dtype: h.dtype, device: device)
+            let scaled = Ops.mul(expertOut, wTensor, on: work)
+            h2acc = h2acc.map { Ops.add($0, scaled, on: work) } ?? scaled
+        }
+        // topK ≥ 1 ⇒ h2acc is non-nil.
+        let h2 = postNorm2(h2acc!, on: work)
+
+        let ffnOut = Ops.add(h1, h2, on: work)
+        work.commit()
+        work.waitUntilCompleted()
+        return ffnOut
     }
 }
 
@@ -912,12 +1055,15 @@ public final class Gemma4Layer: Module {
             postCmd.waitUntilCompleted()
             return hOut
         case .moe(let moe):
-            // MoELayer commits the buffer it is given. Sync `postCmd`,
-            // run the FFN, finish the residual on a fresh buffer.
+            // Gemma 4 MoE block: parallel shared MLP + routed experts.
+            // It needs both the pre-FFN-normed input (shared MLP branch)
+            // and the raw post-attention residual (router + expert
+            // branch), and commits internally (host readback for top-K
+            // routing). Sync `postCmd` so both inputs are resident.
             postCmd.commit()
             postCmd.waitUntilCompleted()
             let moeCmd = device.makeCommandBuffer()
-            let ffnOut = moe.forward(ffnNorm, position: position,
+            let ffnOut = moe.forward(preFFNormed: ffnNorm, h: hOut,
                                      cmd: moeCmd, device: device)
             let addCmd = device.makeCommandBuffer()
             let normedFFN = postFFNorm(ffnOut, on: addCmd)

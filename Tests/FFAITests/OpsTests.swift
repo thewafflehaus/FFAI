@@ -333,6 +333,37 @@ struct OpsTests {
         }
     }
 
+    @Test("rmsNorm f32 — wide row (n=5376) routes to mt_rms_norm_wide")
+    func rmsNormWideF32() {
+        autoreleasepool {
+            // n = 5376 (Gemma 4 31B hidden) is past the 4096 cap of the
+            // 4-elements-per-thread kernel, so Ops.rmsNorm routes to the
+            // strided mt_rms_norm_wide kernel. eps eps=1e-6 like Gemma 4.
+            let n = 5376
+            let eps: Float = 1e-6
+            let xs: [Float] = (0..<n).map { Float(($0 % 37) - 18) * 0.21 }
+            let ws: [Float] = (0..<n).map { 1.0 + Float($0 % 11) * 0.03 }
+
+            let x = Tensor.empty(shape: [n], dtype: .f32)
+            x.copyIn(from: xs)
+            let weight = Tensor.empty(shape: [n], dtype: .f32)
+            weight.copyIn(from: ws)
+
+            var out: Tensor!
+            runAndWait { cb in out = Ops.rmsNorm(x, weight: weight, eps: eps, on: cb) }
+            let result = out.toArray(as: Float.self)
+
+            // CPU reference: rms = sqrt(mean(x^2) + eps); y = x/rms*weight.
+            let ssq = xs.reduce(Float(0)) { $0 + $1 * $1 }
+            let expectedRms = (ssq / Float(n) + eps).squareRoot()
+            for i in 0..<n {
+                let expected = xs[i] / expectedRms * ws[i]
+                #expect(abs(result[i] - expected) < 1e-3,
+                        "i=\(i) got \(result[i]) expected \(expected)")
+            }
+        }
+    }
+
     @Test("rope f32 at position 0 is identity (cos=1, sin=0)")
     func ropePos0Identity() {
         autoreleasepool {
