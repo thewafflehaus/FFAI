@@ -308,15 +308,21 @@ public struct Qwen35Hybrid: Qwen35Variant {
             throw Qwen35Error.missingConfig("embed_tokens.weight (model prefix)")
         }
 
-        // ── Activation dtype — from the embedding table ───────────────
-        let embedW = try weights.tensor(named: "\(modelPrefix).embed_tokens.weight")
-        let activationDtype = embedW.dtype
+        let quant = config.quantization
+
+        // ── Embedding + activation dtype ──────────────────────────────
+        // The embedding may be mlx-quantized (u32-packed `weight`); build
+        // it through `loadEmbedding` (raw `Embedding` or `QuantizedEmbedding`)
+        // and take the activation dtype from a raw tensor — the final
+        // norm — not the packed embedding weight.
+        let embedTokens = try loadEmbedding(
+            base: "\(modelPrefix).embed_tokens", in: weights,
+            hidden: hidden, quantization: quant)
+        let activationDtype = try weights.tensor(
+            named: "\(modelPrefix).norm.weight").dtype
         precondition(
             activationDtype == .f32 || activationDtype == .bf16 || activationDtype == .f16,
             "Qwen3.5: unexpected activation dtype \(activationDtype)")
-        let embedTokens = AnyEmbedding(Embedding(weight: embedW))
-
-        let quant = config.quantization
         let invKeyScale = Foundation.pow(Float(linearKeyHeadDim), -0.5)
 
         // ── Per-layer construction ────────────────────────────────────
@@ -360,6 +366,7 @@ public struct Qwen35Hybrid: Qwen35Variant {
             case .gdn:
                 let mixer = try buildGDNMixer(
                     prefix: "\(p).linear_attn", weights: weights,
+                    quantization: quant,
                     hidden: hidden,
                     numKeyHeads: linearNumKeyHeads, numValueHeads: linearNumValueHeads,
                     keyHeadDim: linearKeyHeadDim, valueHeadDim: linearValueHeadDim,
@@ -407,8 +414,19 @@ public struct Qwen35Hybrid: Qwen35Variant {
         let lmHead: AnyLinear
         if !tieEmbed, weights.has("lm_head.weight") {
             lmHead = try loadLinear(base: "lm_head", in: weights, quantization: quant)
+        } else if let q = quant, weights.isQuantized("\(modelPrefix).embed_tokens") {
+            // Tied to a quantized embedding — reuse the embed triplet as a
+            // QuantizedLinear (per-tensor bit-width via `deriveAffineQuantBits`).
+            let t = try weights.quantizedTriplet("\(modelPrefix).embed_tokens")
+            let bits = deriveAffineQuantBits(
+                weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
+                scaleCols: t.scales.shape[t.scales.shape.count - 1],
+                groupSize: q.groupSize)
+            lmHead = AnyLinear(QuantizedLinear(
+                weight: t.weight, scales: t.scales, biases: t.biases,
+                bits: bits, groupSize: q.groupSize))
         } else {
-            lmHead = AnyLinear(Linear(weight: embedW))
+            lmHead = AnyLinear(Linear(weight: embedTokens.weight))
         }
 
         return Qwen35Model(
@@ -428,6 +446,7 @@ public struct Qwen35Hybrid: Qwen35Variant {
     /// per-step gate computation.
     private static func buildGDNMixer(
         prefix p: String, weights: SafeTensorsBundle,
+        quantization quant: ModelConfig.QuantizationConfig?,
         hidden: Int,
         numKeyHeads: Int, numValueHeads: Int,
         keyHeadDim: Int, valueHeadDim: Int,
@@ -437,16 +456,18 @@ public struct Qwen35Hybrid: Qwen35Variant {
     ) throws -> Qwen35GDNMixer {
         // Split projections — q|k|v stacked into `in_proj_qkv`; z, b, a
         // each their own projection. None ever carry bias on Qwen3.5.
-        let inProjQKV = AnyLinear(Linear(
-            weight: try weights.tensor(named: "\(p).in_proj_qkv.weight")))
-        let inProjZ = AnyLinear(Linear(
-            weight: try weights.tensor(named: "\(p).in_proj_z.weight")))
-        let inProjB = AnyLinear(Linear(
-            weight: try weights.tensor(named: "\(p).in_proj_b.weight")))
-        let inProjA = AnyLinear(Linear(
-            weight: try weights.tensor(named: "\(p).in_proj_a.weight")))
-        let outProj = AnyLinear(Linear(
-            weight: try weights.tensor(named: "\(p).out_proj.weight")))
+        // `loadLinear` builds a QuantizedLinear when the checkpoint is
+        // mlx-quantized, a plain Linear otherwise.
+        let inProjQKV = try loadLinear(
+            base: "\(p).in_proj_qkv", in: weights, quantization: quant)
+        let inProjZ = try loadLinear(
+            base: "\(p).in_proj_z", in: weights, quantization: quant)
+        let inProjB = try loadLinear(
+            base: "\(p).in_proj_b", in: weights, quantization: quant)
+        let inProjA = try loadLinear(
+            base: "\(p).in_proj_a", in: weights, quantization: quant)
+        let outProj = try loadLinear(
+            base: "\(p).out_proj", in: weights, quantization: quant)
 
         // conv1d.weight ships [conv_dim, kernel, 1]; the metaltile kernel
         // wants [kernel, conv_dim].
