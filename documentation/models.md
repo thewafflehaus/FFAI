@@ -119,6 +119,7 @@ emit codes that a codec renders to audio. They live under
 | **SNAC** | [`Audio/SNAC.swift`](../Sources/FFAI/Audio/SNAC.swift) | Multi-scale residual-VQ codec — the waveform tail for Orpheus-style (LlamaTTS) synthesis. `encode(waveform:)` / `decode(codes:)`. |
 | **Encodec** | [`Audio/Encodec.swift`](../Sources/FFAI/Audio/Encodec.swift) | Meta's EnCodec — SEANet encoder/decoder with a 2-layer LSTM bottleneck and a residual-VQ quantizer. Bandwidth-selectable codebook count; optional per-utterance normalization. Single-frame (no-chunking) path. `encode(waveform:)` / `decode(codes:)`. |
 | **Mimi** | [`Audio/Mimi.swift`](../Sources/FFAI/Audio/Mimi.swift) | Kyutai's Mimi/Moshi codec — SEANet encoder/decoder, an 8-layer latent Transformer (traditional RoPE, LayerScale, windowed-causal attention), and a *split* residual-VQ (semantic codebook + acoustic residual stack). The waveform tail for Mimi-code TTS families (e.g. Marvis). Whole-utterance (non-streaming) port. `encode(waveform:)` / `decode(codes:)`. |
+| **Descript DAC** | [`Audio/DescriptDAC.swift`](../Sources/FFAI/Audio/DescriptDAC.swift) | The Descript Audio Codec — a high-fidelity single-scale residual-VQ codec (Snake-conv encoder/decoder, L2-normalized codebook lookup). Shares the proven `WeightNorm` conv path with SNAC. `encode(waveform:)` / `decode(codes:)`. |
 
 DAC-VAE, Vocos and BigVGAN are follow-on codec ports.
 
