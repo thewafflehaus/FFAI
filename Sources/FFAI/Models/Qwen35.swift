@@ -1414,6 +1414,65 @@ public final class Qwen35Model: LanguageModel {
         let normed = finalNorm(h, on: cmd)
         return lmHead(normed, on: cmd)
     }
+
+    // ─── VLM embedding-input path ────────────────────────────────────
+    //
+    // Qwen3.5 is a VL-target text backbone (Qwen3-VL-MoE wraps it). The
+    // splice supplies a `[hidden]` row directly — a vision-encoder token
+    // or a text-token embedding the VL model looked up — so the forward
+    // is identical to `forward(tokenId:...)` minus the embedding gather.
+    // The same command-buffer contract holds: layers run on internal
+    // `workCmd` buffers; only `norm` + `lm_head` touch the caller's
+    // pristine `cmd`.
+
+    public var supportsEmbeddingInput: Bool { true }
+
+    public func forward(inputEmbedding: Tensor, position: Int,
+                        caches: [any LayerCacheProtocol],
+                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(inputEmbedding.elementCount == hidden,
+                     "Qwen35Model.forward(inputEmbedding:): expected [\(hidden)], "
+                     + "got \(inputEmbedding.shape)")
+        var h = inputEmbedding.reshaped(to: [hidden])
+
+        // Layers run on internal buffers — never the caller's `cmd`.
+        var workCmd = device.makeCommandBuffer()
+        for (i, layer) in layers.enumerated() {
+            h = layer.decode(h, position: position, cache: caches[i],
+                             cmd: workCmd, device: device)
+            let committed: Bool
+            switch layer {
+            case let l as Qwen35GDNLayer: committed = l.commitsCommandBuffer
+            case let l as Qwen35AttentionLayer: committed = l.commitsCommandBuffer
+            default: committed = false
+            }
+            if committed { workCmd = device.makeCommandBuffer() }
+        }
+        // Flush a trailing non-committing layer's pending work so `h` is
+        // resident before the caller's `cmd` reads it.
+        if let last = layers.last,
+           !((last as? Qwen35GDNLayer)?.commitsCommandBuffer ?? false),
+           !((last as? Qwen35AttentionLayer)?.commitsCommandBuffer ?? false) {
+            workCmd.commit()
+            workCmd.waitUntilCompleted()
+        }
+
+        let normed = finalNorm(h, on: cmd)
+        return lmHead(normed, on: cmd)
+    }
+
+    /// Raw embedding-table lookup for one text token.
+    public func textEmbedding(tokenId: Int, device: Device) -> Tensor {
+        let cmd = device.makeCommandBuffer()
+        let tokenBuf = device.makeBuffer(length: 4)
+        var tid = UInt32(tokenId)
+        memcpy(tokenBuf.contents(), &tid, 4)
+        let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
+        let embed = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return embed
+    }
 }
 
 // ─── Load-time + host-prep helpers ───────────────────────────────────

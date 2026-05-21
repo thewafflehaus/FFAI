@@ -131,7 +131,20 @@ public enum ModelRegistry {
                     availableCapabilities: Capability.textOnly.union([.visionIn]),
                     vlModel: vlm)
             }
-            // Other VL families (Qwen 3-VL-MoE, …) — the FFAI vision
+            // Qwen 3-VL-MoE — the Qwen3-VL vision tower + the Qwen 3.5
+            // mixture-of-experts hybrid text backbone (Gated Delta Net ↔
+            // attention, block-sparse MoE FFN), joined by the splice.
+            if config.architecture == "Qwen3VLMoeForConditionalGeneration" {
+                let vlm = try Qwen3VLMoe.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: Qwen35Hybrid.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    vlModel: vlm)
+            }
+            // Other VL families (Gemma 4-VL, …) — the FFAI vision
             // foundation (VisionEncoder, ImagePreprocessing, VLModel
             // splice, conv2d/patch_embed/rope_2d Ops) is in tree, but
             // these towers are not yet wired to a checkpoint loader.
