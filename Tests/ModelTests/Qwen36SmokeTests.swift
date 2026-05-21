@@ -1,0 +1,245 @@
+// Temporary smoke test for Qwen3.6-35B-A3B local checkpoint.
+// Verifies the load path succeeds end-to-end (no precondition trap).
+
+import Foundation
+import Testing
+@testable import FFAI
+
+@Suite("Qwen3.6 smoke", .serialized)
+struct Qwen36SmokeTests {
+
+    @Test("Qwen3.6-35B-A3B local checkpoint loads")
+    func loadLocal() async throws {
+        let path = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
+        guard FileManager.default.fileExists(atPath: path) else {
+            print("Qwen3.6 smoke skipped: \(path) not found")
+            return
+        }
+        var optsBuilder = LoadOptions()
+        optsBuilder.prewarm = false  // skip prewarm to isolate load failures
+        let opts = optsBuilder
+        let m: Model
+        do {
+            m = try await ModelLoadLock.shared.loadSerially {
+                try await Model.load(path, options: opts)
+            }
+        } catch {
+            print("LOAD FAILED: \(error)")
+            throw error
+        }
+        print("LOAD OK")
+        #expect(m.qwen35 != nil, "expected Qwen35Model engine")
+        if let q = m.qwen35 {
+            print("hidden=\(q.hidden) layers=\(q.nLayers) heads=\(q.nHeads) kv=\(q.nKVHeads) headDim=\(q.headDim)")
+            print("GDN dims: Hk=\(q.numKeyHeads) Hv=\(q.numValueHeads) Dk=\(q.keyHeadDim) Dv=\(q.valueHeadDim)")
+            print("hasMoE=\(q.hasMoE) vocab=\(q.vocab) dtype=\(q.dtype)")
+            let gdnCount = q.layers.filter { $0 is Qwen35GDNLayer }.count
+            let attnCount = q.layers.filter { $0 is Qwen35AttentionLayer }.count
+            print("layers: gdn=\(gdnCount) attn=\(attnCount)")
+            #expect(q.nLayers == 40)
+            #expect(gdnCount == 30)
+            #expect(attnCount == 10)
+        }
+    }
+
+    @Test("Qwen3.6-35B-A3B bench — short prefill + decode steady-state")
+    func benchShort() async throws {
+        // FFAI's Qwen35 model does single-token forward steps for both
+        // prefill and decode (no batched prefill on this branch), so a
+        // 4K/32K prefill takes prohibitively long. A 128-token prefill +
+        // 64 decode steps is enough to see steady-state decode tps
+        // (the cold first 1-2 tokens absorb PSO JIT) and short-ctx
+        // prefill cost. Use 32-token prompt + 32 steady decode.
+        try await runBench(targetPromptTokens: 32, decodeSteps: 32, label: "T=32")
+    }
+
+    @Test("Qwen3.6-35B-A3B bench — T=4K (slow, ~10min on M5 Max)")
+    func bench4k() async throws {
+        try await runBench(targetPromptTokens: 4096, decodeSteps: 16, label: "T=4K")
+    }
+
+    @Test("Qwen3.6-35B-A3B bench — T=32K (very slow, ~85min on M5 Max)")
+    func bench32k() async throws {
+        try await runBench(targetPromptTokens: 32_768, decodeSteps: 16, label: "T=32K")
+    }
+
+    /// Generate a deterministic prompt to a target token count by
+    /// repeating a base sentence. Returns (promptTokens, prefillSecs,
+    /// decodeSecs, decodeTokens).
+    private func runBench(targetPromptTokens: Int, decodeSteps: Int, label: String) async throws {
+        let path = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
+        guard FileManager.default.fileExists(atPath: path) else {
+            print("Qwen3.6 bench skipped: \(path) not found")
+            return
+        }
+        var optsBuilder = LoadOptions()
+        optsBuilder.prewarm = false
+        let opts = optsBuilder
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(path, options: opts)
+        }
+        // Build a prompt of approximately the target length by repeating
+        // a paragraph until we hit it.
+        let base = "The quick brown fox jumps over the lazy dog. " +
+                   "Pack my box with five dozen liquor jugs. "
+        var text = ""
+        var tokens = m.tokenizer.encode(text: base)
+        while tokens.count < targetPromptTokens {
+            text += base
+            tokens = m.tokenizer.encode(text: text)
+        }
+        if tokens.count > targetPromptTokens {
+            tokens = Array(tokens.prefix(targetPromptTokens))
+        }
+        print("\(label): prompt=\(tokens.count) tokens")
+
+        let caches = m.engine.makeLayerCaches()
+
+        // ── Prefill ──────────────────────────────────────────────────
+        let prefillStart = Date()
+        var lastLogits: Tensor!
+        for (i, tok) in tokens.enumerated() {
+            lastLogits = m.engine.forward(tokenId: tok, position: i, caches: caches)
+        }
+        let prefillSecs = Date().timeIntervalSince(prefillStart)
+        let prefillMs = prefillSecs * 1000
+        let prefillTps = Double(tokens.count) / prefillSecs
+        print("\(label): prefill \(String(format: "%.0f", prefillMs))ms (\(String(format: "%.1f", prefillTps)) tok/s)")
+
+        // Greedy sample first generated token.
+        var logits = lastLogits.toFloatArray()
+        var nextTok = logits.enumerated().max(by: { $0.element < $1.element })!.offset
+
+        // ── Decode loop ──────────────────────────────────────────────
+        var stepTimes: [Double] = []
+        var pos = tokens.count
+        for _ in 0..<decodeSteps {
+            let t0 = Date()
+            lastLogits = m.engine.forward(tokenId: nextTok, position: pos, caches: caches)
+            logits = lastLogits.toFloatArray()
+            nextTok = logits.enumerated().max(by: { $0.element < $1.element })!.offset
+            pos += 1
+            stepTimes.append(Date().timeIntervalSince(t0))
+        }
+        let decodeSecs = stepTimes.reduce(0, +)
+        let decodeTps = Double(decodeSteps) / decodeSecs
+        // Steady-state: skip first 4 steps (PSO JIT) if we have enough samples.
+        let steadyCutoff = min(4, max(0, decodeSteps - 4))
+        let steadySteps = stepTimes.dropFirst(steadyCutoff)
+        let steadySecs = steadySteps.reduce(0, +)
+        let steadyTps = Double(steadySteps.count) / max(steadySecs, 1e-9)
+        print("\(label): decode \(decodeSteps) steps in \(String(format: "%.2f", decodeSecs))s (avg \(String(format: "%.2f", decodeTps)) tok/s, steady \(String(format: "%.2f", steadyTps)) tok/s)")
+        print("\(label): per-step ms (first 8): \(stepTimes.prefix(8).map { String(format: "%.0f", $0 * 1000) })")
+        print("\(label): RESULT prefill_ms=\(String(format: "%.0f", prefillMs)) decode_tps=\(String(format: "%.2f", decodeTps)) steady_tps=\(String(format: "%.2f", steadyTps)) prefill_tps=\(String(format: "%.1f", prefillTps))")
+    }
+
+    @Test("Qwen3.6-35B-A3B forwardMany matches per-token forward")
+    func forwardManyEquivalence() async throws {
+        let path = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
+        guard FileManager.default.fileExists(atPath: path) else {
+            print("Qwen3.6 smoke skipped: \(path) not found")
+            return
+        }
+        var optsBuilder = LoadOptions()
+        optsBuilder.prewarm = false
+        let opts = optsBuilder
+        let m: Model = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(path, options: opts)
+        }
+        guard let qwen = m.qwen35 else {
+            Issue.record("expected Qwen35Model engine, got \(type(of: m.engine))")
+            return
+        }
+        let prompt = "The history of the printing press began when"
+        let encoded = m.tokenizer.encode(text: prompt)
+        precondition(encoded.count >= 4,
+                     "forwardManyEquivalence: prompt encoded to \(encoded.count) tokens; need ≥ 4")
+
+        // ── Reference path: T per-token `forward` calls on fresh caches.
+        let refCaches = qwen.makeLayerCaches()
+        var refLastLogits: Tensor!
+        for (i, tok) in encoded.enumerated() {
+            refLastLogits = qwen.forward(tokenId: tok, position: i, caches: refCaches)
+        }
+        let refLogits = refLastLogits.toFloatArray()
+        let refArgmax = refLogits.enumerated().max(by: { $0.element < $1.element })!.offset
+
+        // ── Batched path: one `forwardMany` over the whole prompt.
+        let manyCaches = qwen.makeLayerCaches()
+        let manyCmd = Device.shared.makeCommandBuffer()
+        let manyLogitsTensor = qwen.forwardMany(
+            tokenIds: encoded, startPosition: 0,
+            caches: manyCaches, on: manyCmd, device: Device.shared)
+        manyCmd.commit()
+        await manyCmd.completed()
+        let manyLogits = manyLogitsTensor.toFloatArray()
+        let manyArgmax = manyLogits.enumerated().max(by: { $0.element < $1.element })!.offset
+
+        print("forwardManyEquivalence T=\(encoded.count): ref argmax=\(refArgmax) batched argmax=\(manyArgmax)")
+        let refTop5 = refLogits.enumerated().sorted { $0.element > $1.element }.prefix(5)
+            .map { (id: $0.offset, logit: $0.element) }
+        let manyTop5 = manyLogits.enumerated().sorted { $0.element > $1.element }.prefix(5)
+            .map { (id: $0.offset, logit: $0.element) }
+        print("  ref top5: \(refTop5)")
+        print("  many top5: \(manyTop5)")
+
+        #expect(refArgmax == manyArgmax,
+                "forwardMany batched argmax \(manyArgmax) ≠ per-token forward argmax \(refArgmax)")
+        let refTopLogit = refLogits[refArgmax]
+        let manyTopLogit = manyLogits[manyArgmax]
+        let absDelta = abs(refTopLogit - manyTopLogit)
+        #expect(absDelta < 0.5,
+                "forwardMany batched top-1 logit \(manyTopLogit) drifted \(absDelta) from per-token \(refTopLogit)")
+    }
+
+    @Test("Qwen3.6-35B-A3B forward pass — first-token greedy decode")
+    func firstTokenForward() async throws {
+        let path = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
+        guard FileManager.default.fileExists(atPath: path) else {
+            print("Qwen3.6 smoke skipped: \(path) not found")
+            return
+        }
+        var optsBuilder = LoadOptions()
+        optsBuilder.prewarm = false
+        let opts = optsBuilder
+        let m: Model
+        do {
+            m = try await ModelLoadLock.shared.loadSerially {
+                try await Model.load(path, options: opts)
+            }
+        } catch {
+            print("LOAD FAILED: \(error)")
+            throw error
+        }
+        // 11-token probe (matches the existing Qwen3.6 baseline prompt
+        // used in the prefill-hypothesis sweeps). Greedy decode of one
+        // token; compare against the mlx-swift-lm-produced baseline
+        // first-token = 11.
+        let prompt = "The history of the printing press began when"
+        let tokenizer = m.tokenizer
+        let encoded = tokenizer.encode(text: prompt)
+        print("encoded prompt (\(encoded.count) tokens): \(encoded.prefix(20))")
+
+        // Run the prefill manually so we can sample the first token
+        // before any maxTokens-loop kicks in.
+        let caches = m.engine.makeLayerCaches()
+        var lastLogits: Tensor!
+        let prefillStart = Date()
+        for (i, tok) in encoded.enumerated() {
+            lastLogits = m.engine.forward(tokenId: tok, position: i, caches: caches)
+        }
+        let prefillSecs = Date().timeIntervalSince(prefillStart)
+        print("prefill \(encoded.count) tokens: \(String(format: "%.3f", prefillSecs))s")
+
+        let logits = lastLogits.toFloatArray()
+        precondition(logits.count == m.engine.vocab,
+                     "logits length \(logits.count) != vocab \(m.engine.vocab)")
+        let argmax = logits.enumerated().max(by: { $0.element < $1.element })!.offset
+        print("first-token argmax = \(argmax)")
+        print("decoded first token: \(tokenizer.decode(tokens: [argmax]))")
+        // top-5 for sanity
+        let top5 = logits.enumerated().sorted { $0.element > $1.element }.prefix(5)
+            .map { (id: $0.offset, logit: $0.element, tok: tokenizer.decode(tokens: [$0.offset])) }
+        print("top5: \(top5)")
+    }
+}

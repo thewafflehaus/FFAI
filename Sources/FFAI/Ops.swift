@@ -25,6 +25,34 @@ public enum Ops {
         return (grid, tg)
     }
 
+    // ─── GPU copy (blit, no kernel dispatch) ─────────────────────────
+
+    /// GPU-side copy of `src` into `dst`. Encoded as an `MTLBlit`
+    /// command on `cmd` — no compute kernel, no PSO dispatch overhead.
+    /// Same dtype, same elementCount; layouts must match.
+    ///
+    /// Use when the caller already has `dst` allocated at a specific
+    /// row inside a larger contiguous buffer and needs to deposit the
+    /// op-produced `src` there (e.g. per-row GDN-layer write-back in
+    /// batched-prefill, where the per-token decode returns a fresh
+    /// tensor but the model's `[T, hidden]` running buffer needs that
+    /// row updated). Prefer `Ops.add(into:)` when an arithmetic
+    /// combine is what's wanted; reach for `copy` for the pure-move
+    /// case.
+    public static func copy(_ src: Tensor, into dst: Tensor,
+                            on cmd: MTLCommandBuffer) {
+        precondition(src.elementCount == dst.elementCount,
+                     "Ops.copy: src/dst element-count mismatch (\(src.elementCount) vs \(dst.elementCount))")
+        precondition(src.dtype == dst.dtype,
+                     "Ops.copy: src/dst dtype mismatch (\(src.dtype) vs \(dst.dtype))")
+        let bytes = src.elementCount * src.dtype.byteSize
+        let blit = cmd.makeBlitCommandEncoder()!
+        blit.copy(from: src.buffer, sourceOffset: src.offset,
+                  to: dst.buffer, destinationOffset: dst.offset,
+                  size: bytes)
+        blit.endEncoding()
+    }
+
     // ─── Element-wise binary: add ────────────────────────────────────
 
     public static func add(_ a: Tensor, _ b: Tensor, on cmd: MTLCommandBuffer,

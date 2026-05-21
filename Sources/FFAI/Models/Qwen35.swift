@@ -1892,6 +1892,36 @@ public final class Qwen35Model: LanguageModel {
             return forward(tokenId: tokenIds[0], position: startPosition,
                            caches: caches, on: cmd, device: device)
         }
+        // ─── Batched-T forward (mixed dispatch) ──────────────────────────
+        // Attention layers dispatch `Qwen35AttentionLayer.decodeMany`
+        // (mixer T-batched, FFN per-row). GDN layers still loop per-token
+        // because `Qwen35GDNMixer.forwardMany` (chunked-T GDN) hasn't
+        // landed yet; their per-row results are blitted back into the
+        // running `[T, hidden]` buffer via `Ops.copy`.
+        //
+        // The wins delivered today: attention-layer mixer projections
+        // fan from T·gemv to 1·gemm, SDPA from T·sdpaDecode to 1·
+        // sdpaMulti, gate-split gather from T to 1. Compounds across
+        // every attention layer in the stack.
+        if ProcessInfo.processInfo.environment["FFAI_LEGACY_FORWARDMANY"] != nil {
+            return _forwardManyPerTokenLegacy(tokenIds: tokenIds,
+                                              startPosition: startPosition,
+                                              caches: caches,
+                                              on: cmd, device: device)
+        }
+        return _forwardManyBatched(tokenIds: tokenIds,
+                                   startPosition: startPosition,
+                                   caches: caches,
+                                   on: cmd, device: device)
+    }
+
+    /// Legacy per-token-loop path retained behind `FFAI_LEGACY_FORWARDMANY=1`
+    /// for A/B benching of the batched mixer wiring.
+    private func _forwardManyPerTokenLegacy(
+        tokenIds: [Int], startPosition: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // Per-token loop for the (T-1) prefix — each call commits its own
         // work buffers, so `cmd` stays pristine. The final token queues
         // onto the caller's `cmd` so the default `forwardSample` /
@@ -1906,6 +1936,86 @@ public final class Qwen35Model: LanguageModel {
         }
         return forward(tokenId: tokenIds[prefix], position: startPosition + prefix,
                        caches: caches, on: cmd, device: device)
+    }
+
+    /// Mixed-dispatch batched forwardMany. Attention layers fan to
+    /// `decodeMany`; GDN (and any other) layer types stay per-token with
+    /// a per-row `Ops.copy` blit-back into the running `[T, hidden]`
+    /// buffer. Embedding gathers all T tokens in one dispatch. Final
+    /// norm + lm_head run only on the LAST row, on the caller's `cmd`.
+    private func _forwardManyBatched(
+        tokenIds: [Int], startPosition: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        let t = tokenIds.count
+        let dt = embedTokens.weight.dtype
+        let dtBytes = dt.byteSize
+
+        // ── Embed all T tokens in one gather ─────────────────────────────
+        let idsBuf = device.makeBuffer(length: t * 4)
+        let idsHost = tokenIds.map { UInt32($0) }
+        idsHost.withUnsafeBytes { _ = memcpy(idsBuf.contents(), $0.baseAddress!, t * 4) }
+        let idsTensor = Tensor(buffer: idsBuf, offset: 0, shape: [t], dtype: .u32)
+
+        var workCmd = device.makeCommandBuffer()
+        var h = embedTokens(idsTensor, on: workCmd).reshaped(to: [t * hidden])
+        // h is `[T, hidden]` flat.
+
+        for (i, layer) in layers.enumerated() {
+            if let attn = layer as? Qwen35AttentionLayer {
+                h = attn.decodeMany(h, t: t, startPosition: startPosition,
+                                    cache: caches[i],
+                                    cmd: workCmd, device: device)
+                // attn.decodeMany commits workCmd if MoE FFN. Refresh.
+                if attn.commitsCommandBuffer {
+                    workCmd = device.makeCommandBuffer()
+                }
+            } else {
+                // GDN (or other) layer — per-token loop with blit-back.
+                // Each layer.decode is the existing single-token path;
+                // we slice `h[r]` as input, get a fresh result tensor
+                // back, and blit it into `h[r]`. All T blits queue onto
+                // one `blitCmd` that commits at the end of this layer.
+                let blitCmd = device.makeCommandBuffer()
+                for r in 0..<t {
+                    let hRow = Tensor(buffer: h.buffer,
+                                      offset: h.offset + r * hidden * dtBytes,
+                                      shape: [hidden], dtype: dt)
+                    let rowOut = layer.decode(hRow, position: startPosition + r,
+                                              cache: caches[i],
+                                              cmd: workCmd, device: device)
+                    Ops.copy(rowOut, into: hRow, on: blitCmd)
+                    // GDN layers commit workCmd inside .decode; refresh.
+                    let committed: Bool
+                    switch layer {
+                    case let l as Qwen35GDNLayer: committed = l.commitsCommandBuffer
+                    case let l as Qwen35AttentionLayer: committed = l.commitsCommandBuffer
+                    default: committed = false
+                    }
+                    if committed { workCmd = device.makeCommandBuffer() }
+                }
+                blitCmd.commit()
+            }
+        }
+
+        // Make sure all in-flight writes to `h` are resident before the
+        // caller's `cmd` reads `h[T-1]` for the final norm / lm_head.
+        // If the last layer was non-committing (dense FFN attention),
+        // its work still sits on `workCmd`. Commit + wait.
+        if let last = layers.last,
+           !((last as? Qwen35GDNLayer)?.commitsCommandBuffer ?? false),
+           !((last as? Qwen35AttentionLayer)?.commitsCommandBuffer ?? false) {
+            workCmd.commit()
+            workCmd.waitUntilCompleted()
+        }
+
+        // ── Final norm + lm_head on the LAST row only ────────────────────
+        let lastRow = Tensor(buffer: h.buffer,
+                             offset: h.offset + (t - 1) * hidden * dtBytes,
+                             shape: [hidden], dtype: dt)
+        let normed = finalNorm(lastRow, on: cmd)
+        return lmHead(normed, on: cmd)
     }
 }
 
