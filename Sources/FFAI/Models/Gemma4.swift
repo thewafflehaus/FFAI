@@ -1648,6 +1648,97 @@ public final class Gemma4Model: LanguageModel {
         let normed = finalNorm(h, on: cmd)
         return lmHead(normed, on: cmd)
     }
+
+    // ─── VLM embedding-input path ────────────────────────────────────
+    //
+    // Gemma 4 is a VL-target text backbone (Gemma4-VL wraps it). The
+    // splice supplies a `[hidden]` row directly — a vision-encoder token
+    // or a text-token embedding the VL model looked up. The forward
+    // mirrors `forward(tokenId:...)` minus the embedding gather; the
+    // `sqrt(hidden)` embed-scale is still applied here (image tokens in
+    // Gemma 4 are scaled the same way as text tokens, matching the
+    // Gemma 3 VL convention).
+    //
+    // Per-Layer Embeddings (Gemma4E) are token-id-derived and so cannot
+    // be computed for a vision token — the dense Gemma 4 VL variant
+    // carries no PLE, and a PLE-bearing variant simply runs its layers
+    // with a nil per-layer input on the splice path (coherence-first).
+
+    public var supportsEmbeddingInput: Bool { true }
+
+    public func forward(inputEmbedding: Tensor, position: Int,
+                        caches: [any LayerCacheProtocol],
+                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(inputEmbedding.elementCount == hidden,
+                     "Gemma4Model.forward(inputEmbedding:): expected [\(hidden)], "
+                     + "got \(inputEmbedding.shape)")
+
+        // Embedding-scale on a private buffer (mirrors the token path).
+        let prepCmd = device.makeCommandBuffer()
+        var h = Ops.mul(inputEmbedding.reshaped(to: [hidden]), embedScale,
+                        on: prepCmd)
+        prepCmd.commit()
+        prepCmd.waitUntilCompleted()
+
+        // Layers run on their own self-committing buffers; `cmd` is left
+        // pristine for the final norm / head (same contract as the
+        // token-id forward). KV-sharing donor map applies unchanged.
+        let donorMap = params.previousKVs
+        var workCmd = device.makeCommandBuffer()
+        var batchPending = false
+        for (i, layer) in layers.enumerated() {
+            if !layer.batchable && batchPending {
+                workCmd.commit()
+                workCmd.waitUntilCompleted()
+                batchPending = false
+            }
+            let donorCache: (any KVCacheProtocol)? =
+                layer.isKvShared
+                ? (caches[donorMap[i]] as? any KVCacheProtocol)
+                : nil
+            let (newH, committed) = layer.forward(
+                h, position: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                perLayerInput: nil, cmd: workCmd, device: device,
+                donorCache: donorCache)
+            h = newH
+            if committed {
+                workCmd = device.makeCommandBuffer()
+                batchPending = false
+            } else {
+                batchPending = true
+            }
+        }
+        if batchPending {
+            workCmd.commit()
+            workCmd.waitUntilCompleted()
+        }
+
+        // Final norm + head. Soft-capping needs the logits host-side, so
+        // it runs on a private buffer (caller's `cmd` stays pristine).
+        if let softcap = finalLogitSoftcapping, softcap > 0 {
+            let headCmd = device.makeCommandBuffer()
+            let normed = finalNorm(h, on: headCmd)
+            let logits = lmHead(normed, on: headCmd)
+            return Gemma4Ops.softcap(logits, cap: softcap, on: headCmd)
+        }
+        let normed = finalNorm(h, on: cmd)
+        return lmHead(normed, on: cmd)
+    }
+
+    /// Raw embedding-table lookup for one text token — no embed-scale
+    /// (that is applied inside `forward(inputEmbedding:...)`).
+    public func textEmbedding(tokenId: Int, device: Device) -> Tensor {
+        let cmd = device.makeCommandBuffer()
+        let tokenBuf = device.makeBuffer(length: 4)
+        var tid = UInt32(tokenId)
+        memcpy(tokenBuf.contents(), &tid, 4)
+        let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
+        let embed = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return embed
+    }
 }
 
 // MARK: - Soft-cap

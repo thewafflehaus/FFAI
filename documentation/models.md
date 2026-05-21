@@ -103,9 +103,10 @@ splices the projected image tokens into the text stream.
 | **Qwen 2.5-VL** | [`Models/Qwen25VL.swift`](../Sources/FFAI/Models/Qwen25VL.swift) | `Qwen2_5_VLForConditionalGeneration` | Dynamic-resolution windowed-attention ViT tower + the Qwen 2.x text backbone routed through the Llama dense engine (embedding-input forward). |
 | **Qwen 3-VL** | [`Models/Qwen3VL.swift`](../Sources/FFAI/Models/Qwen3VL.swift) | `Qwen3VLForConditionalGeneration` | Dynamic-resolution full-attention ViT tower (LayerNorm pre-norms, GELU MLP, learned position table) + the Qwen 3 dense text backbone (embedding-input forward). |
 | **Qwen 3-VL-MoE** | [`Models/Qwen3VLMoe.swift`](../Sources/FFAI/Models/Qwen3VLMoe.swift) | `Qwen3VLMoeForConditionalGeneration` | The Qwen3-VL ViT tower + the Qwen 3.5 mixture-of-experts hybrid text backbone (Gated Delta Net ↔ attention, block-sparse MoE FFN), embedding-input forward. |
+| **Gemma 4 VL** | [`Models/Gemma4VL.swift`](../Sources/FFAI/Models/Gemma4VL.swift) | `Gemma4ForConditionalGeneration` (+ `vision_config`) | Bespoke Gemma 4 ViT tower (RoPE attention with multi-dimensional positions, q/k/v RMSNorms, four per-block GemmaRMSNorms, attention-pooling head) + multi-modal embedder + Gemma 4 text backbone (embedding-input forward). |
 
-Other VL families (Gemma 4-VL, Nemotron-VLM) are recognized by the
-registry with an actionable not-yet-integrated error.
+Other VL families (Nemotron-VLM) are recognized by the registry with an
+actionable not-yet-integrated error.
 
 ### Neural audio codecs (Phase 7)
 
