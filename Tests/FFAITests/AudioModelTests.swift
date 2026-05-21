@@ -158,6 +158,114 @@ struct AudioModelTests {
                 == Capability.omniAudio)
     }
 
+    @Test("AudioModelRegistry — detects LlamaTTS from the orpheus type")
+    func registryDetectsLlamaTTS() {
+        let config = ModelConfig(
+            architecture: "LlamaForCausalLM", modelType: "orpheus",
+            raw: ["model_type": "orpheus", "hidden_size": 3072,
+                  "num_hidden_layers": 28, "num_attention_heads": 24,
+                  "vocab_size": 156_940, "sample_rate": 24_000])
+        #expect(AudioModelRegistry.handles(config))
+        #expect(LlamaTTSModel.handles(config))
+        #expect(AudioModelRegistry.capabilities(for: config)
+                == Capability.textToSpeech)
+    }
+
+    @Test("AudioModelRegistry — detects LlamaTTS structurally")
+    func registryDetectsLlamaTTSStructural() {
+        // A plain LlamaForCausalLM with the Orpheus-extended vocabulary
+        // and a TTS sample_rate is detected even without an explicit
+        // model_type.
+        let config = ModelConfig(
+            architecture: "LlamaForCausalLM", modelType: "llama",
+            raw: ["model_type": "llama", "hidden_size": 3072,
+                  "vocab_size": 156_940, "sample_rate": 24_000])
+        #expect(LlamaTTSModel.handles(config))
+    }
+
+    @Test("AudioModelRegistry — detects Marvis / CSM")
+    func registryDetectsMarvis() {
+        let config = ModelConfig(
+            architecture: "CSMForConditionalGeneration", modelType: "csm",
+            raw: ["model_type": "csm", "hidden_size": 1024,
+                  "num_hidden_layers": 16, "num_attention_heads": 16,
+                  "intermediate_size": 8192, "audio_vocab_size": 2051,
+                  "audio_num_codebooks": 32,
+                  "depth_decoder_config": ["hidden_size": 1024,
+                                           "num_hidden_layers": 4,
+                                           "num_attention_heads": 8,
+                                           "intermediate_size": 8192]])
+        #expect(AudioModelRegistry.handles(config))
+        #expect(MarvisModel.handles(config))
+        #expect(AudioModelRegistry.capabilities(for: config)
+                == Capability.textToSpeech)
+    }
+
+    @Test("AudioModelRegistry — detects Qwen3TTS from talker_config")
+    func registryDetectsQwen3TTS() {
+        let config = ModelConfig(
+            architecture: "Qwen3TTSForConditionalGeneration",
+            modelType: "qwen3_tts",
+            raw: ["model_type": "qwen3_tts",
+                  "talker_config": ["hidden_size": 1024,
+                                    "num_hidden_layers": 28,
+                                    "vocab_size": 3072],
+                  "speaker_encoder_config": ["enc_dim": 1024],
+                  "sample_rate": 24_000])
+        #expect(AudioModelRegistry.handles(config))
+        #expect(Qwen3TTSModel.handles(config))
+        #expect(AudioModelRegistry.capabilities(for: config)
+                == Capability.textToSpeech)
+    }
+
+    @Test("MarvisConfig — decodes the dual-transformer shape")
+    func marvisConfigDecodes() {
+        let config = ModelConfig(
+            architecture: nil, modelType: "csm",
+            raw: ["model_type": "csm", "hidden_size": 2048,
+                  "num_hidden_layers": 16, "num_attention_heads": 32,
+                  "num_key_value_heads": 8, "head_dim": 64,
+                  "intermediate_size": 8192, "audio_vocab_size": 2051,
+                  "audio_num_codebooks": 32, "text_vocab_size": 128_256,
+                  "depth_decoder_config": ["hidden_size": 1024,
+                                           "num_hidden_layers": 4,
+                                           "num_attention_heads": 8,
+                                           "intermediate_size": 8192]])
+        let mc = MarvisConfig.from(config)
+        #expect(mc != nil)
+        #expect(mc?.backbone.nLayers == 16)
+        #expect(mc?.decoder.nLayers == 4)
+        #expect(mc?.audioNumCodebooks == 32)
+    }
+
+    @Test("Qwen3TTSConfig — decodes the nested talker config")
+    func qwen3TTSConfigDecodes() {
+        let config = ModelConfig(
+            architecture: nil, modelType: "qwen3_tts",
+            raw: ["model_type": "qwen3_tts",
+                  "talker_config": ["hidden_size": 1024,
+                                    "num_hidden_layers": 28,
+                                    "num_attention_heads": 16,
+                                    "vocab_size": 3072,
+                                    "codec_eos_token_id": 2150],
+                  "speaker_encoder_config": [:],
+                  "sample_rate": 24_000])
+        let qc = Qwen3TTSConfig.from(config)
+        #expect(qc != nil)
+        #expect(qc?.talker.nLayers == 28)
+        #expect(qc?.talker.hidden == 1024)
+        #expect(qc?.codecEosTokenId == 2150)
+    }
+
+    @Test("LlamaTTS — SNAC code de-interleave plane lengths")
+    func llamaTTSDeinterleave() {
+        // 14 tokens = 2 SNAC frames → layer1:2, layer2:4, layer3:8.
+        let planes = LlamaTTSModel.deinterleaveSNACCodes(Array(0..<14))
+        #expect(planes[0].count == 2)
+        #expect(planes[1].count == 4)
+        #expect(planes[2].count == 8)
+    }
+
     @Test("AudioModelRegistry — text-only config is not an audio model")
     func registryRejectsTextModel() {
         let config = ModelConfig(
