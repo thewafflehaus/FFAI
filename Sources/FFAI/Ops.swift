@@ -1873,6 +1873,7 @@ public enum Ops {
                 // kernel skip the masked range [sink_end, window_start)
                 // at the loop-bound level. See the doc comment above.
                 sink_end: UInt32(sinkEnd), window_start: UInt32(windowStart),
+                has_sink: 0, sink_logit: 0,
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (128, .f16):
@@ -1885,6 +1886,7 @@ public enum Ops {
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
                 sink_end: UInt32(sinkEnd), window_start: UInt32(windowStart),
+                has_sink: 0, sink_logit: 0,
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (128, .bf16):
@@ -1897,6 +1899,7 @@ public enum Ops {
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
                 sink_end: UInt32(sinkEnd), window_start: UInt32(windowStart),
+                has_sink: 0, sink_logit: 0,
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (64, .f32):

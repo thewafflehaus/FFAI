@@ -17,6 +17,7 @@ public enum LoadedAudioModel: @unchecked Sendable {
     case whisper(WhisperModel)
     case kokoro(KokoroModel)
     case qwenOmni(QwenOmniModel)
+    case llamaTTS(LlamaTTSModel)
 
     /// The capabilities this model exposes — `audioIn` for STT / omni,
     /// `audioOut` for TTS.
@@ -25,6 +26,7 @@ public enum LoadedAudioModel: @unchecked Sendable {
         case .whisper: return Capability.speechToText
         case .kokoro: return Capability.textToSpeech
         case .qwenOmni: return Capability.omniAudio
+        case .llamaTTS: return Capability.textToSpeech
         }
     }
 }
@@ -39,6 +41,7 @@ public enum AudioModelRegistry {
         WhisperModel.handles(config)
             || KokoroModel.handles(config)
             || QwenOmniModel.handles(config)
+            || LlamaTTSModel.handles(config)
     }
 
     /// The capability set a checkpoint at `directory` would expose,
@@ -59,18 +62,26 @@ public enum AudioModelRegistry {
         if QwenOmniModel.handles(config) { return Capability.omniAudio }
         if WhisperModel.handles(config) { return Capability.speechToText }
         if KokoroModel.handles(config) { return Capability.textToSpeech }
+        if LlamaTTSModel.handles(config) { return Capability.textToSpeech }
         return nil
     }
 
     /// Load the audio model at a resolved snapshot `directory`.
     /// QwenOmni is checked first (its config nests a Whisper-style
     /// `audio_config`, which would otherwise be mistaken for Whisper).
+    /// LlamaTTS is checked before Whisper / Kokoro because an Orpheus
+    /// checkpoint can carry a plain `LlamaForCausalLM` architecture and
+    /// its loader needs the tokenizer (hence the async signature).
     public static func load(directory: URL, device: Device = .shared)
-        throws -> LoadedAudioModel {
+        async throws -> LoadedAudioModel {
         let config = try ModelConfig.load(from: directory)
         if QwenOmniModel.handles(config) {
             return .qwenOmni(try QwenOmniModel.load(directory: directory,
                                                     device: device))
+        }
+        if LlamaTTSModel.handles(config) {
+            return .llamaTTS(try await LlamaTTSModel.load(
+                directory: directory, device: device))
         }
         if WhisperModel.handles(config) {
             return .whisper(try WhisperModel.load(directory: directory,
