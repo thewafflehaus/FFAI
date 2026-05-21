@@ -3140,4 +3140,80 @@ public enum Ops {
             fatalError("Ops.sigmoidScalarFMA: unsupported dtype \(out.dtype)")
         }
     }
+
+    // ─── Indirect dequant GEMV ────────────────────────────────────────
+    //
+    // Variant of `dequantGemv` that takes its dispatch shape from a GPU
+    // buffer instead of a host-computed `MTLSize`. The buffer holds
+    // `MTLDispatchThreadgroupsIndirectArguments` — 3 × u32 = threadgroup
+    // counts for x/y/z (NOT thread counts). For the reduction kernel
+    // shape used here, write `[outDim, 1, 1]` at the right offset (one
+    // threadgroup per output row, `threadgroupSize = 256`).
+    //
+    // Plumbing for FFAI's GPU-router Day 1 work. The win lands once
+    // multiple chained MoE-layer expert dispatches share one indirect
+    // buffer + one command buffer (Day 1.5 cross-layer chain). Single-
+    // layer use is correctness validation for the indirect path.
+    //
+    // Only the f16 and bf16 4-bit paths get an indirect emit (Qwen3.6-A3B
+    // is bf16 + int4). f32 / 8-bit fall through to a fatalError — no
+    // production MoE checkpoint uses those at decode.
+    public static func dequantGemvIndirect(
+        weight: Tensor, scales: Tensor, biases: Tensor,
+        input: Tensor, bits: Int, groupSize: Int = 64,
+        indirectBuffer: MTLBuffer, indirectBufferOffset: Int,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor
+    ) {
+        precondition(bits == 4,
+                     "Ops.dequantGemvIndirect: only 4-bit weights have indirect variants (got bits=\(bits))")
+        precondition(weight.shape.count == 2, "dequantGemvIndirect: weight must be 2D")
+        precondition(weight.dtype == .u32, "dequantGemvIndirect: weight must be u32 (packed)")
+        precondition(scales.dtype == input.dtype && biases.dtype == input.dtype,
+                     "dequantGemvIndirect: scales/biases dtype must match input")
+        precondition(out.dtype == input.dtype,
+                     "dequantGemvIndirect: out dtype must match input")
+        let outDim = weight.shape[0]
+        let packedPerRow = weight.shape[1]
+        let inDim = packedPerRow * 32 / bits
+        precondition(input.elementCount == inDim,
+                     "dequantGemvIndirect: input \(input.elementCount) ≠ in_dim \(inDim)")
+        precondition(out.elementCount == outDim,
+                     "dequantGemvIndirect: out \(out.elementCount) ≠ outDim \(outDim)")
+        if let reason = OpsValidation.validateDequantGemv(
+            outDim: outDim, inDim: inDim, bits: bits, groupSize: groupSize,
+            scalesCount: scales.elementCount, biasesCount: biases.elementCount
+        ) {
+            preconditionFailure("Ops.dequantGemvIndirect: \(reason)")
+        }
+        let tgWidth = 256
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+        let inDimU = UInt32(inDim)
+        let groupSizeU = UInt32(groupSize)
+
+        switch input.dtype {
+        case .f16:
+            MetalTileKernels.dequant_gemv_int4_f16_indirect(
+                weight: weight.buffer, weightOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                input: input.buffer, inputOffset: input.offset,
+                output: out.buffer, outputOffset: out.offset,
+                in_dim: inDimU, group_size: groupSizeU,
+                indirectBuffer: indirectBuffer, indirectBufferOffset: indirectBufferOffset,
+                threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.dequant_gemv_int4_bf16_indirect(
+                weight: weight.buffer, weightOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                input: input.buffer, inputOffset: input.offset,
+                output: out.buffer, outputOffset: out.offset,
+                in_dim: inDimU, group_size: groupSizeU,
+                indirectBuffer: indirectBuffer, indirectBufferOffset: indirectBufferOffset,
+                threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.dequantGemvIndirect: unsupported input dtype \(input.dtype)")
+        }
+    }
 }
