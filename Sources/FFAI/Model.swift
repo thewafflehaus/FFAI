@@ -4,6 +4,7 @@
 // surface.
 
 import Foundation
+import Metal
 import Tokenizers
 
 public enum ModelError: Error, CustomStringConvertible {
@@ -776,6 +777,17 @@ public final class Model: @unchecked Sendable {
                 let config = try ModelConfig.load(from: dir)
                 Debug.log(.load, "config: arch=\(config.architecture ?? "?") model_type=\(config.modelType ?? "?") hidden=\(config.hiddenSize ?? 0) layers=\(config.numLayers ?? 0)")
                 let bundle = try SafeTensorsBundle(directory: dir, device: device)
+                // Pin all weight buffers in GPU residency. Avoids
+                // per-command-buffer residency re-validation on every
+                // prefill / decode dispatch. macOS 15+ / iOS 18+; opt-out
+                // via FFAI_NO_RESIDENCY_SET=1.
+                var weightBuffers: [MTLBuffer] = []
+                for file in bundle.files {
+                    for entry in file.entries.values {
+                        weightBuffers.append(entry.buffer)
+                    }
+                }
+                device.markWeightsResident(weightBuffers)
                 let loaded = try ModelRegistry.dispatchAndLoad(
                     config: config, weights: bundle, options: options, device: device
                 )
