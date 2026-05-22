@@ -27,8 +27,9 @@ mixed-precision checkpoints (e.g. Gemma 4 26B-A4B) load correctly.
 zoo — SmolLM, OLMo, Starcoder2, internlm2, DeepSeek-R1 distills),
 Qwen 2, Qwen 3, Qwen 3.5 (dense / MoE / GDN-hybrid), Mistral, Phi,
 Gemma 3, Gemma 4 (dense / E-series PLE / MoE), GPT-OSS-20B, Mamba 2,
-the hybrid families (NemotronH, Jamba, GraniteMoeHybrid, FalconH1),
-and Nemotron-Labs-Diffusion. Each ships with a coherent-output
+the hybrid families (NemotronH, Jamba, GraniteMoeHybrid, FalconH1,
+LFM2 / LFM2.5 — conv+attention, dense / MoE), and
+Nemotron-Labs-Diffusion. Each ships with a coherent-output
 integration test.
 
 **KV caches.** Raw fp16/bf16; affine-quantized (`affine4` / `affine8`

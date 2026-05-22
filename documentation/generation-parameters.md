@@ -62,11 +62,18 @@ Current values:
 |---|---|---|---|---|---|---|---|
 | `LlamaDense` | 0.6 | 1.0 | 0 | 0.0 | 1.0 | 1024 | 256 |
 | `Qwen3Dense` | 0.6 | 0.95 | 20 | 0.0 | 1.0 | 1024 | 256 |
+| `LFM2Dense` / `LFM2MoE` | 0.0 | 1.0 | 0 | 0.0 | 1.0 | 1024 | 256 |
 
-These match mlx-swift-lm's per-family `GenerationParameters` baseline
-and `defaultPrefillStepSize` for the same architectures. As new
-families land (Qwen 3.5 hybrid, Qwen 3.5 MoE, Mistral, Phi, Gemma,
-etc.) they declare their own defaults — see
+The full model family set ships today — dense text, hybrid (SSM / GDN /
+conv+attention), MoE, vision-language, and audio families have all
+landed, and each variant struct declares its own
+`defaultGenerationParameters`. The values above are the ones whose
+exact defaults are spelled out here; for any other family, read its
+variant struct in `Sources/FFAI/Models/<Family>.swift` or run `ffai
+inspect <repo>` to see the resolved values. The Llama / Qwen 3
+defaults match mlx-swift-lm's per-family `GenerationParameters`
+baseline and `defaultPrefillStepSize` for the same architectures.
+When porting a new family, declare its defaults — see
 [developing/adding-a-model.md § Step 4: family defaults](developing/adding-a-model.md#step-4--declare-family-defaults).
 
 ## Three ways to call `generate`

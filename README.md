@@ -10,7 +10,9 @@ DSL. No Python. No MLX. No C compilation. No JIT. No four-repo dependency chain.
 
 ## Status
 
-Early bootstrap — Phase 4 complete (end-to-end inference + perf pass).
+Early bootstrap — the dense-text, hybrid, vision-language, and audio
+model waves have all landed; end-to-end inference runs real
+HuggingFace checkpoints across every shipped family.
 
 - [`planning/plan.md`](planning/plan.md) — phased build-out, what we're
   shipping when
@@ -36,8 +38,8 @@ Early bootstrap — Phase 4 complete (end-to-end inference + perf pass).
 | **Quantized KV cache** | Squeeze long contexts into a fraction of the memory. Affine 4/8-bit + AURA compressed. | ✅ |
 | **Hybrid models (GDN + SSM)** | Qwen 3.5, Mamba 2, NemotronH, Jamba, GraniteMoeHybrid, FalconH1 — attention mixed with recurrence. | ✅ |
 | **Mixture-of-experts** | GPT-OSS-20B, Qwen 3.5 MoE, Gemma 4 MoE — sparse top-K expert routing. | ✅ |
-| **Vision (multi-modal)** | Drop in an image, get text back. Qwen 2.5-VL / 3.5-VL first. | 🚧 Phase 6.5 |
-| **Audio in / out** | Whisper-style speech-to-text and text-to-speech. | 🚧 Phase 7 |
+| **Vision (multi-modal)** | Drop in an image, get text back. Gemma 3/4-VL, Qwen 2.5/3-VL, Qwen3-VL-MoE, Nemotron-VLM. | ✅ |
+| **Audio in / out** | Whisper-style speech-to-text, text-to-speech, omni audio, VAD — plus 7 neural audio codecs. | ✅ |
 | **Speculative decoding** | Faster generation via n-gram lookup + draft models. | 🚧 Phase 8 |
 | **Autotuner** | Per-shape kernel tuning so you never leave perf on the table. | 🚧 Phase 9 |
 | **GGUF support** | Run llama.cpp's quants directly. | 🚧 Phase 10 |
@@ -113,6 +115,7 @@ integration test — see
 | **NemotronH** (hybrid) | `nemotron_h` | `nvidia/Nemotron-H-4B-Base-8K` |
 | **GraniteMoeHybrid** | `granitemoehybrid` | `mlx-community/granite-4.0-h-350m-bf16` |
 | **Jamba** (hybrid) | `jamba` | `mlx-community/AI21-Jamba-Reasoning-3B-bf16` |
+| **LFM2 / LFM2.5** (conv+attention hybrid · MoE) | `lfm2` / `lfm2_moe` | `LiquidAI/LFM2-1.2B` · `LiquidAI/LFM2-8B-A1B` |
 | **Nemotron-Labs-Diffusion** | `nemotron_labs_diffusion` | `nvidia/Nemotron-Labs-Diffusion-3B` |
 
 Quantization follows the **mlx-community** packed-uint32 format
@@ -123,9 +126,15 @@ downloads the snapshot, and routes to the right family. See
 [`models.md`](documentation/models.md) for sizes exercised + known
 gaps (hybrid families load raw bf16/f16 only).
 
+Vision-language families (Gemma 3/4-VL, Qwen 2.5/3-VL, Qwen3-VL-MoE,
+Nemotron-VLM) and audio families (Whisper STT, SenseVoice STT, Kokoro
+TTS, LlamaTTS / Marvis / Qwen3-TTS, Qwen-Omni, Silero/SmartTurn VAD)
+plus seven neural audio codecs are all in tree — see
+[`models.md`](documentation/models.md).
+
 **Coming next** (per [`planning/roadmap.md`](planning/roadmap.md)):
-Vision (Qwen 2.5/3.5-VL, Gemma 3/4-VL — Phase 6.5), audio (Whisper,
-Kokoro, Qwen-Omni — Phase 7), speculative decoding + serving (Phase 8).
+chunked (batched) prefill, AURA compressed-domain attention,
+speculative decoding + serving (Phase 8).
 
 ## High Level Architecture
 
@@ -149,7 +158,7 @@ Kokoro, Qwen-Omni — Phase 7), speculative decoding + serving (Phase 8).
 ┌────────────────────────▼────────────────────────────────┐
 │  metaltile (Rust, sibling repo)                         │
 │   • #[kernel] DSL → IR → MSL                            │
-│   • `tile build --emit all` (metaltile-cli) produces:   │
+│   • `tile emit` (metaltile-cli) produces:               │
 │       kernels.metallib   (compiled by xcrun metal)      │
 │       manifest.json      (kernel metadata)              │
 │       MetalTileKernels.swift  (typed wrappers)          │

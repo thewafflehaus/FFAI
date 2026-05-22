@@ -82,8 +82,8 @@ through the well-known variable names; the rest is in the model's
 |---|---|
 | **Qwen 3** | `enable_thinking: true` → `<think>...</think>` block before the answer. Pair with [`ThinkingSplit`](observability.md#think-vs-gen-split) for per-segment stats. |
 | **DeepSeek-R1** | Same `<think>...</think>` convention as Qwen 3. |
-| **GPT-OSS (Harmony)** | `reasoning_effort: "high"` (etc.) → analysis + final channel structure. The `ThinkingSplit.harmony` scanner that partitions those stays a TODO until the GPT-OSS family ships (Phase 8+). |
-| **Gemma 3 / 4** | `<channel\|reasoning\|>` markers when reasoning is enabled. ThinkingSplit scanner stub lands with the Gemma family file (Phase 5+). |
+| **GPT-OSS (Harmony)** | `reasoning_effort: "high"` (etc.) → analysis + final channel structure. The GPT-OSS family ships; pair with the `ThinkingSplit.harmony` scanner to partition the analysis + final channels. |
+| **Gemma 3 / 4** | `<channel\|reasoning\|>` markers when reasoning is enabled. The Gemma 3 / 4 family files ship; the ThinkingSplit scanner partitions the reasoning segment. |
 | **Llama 3 instruct** | Standard chat template, no reasoning hooks. |
 | **Tools / function calling** | Not yet wired — `tools:` is plumbed through swift-transformers but FFAI's `ChatMessage` doesn't carry `toolCalls` yet. Lands when `.toolCalling` capability ships. |
 

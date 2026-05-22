@@ -192,40 +192,24 @@ public static func load<Family>(...) throws -> Loaded {
 }
 ```
 
-## Step 6 — capture golden fixtures
+## Step 6 — verify correctness
 
-Golden fixtures are how we pin correctness without a Python
-dependency in CI. The capture script runs the new model through our
-reference — `mlx-lm` for text-only families, `mlx-vlm` for
-vision-language families — and dumps tokens + per-layer activations
-to disk; tests then load those files and compare against our forward
-pass within tolerance. One commit pins the reference; every
-subsequent `swift test` is fully reproducible on a stock Apple Silicon
-runner with no Python in the loop.
+FFAI does **not** pin correctness with golden fixtures. There is no
+Python dependency in the test loop. Correctness comes from two
+layers:
 
-`mlx-vlm` installs `mlx-lm` as a transitive dependency, so a single
-`pip install mlx-vlm` gets you both backends. The capture script
-picks the right one per model based on whether the config declares a
-vision encoder.
-
-```bash
-pip install mlx-vlm        # also installs mlx-lm
-python Tools/capture-fixtures.py \
-    --model <hf-repo-id> \
-    --output Tests/Fixtures/<family>/ \
-    --prompts "Once upon a time,The capital of France is" \
-    --max-tokens 16
-```
-
-The script invokes `mlx_lm.generate` (or `mlx_vlm.generate` for VLMs)
-and dumps:
-
-- `metadata.json` — mlx-lm version, capture date, config hash
-- `tokens-<prompt-hash>.json` — token sequences for each prompt
-- `activations-layer-0.npy` — first-layer activations (optional, for
-  forward-pass tests)
-
-Commit the fixtures with the model code.
+- **Per-kernel GPU correctness** — every non-trivial kernel lands
+  with a metaltile-side `<kernel>_gpu_correctness` test comparing the
+  GPU result against a naive CPU oracle in fp32 (see metaltile's
+  `docs/testing.md`). This is the tight numerical signal. If your
+  family needed a new kernel, that test ships in the same commit on
+  the metaltile side.
+- **Per-family coherence** — the FFAI integration test (Step 8) loads
+  a real checkpoint, greedy-decodes, and asserts the model produces
+  coherent text. The contract is "the pipeline produces coherent
+  output", not bit-parity with mlx-lm / mlx-vlm — cross-implementation
+  token parity proved to be a measure of rounding-mode alignment, not
+  correctness, and was dropped.
 
 ## Step 7 — wire inspect hooks
 
@@ -313,22 +297,38 @@ the inspect path runs end-to-end against a representative model
 from each family; that test will fail loudly if a family file
 forgets to wire `InspectTap` calls.
 
-## Step 8 — add tests
+## Step 8 — add the integration test
 
-`Tests/ModelTests/<Family>/` gets at minimum:
+Every family gets one flat file,
+`Tests/ModelTests/<Family>IntegrationTests.swift`. It loads the
+smallest published checkpoint through `ModelLoadLock.shared`
+(serializes the multi-GB load across suites), greedy-decodes, and
+asserts `expectCoherentOutput(...)` — a token-count floor, no
+degenerate repeat run, minimum token diversity. A checkpoint that
+can't be fetched (offline, gated repo) prints a skip line and
+**passes**:
 
-- **`<Family>ForwardTests.swift`** — one prompt, run the forward
-  pass once, compare the per-layer activations against the
-  captured golden values within tolerance (`1e-3` for bf16,
-  `1e-4` for fp16, `1e-2` for 4-bit quant).
-- **`<Family>GenerateTests.swift`** — one prompt with greedy
-  argmax, generate N tokens, compare exact token sequence against
-  the golden capture.
+```swift
+@Suite("<Family> integration", .serialized)
+struct <Family>IntegrationTests {
+    @Test("load + greedy generate produces coherent output")
+    func loadAndGenerate() async throws {
+        let m: Model
+        do { m = try await ModelLoadLock.shared.loadSerially {
+                 try await Model.load("<smallest-published-repo>") } }
+        catch { print("skipped: \(error)"); return }
+        let r = try await m.generate(
+            prompt: "Once upon a time",
+            parameters: GenerationParameters(maxTokens: 64, temperature: 0))
+        expectCoherentOutput(r.generatedTokens, label: "<Family>")
+    }
+}
+```
 
-Determinism check: both tests should be exactly reproducible run-to-
-run on the same machine. Floating-point drift is fine within the
-forward-pass tolerance; greedy decode must be bit-exact (the same
-argmax produces the same token).
+Determinism: temp = 0 greedy decode is bit-exact run-to-run on the
+same machine — the cross-cutting `DeterminismSmokeTests` covers that
+contract. See [testing.md](testing.md) for the full integration-test
+story, the cross-cutting suites, and the env-gated heavy checkpoints.
 
 ## Step 9 — wire into CI
 
@@ -360,7 +360,7 @@ checkpoints you exercised.
 
 - [Developing](developing.md) — repo layout, `make` workflow, kernel
   regeneration.
-- [Testing](testing.md) — golden fixtures, coverage targets.
+- [Testing](testing.md) — integration coherence checks, coverage targets.
 - [Architecture](../architecture.md) — where family files sit in the
   stack, the per-token dispatch loop they implement.
 - [`planning/plan.md`](../../planning/plan.md) — what's in / out of

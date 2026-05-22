@@ -74,7 +74,7 @@ For sizes exercised + known gaps, see [models.md](models.md).
 
 When a new model checkpoint isn't producing coherent text, run
 `ffai inspect <repo>` before anything else. The output is structured
-in five sections:
+in six sections:
 
 1. **Architecture** — family + dtype + every shape the loader inferred from
    `config.json` (hidden / nLayers / nHeads / nKVHeads / head_dim / vocab

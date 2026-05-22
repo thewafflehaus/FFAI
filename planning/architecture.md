@@ -44,7 +44,7 @@ resources.
                       │
                       ▼
   ┌──────────────────────────────────────────────────────────────┐
-  │  tile build --emit all --out Sources/MetalTileSwift          │
+  │  tile emit --out Sources/MetalTileSwift                      │
   │  (metaltile-cli, dev sibling repo)                           │
   │                                                              │
   │  Walks the inventory of `BenchSpec`-registered kernels,      │
@@ -76,8 +76,8 @@ resources.
   └──────────────────────────────────────────────────────────────┘
 
            │
-           │  triggered automatically by SPM build plugin
-           │  (MetalTileEmitPlugin) on every `swift build`
+           │  `make regenerate-kernels` runs `tile emit` before
+           │  every `make build` / `make test`
            ▼
    swift build / swift test  →  ready Swift package
 ```
@@ -97,8 +97,8 @@ resources.
   MLX upstream counterpart at the pinned `MLX_COMMIT`; correctness
   validated by FFAI integration tests against real models). Kernels
   graduate from `ffai/` to `mlx/` when an MLX counterpart ships
-  upstream or someone wires a hand-written runner. The `tile build`
-  emit pipeline is agnostic — both folders feed the same
+  upstream or someone wires a hand-written runner. The `tile emit`
+  pipeline is agnostic — both folders feed the same
   `kernels.metallib` + `manifest.json` + `MetalTileKernels.swift`
   outputs.
 - **No CPU interpreter.** The `metaltile-interp` crate was dropped
@@ -1154,8 +1154,8 @@ floor.
   ┌──────────────────────────────────────────────────────────┐
   │  metaltile (Rust workspace, sibling repo)                │
   │  Generates kernels.metallib + manifest + Swift wrappers  │
-  │  via the `tile build --emit all --out <dir>` CLI         │
-  │  command (metaltile-cli).                                │
+  │  via the `tile emit --out <dir>` CLI command             │
+  │  (metaltile-cli).                                        │
   └──────────────────────────────────────────────────────────┘
 ```
 

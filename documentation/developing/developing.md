@@ -36,13 +36,12 @@ Sources/
 Tests/
   MetalTileSwiftTests/     One file per kernel
   FFAITests/               Tensor, Module, KVCache, Sampling, ...
-  ModelTests/              Per-model forward + generate determinism
-  Fixtures/                Golden outputs captured from mlx-lm
+  ModelTests/              Per-family integration tests — load,
+                           greedy-decode, assert coherent output
 
 planning/                  Phased build-out + architecture diagrams
 documentation/             User-facing docs (you are here)
 scripts/                   setup-dev.sh, coverage.sh, verify-docs.sh
-Tools/                     Fixture-capture scripts (Python, dev-only)
 ```
 
 For the per-Sources-file purpose see
@@ -53,7 +52,7 @@ For the per-Sources-file purpose see
 ```bash
 make build              # regenerate kernels + swift build (debug)
 make build-release      # regenerate kernels + swift build -c release
-make regenerate-kernels # run `tile build --emit all` only
+make regenerate-kernels # run `tile emit` only
 make test               # regenerate kernels + swift test
 make coverage           # swift test --enable-code-coverage + summary
 make format             # swift-format the repo in place
@@ -70,7 +69,7 @@ no out-of-date kernels in CI or local dev.
 ```
 ~/Development/metaltile          ←  Rust kernel source
    cargo run --bin tile          ←  generates →  Sources/MetalTileSwift/
-   -- build --emit all                              Resources/kernels.metallib
+   -- emit                                           Resources/kernels.metallib
    --out Sources/MetalTileSwift                     Resources/kernels/*.metal
                                                     Resources/manifest.json
                                                     Generated/MetalTileKernels.swift
@@ -79,10 +78,10 @@ no out-of-date kernels in CI or local dev.
                                                     the generated typed wrappers
 ```
 
-`make regenerate-kernels` runs `cargo run --release --bin tile -- build
---emit all --out Sources/MetalTileSwift` from the sibling metaltile
-repo. Cargo runs from the metaltile dir so its `rust-toolchain.toml`
-(nightly, 2024 edition) is honored. Eventually the `tile` binary will
+`make regenerate-kernels` runs `cargo run --release --bin tile -- emit
+--out Sources/MetalTileSwift` from the sibling metaltile repo. Cargo
+runs from the metaltile dir so its `rust-toolchain.toml` (nightly,
+2024 edition) is honored. Eventually the `tile` binary will
 ship via Homebrew so this won't need a metaltile checkout — only
 kernel authors will need the repo.
 
@@ -116,15 +115,14 @@ TL;DR:
    protocol, and one or more variant structs.
 2. Register the family in `Sources/FFAI/Model.swift` →
    `ModelRegistry.dispatchAndLoad`.
-3. Capture golden fixtures via `Tools/capture-fixtures.py` against
-   mlx-lm.
-4. Add `Tests/ModelTests/<Family>/` with forward + generate
-   determinism tests.
+3. Add `Tests/ModelTests/<Family>IntegrationTests.swift` — load the
+   smallest published checkpoint, greedy-decode, and assert
+   `expectCoherentOutput(...)`.
 
 ## Testing
 
-See [testing.md](testing.md) for running tests, the golden-fixture
-convention, and coverage targets.
+See [testing.md](testing.md) for running tests, the
+`expectCoherentOutput` integration model, and coverage targets.
 
 ## Coding conventions
 
@@ -133,8 +131,10 @@ convention, and coverage targets.
 - **Comments** — sparing. Lead with WHY, not WHAT. The
   Tensor/Module/Layer naming carries the WHAT.
 - **No mocking the GPU.** Every test runs real Metal dispatches on
-  the CI runner (Apple Silicon). Numerical references are golden
-  fixtures captured from mlx-lm, not live Python/PyTorch invocations.
+  the CI runner (Apple Silicon). Numerical correctness comes from the
+  metaltile-side per-kernel GPU-correctness tests (vs a naive CPU
+  oracle); FFAI integration tests assert the model pipeline produces
+  coherent text. There are no golden fixtures.
 - **No unused / speculative code.** Build only what the active phase
   needs. Future-phase fields go into `LoadOptions` with a comment
   pointer to the phase, not stubs in the call path.
@@ -156,7 +156,8 @@ convention, and coverage targets.
 
 ## See also
 
-- [Testing](testing.md) — running tests, golden fixtures, coverage.
+- [Testing](testing.md) — running tests, integration coherence
+  checks, coverage.
 - [Adding a model](adding-a-model.md) — porting a new architecture.
 - [`planning/plan.md`](../../planning/plan.md) — what's in / out of
   scope per phase.

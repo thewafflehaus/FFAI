@@ -5,9 +5,12 @@ HuggingFace checkpoints end-to-end through `Model.load("org/repo")`.
 That spans the dense transformer families (Llama + the
 Llama-compatible zoo, Qwen 2 / 3, Mistral, Phi, Gemma 3, Gemma 4),
 the GPT-OSS-20B MoE, the dense SSM family Mamba 2, the SSM/GDN hybrid
-families (FalconH1, NemotronH, GraniteMoeHybrid, Jamba, Qwen 3.5),
-and Nemotron-Labs-Diffusion. Vision (VLM) and audio families are the
-next wave — see [Coming next](#coming-next).
+families (FalconH1, NemotronH, GraniteMoeHybrid, Jamba, Qwen 3.5), the
+LFM2 / LFM2.5 conv+attention hybrid family, and
+Nemotron-Labs-Diffusion. Vision-language (VLM) and audio families ship
+too — see the [vision-language](#vision-language-families-phase-65),
+[audio](#audio-families-phase-7) and [neural codec](#neural-audio-codecs-phase-7)
+sections below.
 
 This page is the canonical landing for:
 
@@ -35,6 +38,7 @@ For porting a new architecture, see
 | **Nemotron-Labs-Diffusion** | [`Models/NemotronLabsDiffusion.swift`](../Sources/FFAI/Models/NemotronLabsDiffusion.swift) | `nemotron_labs_diffusion` | `NemotronLabsDiffusionModel` | `NemotronLabsDiffusionDense` |
 | **GraniteMoeHybrid** | [`Models/GraniteMoeHybrid.swift`](../Sources/FFAI/Models/GraniteMoeHybrid.swift) | `granitemoehybrid` | `GraniteMoeHybridForCausalLM` | `GraniteMoeHybridHybrid` |
 | **Jamba** | [`Models/Jamba.swift`](../Sources/FFAI/Models/Jamba.swift) | `jamba` | `JambaForCausalLM` | `JambaHybrid` |
+| **LFM2 / LFM2.5** | [`Models/LFM2.swift`](../Sources/FFAI/Models/LFM2.swift) | `lfm2`, `lfm2_moe` | `Lfm2ForCausalLM`, `Lfm2MoeForCausalLM` | `LFM2Dense`, `LFM2MoE` |
 | **Qwen 3.5** | [`Models/Qwen35.swift`](../Sources/FFAI/Models/Qwen35.swift) | `qwen3_5`, `qwen3_5_moe` | `Qwen3_5ForConditionalGeneration`, `Qwen3_5MoeForConditionalGeneration` | `Qwen35Hybrid` |
 | **Gemma 4** | [`Models/Gemma4.swift`](../Sources/FFAI/Models/Gemma4.swift) | `gemma4`, `gemma4_text` | `Gemma4ForCausalLM`, `Gemma4ForConditionalGeneration` | `Gemma4Dense`, `Gemma4E`, `Gemma4MoE` |
 | **GPT-OSS** | [`Models/GPTOSS.swift`](../Sources/FFAI/Models/GPTOSS.swift) | `gpt_oss` | `GptOssForCausalLM` | `GPTOSSMoEVariant` |
@@ -251,6 +255,37 @@ GDN layer's cache is a composite `Qwen35GDNLayerCache` bundling a
 feed-forward reuses the shared `MoELayer` (`.softmaxThenTopK` gating)
 for the routed experts and applies the sigmoid-gated shared expert
 separately.
+
+**LFM2 / LFM2.5** is LiquidAI's Liquid Foundation Models 2 — a
+*stack-interleaved* hybrid like NemotronH / GraniteMoeHybrid / Jamba,
+but the two mixer kinds are **conv** and **attention** (no SSM). A
+`layer_types` array (or the older `full_attn_idxs` index list) assigns
+each decoder layer one mixer: `conv` is LFM2's double-gated short
+convolution — `in_proj` splits into `(B, C, x)`, the input gate `B·x`
+feeds a depthwise causal conv1d, the output gate `C·conv` feeds
+`out_proj` (no activation between the conv and the gate, unlike
+Mamba's post-conv SiLU); `full_attention` is grouped-query attention
+with RoPE and a per-head RMSNorm on Q/K (like Qwen 3). The conv mixer
+reuses the shipped `conv1d_causal_step` kernel + a `ConvStateCache` —
+no new kernel. LFM2.5 is architecturally identical (`model_type:
+lfm2`); the "Thinking" / "Instruct" / "Base" variants differ only by
+training run + chat template, so they load through the same family.
+LFM2's head_dim (64) is not 128-aligned, so the per-head Q/K RMSNorm
+runs **host-side** (a 64-wide norm over one decode token is trivial on
+the CPU) — the GPT-OSS host-norm precedent. The **`lfm2_moe`** variant
+(`Lfm2MoeForCausalLM` — LFM2-8B-A1B / LFM2-24B-A2B) swaps the dense
+SwiGLU FFN for a block-sparse `MoELayer` on every layer at index ≥
+`num_dense_layers`; the first `num_dense_layers` stay dense. Its
+router is softmax → add a per-expert load-balancing `expert_bias` →
+top-K of the biased values → optional `norm_topk_prob` re-normalise —
+the biased value is *both* the selector and the combine weight, wired
+through `MoERouter`'s `expertBias` parameter on `.softmaxThenTopK`.
+Both an attention layer (host-side Q/K norm) and a MoE FFN (router CPU
+readback) commit the command buffer mid-layer, so `LFM2Model.forward`
+runs the stack on internal work buffers and refreshes after each
+committing layer — the GraniteMoeHybrid contract. Only raw bf16 / f16
+LFM2 checkpoints are supported; quantized variants are rejected with a
+clear error.
 
 **Gemma 4** is Google's Gemma 4 text decoder — three checkpoint shapes
 under the single `gemma4` model_type, picked from config by the family
