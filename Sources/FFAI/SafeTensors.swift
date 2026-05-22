@@ -217,9 +217,16 @@ public final class SafeTensorsBundle: @unchecked Sendable {
     public let directory: URL
     /// tensor name → file index in `files`.
     public let index: [String: Int]
+    /// Lookup-key → physical-key translation. Empty for a normally
+    /// loaded bundle (the lookup key *is* the physical key); a
+    /// `prefixed(_:)` view populates it so a stripped lookup key
+    /// resolves back to the full key the underlying `SafeTensorsFile`
+    /// stores. `physicalKey(_:)` consults it.
+    private let keyTranslation: [String: String]
 
     public init(directory: URL, device: Device = .shared) throws {
         self.directory = directory
+        self.keyTranslation = [:]
 
         // Look for an index file (sharded model.safetensors.index.json)
         let indexURL = directory.appendingPathComponent("model.safetensors.index.json")
@@ -266,7 +273,44 @@ public final class SafeTensorsBundle: @unchecked Sendable {
 
     public func tensor(named: String) throws -> Tensor {
         guard let i = index[named] else { throw SafeTensorsError.missingTensor(named) }
-        return try files[i].tensor(named: named)
+        // In a `prefixed(_:)` view the lookup key is stripped; the
+        // underlying file still stores the full key, so translate back.
+        let physical = keyTranslation[named] ?? named
+        return try files[i].tensor(named: physical)
+    }
+
+    /// Internal init for building a re-indexed view over the same
+    /// underlying `SafeTensorsFile`s — used by `prefixed(_:)`.
+    private init(files: [SafeTensorsFile], directory: URL,
+                 index: [String: Int], keyTranslation: [String: String]) {
+        self.files = files
+        self.directory = directory
+        self.index = index
+        self.keyTranslation = keyTranslation
+    }
+
+    /// A view onto this bundle with `prefix` prepended to every lookup
+    /// key — the inverse of a checkpoint that namespaces its weights
+    /// under a sub-module. A VL checkpoint stores its text backbone
+    /// under `language_model.`; `bundle.prefixed("language_model.")`
+    /// returns a bundle whose `tensor(named: "model.embed_tokens.weight")`
+    /// resolves to `language_model.model.embed_tokens.weight`, so the
+    /// existing text-family loader runs unchanged on the sub-tree.
+    ///
+    /// Only keys carrying `prefix` survive into the view; everything
+    /// else (vision-tower weights, the multi-modal projector) is hidden.
+    public func prefixed(_ prefix: String) -> SafeTensorsBundle {
+        var remapped: [String: Int] = [:]
+        var translation: [String: String] = [:]
+        for (key, fileIndex) in index where key.hasPrefix(prefix) {
+            let stripped = String(key.dropFirst(prefix.count))
+            remapped[stripped] = fileIndex
+            // Resolve through any existing translation so chained
+            // `prefixed` calls still reach the real physical key.
+            translation[stripped] = keyTranslation[key] ?? key
+        }
+        return SafeTensorsBundle(files: files, directory: directory,
+                                 index: remapped, keyTranslation: translation)
     }
 
     public var allKeys: [String] { Array(index.keys).sorted() }

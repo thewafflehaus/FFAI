@@ -365,3 +365,35 @@ public final class RMSNorm: Module {
         Ops.rmsNorm(x, weight: weight, eps: eps, on: cmd)
     }
 }
+
+// ─── LayerNorm ───────────────────────────────────────────────────────
+
+/// Standard LayerNorm with learned scale + shift — the normalization
+/// vision-transformer encoders (SigLIP / CLIP) use instead of RMSNorm.
+/// `callAsFunction` treats `x` as a single `[rowSize]` row; multi-row
+/// callers (the vision encoder, processing all patch tokens at once)
+/// call `Ops.layerNorm` directly with an explicit `nRows`.
+public final class LayerNorm: Module {
+    /// weight shape [n] — per-channel scale (`gamma`).
+    public let weight: Tensor
+    /// bias shape [n] — per-channel shift (`beta`).
+    public let bias: Tensor
+    public let eps: Float
+
+    public init(weight: Tensor, bias: Tensor, eps: Float) {
+        precondition(weight.shape == bias.shape,
+                     "LayerNorm: weight/bias shape mismatch")
+        self.weight = weight
+        self.bias = bias
+        self.eps = eps
+    }
+
+    public func parameters() -> [(String, Tensor)] {
+        [("weight", weight), ("bias", bias)]
+    }
+
+    public func callAsFunction(_ x: Tensor, on cmd: MTLCommandBuffer) -> Tensor {
+        Ops.layerNorm(x, weight: weight, bias: bias, eps: eps,
+                      nRows: 1, rowSize: x.elementCount, on: cmd)
+    }
+}

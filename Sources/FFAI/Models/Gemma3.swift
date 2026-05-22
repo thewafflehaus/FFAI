@@ -695,4 +695,42 @@ public final class Gemma3Model: LanguageModel {
         }
         return logits
     }
+
+    /// Embedding-input forward — the VLM splice path. Identical to
+    /// `forward(tokenId:...)` except the `[hidden]` embedding row is
+    /// supplied directly (a vision-encoder token, or a text-token
+    /// embedding the VL model looked up itself). The Gemma embed-scale
+    /// is still applied: image tokens in Gemma 3 are scaled the same
+    /// way as text tokens.
+    public var supportsEmbeddingInput: Bool { true }
+
+    public func forward(inputEmbedding: Tensor, position: Int,
+                        caches: [any LayerCacheProtocol],
+                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(inputEmbedding.elementCount == hidden,
+                     "Gemma3Model.forward(inputEmbedding:): expected [\(hidden)], "
+                     + "got \(inputEmbedding.shape)")
+        var h = Ops.mul(inputEmbedding.reshaped(to: [hidden]), embedScale, on: cmd)
+        for (i, layer) in layers.enumerated() {
+            h = layer.forward(h, position: position,
+                              cache: caches[i] as! any KVCacheProtocol,
+                              on: cmd, device: device)
+        }
+        h = finalNorm(h, on: cmd)
+        return lmHead(h, on: cmd)
+    }
+
+    /// Raw embedding-table lookup for one text token — no embed-scale
+    /// (that is applied inside `forward(inputEmbedding:...)`).
+    public func textEmbedding(tokenId: Int, device: Device) -> Tensor {
+        let cmd = device.makeCommandBuffer()
+        let tokenBuf = device.makeBuffer(length: 4)
+        var tid = UInt32(tokenId)
+        memcpy(tokenBuf.contents(), &tid, 4)
+        let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
+        let embed = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return embed
+    }
 }

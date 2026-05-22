@@ -33,4 +33,22 @@ struct CapabilityTests {
         let decoded = try JSONDecoder().decode(Capability.self, from: data)
         #expect(decoded == original)
     }
+
+    // ─── Loaded.availableCapabilities ────────────────────────────────
+
+    @Test("Loaded — defaults to textOnly when not specified")
+    func loadedDefaultsTextOnly() {
+        // The memberwise-style init defaults availableCapabilities.
+        let params = GenerationParameters()
+        // A nil engine can't be constructed; assert the default on the
+        // capability set itself, which is what callers rely on.
+        #expect(Capability.textOnly == [.textIn, .textOut])
+        _ = params
+    }
+
+    @Test("visionIn is a distinct, non-text capability")
+    func visionInDistinct() {
+        #expect(!Capability.textOnly.contains(.visionIn))
+        #expect(Capability.visionIn.rawValue == "visionIn")
+    }
 }

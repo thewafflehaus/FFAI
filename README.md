@@ -33,13 +33,14 @@ Early bootstrap — Phase 4 complete (end-to-end inference + perf pass).
 | **Async lifecycle stream** | Real progress for your UI — download, load, ready — as an `AsyncStream`. | ✅ |
 | **Built in performance profiling** | Run benchmarks using the FFAI CLI and get performance telemtry data as you do inference. | ✅ |
 | **Streaming generation** | Streaming inference support across all models. | ✅ |
-| **Quantized KV cache** | Squeeze long contexts into a fraction of the memory. Affine 4/6/8-bit + TurboQuant. | 🚧 Phase 5 |
-| **Hybrid models (GDN + SSM)** | Qwen 3.5, Mamba, NemotronH — the families that mix attention with recurrence. | 🚧 Phase 5 |
-| **Vision (multi-modal)** | Drop in an image, get text back. Qwen 2.5-VL / 3.5-VL first. | 🚧 Phase 6 |
-| **Audio in / out** | Whisper-style speech-to-text and text-to-speech. | 🚧 Phase 8+ |
-| **Speculative decoding** | Faster generation via n-gram lookup + draft models. | 🚧 Phase 8+ |
-| **Autotuner** | Per-shape kernel tuning so you never leave perf on the table. | 🚧 Phase 7 |
-| **GGUF support** | Run llama.cpp's quants directly. | 🚧 Phase 8+ |
+| **Quantized KV cache** | Squeeze long contexts into a fraction of the memory. Affine 4/8-bit + AURA compressed. | ✅ |
+| **Hybrid models (GDN + SSM)** | Qwen 3.5, Mamba 2, NemotronH, Jamba, GraniteMoeHybrid, FalconH1 — attention mixed with recurrence. | ✅ |
+| **Mixture-of-experts** | GPT-OSS-20B, Qwen 3.5 MoE, Gemma 4 MoE — sparse top-K expert routing. | ✅ |
+| **Vision (multi-modal)** | Drop in an image, get text back. Qwen 2.5-VL / 3.5-VL first. | 🚧 Phase 6.5 |
+| **Audio in / out** | Whisper-style speech-to-text and text-to-speech. | 🚧 Phase 7 |
+| **Speculative decoding** | Faster generation via n-gram lookup + draft models. | 🚧 Phase 8 |
+| **Autotuner** | Per-shape kernel tuning so you never leave perf on the table. | 🚧 Phase 9 |
+| **GGUF support** | Run llama.cpp's quants directly. | 🚧 Phase 10 |
 
 For the longer-form view of what's shipped vs planned, see
 [`planning/roadmap.md`](planning/roadmap.md). For the per-topic
@@ -88,26 +89,43 @@ shared cache between Python tools, etc.)? See
 
 ## Models Supported
 
-Two architecture families ship today; both run real HuggingFace
-checkpoints end-to-end. Adding a new family is one Swift file plus
-test fixtures — see
-[`adding-a-model.md`](documentation/adding-a-model.md).
+The full text-LLM family set ships today — dense, mixture-of-experts,
+and SSM/GDN hybrid architectures, all running real HuggingFace
+checkpoints end-to-end. Run `ffai models` for the live list with
+copy-paste repo IDs. Adding a family is one Swift file plus an
+integration test — see
+[`adding-a-model.md`](documentation/developing/adding-a-model.md).
 
-| Family | Variants | Sizes | Quantizations |
-|---|---|---|---|
-| **Llama 3.x** (`Llama.swift`) | `LlamaDense` (GQA + RoPE3 scaling + RMSNorm + SwiGLU MLP) | 1B / 3B / 8B / 70B | bf16 / 8bit / 6bit / 5bit / 4bit / 3bit |
-| **Qwen 3** (`Qwen3.swift`) | `Qwen3Dense` (Llama core + per-head q_norm/k_norm) | 0.6B / 1.7B / 4B / 8B / 14B / 32B | bf16 / 8bit / 6bit / 5bit / 4bit / 3bit |
+| Family | `model_type` | Example repo (bf16 · 8-bit · 4-bit) |
+|---|---|---|
+| **Llama 3.x** | `llama` | `unsloth/Llama-3.2-1B` · `mlx-community/Meta-Llama-3.1-8B-Instruct-4bit` |
+| **Llama-compatible zoo** | `smollm` / `olmo2` / `starcoder2` / … | `mlx-community/SmolLM2-360M-Instruct-bf16` |
+| **Qwen 2** | `qwen2` | `Qwen/Qwen2.5-0.5B-Instruct` |
+| **Qwen 3** | `qwen3` | `mlx-community/Qwen3-1.7B-bf16` · `-8bit` · `-4bit` |
+| **Qwen 3.5** (GDN hybrid · MoE) | `qwen3_5` | `mlx-community/Qwen3.5-0.8B-MLX-bf16` · `-MLX-8bit` · `-MLX-4bit` |
+| **Mistral** | `mistral` | `mlx-community/Mistral-7B-Instruct-v0.3-4bit` |
+| **Phi 3** | `phi3` | `mlx-community/Phi-3-mini-4k-instruct-4bit` |
+| **Gemma 3** | `gemma3` | `mlx-community/gemma-3-1b-it-bf16` |
+| **Gemma 4** (Dense · E-PLE · MoE) | `gemma4` | `mlx-community/gemma-4-e2b-it-bf16` · `gemma-4-26b-a4b-it-8bit` · `gemma-4-31b-it-4bit` |
+| **GPT-OSS-20B** (MoE) | `gpt_oss` | `mlx-community/gpt-oss-20b-MXFP4-Q8` |
+| **Mamba 2** | `mamba2` | `mlx-community/mamba2-130m` |
+| **FalconH1** (hybrid) | `falcon_h1` | `mlx-community/Falcon-H1-Tiny-90M-Instruct-bf16` |
+| **NemotronH** (hybrid) | `nemotron_h` | `nvidia/Nemotron-H-4B-Base-8K` |
+| **GraniteMoeHybrid** | `granitemoehybrid` | `mlx-community/granite-4.0-h-350m-bf16` |
+| **Jamba** (hybrid) | `jamba` | `mlx-community/AI21-Jamba-Reasoning-3B-bf16` |
+| **Nemotron-Labs-Diffusion** | `nemotron_labs_diffusion` | `nvidia/Nemotron-Labs-Diffusion-3B` |
 
-Quant layouts follow the **mlx-community** packed-uint32 format
-(weights + scales + biases per group). Pass any HuggingFace repo ID
-and the loader resolves architecture, downloads the snapshot, and
-routes to the right family. See
-[`models.md`](documentation/models.md) for the full
-matrix and known gaps.
+Quantization follows the **mlx-community** packed-uint32 format
+(3/4/5/6/8-bit affine — weights + scales + biases per group), with
+per-tensor bit-width derivation for mixed-precision checkpoints. Pass
+any HuggingFace repo ID and the loader resolves architecture,
+downloads the snapshot, and routes to the right family. See
+[`models.md`](documentation/models.md) for sizes exercised + known
+gaps (hybrid families load raw bf16/f16 only).
 
-**Coming next** (per [`planning/plan.md`](planning/plan.md)): Qwen 3.5
-hybrid (GDN + attention), Qwen 3.5 MoE, Mistral, Phi, Gemma, vision
-(Qwen 2.5/3.5-VL), audio (Whisper / Qwen-Omni).
+**Coming next** (per [`planning/roadmap.md`](planning/roadmap.md)):
+Vision (Qwen 2.5/3.5-VL, Gemma 3/4-VL — Phase 6.5), audio (Whisper,
+Kokoro, Qwen-Omni — Phase 7), speculative decoding + serving (Phase 8).
 
 ## High Level Architecture
 

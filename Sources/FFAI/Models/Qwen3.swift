@@ -505,6 +505,41 @@ public final class Qwen3Model: LanguageModel {
         return logits
     }
 
+    /// Embedding-input forward — the VLM splice path. Identical to
+    /// `forward(tokenId:...)` minus the embedding gather: the `[hidden]`
+    /// row is supplied directly (a vision-encoder token, or a text-token
+    /// embedding the VL model looked up itself).
+    public var supportsEmbeddingInput: Bool { true }
+
+    public func forward(inputEmbedding: Tensor, position: Int,
+                        caches: [any LayerCacheProtocol],
+                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(inputEmbedding.elementCount == hidden,
+                     "Qwen3Model.forward(inputEmbedding:): expected [\(hidden)], "
+                     + "got \(inputEmbedding.shape)")
+        var h = inputEmbedding.reshaped(to: [hidden])
+        for (i, layer) in layers.enumerated() {
+            h = layer.forward(h, position: position,
+                              cache: caches[i] as! any KVCacheProtocol,
+                              cmd: cmd, device: device)
+        }
+        let normed = finalNorm(h, on: cmd)
+        return lmHead(normed, on: cmd)
+    }
+
+    /// Raw embedding-table lookup for one text token.
+    public func textEmbedding(tokenId: Int, device: Device) -> Tensor {
+        let cmd = device.makeCommandBuffer()
+        let tokenBuf = device.makeBuffer(length: 4)
+        var tid = UInt32(tokenId)
+        memcpy(tokenBuf.contents(), &tid, 4)
+        let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
+        let embed = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return embed
+    }
+
     // `forward`, `forwardSample`, `forwardSampleCategorical` come from
     // LanguageModel's default extension — they wrap `forward(...on cmd:)`
     // above with a 1-commit-per-token cmdbuf and the appropriate

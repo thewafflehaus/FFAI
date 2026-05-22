@@ -64,6 +64,18 @@ public struct ModelConfig: @unchecked Sendable {
         raw[key] as? [String: Any]
     }
 
+    /// A `ModelConfig` view onto a nested sub-dictionary — e.g. a VLM's
+    /// `text_config` or `vision_config`. The sub-view keeps the parent's
+    /// `architecture` (the sub-dict has its own `model_type`), so the
+    /// text backbone can load from a VL checkpoint's `text_config`
+    /// exactly as it loads a stand-alone text config.
+    public func subConfig(_ key: String) -> ModelConfig? {
+        guard let sub = nested(key) else { return nil }
+        return ModelConfig(architecture: architecture,
+                           modelType: sub["model_type"] as? String ?? modelType,
+                           raw: sub)
+    }
+
     /// `vocab_size`
     public var vocabSize: Int? { int("vocab_size") }
     /// `hidden_size`
