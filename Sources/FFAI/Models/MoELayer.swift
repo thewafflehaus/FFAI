@@ -48,6 +48,7 @@
 
 import Foundation
 import Metal
+import MetalTileSwift
 
 // ─── Gating mode ─────────────────────────────────────────────────────
 
@@ -368,6 +369,20 @@ public final class MoELayer: Module, DecoderLayer {
     public let useBm8Env: Bool
     public let useM1Env: Bool
 
+    /// Lazy cache of the dequantized gate weight in `[K=hidden, N=nExperts]`
+    /// row-major layout (the `b` operand `mt_steel_gemm_64x64x16_2x2_*`
+    /// expects). For 8-bit gates, `QuantizedLinear.callMany` falls into a
+    /// T-loop of per-row `dequantGemv` (T·40 = 20480 launches at T=512
+    /// prefill); the dense path collapses each layer's gate to one
+    /// `mt_steel_gemm` dispatch. Skipped when:
+    ///   • `gate.inner` is not `QuantizedLinear`, or
+    ///   • bits != 8, or
+    ///   • env `FFAI_MOE_NO_DEQUANT_GATE=1`.
+    /// Materialised lazily on first `gateLogitsMany` to avoid eager work
+    /// in layers that never see a forward pass.
+    private var dequantizedGateCache: Tensor?
+    private var dequantizedGateAttempted = false
+
     /// - gate: hidden → nExperts router projection.
     /// - gateProj/upProj/downProj: `nExperts`-long arrays of per-expert
     ///   SwiGLU projections, index-aligned with the expert id.
@@ -578,7 +593,7 @@ public final class MoELayer: Module, DecoderLayer {
 
         // ── 1. Gate gemv batched on caller's cmd ─────────────────────────
         let hRows = hFlat.reshaped(to: [t, hidden])
-        let gateLogitsAll = gate.callMany(hRows, t: t, on: cmd, device: device)
+        let gateLogitsAll = gateLogitsMany(hRows, t: t, on: cmd, device: device)
         // gateLogitsAll shape: [T, nExperts]
 
         // ── 2. Commit + wait so the router can read logits ───────────────
@@ -970,6 +985,137 @@ public final class MoELayer: Module, DecoderLayer {
         let u = upProj(x, on: cmd)
         let inner = Ops.swiglu(gate: g, up: u, on: cmd)
         return downProj(inner, on: cmd)
+    }
+
+    /// Batched gate logits dispatch with lazy 8-bit dense weight materialise.
+    ///
+    /// For 4-bit gates, falls through to `gate.callMany` (already routes
+    /// to the fast `mt_qmm_mma` batched kernel via `dequantGemmDynamicM`).
+    /// For 8-bit gates — common on Qwen3.5/3.6 MoE checkpoints —
+    /// `QuantizedLinear.callMany` loops T `dequantGemv` dispatches per
+    /// call (T·40 layers = 20 480 dispatches at T=512 prefill). We
+    /// dequantise the 8-bit weight to a dense `[hidden, nExperts]` (K, N)
+    /// tensor once on first invocation and dispatch ONE
+    /// `mt_steel_gemm_64x64x16_2x2_*` per layer instead. Constraint: the
+    /// steel gemm tile is 64×64×16 with no M-bounds masking, so falls
+    /// back to per-token when `T % 64 != 0` (decode + small prefill).
+    /// Memory cost: one extra [hidden, nExperts] tensor per 8-bit gate;
+    /// at Qwen3.6-A3B that's 40 × 2048 × 128 × 2 B = ~20 MB.
+    private func gateLogitsMany(_ hRows: Tensor, t: Int,
+                                on cmd: MTLCommandBuffer,
+                                device: Device) -> Tensor {
+        if !dequantizedGateAttempted {
+            dequantizedGateAttempted = true
+            if ProcessInfo.processInfo.environment["FFAI_MOE_NO_DEQUANT_GATE"] == nil,
+               let q = gate.inner as? QuantizedLinear,
+               q.bits == 8 {
+                dequantizedGateCache = Self.dequantizeQuantizedLinearTransposed(
+                    q, device: device)
+            }
+        }
+        // Steel gemm wants M, N multiples of 64 — fall back to gate.callMany
+        // for shapes that don't satisfy.
+        if let denseKN = dequantizedGateCache,
+           t % 64 == 0,
+           let nExperts = denseKN.shape.last,
+           nExperts % 64 == 0
+        {
+            let k = hidden
+            let out = Tensor.empty(shape: [t, nExperts], dtype: hRows.dtype, device: device)
+            // Steel block 64x64x16: grid = (n_tiles, m_tiles, 1)
+            // threadgroups, each 1024 threads (4 SGs WM=WN=2).
+            let nTiles = nExperts / 64
+            let mTiles = t / 64
+            let tgWidth = 1024
+            let grid = MTLSize(width: nTiles, height: mTiles, depth: 1)
+            let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+            switch hRows.dtype {
+            case .bf16:
+                MetalTileKernels.mt_steel_gemm_64x64x16_2x2_bf16(
+                    a: hRows.buffer, aOffset: hRows.offset,
+                    b: denseKN.buffer, bOffset: denseKN.offset,
+                    out: out.buffer, outOffset: out.offset,
+                    m: UInt32(t), n: UInt32(nExperts), k: UInt32(k),
+                    gridSize: grid, threadgroupSize: tg, on: cmd)
+            case .f16:
+                MetalTileKernels.mt_steel_gemm_64x64x16_2x2_f16(
+                    a: hRows.buffer, aOffset: hRows.offset,
+                    b: denseKN.buffer, bOffset: denseKN.offset,
+                    out: out.buffer, outOffset: out.offset,
+                    m: UInt32(t), n: UInt32(nExperts), k: UInt32(k),
+                    gridSize: grid, threadgroupSize: tg, on: cmd)
+            case .f32:
+                MetalTileKernels.mt_steel_gemm_64x64x16_2x2_f32(
+                    a: hRows.buffer, aOffset: hRows.offset,
+                    b: denseKN.buffer, bOffset: denseKN.offset,
+                    out: out.buffer, outOffset: out.offset,
+                    m: UInt32(t), n: UInt32(nExperts), k: UInt32(k),
+                    gridSize: grid, threadgroupSize: tg, on: cmd)
+            default:
+                return gate.callMany(hRows, t: t, on: cmd, device: device)
+            }
+            return out
+        }
+        return gate.callMany(hRows, t: t, on: cmd, device: device)
+    }
+
+    /// CPU-side dense materialisation of a `QuantizedLinear` into the
+    /// `[K=inDim, N=outDim]` layout `mt_steel_gemm` expects for its `b`
+    /// operand (i.e., gate weight transposed from `[outDim, inDim]` to
+    /// `[inDim, outDim]`). Supports 8-bit only — the path that
+    /// `QuantizedLinear.callMany` falls into a T-loop for.
+    private static func dequantizeQuantizedLinearTransposed(
+        _ q: QuantizedLinear, device: Device
+    ) -> Tensor? {
+        precondition(q.bits == 8, "dequantizeQuantizedLinearTransposed: only 8-bit supported")
+        let outDim = q.weight.shape[0]                    // nExperts
+        let packsPerRow = q.weight.shape[1]
+        let inDim = packsPerRow * 4                       // hidden
+        let groupsPerRow = inDim / q.groupSize
+        precondition(inDim % q.groupSize == 0,
+                     "dequantizeQuantizedLinearTransposed: inDim \(inDim) not aligned to groupSize \(q.groupSize)")
+
+        let wPacked = q.weight.toArray(as: UInt32.self)
+        precondition(wPacked.count == outDim * packsPerRow,
+                     "dequantizeQuantizedLinearTransposed: weight buffer size mismatch")
+        let scalesF = q.scales.toFloatArray()
+        let biasesF = q.biases.toFloatArray()
+
+        // Output [K=inDim, N=outDim] row-major: dense[c, r] is the weight
+        // for output expert r at hidden dim c. Stored as flat
+        // dense[c * outDim + r].
+        var dense = [Float](repeating: 0, count: inDim * outDim)
+        for r in 0..<outDim {
+            let rwBase = r * packsPerRow
+            let rsBase = r * groupsPerRow
+            for c in 0..<inDim {
+                let packIdx = rwBase + (c >> 2)
+                let shift = UInt32((c & 3) << 3)
+                let qByte = Float((wPacked[packIdx] >> shift) & 0xFF)
+                let gIdx = rsBase + (c / q.groupSize)
+                let w = qByte * scalesF[gIdx] + biasesF[gIdx]
+                dense[c * outDim + r] = w
+            }
+        }
+
+        let dtype = q.scales.dtype
+        let denseT = Tensor.empty(shape: [inDim, outDim], dtype: dtype, device: device)
+        switch dtype {
+        case .f32:
+            denseT.copyIn(from: dense)
+        case .f16:
+            denseT.copyIn(from: dense.map { Float16($0) })
+        case .bf16:
+            let bf16Bits = dense.map { f -> UInt16 in
+                let bits = f.bitPattern
+                let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
+                return UInt16(truncatingIfNeeded: rounded >> 16)
+            }
+            denseT.copyIn(from: bf16Bits)
+        default:
+            return nil
+        }
+        return denseT
     }
 }
 
