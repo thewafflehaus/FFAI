@@ -158,11 +158,26 @@ struct Qwen36SmokeTests {
         let T = encoded.count
         print("forwardManyBench T=\(T)")
 
-        // Warm up Metal PSO + first-token JIT.
-        let warmCaches = qwen.makeLayerCaches()
+        // Warm up Metal PSO + first-token JIT for **both** paths:
+        //   - per-token forward (warms the gemv / dequantGemv / sdpaDecode
+        //     / single-token GDN / per-expert SwiGLU PSOs)
+        //   - batched forwardMany (warms gemm / dequantGemmDynamicM /
+        //     sdpaMulti / batched GDN prep / MoE BGEMM / moeUnpermute PSOs)
+        // Without the batched warmup the first batched run pays full PSO
+        // JIT compile cost (~50-200 ms across ~20 unique kernels) and the
+        // 5-run median skews artificially slow. Mirrors mlx-lm bench
+        // convention `model(batch[:1]); mx.eval()` but adapted for our
+        // dual-path harness.
+        let warmCaches1 = qwen.makeLayerCaches()
         for (i, tok) in encoded.prefix(2).enumerated() {
-            _ = qwen.forward(tokenId: tok, position: i, caches: warmCaches)
+            _ = qwen.forward(tokenId: tok, position: i, caches: warmCaches1)
         }
+        let warmCaches2 = qwen.makeLayerCaches()
+        let warmCmd = Device.shared.makeCommandBuffer()
+        _ = qwen.forwardMany(tokenIds: encoded, startPosition: 0,
+                             caches: warmCaches2, on: warmCmd, device: Device.shared)
+        warmCmd.commit()
+        await warmCmd.completed()
 
         // Per-token loop baseline (5 runs, mean).
         var perTokenSecs: [Double] = []
