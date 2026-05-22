@@ -1351,23 +1351,24 @@ public final class Qwen35GDNMixer: Module {
         precondition(xNormFlat.elementCount == t * hidden,
                      "Qwen35GDNMixer.forwardMany: xNormFlat size \(xNormFlat.elementCount) ≠ T·hidden = \(t * hidden)")
 
-        // ── FFAI_GDN_PREP_CHUNK=1 — chunked prep+recurrence route ─────────
+        // ── Chunked prep+recurrence — now the default route ──────────────
         //
         // Replaces the per-token T-loop body (conv1d_step + silu_cast +
         // prep_step + mixer_norm + state swap) with: T conv1d_step + T
-        // silu_cast writing into a single `[T, convDim]` f32 staging
-        // buffer, then ONE `Ops.gatedDeltaPrepChunk` dispatch that runs
-        // the entire T-sweep with state register-resident across all T
-        // tokens. State traffic per layer drops from `T·(load + store)` to
-        // `1·(load + store)`.
+        // silu_cast + ONE `Ops.gatedDeltaPrepChunk` dispatch (state
+        // register-resident across the full T-sweep) + ONE batched
+        // mixer norm. State traffic per layer drops from
+        // `T·(load + store)` to `1·(load + store)`.
         //
-        // Conv1d still loops T times (the depthwise causal state crosses
-        // tokens), but each step costs one dispatch onto the same `cmd`,
-        // no host sync.
+        // Bench wins (Qwen3.6-A3B M5 Max, 5-run median):
+        //   T=32:  96.29 → 189.26 tps  +97% (1.97×)
+        //   T=128: 136.52 → 295.16 tps +116% (2.16×)
+        //   T=512: 203.11 → 253.99 tps +22% / best 252 → 328 tps +30%
         //
-        // The mixer norm + outProj fan-out are the same batched path as
-        // the prep_step route.
-        if ProcessInfo.processInfo.environment["FFAI_GDN_PREP_CHUNK"] != nil {
+        // Opt out via `FFAI_GDN_NO_PREP_CHUNK=1` for A/B benching or in
+        // case a future silicon family regresses on the chunked path
+        // (M2 mini soak not yet run as of flip).
+        if ProcessInfo.processInfo.environment["FFAI_GDN_NO_PREP_CHUNK"] == nil {
             return forwardManyChunked(xNormFlat, t: t, cache: cache,
                                       cmd: cmd, device: device)
         }
