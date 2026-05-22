@@ -146,19 +146,53 @@ final class SileroVADBranch: Sendable {
          lookup: (String) -> Tensor?) throws {
         self.config = config
 
-        func floats(_ name: String) throws -> [Float] {
+        func tensor(_ name: String) throws -> Tensor {
             let key = "\(prefix).\(name)"
             guard let tensor = lookup(key) else {
                 throw SileroVADError.missingWeight(key)
             }
-            return tensor.toFloatArray()
+            return tensor
+        }
+        func floats(_ name: String) throws -> [Float] {
+            try tensor(name).toFloatArray()
         }
         func floatsOpt(_ name: String) -> [Float]? {
             lookup("\(prefix).\(name)")?.toFloatArray()
         }
 
+        // Conv weight layout fix. The `mlx-community/silero-vad` checkpoint
+        // was exported from an MLX model, so every conv weight ships in
+        // MLX's `[outC, K, inC]` layout. `VADConv1d` (a PyTorch-style CPU
+        // conv) expects `[outC, inC, K]`. For `stft_conv` (inC=1) and
+        // `final_conv` (K=1) the two layouts are bit-identical, but the
+        // feature convs conv1..conv4 have both inC>1 and K>1 — loading
+        // them raw silently scrambles the kernel and collapses the speech
+        // probability to ~0. Transpose `[outC, K, inC] → [outC, inC, K]`
+        // here, keyed off the stored tensor shape so a future PyTorch-
+        // layout checkpoint still loads correctly.
+        func convWeight(_ name: String, outC: Int, inC: Int, k: Int) throws -> [Float] {
+            let t = try tensor(name)
+            let raw = t.toFloatArray()
+            precondition(raw.count == outC * inC * k,
+                         "SileroVAD: \(prefix).\(name) count \(raw.count) != \(outC)*\(inC)*\(k)")
+            // Stored MLX layout [outC, K, inC] → transpose to [outC, inC, K].
+            if t.shape.count == 3, t.shape[1] == k, t.shape[2] == inC, inC != k {
+                var out = [Float](repeating: 0, count: raw.count)
+                for o in 0..<outC {
+                    for kk in 0..<k {
+                        for ic in 0..<inC {
+                            // src [o, kk, ic] → dst [o, ic, kk]
+                            out[(o * inC + ic) * k + kk] = raw[(o * k + kk) * inC + ic]
+                        }
+                    }
+                }
+                return out
+            }
+            return raw
+        }
+
         // stft_conv: learned STFT — Conv1d(1 → cutoff*2, K=filterLength,
-        // stride=hopLength), no bias.
+        // stride=hopLength), no bias. inC=1 so layout is unambiguous.
         self.stftConv = VADConv1d(
             weight: try floats("stft_conv.weight"), bias: nil,
             inChannels: 1, outChannels: config.cutoff * 2,
@@ -166,16 +200,20 @@ final class SileroVADBranch: Sendable {
 
         // conv1..conv4: feature CNN over the magnitude spectrogram.
         self.conv1 = VADConv1d(
-            weight: try floats("conv1.weight"), bias: floatsOpt("conv1.bias"),
+            weight: try convWeight("conv1.weight", outC: 128, inC: config.cutoff, k: 3),
+            bias: floatsOpt("conv1.bias"),
             inChannels: config.cutoff, outChannels: 128, kernelSize: 3, padding: 1)
         self.conv2 = VADConv1d(
-            weight: try floats("conv2.weight"), bias: floatsOpt("conv2.bias"),
+            weight: try convWeight("conv2.weight", outC: 64, inC: 128, k: 3),
+            bias: floatsOpt("conv2.bias"),
             inChannels: 128, outChannels: 64, kernelSize: 3, stride: 2, padding: 1)
         self.conv3 = VADConv1d(
-            weight: try floats("conv3.weight"), bias: floatsOpt("conv3.bias"),
+            weight: try convWeight("conv3.weight", outC: 64, inC: 64, k: 3),
+            bias: floatsOpt("conv3.bias"),
             inChannels: 64, outChannels: 64, kernelSize: 3, stride: 2, padding: 1)
         self.conv4 = VADConv1d(
-            weight: try floats("conv4.weight"), bias: floatsOpt("conv4.bias"),
+            weight: try convWeight("conv4.weight", outC: 128, inC: 64, k: 3),
+            bias: floatsOpt("conv4.bias"),
             inChannels: 64, outChannels: 128, kernelSize: 3, padding: 1)
 
         // LSTM(128 → 128). PyTorch packs weights as `weight_ih_l0` /
@@ -185,10 +223,18 @@ final class SileroVADBranch: Sendable {
         guard let lstmIH, let lstmHH else {
             throw SileroVADError.missingWeight("\(prefix).lstm.{Wx,Wh}")
         }
+        // Bias: PyTorch splits into `bias_ih` + `bias_hh`; the MLX export
+        // ships a single fused `lstm.bias` of length `4*hidden`. The two
+        // are summed at runtime, so a single fused bias goes into `biasIH`
+        // with `biasHH` left nil — it is then applied exactly once. The
+        // earlier loader only looked for `bias_ih*` keys, so the fused
+        // `lstm.bias` was dropped and the LSTM ran bias-free.
+        let lstmBiasIH = floatsOpt("lstm.bias_ih") ?? floatsOpt("lstm.bias_ih_l0")
+            ?? floatsOpt("lstm.bias")
+        let lstmBiasHH = floatsOpt("lstm.bias_hh") ?? floatsOpt("lstm.bias_hh_l0")
         self.lstm = VADLSTM(
             weightIH: lstmIH, weightHH: lstmHH,
-            biasIH: floatsOpt("lstm.bias_ih") ?? floatsOpt("lstm.bias_ih_l0"),
-            biasHH: floatsOpt("lstm.bias_hh") ?? floatsOpt("lstm.bias_hh_l0"),
+            biasIH: lstmBiasIH, biasHH: lstmBiasHH,
             inputSize: 128, hiddenSize: 128)
 
         // final_conv: 1x1 conv to a single channel.
