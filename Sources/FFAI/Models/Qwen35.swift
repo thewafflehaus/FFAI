@@ -1501,9 +1501,12 @@ public final class Qwen35GDNMixer: Module {
         // ── Conv1d + silu+cast → `[T, convDim]` f32 staging buffer ──────
         //
         // Conv1d_causal_step is per-token state-carrying — must loop T
-        // times. silu+cast can be fused (mt_silu_cast_to_f32) when the
-        // conv output dtype is bf16/f16; when dtype is f32 we silu in
-        // place then identity-cast to the destination.
+        // times. silu+cast stays per-row INTENTIONALLY: per-row keeps
+        // conv1d output in L1 cache for the immediately-following
+        // silu_cast read; materialising a full `[T, convDim]` activation
+        // buffer between conv and silu_cast forces a device-memory
+        // round-trip (memory: feedback_gdn_inner_loop_already_bandwidth_optimal —
+        // tried batched silu_cast 2026-05-22, lost -4.8% median).
         let convOutAllF32 = Tensor.empty(shape: [t * convDim],
                                          dtype: .f32, device: device)
         for r in 0..<t {
