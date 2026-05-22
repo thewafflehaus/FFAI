@@ -14,8 +14,10 @@ every page in the tree so you can jump straight to a topic.
 - [Architecture](architecture.md) — the three-layer stack
   (`metaltile` Rust → `MetalTileSwift` → `FFAI`), build pipeline, and
   per-token dispatch loop.
-- [Models](models.md) — supported architectures (Llama 3.x, Qwen 3),
-  per-family known gaps, and adding a new family.
+- [Models](models.md) — the supported architecture families (dense
+  text, SSM / GDN / conv+attention hybrids, MoE, vision-language,
+  audio, neural codecs), per-family known gaps, and adding a new
+  family.
 
 ## Cross-cutting topics
 
@@ -51,8 +53,8 @@ every page in the tree so you can jump straight to a topic.
   `make` workflow, regenerating kernels.
 - [Adding a model](developing/adding-a-model.md) — porting a new
   architecture from a reference implementation.
-- [Testing](developing/testing.md) — running tests, golden fixtures,
-  coverage targets.
+- [Testing](developing/testing.md) — running tests, the
+  `expectCoherentOutput` integration model, coverage targets.
 - [Publishing](developing/publishing.md) — dev → main release flow,
   release notes, and how the docs site rebuilds.
 

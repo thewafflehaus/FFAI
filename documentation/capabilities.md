@@ -5,9 +5,9 @@ picks what to *enable* at load time via `LoadOptions`, and the model
 exposes its load progress + hot capability changes via an
 `AsyncStream<ModelLifecycleEvent>`.
 
-The infrastructure is in place from Phase 2; the first multi-modal
-model that exercises it end-to-end (vision encoder, hot
-`enable(.visionIn)`, etc.) lands in Phase 6.
+The infrastructure has been in place since Phase 2; the
+vision-language families (Gemma 3/4-VL, Qwen 2.5/3-VL, Qwen3-VL-MoE,
+Nemotron-VLM) and audio families now exercise it end-to-end.
 
 ## The `Capability` enum
 
@@ -25,7 +25,7 @@ public enum Capability: String, Sendable, Hashable, CaseIterable, Codable {
 | Capability | Today | When |
 |---|---|---|
 | `.textIn` / `.textOut` | ✅ Always on for LLMs. | Phase 2 |
-| `.visionIn` | Declared on family files but no family supports it yet. | Phase 6 (Qwen 2.5/3.5-VL) |
+| `.visionIn` | ✅ Gemma 3/4-VL, Qwen 2.5/3-VL, Qwen3-VL-MoE, Nemotron-VLM. | Phase 6.5 |
 | `.audioIn` | ✅ Whisper STT + SenseVoice STT + Qwen-Omni audio-in. | Phase 7 |
 | `.audioOut` | ✅ Kokoro TTS (iSTFTNet vocoder tail). | Phase 7 |
 | `.toolCalling` | Not declared by any family. | Phase 8+ |
@@ -73,13 +73,14 @@ set without loading weights — useful for a model picker.
 | `NemotronLabsDiffusion.NemotronLabsDiffusionDense` | `[.textIn, .textOut]` |
 | `GraniteMoeHybrid.GraniteMoeHybridHybrid` | `[.textIn, .textOut]` |
 | `Jamba.JambaHybrid` | `[.textIn, .textOut]` |
+| `LFM2.LFM2Dense` / `LFM2MoE` | `[.textIn, .textOut]` |
 | `Qwen35.Qwen35Hybrid` | `[.textIn, .textOut]` |
 | `Gemma4.Gemma4Dense` / `Gemma4E` / `Gemma4MoE` | `[.textIn, .textOut]` |
 | `GPTOSS.GPTOSSMoEVariant` | `[.textIn, .textOut]` |
 
-When a family adds a capability (e.g. `Qwen35VL` adds `.visionIn`),
-the family file declares it and the loader allocates the
-corresponding subnet only if the user opts in.
+When a family adds a capability (e.g. the VL families add
+`.visionIn`), the family file declares it and the loader allocates
+the corresponding subnet only if the user opts in.
 
 ## `LoadOptions`
 

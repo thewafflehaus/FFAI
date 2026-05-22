@@ -28,7 +28,7 @@ for and how a single token moves through the stack.
 ┌────────────────────────▼────────────────────────────────┐
 │  metaltile (Rust, sibling repo)                         │
 │   • #[kernel] DSL → IR → MSL                            │
-│   • `tile build --emit all` (metaltile-cli) produces:   │
+│   • `tile emit` (metaltile-cli) produces:               │
 │       kernels.metallib   (compiled by xcrun metal)      │
 │       manifest.json      (kernel metadata)              │
 │       MetalTileKernels.swift  (typed wrappers)          │
@@ -76,8 +76,8 @@ The user-facing layer:
 ## The build pipeline
 
 ```
-┌──────────────┐  tile build       ┌──────────────────┐  xcrun metal   ┌────────────────────┐
-│  Rust kernels│  --emit all --out │  *.metal sources │   + metallib   │  kernels.metallib  │
+┌──────────────┐  tile emit        ┌──────────────────┐  xcrun metal   ┌────────────────────┐
+│  Rust kernels│  --out <dir>      │  *.metal sources │   + metallib   │  kernels.metallib  │
 │  (#[kernel]) │ ─────────────────▶│  manifest.json   │ ──────────────▶│  manifest.json     │
 └──────────────┘                   │  MetalTileKernels│                │  MetalTileKernels  │
                                    │  .swift (typed)  │                │  .swift (typed)    │
@@ -157,15 +157,14 @@ User: model.engine.forwardSample(tokenId: t, position: pos, caches: caches)
 A `Model` has two `Capability` sets:
 
 - `availableCapabilities` — what the family declares it can do
-  (`Llama` is `[.textIn, .textOut]`; a hypothetical `Qwen35VL` would
-  add `.visionIn`).
+  (`Llama` is `[.textIn, .textOut]`; the VL families add `.visionIn`).
 - `enabledCapabilities` — what the user opted into via
   `LoadOptions.capabilities`.
 
 Disabled modalities skip weight allocation entirely — the vision
 encoder of a 9B VL model is ~600MB you don't pay for if you only need
-text. The infrastructure is in place from Phase 2; the first real
-multi-modal exercise lands in Phase 6.
+text. The infrastructure has been in place since Phase 2; the
+vision-language and audio families now exercise it end-to-end.
 
 ## File layout
 
@@ -207,8 +206,8 @@ Sources/
 Tests/
   MetalTileSwiftTests/     One file per kernel
   FFAITests/               Tensor, Module, KVCache, Sampling, …
-  ModelTests/              Per-model forward + generate determinism
-  Fixtures/                Golden outputs captured from mlx-lm
+  ModelTests/              Per-family integration tests — load,
+                           greedy-decode, assert coherent output
 ```
 
 ## Where to read more

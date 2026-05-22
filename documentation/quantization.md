@@ -7,7 +7,8 @@ This is **weight-only** quantization — it shrinks the on-disk + on-GPU
 footprint of the model and (usually) speeds up decode by lowering
 memory-bandwidth pressure. It's a different axis from
 **[KV cache quantization](kv-cache.md)**, which compresses the
-attention K/V tensors at runtime and lands in Phase 5.
+attention K/V tensors at runtime (the affine 4/8-bit and AURA
+compressed KV caches both ship today).
 
 ## What's supported
 
@@ -127,20 +128,31 @@ The loader reads `config.json`, sees `quantization.bits = 4`, and
 routes the linear layers through `dequant_gemv_4`. No flag, no extra
 field on `LoadOptions`.
 
+## MXFP4
+
+GPT-OSS-20B publishes its MoE experts **MXFP4**-quantized
+(Microscaling FP4 with FP8-block scales) while the attention / router
+/ embedding / lm_head tensors stay mlx affine-quantized. FFAI handles
+this via a load-time **transcode** path
+([`GPTOSSMoE.swift`](../Sources/FFAI/Models/GPTOSSMoE.swift)): the
+MXFP4 experts are converted to FFAI's affine-int4 format at load, so
+the decode kernels are the same `dequant_gemv_4` path the rest of the
+model uses — no separate MXFP4 inference kernel. `nvfp4` is not
+handled.
+
 ## What's not supported (yet)
 
-- **mxfp4 / nvfp4** — Microscaling FP4 with FP8-block scales. mlx-lm
-  ships these for Qwen 3.5 / Gemma 4 / GPT-OSS; FFAI doesn't yet.
-  Different scale layout means a different kernel; planned alongside
-  Qwen 3.5 in Phase 5.
+- **Native mxfp4 / nvfp4 inference** — FFAI transcodes GPT-OSS's
+  MXFP4 experts to affine-int4 at load (see above). A native
+  MXFP4-scale-layout decode kernel — keeping the FP8-block scales
+  rather than transcoding — is not implemented.
 - **gguf** quantizations (`Q4_K_M`, `Q5_K_M`, `Q8_0`, …) — different
   binary layout, different per-block scales, different tensor naming.
   Planned for Phase 8+ if community demand justifies a per-arch
   name mapper.
-- **QAT 4-bit** (Gemma 3 in particular) — works mechanically (it's
-  affine 4-bit), but no Gemma family file exists yet.
 - **Mixed-bit per-layer** — config-driven per-layer bit budgets
-  (`quantization_config` block). Planned alongside Phase 7 autotuner.
+  (`quantization_config` block). Planned alongside the Phase 9
+  autotuner.
 
 ## See also
 
