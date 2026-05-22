@@ -135,9 +135,18 @@ struct Qwen36SmokeTests {
 
     @Test("Qwen3.6-35B-A3B forwardMany bench — T=32 prefill, batched vs per-token")
     func forwardManyBench() async throws {
+        try await runForwardManyBench(targetT: 32)
+    }
+
+    @Test("Qwen3.6-35B-A3B forwardMany bench — T=128 prefill scaling")
+    func forwardManyBench128() async throws {
+        try await runForwardManyBench(targetT: 128)
+    }
+
+    private func runForwardManyBench(targetT: Int) async throws {
         let path = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
         guard FileManager.default.fileExists(atPath: path) else {
-            print("Qwen3.6 forwardManyBench skipped: \(path) not found")
+            print("Qwen3.6 forwardManyBench(T=\(targetT)) skipped: \(path) not found")
             return
         }
         var optsBuilder = LoadOptions()
@@ -150,36 +159,36 @@ struct Qwen36SmokeTests {
             Issue.record("expected Qwen35Model engine")
             return
         }
-        // T=32 prompt — matches benchShort target. Pad / truncate as needed.
-        let prompt = "The history of the printing press began when European craftsmen of the 15th century combined movable metal type with oil based ink screw presses paper to mass produce printed books pamphlets and broadsheets revolutionising communication"
-        var encoded = m.tokenizer.encode(text: prompt)
-        let target = 32
-        if encoded.count > target { encoded = Array(encoded.prefix(target)) }
+        // Seed prompt — 32 tokens. Tile until we hit targetT, then trim.
+        let seed = "The history of the printing press began when European craftsmen of the 15th century combined movable metal type with oil based ink screw presses paper to mass produce printed books pamphlets and broadsheets revolutionising communication"
+        let seedEncoded = m.tokenizer.encode(text: seed)
+        var encoded = seedEncoded
+        while encoded.count < targetT {
+            encoded.append(contentsOf: seedEncoded)
+        }
+        encoded = Array(encoded.prefix(targetT))
         let T = encoded.count
         print("forwardManyBench T=\(T)")
 
-        // Warm up Metal PSO + first-token JIT for **both** paths:
-        //   - per-token forward (warms the gemv / dequantGemv / sdpaDecode
-        //     / single-token GDN / per-expert SwiGLU PSOs)
-        //   - batched forwardMany (warms gemm / dequantGemmDynamicM /
-        //     sdpaMulti / batched GDN prep / MoE BGEMM / moeUnpermute PSOs)
-        // Without the batched warmup the first batched run pays full PSO
-        // JIT compile cost (~50-200 ms across ~20 unique kernels) and the
-        // 5-run median skews artificially slow. Mirrors mlx-lm bench
-        // convention `model(batch[:1]); mx.eval()` but adapted for our
-        // dual-path harness.
-        let warmCaches1 = qwen.makeLayerCaches()
-        for (i, tok) in encoded.prefix(2).enumerated() {
-            _ = qwen.forward(tokenId: tok, position: i, caches: warmCaches1)
+        // Warm up Metal PSO + first-token JIT for **both** paths.
+        // mlx-lm bench convention is `model(batch[:1]); mx.eval()` once;
+        // here we do 2 iters of each path so the second iter benches at
+        // steady-state-ish (PSOs compiled, page caches warm).
+        for warmIter in 0..<2 {
+            let warmCachesP = qwen.makeLayerCaches()
+            for (i, tok) in encoded.prefix(2).enumerated() {
+                _ = qwen.forward(tokenId: tok, position: i, caches: warmCachesP)
+            }
+            let warmCachesB = qwen.makeLayerCaches()
+            let warmCmd = Device.shared.makeCommandBuffer()
+            _ = qwen.forwardMany(tokenIds: encoded, startPosition: 0,
+                                 caches: warmCachesB, on: warmCmd, device: Device.shared)
+            warmCmd.commit()
+            await warmCmd.completed()
+            _ = warmIter  // silence
         }
-        let warmCaches2 = qwen.makeLayerCaches()
-        let warmCmd = Device.shared.makeCommandBuffer()
-        _ = qwen.forwardMany(tokenIds: encoded, startPosition: 0,
-                             caches: warmCaches2, on: warmCmd, device: Device.shared)
-        warmCmd.commit()
-        await warmCmd.completed()
 
-        // Per-token loop baseline (5 runs, mean).
+        // Per-token loop baseline (5 runs, median).
         var perTokenSecs: [Double] = []
         for _ in 0..<5 {
             let caches = qwen.makeLayerCaches()
@@ -193,7 +202,7 @@ struct Qwen36SmokeTests {
         let perTokenMedian = perTokenSecs[perTokenSecs.count / 2]
         print("per-token T=\(T): runs=\(perTokenSecs.map { String(format: "%.3f", $0) }) median=\(String(format: "%.3f", perTokenMedian))s = \(String(format: "%.2f", Double(T)/perTokenMedian)) tps")
 
-        // Batched forwardMany (5 runs, mean).
+        // Batched forwardMany (5 runs, median).
         var batchedSecs: [Double] = []
         for _ in 0..<5 {
             let caches = qwen.makeLayerCaches()
