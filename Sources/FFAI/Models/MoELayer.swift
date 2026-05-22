@@ -369,18 +369,25 @@ public final class MoELayer: Module, DecoderLayer {
     public let useBm8Env: Bool
     public let useM1Env: Bool
 
-    /// Lazy cache of the dequantized gate weight in `[K=hidden, N=nExperts]`
-    /// row-major layout (the `b` operand `mt_steel_gemm_64x64x16_2x2_*`
-    /// expects). For 8-bit gates, `QuantizedLinear.callMany` falls into a
-    /// T-loop of per-row `dequantGemv` (T·40 = 20480 launches at T=512
-    /// prefill); the dense path collapses each layer's gate to one
-    /// `mt_steel_gemm` dispatch. Skipped when:
+    /// Lazy cache of the dequantized gate weight in `[outDim=nExperts,
+    /// inDim=hidden]` layout — what `Ops.gemm` expects for its `weight`
+    /// argument (`ffai_gemm` computes `out = input @ weight^T`). For
+    /// 8-bit gates, `QuantizedLinear.callMany` falls into a T-loop of
+    /// per-row `dequantGemv` (T·40 = 20480 launches at T=512 prefill);
+    /// the dense path collapses each layer's gate to one `Ops.gemm`
+    /// dispatch regardless of T (no T % 64 alignment constraint).
+    /// Skipped when:
     ///   • `gate.inner` is not `QuantizedLinear`, or
     ///   • bits != 8, or
     ///   • env `FFAI_MOE_NO_DEQUANT_GATE=1`.
     /// Materialised lazily on first `gateLogitsMany` to avoid eager work
     /// in layers that never see a forward pass.
     private var dequantizedGateCache: Tensor?
+    /// Sibling cache in `[hidden, nExperts]` (K, N) layout for the
+    /// `mt_steel_gemm_64x64x16_2x2_*` fast path. Engaged when T and
+    /// nExperts both divide 64 — covers the production prefill shape
+    /// (T=64, 128, 512; nExperts=128).
+    private var dequantizedGateCacheKN: Tensor?
     private var dequantizedGateAttempted = false
 
     /// - gate: hidden → nExperts router projection.
@@ -994,13 +1001,12 @@ public final class MoELayer: Module, DecoderLayer {
     /// For 8-bit gates — common on Qwen3.5/3.6 MoE checkpoints —
     /// `QuantizedLinear.callMany` loops T `dequantGemv` dispatches per
     /// call (T·40 layers = 20 480 dispatches at T=512 prefill). We
-    /// dequantise the 8-bit weight to a dense `[hidden, nExperts]` (K, N)
-    /// tensor once on first invocation and dispatch ONE
-    /// `mt_steel_gemm_64x64x16_2x2_*` per layer instead. Constraint: the
-    /// steel gemm tile is 64×64×16 with no M-bounds masking, so falls
-    /// back to per-token when `T % 64 != 0` (decode + small prefill).
-    /// Memory cost: one extra [hidden, nExperts] tensor per 8-bit gate;
-    /// at Qwen3.6-A3B that's 40 × 2048 × 128 × 2 B = ~20 MB.
+    /// dequantise the 8-bit weight to a dense `[nExperts, hidden]` tensor
+    /// once on first invocation and dispatch ONE `Ops.gemm` per layer
+    /// (which routes to `ffai_gemm_{f32,f16,bf16}` — handles arbitrary
+    /// T, no tile-alignment constraint). Memory cost: one extra
+    /// `[nExperts, hidden]` tensor per 8-bit gate; at Qwen3.6-A3B
+    /// that's 40 × 128 × 2048 × 2 B = ~20 MB.
     private func gateLogitsMany(_ hRows: Tensor, t: Int,
                                 on cmd: MTLCommandBuffer,
                                 device: Device) -> Tensor {
@@ -1009,21 +1015,25 @@ public final class MoELayer: Module, DecoderLayer {
             if ProcessInfo.processInfo.environment["FFAI_MOE_NO_DEQUANT_GATE"] == nil,
                let q = gate.inner as? QuantizedLinear,
                q.bits == 8 {
-                dequantizedGateCache = Self.dequantizeQuantizedLinearTransposed(
+                dequantizedGateCache = Self.dequantizeQuantizedLinear(
+                    q, device: device)
+                // ALSO build the [K, N] (transposed) layout for the
+                // steel-gemm fast path when T % 64 == 0. Steel-gemm uses
+                // half-precision MMA accumulators — slightly less precise
+                // than `ffai_gemm`'s fp32 accumulator, but ~7% faster at
+                // T=512 prefill where the tile size lines up.
+                dequantizedGateCacheKN = Self.dequantizeQuantizedLinearKN(
                     q, device: device)
             }
         }
-        // Steel gemm wants M, N multiples of 64 — fall back to gate.callMany
-        // for shapes that don't satisfy.
-        if let denseKN = dequantizedGateCache,
+        // Steel-gemm fast path: T-tile and N-tile align with the 64x64x16
+        // block. Falls back to `Ops.gemm` for ragged T.
+        if let denseKN = dequantizedGateCacheKN,
            t % 64 == 0,
            let nExperts = denseKN.shape.last,
            nExperts % 64 == 0
         {
-            let k = hidden
             let out = Tensor.empty(shape: [t, nExperts], dtype: hRows.dtype, device: device)
-            // Steel block 64x64x16: grid = (n_tiles, m_tiles, 1)
-            // threadgroups, each 1024 threads (4 SGs WM=WN=2).
             let nTiles = nExperts / 64
             let mTiles = t / 64
             let tgWidth = 1024
@@ -1035,55 +1045,113 @@ public final class MoELayer: Module, DecoderLayer {
                     a: hRows.buffer, aOffset: hRows.offset,
                     b: denseKN.buffer, bOffset: denseKN.offset,
                     out: out.buffer, outOffset: out.offset,
-                    m: UInt32(t), n: UInt32(nExperts), k: UInt32(k),
+                    m: UInt32(t), n: UInt32(nExperts), k: UInt32(hidden),
                     gridSize: grid, threadgroupSize: tg, on: cmd)
+                return out
             case .f16:
                 MetalTileKernels.mt_steel_gemm_64x64x16_2x2_f16(
                     a: hRows.buffer, aOffset: hRows.offset,
                     b: denseKN.buffer, bOffset: denseKN.offset,
                     out: out.buffer, outOffset: out.offset,
-                    m: UInt32(t), n: UInt32(nExperts), k: UInt32(k),
+                    m: UInt32(t), n: UInt32(nExperts), k: UInt32(hidden),
                     gridSize: grid, threadgroupSize: tg, on: cmd)
+                return out
             case .f32:
                 MetalTileKernels.mt_steel_gemm_64x64x16_2x2_f32(
                     a: hRows.buffer, aOffset: hRows.offset,
                     b: denseKN.buffer, bOffset: denseKN.offset,
                     out: out.buffer, outOffset: out.offset,
-                    m: UInt32(t), n: UInt32(nExperts), k: UInt32(k),
+                    m: UInt32(t), n: UInt32(nExperts), k: UInt32(hidden),
                     gridSize: grid, threadgroupSize: tg, on: cmd)
+                return out
             default:
-                return gate.callMany(hRows, t: t, on: cmd, device: device)
+                break
             }
-            return out
+        }
+        // General path: ffai_gemm handles arbitrary T (no tile alignment).
+        if let dense = dequantizedGateCache {
+            return Ops.gemm(weight: dense, input: hRows, nRows: t, on: cmd)
         }
         return gate.callMany(hRows, t: t, on: cmd, device: device)
     }
 
     /// CPU-side dense materialisation of a `QuantizedLinear` into the
-    /// `[K=inDim, N=outDim]` layout `mt_steel_gemm` expects for its `b`
-    /// operand (i.e., gate weight transposed from `[outDim, inDim]` to
-    /// `[inDim, outDim]`). Supports 8-bit only — the path that
-    /// `QuantizedLinear.callMany` falls into a T-loop for.
-    private static func dequantizeQuantizedLinearTransposed(
+    /// `[outDim, inDim]` layout that `Ops.gemm` expects (i.e., the same
+    /// shape `QuantizedLinear.weight` already has but with dequantised
+    /// values in the activation dtype instead of u32-packed int8s).
+    /// Supports 8-bit only — the path that `QuantizedLinear.callMany`
+    /// falls into a T-loop for.
+    private static func dequantizeQuantizedLinear(
         _ q: QuantizedLinear, device: Device
     ) -> Tensor? {
-        precondition(q.bits == 8, "dequantizeQuantizedLinearTransposed: only 8-bit supported")
+        precondition(q.bits == 8, "dequantizeQuantizedLinear: only 8-bit supported")
         let outDim = q.weight.shape[0]                    // nExperts
         let packsPerRow = q.weight.shape[1]
         let inDim = packsPerRow * 4                       // hidden
         let groupsPerRow = inDim / q.groupSize
         precondition(inDim % q.groupSize == 0,
-                     "dequantizeQuantizedLinearTransposed: inDim \(inDim) not aligned to groupSize \(q.groupSize)")
+                     "dequantizeQuantizedLinear: inDim \(inDim) not aligned to groupSize \(q.groupSize)")
 
         let wPacked = q.weight.toArray(as: UInt32.self)
         precondition(wPacked.count == outDim * packsPerRow,
-                     "dequantizeQuantizedLinearTransposed: weight buffer size mismatch")
+                     "dequantizeQuantizedLinear: weight buffer size mismatch")
         let scalesF = q.scales.toFloatArray()
         let biasesF = q.biases.toFloatArray()
 
-        // Output [K=inDim, N=outDim] row-major: dense[c, r] is the weight
-        // for output expert r at hidden dim c. Stored as flat
-        // dense[c * outDim + r].
+        // Output [outDim, inDim] row-major: dense[r, c] = q_byte * scale + bias.
+        var dense = [Float](repeating: 0, count: outDim * inDim)
+        for r in 0..<outDim {
+            let rwBase = r * packsPerRow
+            let rsBase = r * groupsPerRow
+            let rdBase = r * inDim
+            for c in 0..<inDim {
+                let packIdx = rwBase + (c >> 2)
+                let shift = UInt32((c & 3) << 3)
+                let qByte = Float((wPacked[packIdx] >> shift) & 0xFF)
+                let gIdx = rsBase + (c / q.groupSize)
+                dense[rdBase + c] = qByte * scalesF[gIdx] + biasesF[gIdx]
+            }
+        }
+
+        let dtype = q.scales.dtype
+        let denseT = Tensor.empty(shape: [outDim, inDim], dtype: dtype, device: device)
+        switch dtype {
+        case .f32:
+            denseT.copyIn(from: dense)
+        case .f16:
+            denseT.copyIn(from: dense.map { Float16($0) })
+        case .bf16:
+            let bf16Bits = dense.map { f -> UInt16 in
+                let bits = f.bitPattern
+                let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
+                return UInt16(truncatingIfNeeded: rounded >> 16)
+            }
+            denseT.copyIn(from: bf16Bits)
+        default:
+            return nil
+        }
+        return denseT
+    }
+
+    /// `[K=inDim, N=outDim]` (transposed) materialisation of a
+    /// `QuantizedLinear` — the `b` operand `mt_steel_gemm_64x64x16_2x2_*`
+    /// expects. Same dequant math as the row-major sibling, just
+    /// permuted on store.
+    private static func dequantizeQuantizedLinearKN(
+        _ q: QuantizedLinear, device: Device
+    ) -> Tensor? {
+        precondition(q.bits == 8, "dequantizeQuantizedLinearKN: only 8-bit supported")
+        let outDim = q.weight.shape[0]
+        let packsPerRow = q.weight.shape[1]
+        let inDim = packsPerRow * 4
+        let groupsPerRow = inDim / q.groupSize
+        precondition(inDim % q.groupSize == 0,
+                     "dequantizeQuantizedLinearKN: inDim not aligned")
+
+        let wPacked = q.weight.toArray(as: UInt32.self)
+        let scalesF = q.scales.toFloatArray()
+        let biasesF = q.biases.toFloatArray()
+
         var dense = [Float](repeating: 0, count: inDim * outDim)
         for r in 0..<outDim {
             let rwBase = r * packsPerRow
@@ -1093,8 +1161,7 @@ public final class MoELayer: Module, DecoderLayer {
                 let shift = UInt32((c & 3) << 3)
                 let qByte = Float((wPacked[packIdx] >> shift) & 0xFF)
                 let gIdx = rsBase + (c / q.groupSize)
-                let w = qByte * scalesF[gIdx] + biasesF[gIdx]
-                dense[c * outDim + r] = w
+                dense[c * outDim + r] = qByte * scalesF[gIdx] + biasesF[gIdx]
             }
         }
 
