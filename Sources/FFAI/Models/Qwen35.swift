@@ -894,11 +894,16 @@ public final class Qwen35MoEFFN: Module {
                                                       on: work, device: device)
         work.commit()
 
-        // ── Per-row sigmoidScalarFMA fan-out ─────────────────────────────
-        // `Ops.sigmoidScalarFMA` requires a `[1]` scalar gate; row-slice
-        // each token's gate logit + run the FMA. T fmaCmd commits but
-        // each is one small kernel that pipelines on the queue.
+        // ── Per-row sigmoidScalarFMA chained on one cmd ──────────────────
+        // `Ops.sigmoidScalarFMA` requires a `[1]` scalar gate, so the
+        // T-row fan-out stays as T dispatches (each per-row), but ALL
+        // share one command buffer. Previously each row spun up its own
+        // `device.makeCommandBuffer() + commit()` — T·40 layers = 20 480
+        // tiny cmd allocations at Qwen3.6-A3B T=512 prefill. Single cmd
+        // keeps Metal's dispatcher pipelining contiguous and saves the
+        // per-buffer encode/finalise overhead.
         let outFlat = Tensor.empty(shape: [t * hidden], dtype: dt, device: device)
+        let fmaCmd = device.makeCommandBuffer()
         for r in 0..<t {
             let gateRow = Tensor(buffer: gateLogitsAll.buffer,
                                  offset: gateLogitsAll.offset + r * dtBytes,
@@ -912,12 +917,11 @@ public final class Qwen35MoEFFN: Module {
             let outRow = Tensor(buffer: outFlat.buffer,
                                 offset: outFlat.offset + r * hidden * dtBytes,
                                 shape: [hidden], dtype: dt)
-            let fmaCmd = device.makeCommandBuffer()
             Ops.sigmoidScalarFMA(
                 gate: gateRow, value: sharedRow, base: routedRow,
                 into: outRow, on: fmaCmd)
-            fmaCmd.commit()
         }
+        fmaCmd.commit()
         return outFlat
     }
 }
