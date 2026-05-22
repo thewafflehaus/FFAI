@@ -153,6 +153,77 @@ struct Qwen36SmokeTests {
         try await runForwardManyBench(targetT: 2048, skipPerToken: true)
     }
 
+    @Test("Qwen3.6-35B-A3B forwardMany profile — T=512 phase breakdown")
+    func forwardManyProfile512() async throws {
+        let path = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
+        guard FileManager.default.fileExists(atPath: path) else {
+            print("Qwen3.6 forwardManyProfile skipped: \(path) not found")
+            return
+        }
+        var optsBuilder = LoadOptions()
+        optsBuilder.prewarm = false
+        let opts = optsBuilder
+        let m: Model = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(path, options: opts)
+        }
+        guard let qwen = m.qwen35 else {
+            Issue.record("expected Qwen35Model engine")
+            return
+        }
+        // Build a T=512 prompt.
+        let seed = "The history of the printing press began when European craftsmen of the 15th century combined movable metal type with oil based ink screw presses paper to mass produce printed books pamphlets and broadsheets revolutionising communication"
+        let seedEncoded = m.tokenizer.encode(text: seed)
+        var encoded = seedEncoded
+        while encoded.count < 512 { encoded.append(contentsOf: seedEncoded) }
+        encoded = Array(encoded.prefix(512))
+        let T = encoded.count
+
+        // Warm-up — same convention as the bench.
+        for _ in 0..<2 {
+            let warmCaches = qwen.makeLayerCaches()
+            let warmCmd = Device.shared.makeCommandBuffer()
+            _ = qwen.forwardMany(tokenIds: encoded, startPosition: 0,
+                                 caches: warmCaches, on: warmCmd, device: Device.shared)
+            warmCmd.commit()
+            await warmCmd.completed()
+        }
+
+        // Enable wallclock profile, reset accumulator.
+        Profile.shared.level = .wallclock
+        Profile.shared.resetPhases()
+
+        // Run forwardMany once. Wallclock measures CPU-side dispatch time
+        // per phase; for the layer-type phases the underlying decodeMany
+        // calls queue work onto an in-flight cmd without waiting, so the
+        // recorded values are CPU dispatch + GPU work IF the layer commits
+        // inside, else CPU dispatch only. The breakdown is most useful
+        // for identifying CPU-bound dispatch concentrations rather than
+        // GPU phase time — for GPU timing use Instruments / xctrace.
+        let caches = qwen.makeLayerCaches()
+        let cmd = Device.shared.makeCommandBuffer()
+        let totalStart = Date()
+        _ = qwen.forwardMany(tokenIds: encoded, startPosition: 0,
+                             caches: caches, on: cmd, device: Device.shared)
+        cmd.commit()
+        await cmd.completed()
+        let totalS = Date().timeIntervalSince(totalStart)
+
+        // Dump per-phase totals.
+        Profile.shared.level = .off
+        var totals: [String: (count: Int, sumS: Double)] = [:]
+        for (name, dur) in Profile.shared.phases.entries {
+            let prev = totals[name] ?? (0, 0)
+            totals[name] = (prev.count + 1, prev.sumS + dur)
+        }
+        print("forwardManyProfile T=\(T): total=\(String(format: "%.3f", totalS))s = \(String(format: "%.1f", Double(T)/totalS)) tps")
+        let sorted = totals.sorted { $0.value.sumS > $1.value.sumS }
+        for (name, agg) in sorted {
+            let pct = agg.sumS / totalS * 100
+            let avgMs = agg.sumS / Double(agg.count) * 1000
+            print("  \(name): count=\(agg.count) total=\(String(format: "%.3f", agg.sumS))s (\(String(format: "%.1f", pct))%) avg=\(String(format: "%.2f", avgMs))ms")
+        }
+    }
+
     @Test("Qwen3.6-35B-A3B forwardMany bench — T=4096 batched-only")
     func forwardManyBench4K() async throws {
         try await runForwardManyBench(targetT: 4096, skipPerToken: true)

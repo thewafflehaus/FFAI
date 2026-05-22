@@ -2381,7 +2381,9 @@ public final class Qwen35Model: LanguageModel {
         let idsTensor = Tensor(buffer: idsBuf, offset: 0, shape: [t], dtype: .u32)
 
         var workCmd = device.makeCommandBuffer()
-        var h = embedTokens(idsTensor, on: workCmd).reshaped(to: [t * hidden])
+        var h = Profile.time("forwardMany.embed") {
+            embedTokens(idsTensor, on: workCmd).reshaped(to: [t * hidden])
+        }
         // h is `[T, hidden]` flat. Dtype follows the embedding output —
         // for QuantizedEmbedding that's `scales.dtype` (model running
         // dtype), NOT `weight.dtype` (which would be u32 packed). Read
@@ -2392,17 +2394,21 @@ public final class Qwen35Model: LanguageModel {
 
         for (i, layer) in layers.enumerated() {
             if let attn = layer as? Qwen35AttentionLayer {
-                h = attn.decodeMany(h, t: t, startPosition: startPosition,
+                h = Profile.time("forwardMany.attn_layer") {
+                    attn.decodeMany(h, t: t, startPosition: startPosition,
                                     cache: caches[i],
                                     cmd: workCmd, device: device)
+                }
                 // attn.decodeMany commits workCmd if MoE FFN. Refresh.
                 if attn.commitsCommandBuffer {
                     workCmd = device.makeCommandBuffer()
                 }
             } else if let gdn = layer as? Qwen35GDNLayer, gdn.mixer.fused {
-                h = gdn.decodeMany(h, t: t, startPosition: startPosition,
+                h = Profile.time("forwardMany.gdn_layer") {
+                    gdn.decodeMany(h, t: t, startPosition: startPosition,
                                    cache: caches[i],
                                    cmd: workCmd, device: device)
+                }
                 // GDN's commitsCommandBuffer is always true; refresh.
                 workCmd = device.makeCommandBuffer()
             } else {
