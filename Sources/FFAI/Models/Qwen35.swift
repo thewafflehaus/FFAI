@@ -1363,10 +1363,14 @@ public final class Qwen35GDNMixer: Module {
                 x: qkvRow, w: convW, b: convB,
                 state: cache.conv.state, into: convOutScratch,
                 nChannels: convDim, kernelSize: convKernel, on: cmd)
-            let convActRow = Ops.silu(convOutScratch, on: cmd)
+            // In-place silu: read + write the same buffer. Safe for the
+            // elementwise kernel (each thread does one load + one store
+            // at the same offset). Saves T·30 `Tensor.empty` allocations
+            // per prefill at Qwen3.6-A3B GDN layers.
+            _ = Ops.silu(convOutScratch, on: cmd, into: convOutScratch)
 
             // Cast bf16 activations to fp32 for the fused step / state.
-            Ops.castToF32(convActRow, into: convActF32Scratch, on: cmd)
+            Ops.castToF32(convOutScratch, into: convActF32Scratch, on: cmd)
             Ops.castToF32(aRawRow, into: aRawF32Scratch, on: cmd)
             Ops.castToF32(bRawRow, into: bRawF32Scratch, on: cmd)
 
