@@ -2603,6 +2603,125 @@ public enum Ops {
         }
     }
 
+    /// Chunked fused GDN prep + recurrence over `T` tokens.
+    ///
+    /// Wraps `mt_gated_delta_prep_chunk` — the chunked counterpart of
+    /// `gatedDeltaPrepStep`. Performs the entire per-token prep
+    /// (q/k per-head RMSNorm + `g = exp(-exp(a_log)·softplus(a_raw+dt_bias))`
+    /// + `beta = sigmoid(b_raw)`) and recurrence step inside a single
+    /// kernel for all `T` tokens, with the recurrent state kept in
+    /// per-lane registers across the entire `T`-sweep. One state-load
+    /// and one state-store per dispatch instead of `T` of each.
+    ///
+    /// Drop-in replacement for the per-token T-loop body in
+    /// `Qwen35GDNMixer.forwardMany`:
+    ///   * conv1d still loops T times (depthwise, state-carrying)
+    ///   * silu+cast still per-row
+    ///   * prep + recurrence: ONE dispatch (this kernel)
+    ///   * gatedMixerNorm + outProj already T-batched
+    ///
+    /// Layout:
+    ///   * `convOut`        : `[B, T, 2·Hk·Dk + Hv·Dv]`   q | k | v slabs per token
+    ///   * `aLog, dtBias`   : `[Hv]`                       per-Hv-head learnables
+    ///   * `aRaw, bRaw`     : `[B, T, Hv]`
+    ///   * `qNormWeight, kNormWeight`: `[Hk·Dk]`
+    ///   * `stateIn/Out`    : `[B, Hv, Dv, Dk]`   one state per (b, hv) — NO T dim
+    ///   * `y`              : `[B, T, Hv, Dv]`
+    ///   * `tLen`           : `[1]` u32 scalar buffer — chunk length at runtime
+    ///
+    /// Dispatch: grid `(Dv, B·Hv)` threadgroups, 32 threads per group
+    /// (one simdgroup). Same geometry as `gatedDeltaPrepStep`. `Dk %
+    /// 32 == 0` invariant applies (max Dk = 256, n_per_t ≤ 8).
+    ///
+    /// All inputs must share dtype `T` — f32 / f16 / bf16 emit variants.
+    /// Qwen3.5/3.6 production path uses bf16 conv_out with bf16 state
+    /// (matches `Qwen35GDNMixer.forward` parity convention).
+    public static func gatedDeltaPrepChunk(
+        convOut: Tensor,
+        aLog: Tensor, dtBias: Tensor,
+        aRaw: Tensor, bRaw: Tensor,
+        qNormWeight: Tensor, kNormWeight: Tensor,
+        stateIn: Tensor, stateOut: Tensor, y: Tensor,
+        tLen: Tensor,
+        batchSize: Int, dk: Int, dv: Int, hv: Int, hk: Int,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(convOut.dtype == aLog.dtype && aLog.dtype == dtBias.dtype
+                     && dtBias.dtype == aRaw.dtype && aRaw.dtype == bRaw.dtype
+                     && bRaw.dtype == qNormWeight.dtype && qNormWeight.dtype == kNormWeight.dtype
+                     && kNormWeight.dtype == stateIn.dtype && stateIn.dtype == stateOut.dtype
+                     && stateOut.dtype == y.dtype,
+                     "Ops.gatedDeltaPrepChunk: every tensor must share dtype")
+        precondition(dk % 32 == 0,
+                     "Ops.gatedDeltaPrepChunk: dk \(dk) must be multiple of 32")
+        precondition(dv % 32 == 0,
+                     "Ops.gatedDeltaPrepChunk: dv \(dv) must be multiple of 32")
+        precondition(hv % hk == 0,
+                     "Ops.gatedDeltaPrepChunk: hv \(hv) must be a multiple of hk \(hk) (GQA)")
+        precondition(tLen.dtype == .u32 && tLen.elementCount == 1,
+                     "Ops.gatedDeltaPrepChunk: tLen must be a [1] u32 scalar buffer")
+
+        let tgWidth = 32
+        let grid = MTLSize(width: dv * tgWidth,
+                           height: batchSize * hv,
+                           depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+        let dkU = UInt32(dk)
+        let dvU = UInt32(dv)
+        let hvU = UInt32(hv)
+        let hkU = UInt32(hk)
+
+        switch convOut.dtype {
+        case .f32:
+            MetalTileKernels.mt_gated_delta_prep_chunk_f32(
+                conv_out: convOut.buffer, conv_outOffset: convOut.offset,
+                a_log: aLog.buffer, a_logOffset: aLog.offset,
+                dt_bias: dtBias.buffer, dt_biasOffset: dtBias.offset,
+                a_raw: aRaw.buffer, a_rawOffset: aRaw.offset,
+                b_raw: bRaw.buffer, b_rawOffset: bRaw.offset,
+                q_norm_weight: qNormWeight.buffer, q_norm_weightOffset: qNormWeight.offset,
+                k_norm_weight: kNormWeight.buffer, k_norm_weightOffset: kNormWeight.offset,
+                state_in: stateIn.buffer, state_inOffset: stateIn.offset,
+                state_out: stateOut.buffer, state_outOffset: stateOut.offset,
+                y: y.buffer, yOffset: y.offset,
+                t_len: tLen.buffer, t_lenOffset: tLen.offset,
+                dk: dkU, dv: dvU, hv: hvU, hk: hkU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_gated_delta_prep_chunk_f16(
+                conv_out: convOut.buffer, conv_outOffset: convOut.offset,
+                a_log: aLog.buffer, a_logOffset: aLog.offset,
+                dt_bias: dtBias.buffer, dt_biasOffset: dtBias.offset,
+                a_raw: aRaw.buffer, a_rawOffset: aRaw.offset,
+                b_raw: bRaw.buffer, b_rawOffset: bRaw.offset,
+                q_norm_weight: qNormWeight.buffer, q_norm_weightOffset: qNormWeight.offset,
+                k_norm_weight: kNormWeight.buffer, k_norm_weightOffset: kNormWeight.offset,
+                state_in: stateIn.buffer, state_inOffset: stateIn.offset,
+                state_out: stateOut.buffer, state_outOffset: stateOut.offset,
+                y: y.buffer, yOffset: y.offset,
+                t_len: tLen.buffer, t_lenOffset: tLen.offset,
+                dk: dkU, dv: dvU, hv: hvU, hk: hkU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_gated_delta_prep_chunk_bf16(
+                conv_out: convOut.buffer, conv_outOffset: convOut.offset,
+                a_log: aLog.buffer, a_logOffset: aLog.offset,
+                dt_bias: dtBias.buffer, dt_biasOffset: dtBias.offset,
+                a_raw: aRaw.buffer, a_rawOffset: aRaw.offset,
+                b_raw: bRaw.buffer, b_rawOffset: bRaw.offset,
+                q_norm_weight: qNormWeight.buffer, q_norm_weightOffset: qNormWeight.offset,
+                k_norm_weight: kNormWeight.buffer, k_norm_weightOffset: kNormWeight.offset,
+                state_in: stateIn.buffer, state_inOffset: stateIn.offset,
+                state_out: stateOut.buffer, state_outOffset: stateOut.offset,
+                y: y.buffer, yOffset: y.offset,
+                t_len: tLen.buffer, t_lenOffset: tLen.offset,
+                dk: dkU, dv: dvU, hv: hvU, hk: hkU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.gatedDeltaPrepChunk: unsupported dtype \(convOut.dtype)")
+        }
+    }
+
     /// Batched-Q causal SDPA prefill via the simdgroup-matrix MMA kernel.
     /// Replaces `T` independent `sdpaDecode` calls (each O(K) per
     /// q-head, T separate dispatches) with one dispatch that tiles the
