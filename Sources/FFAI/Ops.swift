@@ -1834,6 +1834,11 @@ public enum Ops {
                 // kernel skip the masked range [sink_end, window_start)
                 // at the loop-bound level. See the doc comment above.
                 sink_end: UInt32(sinkEnd), window_start: UInt32(windowStart),
+                // has_sink: 0 → no learned attention-sink logit folded
+                // into the softmax denominator (GPT-OSS-style sinks).
+                // Ops.sdpaDecode does not yet expose a sink-logit param;
+                // 0 reproduces the pre-#145 dense-attention behavior.
+                has_sink: 0, sink_logit: 0.0,
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (128, .f16):
@@ -1846,6 +1851,9 @@ public enum Ops {
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
                 sink_end: UInt32(sinkEnd), window_start: UInt32(windowStart),
+                // has_sink: 0 → dense softmax denominator (see d128 f32
+                // case above for the GPT-OSS attention-sink rationale).
+                has_sink: 0, sink_logit: 0.0,
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (128, .bf16):
@@ -1858,6 +1866,9 @@ public enum Ops {
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
                 sink_end: UInt32(sinkEnd), window_start: UInt32(windowStart),
+                // has_sink: 0 → dense softmax denominator (see d128 f32
+                // case above for the GPT-OSS attention-sink rationale).
+                has_sink: 0, sink_logit: 0.0,
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         // NOTE: the d64/d256 specialized kernels in metaltile-std
@@ -1934,14 +1945,16 @@ public enum Ops {
                 heads_per_group: UInt32(headsPerGroup),
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
+        // d512 routes to the dedicated `ffai_sdpa_decode_d512_*` kernel.
+        // metaltile #145 auto-discovers `sdpa_decode_d512.rs`, so the
+        // per-head-dim kernel is emitted again — the generic-kernel
+        // reroute used while it was missing produced all-zero output
+        // past offset 128 (the generic body's per-lane width assumes
+        // head_dim ≤ 128). Like d64/d256, the d512 kernel is perf-tuned
+        // for dense full attention and does not accept sink params;
+        // OpsValidation preconditions `sinkEnd == 0 && windowStart == 0`.
         case (512, .f32):
-            // d512 had a dedicated `ffai_sdpa_decode_d512_*` kernel under
-            // the old `metaltile-emit/main.rs` manual allowlist; the new
-            // `tile build --emit all` auto-discovery doesn't synthesize
-            // it (no per-head-dim file in `crates/metaltile-std/src/ffai/`).
-            // Route through the generic kernel with constexpr head_dim
-            // — same code path d128 already uses.
-            MetalTileKernels.ffai_sdpa_decode_f32(
+            MetalTileKernels.ffai_sdpa_decode_d512_f32(
                 q: q.buffer, qOffset: q.offset,
                 k: k.buffer, kOffset: k.offset,
                 v: v.buffer, vOffset: v.offset,
@@ -1949,11 +1962,10 @@ public enum Ops {
                 head_dim: UInt32(headDim), n_kv: UInt32(nKV),
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
-                sink_end: UInt32(sinkEnd), window_start: UInt32(windowStart),
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (512, .f16):
-            MetalTileKernels.ffai_sdpa_decode_f16(
+            MetalTileKernels.ffai_sdpa_decode_d512_f16(
                 q: q.buffer, qOffset: q.offset,
                 k: k.buffer, kOffset: k.offset,
                 v: v.buffer, vOffset: v.offset,
@@ -1961,11 +1973,10 @@ public enum Ops {
                 head_dim: UInt32(headDim), n_kv: UInt32(nKV),
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
-                sink_end: UInt32(sinkEnd), window_start: UInt32(windowStart),
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (512, .bf16):
-            MetalTileKernels.ffai_sdpa_decode_bf16(
+            MetalTileKernels.ffai_sdpa_decode_d512_bf16(
                 q: q.buffer, qOffset: q.offset,
                 k: k.buffer, kOffset: k.offset,
                 v: v.buffer, vOffset: v.offset,
@@ -1973,7 +1984,6 @@ public enum Ops {
                 head_dim: UInt32(headDim), n_kv: UInt32(nKV),
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
-                sink_end: UInt32(sinkEnd), window_start: UInt32(windowStart),
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         default:
@@ -3670,70 +3680,521 @@ public enum Ops {
         return result
     }
 
-    // ─── VLM / audio stubs ───────────────────────────────────────────
-    //
-    // These ops are wired up on `waffles/ek/aura-port` against a separate
-    // metaltile branch that registers `mt_conv2d_generic_*`,
-    // `mt_patch_embed_*`, `mt_rope_2d_*`, `mt_audio_conv1d_*`,
-    // `mt_mel_spectrogram_*`, `mt_vocoder_istft_*`. Those kernels are NOT
-    // on `clandestine/dev` and therefore not in the metallib this branch
-    // builds against. VLM / audio models (VisionEncoder, AudioEncoder,
-    // Vocos, Kokoro) still need the symbols to compile — stub each with
-    // `fatalError` so the language-model + Qwen3.5/3.6 prefill paths
-    // build cleanly, while any caller of the VLM / audio paths trips
-    // loudly at first use. Follow-up: rebase metaltile-side kernel
-    // sources from `aura-port` onto `clandestine/dev`, re-emit, drop
-    // these stubs.
+    // ─── Vision: conv2d ──────────────────────────────────────────────
+
+    /// 2D convolution for vision-transformer patch embedding.
+    ///
+    /// Backed by `metaltile-std/src/ffai/conv2d.rs` (`conv2d_generic`).
+    /// One thread per output element `(n, oc, oh, ow)` — a genuine
+    /// Grid3D / one-thread-per-output kernel, dispatched flat over the
+    /// `batch * out_ch * out_h * out_w` output count, exactly like
+    /// `gather`.
+    ///
+    /// Layouts (NCHW input, OIHW weight — the PyTorch / safetensors
+    /// default every VLM checkpoint ships):
+    ///   input  `[batch, in_ch,  in_h,  in_w]`
+    ///   weight `[out_ch, in_ch, kh,    kw]`
+    ///   bias   `[out_ch]`
+    ///   out    `[batch, out_ch, out_h, out_w]`
+    ///
+    /// ## DISPATCH INVARIANTS (conv2d.rs)
+    ///   * `out_h = (in_h + 2*pad_h - kh) / stride_h + 1`
+    ///   * `out_w = (in_w + 2*pad_w - kw) / stride_w + 1`
+    ///   * `input`, `weight`, `bias`, `out` share one floating dtype.
     public static func conv2d(
-        input _: Tensor, weight _: Tensor, bias _: Tensor,
-        strideH _: Int, strideW _: Int,
-        padH _: Int = 0, padW _: Int = 0,
-        on _: MTLCommandBuffer,
-        into _: Tensor? = nil
+        input: Tensor, weight: Tensor, bias: Tensor,
+        strideH: Int, strideW: Int,
+        padH: Int = 0, padW: Int = 0,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
     ) -> Tensor {
-        fatalError("Ops.conv2d: metaltile kernel mt_conv2d_generic not on clandestine/dev; rebase aura-port kernels first")
+        precondition(input.shape.count == 4,
+                     "Ops.conv2d: input must be 4D [batch,in_ch,in_h,in_w] (conv2d.rs)")
+        precondition(weight.shape.count == 4,
+                     "Ops.conv2d: weight must be 4D [out_ch,in_ch,kh,kw] (conv2d.rs)")
+        precondition(bias.shape.count == 1,
+                     "Ops.conv2d: bias must be 1D [out_ch] (conv2d.rs)")
+        precondition(input.dtype == weight.dtype && weight.dtype == bias.dtype,
+                     "Ops.conv2d: input/weight/bias dtype mismatch (conv2d.rs)")
+        precondition(strideH > 0 && strideW > 0,
+                     "Ops.conv2d: stride must be positive (conv2d.rs)")
+
+        let batch = input.shape[0]
+        let inCh = input.shape[1]
+        let inH = input.shape[2]
+        let inW = input.shape[3]
+        let outCh = weight.shape[0]
+        let kh = weight.shape[2]
+        let kw = weight.shape[3]
+        precondition(weight.shape[1] == inCh,
+                     "Ops.conv2d: weight in_ch \(weight.shape[1]) != input in_ch \(inCh) (conv2d.rs)")
+        precondition(bias.shape[0] == outCh,
+                     "Ops.conv2d: bias \(bias.shape[0]) != out_ch \(outCh) (conv2d.rs)")
+
+        // Output spatial dims — the conv2d.rs DISPATCH INVARIANT.
+        let outH = (inH + 2 * padH - kh) / strideH + 1
+        let outW = (inW + 2 * padW - kw) / strideW + 1
+        precondition(outH > 0 && outW > 0,
+                     "Ops.conv2d: degenerate output \(outH)x\(outW) — kernel "
+                     + "larger than padded input (conv2d.rs)")
+
+        let result = out ?? Tensor.empty(shape: [batch, outCh, outH, outW],
+                                         dtype: input.dtype)
+        precondition(result.shape == [batch, outCh, outH, outW],
+                     "Ops.conv2d: out shape \(result.shape) != expected "
+                     + "\([batch, outCh, outH, outW]) (conv2d.rs)")
+
+        // Grid3D — one thread per output element, dispatched flat.
+        let totalThreads = batch * outCh * outH * outW
+        let (grid, tg) = elementwiseGrid(totalThreads)
+
+        func dispatch(
+            _ fn: (MTLBuffer, Int, MTLBuffer, Int, MTLBuffer, Int, MTLBuffer, Int,
+                   UInt32, UInt32, UInt32, UInt32, UInt32, UInt32, UInt32,
+                   UInt32, UInt32, UInt32, UInt32, UInt32, UInt32,
+                   MTLSize, MTLSize, MTLCommandBuffer) -> Void
+        ) {
+            fn(input.buffer, input.offset, weight.buffer, weight.offset,
+               bias.buffer, bias.offset, result.buffer, result.offset,
+               UInt32(batch), UInt32(inCh), UInt32(inH), UInt32(inW),
+               UInt32(outCh), UInt32(outH), UInt32(outW),
+               UInt32(kh), UInt32(kw), UInt32(strideH), UInt32(strideW),
+               UInt32(padH), UInt32(padW), grid, tg, cmd)
+        }
+        switch input.dtype {
+        case .f32:
+            dispatch { MetalTileKernels.conv2d_generic_f32(
+                input: $0, inputOffset: $1, weight: $2, weightOffset: $3,
+                bias: $4, biasOffset: $5, out: $6, outOffset: $7,
+                batch: $8, in_ch: $9, in_h: $10, in_w: $11,
+                out_ch: $12, out_h: $13, out_w: $14,
+                kh: $15, kw: $16, stride_h: $17, stride_w: $18,
+                pad_h: $19, pad_w: $20, gridSize: $21, threadgroupSize: $22,
+                on: $23) }
+        case .f16:
+            dispatch { MetalTileKernels.conv2d_generic_f16(
+                input: $0, inputOffset: $1, weight: $2, weightOffset: $3,
+                bias: $4, biasOffset: $5, out: $6, outOffset: $7,
+                batch: $8, in_ch: $9, in_h: $10, in_w: $11,
+                out_ch: $12, out_h: $13, out_w: $14,
+                kh: $15, kw: $16, stride_h: $17, stride_w: $18,
+                pad_h: $19, pad_w: $20, gridSize: $21, threadgroupSize: $22,
+                on: $23) }
+        case .bf16:
+            dispatch { MetalTileKernels.conv2d_generic_bf16(
+                input: $0, inputOffset: $1, weight: $2, weightOffset: $3,
+                bias: $4, biasOffset: $5, out: $6, outOffset: $7,
+                batch: $8, in_ch: $9, in_h: $10, in_w: $11,
+                out_ch: $12, out_h: $13, out_w: $14,
+                kh: $15, kw: $16, stride_h: $17, stride_w: $18,
+                pad_h: $19, pad_w: $20, gridSize: $21, threadgroupSize: $22,
+                on: $23) }
+        default:
+            fatalError("Ops.conv2d: unsupported dtype \(input.dtype)")
+        }
+        return result
     }
 
+    // ─── Vision: patch_embed ─────────────────────────────────────────
+
+    /// Fused image-unfold + linear-projection patch embedding for vision
+    /// transformers — the ViT stem in one dispatch.
+    ///
+    /// Backed by `metaltile-std/src/ffai/patch_embed.rs`. One thread per
+    /// output element `(patch, h)` — Grid3D / one-thread-per-output,
+    /// dispatched flat over `num_patches * hidden`.
+    ///
+    /// Layouts (NCHW image, flat linear weight):
+    ///   image  `[in_ch, in_h, in_w]`  (single image)
+    ///   weight `[hidden, in_ch * patch_h * patch_w]`
+    ///   bias   `[hidden]`
+    ///   out    `[num_patches, hidden]`
+    ///
+    /// ## DISPATCH INVARIANTS (patch_embed.rs)
+    ///   * `in_h` divisible by `patch_h`, `in_w` by `patch_w` — the
+    ///     patch grid tiles the image exactly (no padding / clamp).
+    ///   * `weight` second dim == `in_ch * patch_h * patch_w`.
+    ///   * `image`, `weight`, `bias`, `out` share one floating dtype.
     public static func patchEmbed(
-        image _: Tensor, weight _: Tensor, bias _: Tensor,
-        patchH _: Int, patchW _: Int,
-        on _: MTLCommandBuffer, into _: Tensor? = nil
+        image: Tensor, weight: Tensor, bias: Tensor,
+        patchH: Int, patchW: Int,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
     ) -> Tensor {
-        fatalError("Ops.patchEmbed: metaltile kernel mt_patch_embed not on clandestine/dev")
+        precondition(image.shape.count == 3,
+                     "Ops.patchEmbed: image must be 3D [in_ch,in_h,in_w] (patch_embed.rs)")
+        precondition(weight.shape.count == 2,
+                     "Ops.patchEmbed: weight must be 2D [hidden,patch_dim] (patch_embed.rs)")
+        precondition(bias.shape.count == 1,
+                     "Ops.patchEmbed: bias must be 1D [hidden] (patch_embed.rs)")
+        precondition(image.dtype == weight.dtype && weight.dtype == bias.dtype,
+                     "Ops.patchEmbed: image/weight/bias dtype mismatch (patch_embed.rs)")
+
+        let inCh = image.shape[0]
+        let inH = image.shape[1]
+        let inW = image.shape[2]
+        let hidden = weight.shape[0]
+        precondition(inH % patchH == 0 && inW % patchW == 0,
+                     "Ops.patchEmbed: image \(inH)x\(inW) not divisible by patch "
+                     + "\(patchH)x\(patchW) (patch_embed.rs)")
+        let patchDim = inCh * patchH * patchW
+        precondition(weight.shape[1] == patchDim,
+                     "Ops.patchEmbed: weight patch_dim \(weight.shape[1]) != "
+                     + "in_ch*patch_h*patch_w \(patchDim) (patch_embed.rs)")
+        precondition(bias.shape[0] == hidden,
+                     "Ops.patchEmbed: bias \(bias.shape[0]) != hidden \(hidden) (patch_embed.rs)")
+
+        let numPatches = (inH / patchH) * (inW / patchW)
+        let result = out ?? Tensor.empty(shape: [numPatches, hidden],
+                                         dtype: image.dtype)
+        precondition(result.shape == [numPatches, hidden],
+                     "Ops.patchEmbed: out shape \(result.shape) != expected "
+                     + "\([numPatches, hidden]) (patch_embed.rs)")
+
+        let totalThreads = numPatches * hidden
+        let (grid, tg) = elementwiseGrid(totalThreads)
+        switch image.dtype {
+        case .f32:
+            MetalTileKernels.patch_embed_f32(
+                image: image.buffer, imageOffset: image.offset,
+                weight: weight.buffer, weightOffset: weight.offset,
+                bias: bias.buffer, biasOffset: bias.offset,
+                out: result.buffer, outOffset: result.offset,
+                in_ch: UInt32(inCh), in_h: UInt32(inH), in_w: UInt32(inW),
+                patch_h: UInt32(patchH), patch_w: UInt32(patchW),
+                hidden: UInt32(hidden),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.patch_embed_f16(
+                image: image.buffer, imageOffset: image.offset,
+                weight: weight.buffer, weightOffset: weight.offset,
+                bias: bias.buffer, biasOffset: bias.offset,
+                out: result.buffer, outOffset: result.offset,
+                in_ch: UInt32(inCh), in_h: UInt32(inH), in_w: UInt32(inW),
+                patch_h: UInt32(patchH), patch_w: UInt32(patchW),
+                hidden: UInt32(hidden),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.patch_embed_bf16(
+                image: image.buffer, imageOffset: image.offset,
+                weight: weight.buffer, weightOffset: weight.offset,
+                bias: bias.buffer, biasOffset: bias.offset,
+                out: result.buffer, outOffset: result.offset,
+                in_ch: UInt32(inCh), in_h: UInt32(inH), in_w: UInt32(inW),
+                patch_h: UInt32(patchH), patch_w: UInt32(patchW),
+                hidden: UInt32(hidden),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.patchEmbed: unsupported dtype \(image.dtype)")
+        }
+        return result
     }
 
+    // ─── Vision: rope_2d ─────────────────────────────────────────────
+
+    /// 2D positional RoPE for vision transformers — the "M-RoPE" spatial
+    /// component. Splits each head's `head_dim` into two halves: the
+    /// first rotated by the token's row index, the second by its column.
+    ///
+    /// Backed by `metaltile-std/src/ffai/rope_2d.rs`. Grid3D — one thread
+    /// per `(token, head, j)` with `j ∈ [0, quarter_dim)`; each thread
+    /// emits four output values.
+    ///
+    /// Layout:
+    ///   qk        `[n_tokens, n_heads, head_dim]`
+    ///   positions `[n_tokens, 2]`  u32 — `(row, col)` per token
+    ///   out       `[n_tokens, n_heads, head_dim]`
+    ///
+    /// ## DISPATCH INVARIANTS (rope_2d.rs)
+    ///   * `head_dim` divisible by 4 (`quarter_dim = head_dim / 4`).
+    ///   * `positions` is u32, `[n_tokens, 2]`.
+    ///   * `qk` element count == `n_tokens * n_heads * head_dim`.
     public static func rope2D(
-        _: Tensor, positions _: Tensor,
-        nTokens _: Int, nHeads _: Int, headDim _: Int,
-        thetaBase _: Float,
-        on _: MTLCommandBuffer, into _: Tensor? = nil
+        _ qk: Tensor, positions: Tensor,
+        nTokens: Int, nHeads: Int, headDim: Int,
+        thetaBase: Float,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
     ) -> Tensor {
-        fatalError("Ops.rope2D: metaltile kernel mt_rope_2d not on clandestine/dev")
+        precondition(headDim % 4 == 0,
+                     "Ops.rope2D: head_dim \(headDim) must be a multiple of 4 (rope_2d.rs)")
+        precondition(positions.dtype == .u32,
+                     "Ops.rope2D: positions must be u32 (rope_2d.rs)")
+        precondition(positions.elementCount == nTokens * 2,
+                     "Ops.rope2D: positions count \(positions.elementCount) != "
+                     + "n_tokens*2 \(nTokens * 2) (rope_2d.rs)")
+        precondition(qk.elementCount == nTokens * nHeads * headDim,
+                     "Ops.rope2D: qk count \(qk.elementCount) != "
+                     + "n_tokens*n_heads*head_dim \(nTokens * nHeads * headDim) (rope_2d.rs)")
+
+        let halfDim = headDim / 2
+        let quarterDim = headDim / 4
+        let result = out ?? Tensor.empty(shape: qk.shape, dtype: qk.dtype)
+
+        // Grid3D: one thread per (token, head, j).
+        let grid = MTLSize(width: nTokens, height: nHeads, depth: quarterDim)
+        let tg = MTLSize(width: 1, height: 1, depth: 1)
+        switch qk.dtype {
+        case .f32:
+            MetalTileKernels.ffai_rope_2d_f32(
+                qk: qk.buffer, qkOffset: qk.offset,
+                positions: positions.buffer, positionsOffset: positions.offset,
+                out: result.buffer, outOffset: result.offset,
+                n_heads: UInt32(nHeads), head_dim: UInt32(headDim),
+                half_dim: UInt32(halfDim), quarter_dim: UInt32(quarterDim),
+                theta_base: thetaBase,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.ffai_rope_2d_f16(
+                qk: qk.buffer, qkOffset: qk.offset,
+                positions: positions.buffer, positionsOffset: positions.offset,
+                out: result.buffer, outOffset: result.offset,
+                n_heads: UInt32(nHeads), head_dim: UInt32(headDim),
+                half_dim: UInt32(halfDim), quarter_dim: UInt32(quarterDim),
+                theta_base: thetaBase,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.ffai_rope_2d_bf16(
+                qk: qk.buffer, qkOffset: qk.offset,
+                positions: positions.buffer, positionsOffset: positions.offset,
+                out: result.buffer, outOffset: result.offset,
+                n_heads: UInt32(nHeads), head_dim: UInt32(headDim),
+                half_dim: UInt32(halfDim), quarter_dim: UInt32(quarterDim),
+                theta_base: thetaBase,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.rope2D: unsupported dtype \(qk.dtype)")
+        }
+        return result
     }
 
+    // ─── Audio front-end / vocoder ───────────────────────────────────
+
+    /// Log-Mel spectrogram — the STT / audio-in front-end. Fuses the
+    /// short-time Fourier transform, the Mel filterbank projection and
+    /// the log into one dispatch. Wraps `mel_spectrogram_{f32,f16}`.
+    ///
+    /// Inputs (all share `dtype`, f32 or f16):
+    ///   * `audio`      — `[nSamples]` mono waveform, pre-padded so every
+    ///                    frame is in-bounds (Whisper reflect-pads by
+    ///                    `nFFT/2` on each side before calling this).
+    ///   * `window`     — `[nFFT]` analysis window (periodic Hann).
+    ///   * `melWeight`  — `[nMels, nFreq]` Mel filterbank, row-major.
+    ///
+    /// Output: `[nFrames, nMels]` log-Mel.
+    ///
+    /// The kernel is a plain Grid3D one-thread-per-output kernel
+    /// (`KernelMode::Grid3D` in `mel_spectrogram.rs`), so `elementwiseGrid`
+    /// is the correct dispatch — NOT a reduction kernel.
+    ///
+    /// ## DISPATCH INVARIANTS (from `ffai/mel_spectrogram.rs`)
+    ///   * `nFreq == nFFT / 2 + 1` — the non-redundant real-FFT bins.
+    ///   * `nSamples >= (nFrames - 1) * hopLength + nFFT` — the kernel
+    ///     does no bounds check on the frame walk; the caller pre-pads.
     public static func melSpectrogram(
-        audio _: Tensor, window _: Tensor, melWeight _: Tensor,
-        nFFT _: Int, nMels _: Int, hopLength _: Int,
-        nFrames _: Int, logEps _: Float = 1e-10,
-        on _: MTLCommandBuffer, into _: Tensor? = nil
+        audio: Tensor, window: Tensor, melWeight: Tensor,
+        nFFT: Int, nMels: Int, hopLength: Int,
+        nFrames: Int, logEps: Float = 1e-10,
+        on cmd: MTLCommandBuffer, into out: Tensor? = nil
     ) -> Tensor {
-        fatalError("Ops.melSpectrogram: metaltile kernel mt_mel_spectrogram not on clandestine/dev")
+        precondition(audio.dtype == window.dtype && audio.dtype == melWeight.dtype,
+                     "Ops.melSpectrogram: audio/window/melWeight must share dtype")
+        precondition(audio.dtype == .f32 || audio.dtype == .f16,
+                     "Ops.melSpectrogram: dtype must be f32 or f16")
+        let nFreq = nFFT / 2 + 1
+        // Invariants cited from ffai/mel_spectrogram.rs §"Layouts".
+        precondition(window.elementCount == nFFT,
+                     "Ops.melSpectrogram: window must be [nFFT=\(nFFT)] "
+                     + "(ffai/mel_spectrogram.rs)")
+        precondition(melWeight.elementCount == nMels * nFreq,
+                     "Ops.melSpectrogram: melWeight must be [nMels, nFreq] "
+                     + "= [\(nMels), \(nFreq)] (ffai/mel_spectrogram.rs)")
+        precondition(audio.elementCount >= (nFrames - 1) * hopLength + nFFT,
+                     "Ops.melSpectrogram: audio too short — kernel does no "
+                     + "bounds check on the frame walk; pre-pad so "
+                     + "nSamples >= (nFrames-1)*hop + nFFT "
+                     + "(ffai/mel_spectrogram.rs)")
+        let result = out ?? Tensor.empty(shape: [nFrames, nMels], dtype: audio.dtype)
+        // One thread per output element (frame, mel_bin).
+        let (grid, tg) = elementwiseGrid(nFrames * nMels)
+        switch audio.dtype {
+        case .f32:
+            MetalTileKernels.mel_spectrogram_f32(
+                audio: audio.buffer, audioOffset: audio.offset,
+                window: window.buffer, windowOffset: window.offset,
+                mel_weight: melWeight.buffer, mel_weightOffset: melWeight.offset,
+                out: result.buffer, outOffset: result.offset,
+                n_fft: UInt32(nFFT), n_freq: UInt32(nFreq),
+                n_mels: UInt32(nMels), hop_length: UInt32(hopLength),
+                log_eps: logEps,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mel_spectrogram_f16(
+                audio: audio.buffer, audioOffset: audio.offset,
+                window: window.buffer, windowOffset: window.offset,
+                mel_weight: melWeight.buffer, mel_weightOffset: melWeight.offset,
+                out: result.buffer, outOffset: result.offset,
+                n_fft: UInt32(nFFT), n_freq: UInt32(nFreq),
+                n_mels: UInt32(nMels), hop_length: UInt32(hopLength),
+                log_eps: logEps,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.melSpectrogram: unsupported dtype \(audio.dtype)")
+        }
+        return result
     }
 
+    /// Wide-stride multi-channel 1D convolution — the STT audio patch
+    /// embedding. Dense, strided, NCL layout (PyTorch `nn.Conv1d`).
+    /// Wraps `audio_conv1d_{f32,f16,bf16}`.
+    ///
+    /// Inputs (all share `dtype`):
+    ///   * `input`  — `[batch, inCh, inLen]`.
+    ///   * `weight` — `[outCh, inCh, k]`.
+    ///   * `bias`   — `[outCh]`.
+    ///
+    /// Output: `[batch, outCh, outLen]` with
+    /// `outLen = (inLen + 2*pad - k) / stride + 1`.
+    ///
+    /// Grid3D one-thread-per-output kernel (`KernelMode::Grid3D` in
+    /// `audio_conv1d.rs`); `elementwiseGrid` is the correct dispatch.
+    ///
+    /// ## DISPATCH INVARIANTS (from `ffai/audio_conv1d.rs`)
+    ///   * `outLen == (inLen + 2*pad - k) / stride + 1`.
+    ///   * `stride >= 1`, `k >= 1`.
     public static func audioConv1d(
-        input _: Tensor, weight _: Tensor, bias _: Tensor,
-        batch _: Int, inCh _: Int, inLen _: Int, outCh _: Int,
-        k _: Int, stride _: Int, pad _: Int,
-        on _: MTLCommandBuffer, into _: Tensor? = nil
+        input: Tensor, weight: Tensor, bias: Tensor,
+        batch: Int, inCh: Int, inLen: Int, outCh: Int,
+        k: Int, stride: Int, pad: Int,
+        on cmd: MTLCommandBuffer, into out: Tensor? = nil
     ) -> Tensor {
-        fatalError("Ops.audioConv1d: metaltile kernel mt_audio_conv1d not on clandestine/dev")
+        precondition(input.dtype == weight.dtype && input.dtype == bias.dtype,
+                     "Ops.audioConv1d: input/weight/bias must share dtype")
+        precondition(stride >= 1 && k >= 1,
+                     "Ops.audioConv1d: stride and k must be >= 1 "
+                     + "(ffai/audio_conv1d.rs)")
+        precondition(input.elementCount == batch * inCh * inLen,
+                     "Ops.audioConv1d: input must be [batch, inCh, inLen]")
+        precondition(weight.elementCount == outCh * inCh * k,
+                     "Ops.audioConv1d: weight must be [outCh, inCh, k]")
+        precondition(bias.elementCount == outCh,
+                     "Ops.audioConv1d: bias must be [outCh]")
+        let outLen = (inLen + 2 * pad - k) / stride + 1
+        precondition(outLen >= 1,
+                     "Ops.audioConv1d: degenerate outLen=\(outLen) "
+                     + "(ffai/audio_conv1d.rs)")
+        let result = out ?? Tensor.empty(shape: [batch, outCh, outLen],
+                                         dtype: input.dtype)
+        // One thread per output element (n, oc, op).
+        let (grid, tg) = elementwiseGrid(batch * outCh * outLen)
+        switch input.dtype {
+        case .f32:
+            MetalTileKernels.audio_conv1d_f32(
+                input: input.buffer, inputOffset: input.offset,
+                weight: weight.buffer, weightOffset: weight.offset,
+                bias: bias.buffer, biasOffset: bias.offset,
+                out: result.buffer, outOffset: result.offset,
+                batch: UInt32(batch), in_ch: UInt32(inCh), in_len: UInt32(inLen),
+                out_ch: UInt32(outCh), out_len: UInt32(outLen),
+                k: UInt32(k), stride: UInt32(stride), pad: UInt32(pad),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.audio_conv1d_f16(
+                input: input.buffer, inputOffset: input.offset,
+                weight: weight.buffer, weightOffset: weight.offset,
+                bias: bias.buffer, biasOffset: bias.offset,
+                out: result.buffer, outOffset: result.offset,
+                batch: UInt32(batch), in_ch: UInt32(inCh), in_len: UInt32(inLen),
+                out_ch: UInt32(outCh), out_len: UInt32(outLen),
+                k: UInt32(k), stride: UInt32(stride), pad: UInt32(pad),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.audio_conv1d_bf16(
+                input: input.buffer, inputOffset: input.offset,
+                weight: weight.buffer, weightOffset: weight.offset,
+                bias: bias.buffer, biasOffset: bias.offset,
+                out: result.buffer, outOffset: result.offset,
+                batch: UInt32(batch), in_ch: UInt32(inCh), in_len: UInt32(inLen),
+                out_ch: UInt32(outCh), out_len: UInt32(outLen),
+                k: UInt32(k), stride: UInt32(stride), pad: UInt32(pad),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.audioConv1d: unsupported dtype \(input.dtype)")
+        }
+        return result
     }
 
+    /// Inverse-STFT overlap-add — the TTS vocoder waveform-synthesis
+    /// tail. Inverse-DFTs each frame, applies the synthesis window,
+    /// overlap-adds with COLA normalisation. Wraps
+    /// `vocoder_istft_{f32,f16,bf16}`.
+    ///
+    /// Inputs (all share `dtype`):
+    ///   * `specRe` / `specIm` — `[nFrames, nFreq]` real / imaginary
+    ///     planes of the predicted STFT.
+    ///   * `window` — `[nFFT]` synthesis window.
+    ///
+    /// Output: `[outLen]` reconstructed waveform with
+    /// `outLen = (nFrames - 1) * hopLength + nFFT`.
+    ///
+    /// Grid3D one-thread-per-output-sample kernel (`KernelMode::Grid3D`
+    /// in `vocoder.rs`); `elementwiseGrid` is the correct dispatch.
+    ///
+    /// ## DISPATCH INVARIANTS (from `ffai/vocoder.rs`)
+    ///   * `nFreq == nFFT / 2 + 1`.
+    ///   * `outLen == (nFrames - 1) * hopLength + nFFT`.
     public static func vocoderISTFT(
-        specRe _: Tensor, specIm _: Tensor, window _: Tensor,
-        nFrames _: Int, nFFT _: Int, hopLength _: Int,
-        on _: MTLCommandBuffer, into _: Tensor? = nil
+        specRe: Tensor, specIm: Tensor, window: Tensor,
+        nFrames: Int, nFFT: Int, hopLength: Int,
+        on cmd: MTLCommandBuffer, into out: Tensor? = nil
     ) -> Tensor {
-        fatalError("Ops.vocoderISTFT: metaltile kernel mt_vocoder_istft not on clandestine/dev")
+        precondition(specRe.dtype == specIm.dtype && specRe.dtype == window.dtype,
+                     "Ops.vocoderISTFT: specRe/specIm/window must share dtype")
+        let nFreq = nFFT / 2 + 1
+        precondition(window.elementCount == nFFT,
+                     "Ops.vocoderISTFT: window must be [nFFT=\(nFFT)] "
+                     + "(ffai/vocoder.rs)")
+        precondition(specRe.elementCount == nFrames * nFreq,
+                     "Ops.vocoderISTFT: specRe must be [nFrames, nFreq] "
+                     + "= [\(nFrames), \(nFreq)] (ffai/vocoder.rs)")
+        precondition(specIm.elementCount == nFrames * nFreq,
+                     "Ops.vocoderISTFT: specIm must be [nFrames, nFreq] "
+                     + "= [\(nFrames), \(nFreq)] (ffai/vocoder.rs)")
+        let outLen = (nFrames - 1) * hopLength + nFFT
+        let result = out ?? Tensor.empty(shape: [outLen], dtype: specRe.dtype)
+        // One thread per output sample.
+        let (grid, tg) = elementwiseGrid(outLen)
+        switch specRe.dtype {
+        case .f32:
+            MetalTileKernels.vocoder_istft_f32(
+                spec_re: specRe.buffer, spec_reOffset: specRe.offset,
+                spec_im: specIm.buffer, spec_imOffset: specIm.offset,
+                window: window.buffer, windowOffset: window.offset,
+                out: result.buffer, outOffset: result.offset,
+                n_frames: UInt32(nFrames), n_fft: UInt32(nFFT),
+                n_freq: UInt32(nFreq), hop_length: UInt32(hopLength),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.vocoder_istft_f16(
+                spec_re: specRe.buffer, spec_reOffset: specRe.offset,
+                spec_im: specIm.buffer, spec_imOffset: specIm.offset,
+                window: window.buffer, windowOffset: window.offset,
+                out: result.buffer, outOffset: result.offset,
+                n_frames: UInt32(nFrames), n_fft: UInt32(nFFT),
+                n_freq: UInt32(nFreq), hop_length: UInt32(hopLength),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.vocoder_istft_bf16(
+                spec_re: specRe.buffer, spec_reOffset: specRe.offset,
+                spec_im: specIm.buffer, spec_imOffset: specIm.offset,
+                window: window.buffer, windowOffset: window.offset,
+                out: result.buffer, outOffset: result.offset,
+                n_frames: UInt32(nFrames), n_fft: UInt32(nFFT),
+                n_freq: UInt32(nFreq), hop_length: UInt32(hopLength),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.vocoderISTFT: unsupported dtype \(specRe.dtype)")
+        }
+        return result
     }
 }

@@ -124,7 +124,7 @@ public struct MoERouter: Sendable {
                      "MoERouter.route: logits.count \(logits.count) ≠ nExperts \(nExperts)")
 
         switch gatingMode {
-        case .softmaxThenTopK where normTopKProb:
+        case .softmaxThenTopK where normTopKProb && expertBias == nil:
             // Fast path: `softmaxThenTopK + normTopKProb=true` produces
             // the same weights as `.topKThenSoftmax`. Proof:
             //   softmax(L)[i] = exp(L[i] - M) / Z, M = max(L), Z = Σ
@@ -140,6 +140,14 @@ public struct MoERouter: Sendable {
             // ~1000 ops per route saved). Qwen3 / Qwen3.5 / Qwen3.6 MoE
             // all hit this branch (`norm_topk_prob: true` in every
             // shipped config).
+            //
+            // REQUIRES `expertBias == nil`: the proof's "top-K of raw
+            // logits == top-K of softmax probs" step breaks once an
+            // additive per-expert bias is applied AFTER softmax (the
+            // bias is not monotonic in the raw logit). LFM2-MoE supplies
+            // an `expert_bias`, so it falls through to the general
+            // `.softmaxThenTopK` path below, which selects on
+            // `softmax(logits) + bias`.
             let idx = Self.topKIndices(logits, k: topK)
             let weights = Self.softmax(idx.map { logits[$0] })
             return Routing(indices: idx, weights: weights)
