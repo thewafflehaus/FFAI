@@ -196,6 +196,14 @@ public enum ModelRegistry {
             // MoE family name and we have a text-only loader — route to
             // it instead of throwing the VL-not-integrated error. The
             // vision tower is not used.
+            //
+            // (Rebase note 2026-05-23: this is the merge of two parallel
+            // changes — our `826ae2a` hand-listed the architecture
+            // strings and called `Qwen35Hybrid.loadModel` directly with a
+            // `language_model.` prefix; Tom's `a9f0ed5` consolidated the
+            // dispatch through `Qwen35.architectures` + the `loadQwen35`
+            // helper. Kept Tom's version — same functional outcome,
+            // uses the family-set abstraction.)
             if let arch = config.architecture, Qwen35.architectures.contains(arch) {
                 return try loadQwen35(config: config, weights: weights,
                                       options: options, device: device)
