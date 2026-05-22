@@ -1556,29 +1556,21 @@ public final class Qwen35GDNMixer: Module {
         cache.gdn.swap()
         for _ in 0..<t { cache.advance() }
 
-        // ── Mixer norm per row (T dispatches; cheap on same cmd) ────────
+        // ── Mixer norm T-batched (one dispatch across T·Hv rows) ────────
+        //
+        // `mt_gated_mixer_norm` decodes its row from
+        // `program_id::<0>()`, so dispatching `T·Hv` rows instead of
+        // `Hv` runs the same per-row math over every token in one
+        // dispatch. Saves T-1 per-layer dispatches × 30 GDN layers =
+        // 15330 dispatches at T=512.
         let yGatedAll = Tensor.empty(shape: [t * valueDim],
                                      dtype: dt, device: device)
-        for r in 0..<t {
-            let yF32Row = Tensor(
-                buffer: yF32All.buffer,
-                offset: yF32All.offset + r * valueDim * f32Bytes,
-                shape: [numValueHeads, valueHeadDim], dtype: .f32)
-            let zRow = Tensor(
-                buffer: zAll.buffer,
-                offset: zAll.offset + r * valueDim * dtBytes,
-                shape: [valueDim], dtype: dt)
-            let yGatedRow = Tensor(
-                buffer: yGatedAll.buffer,
-                offset: yGatedAll.offset + r * valueDim * dtBytes,
-                shape: [valueDim], dtype: dt)
-            Ops.gatedMixerNorm(
-                y: yF32Row, z: zRow, weight: mixerNorm.weight,
-                epsBuf: epsBufFused,
-                into: yGatedRow,
-                numValueHeads: numValueHeads, valueHeadDim: valueHeadDim,
-                on: cmd)
-        }
+        Ops.gatedMixerNormMany(
+            y: yF32All, z: zAll, weight: mixerNorm.weight,
+            epsBuf: epsBufFused,
+            into: yGatedAll,
+            t: t, numValueHeads: numValueHeads, valueHeadDim: valueHeadDim,
+            on: cmd)
 
         // ── Batched output projection ───────────────────────────────────
         let yGatedRows = yGatedAll.reshaped(to: [t, valueDim])
