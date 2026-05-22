@@ -286,6 +286,87 @@ struct Qwen36SmokeTests {
                 "forwardMany batched top-1 logit \(manyTopLogit) drifted \(absDelta) from per-token \(refTopLogit)")
     }
 
+    /// T=128 equivalence — pins the new dequantised-gate + `mt_steel_gemm`
+    /// path in `MoELayer.gateLogitsMany` (engaged when T % 64 == 0). The
+    /// short-prompt sibling above hits the legacy fallback at T=8, so
+    /// without this cell the steel-gemm gate path has no argmax canary.
+    @Test("Qwen3.6-35B-A3B forwardMany T=128 matches per-token forward")
+    func forwardManyEquivalenceT128() async throws {
+        let path = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
+        guard FileManager.default.fileExists(atPath: path) else {
+            print("Qwen3.6 smoke skipped: \(path) not found")
+            return
+        }
+        var optsBuilder = LoadOptions()
+        optsBuilder.prewarm = false
+        let opts = optsBuilder
+        let m: Model = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(path, options: opts)
+        }
+        guard let qwen = m.qwen35 else {
+            Issue.record("expected Qwen35Model engine, got \(type(of: m.engine))")
+            return
+        }
+        // Encode + pad-with-repeats to exactly 128 tokens. The model's
+        // attention is causal so trailing repeats only feed the cache —
+        // the LAST-token logits are what both paths return + compare.
+        let prompt = "The history of the printing press began when"
+        let baseEncoded = m.tokenizer.encode(text: prompt)
+        precondition(baseEncoded.count >= 4,
+                     "forwardManyEquivalenceT128: short prompt encoded to \(baseEncoded.count) tokens")
+        var encoded: [Int] = []
+        while encoded.count + baseEncoded.count <= 128 {
+            encoded.append(contentsOf: baseEncoded)
+        }
+        while encoded.count < 128 { encoded.append(baseEncoded[0]) }
+        precondition(encoded.count == 128,
+                     "forwardManyEquivalenceT128: built \(encoded.count) tokens, want 128")
+
+        // Reference: T per-token forward.
+        let refCaches = qwen.makeLayerCaches()
+        var refLastLogits: Tensor!
+        for (i, tok) in encoded.enumerated() {
+            refLastLogits = qwen.forward(tokenId: tok, position: i, caches: refCaches)
+        }
+        let refLogits = refLastLogits.toFloatArray()
+        let refArgmax = refLogits.enumerated().max(by: { $0.element < $1.element })!.offset
+
+        // Batched: one forwardMany call — engages gateLogitsMany's steel-gemm
+        // path (T=128 % 64 == 0, nExperts=128 % 64 == 0).
+        let manyCaches = qwen.makeLayerCaches()
+        let manyCmd = Device.shared.makeCommandBuffer()
+        let manyLogitsTensor = qwen.forwardMany(
+            tokenIds: encoded, startPosition: 0,
+            caches: manyCaches, on: manyCmd, device: Device.shared)
+        manyCmd.commit()
+        await manyCmd.completed()
+        let manyLogits = manyLogitsTensor.toFloatArray()
+        let manyArgmax = manyLogits.enumerated().max(by: { $0.element < $1.element })!.offset
+
+        print("forwardManyEquivalenceT128 T=\(encoded.count): ref argmax=\(refArgmax) batched argmax=\(manyArgmax)")
+        let refTop5 = refLogits.enumerated().sorted { $0.element > $1.element }.prefix(5)
+            .map { (id: $0.offset, logit: $0.element) }
+        let manyTop5 = manyLogits.enumerated().sorted { $0.element > $1.element }.prefix(5)
+            .map { (id: $0.offset, logit: $0.element) }
+        print("  ref top5: \(refTop5)")
+        print("  many top5: \(manyTop5)")
+
+        #expect(refArgmax == manyArgmax,
+                "T=128 forwardMany batched argmax \(manyArgmax) ≠ per-token forward argmax \(refArgmax)")
+        let refTopLogit = refLogits[refArgmax]
+        let manyTopLogit = manyLogits[manyArgmax]
+        let absDelta = abs(refTopLogit - manyTopLogit)
+        // T=128 across 40 layers of bf16 accumulates more rounding than
+        // T=8 (the short-prompt sibling's 0.5 floor). The dense-gate
+        // path adds another ~0.4 logits of drift on the top-1 score
+        // vs the per-row dequant_gemv reference — argmax still matches,
+        // top-5 still overlaps. 1.5 is a permissive cap that catches
+        // structural divergence (≥ 2 logits = different token order)
+        // without false-positive-ing on bf16 noise.
+        #expect(absDelta < 1.5,
+                "T=128 forwardMany top-1 logit \(manyTopLogit) drifted \(absDelta) from per-token \(refTopLogit)")
+    }
+
     @Test("Qwen3.6-35B-A3B forward pass — first-token greedy decode")
     func firstTokenForward() async throws {
         let path = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
