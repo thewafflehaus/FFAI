@@ -61,6 +61,34 @@ public protocol LanguageModel: Module {
     /// chosen token id (4-byte readback) — no full logits transfer.
     func forwardSample(tokenId: Int, position: Int,
                        caches: [any LayerCacheProtocol], device: Device) -> Int
+
+    /// Whether this engine supports `forward(inputEmbedding:...)` — the
+    /// embedding-input forward path a VLM needs to splice image tokens
+    /// into the text stream. Most text-only families return `false`; the
+    /// VL-target families (Gemma 3 / 4, Qwen3 / 3.5, Nemotron-Labs-
+    /// Diffusion) override this to `true`. Default `false`.
+    var supportsEmbeddingInput: Bool { get }
+
+    /// Queue a single-token forward pass that takes a precomputed
+    /// `[hidden]` embedding row instead of a token id — the primitive a
+    /// `VLModel` uses to inject vision-encoder tokens at image-placeholder
+    /// positions. Everything after the embedding lookup (norm scale,
+    /// layer stack, lm_head) is identical to `forward(tokenId:...)`.
+    ///
+    /// Families that don't support this trap; check `supportsEmbeddingInput`
+    /// first. The default implementation traps.
+    func forward(inputEmbedding: Tensor, position: Int,
+                 caches: [any LayerCacheProtocol],
+                 on cmd: MTLCommandBuffer, device: Device) -> Tensor
+
+    /// Look up the raw `[hidden]` embedding row for a text token — the
+    /// table gather *without* any family-specific post-scale (Gemma's
+    /// embed-scale is applied inside `forward(inputEmbedding:...)`, not
+    /// here). A `VLModel` uses this to build the spliced prompt-embedding
+    /// stream: text tokens get `textEmbedding(...)`, image-placeholder
+    /// positions get vision-encoder rows. VL-target families implement
+    /// it; the default traps. Check `supportsEmbeddingInput` first.
+    func textEmbedding(tokenId: Int, device: Device) -> Tensor
 }
 
 public extension LanguageModel {
@@ -68,6 +96,28 @@ public extension LanguageModel {
     /// and whose tokenizer post-processor does not add one (Gemma 4)
     /// override this to `true`.
     var requiresLeadingBOS: Bool { false }
+
+    /// Default: embedding-input forward unsupported. VL-target families
+    /// override both this and `forward(inputEmbedding:...)`.
+    var supportsEmbeddingInput: Bool { false }
+
+    /// Default `forward(inputEmbedding:...)`: traps. VL-target families
+    /// provide a real implementation.
+    func forward(inputEmbedding: Tensor, position: Int,
+                 caches: [any LayerCacheProtocol],
+                 on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        preconditionFailure(
+            "\(type(of: self)) does not support embedding-input forward — "
+            + "check supportsEmbeddingInput before calling")
+    }
+
+    /// Default `textEmbedding(...)`: traps. VL-target families provide a
+    /// real implementation.
+    func textEmbedding(tokenId: Int, device: Device) -> Tensor {
+        preconditionFailure(
+            "\(type(of: self)) does not support textEmbedding — "
+            + "check supportsEmbeddingInput before calling")
+    }
 
     func makeLayerCaches(maxSeq: Int? = nil, device: Device = .shared) -> [any LayerCacheProtocol] {
         makeLayerCaches(maxSeq: maxSeq, device: device)

@@ -18,4 +18,11 @@ public enum Capability: String, Sendable, Hashable, CaseIterable, Codable {
 extension Capability {
     public static let textOnly: Set<Capability> = [.textIn, .textOut]
     public static let textWithTools: Set<Capability> = [.textIn, .textOut, .toolCalling]
+
+    /// Speech-to-text models (Whisper): audio in, text out.
+    public static let speechToText: Set<Capability> = [.audioIn, .textOut]
+    /// Text-to-speech models (Kokoro): text in, audio out.
+    public static let textToSpeech: Set<Capability> = [.textIn, .audioOut]
+    /// Omni-modal models (Qwen-Omni): text + audio in, text out.
+    public static let omniAudio: Set<Capability> = [.textIn, .audioIn, .textOut]
 }

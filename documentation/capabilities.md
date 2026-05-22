@@ -26,7 +26,8 @@ public enum Capability: String, Sendable, Hashable, CaseIterable, Codable {
 |---|---|---|
 | `.textIn` / `.textOut` | ✅ Always on for LLMs. | Phase 2 |
 | `.visionIn` | Declared on family files but no family supports it yet. | Phase 6 (Qwen 2.5/3.5-VL) |
-| `.audioIn` / `.audioOut` | Not declared by any family. | Phase 8+ |
+| `.audioIn` | ✅ Whisper STT + SenseVoice STT + Qwen-Omni audio-in. | Phase 7 |
+| `.audioOut` | ✅ Kokoro TTS (iSTFTNet vocoder tail). | Phase 7 |
 | `.toolCalling` | Not declared by any family. | Phase 8+ |
 
 Convenience sets:
@@ -34,7 +35,31 @@ Convenience sets:
 ```swift
 Capability.textOnly       // [.textIn, .textOut]
 Capability.textWithTools  // [.textIn, .textOut, .toolCalling]
+Capability.speechToText   // [.audioIn, .textOut]   — Whisper, SenseVoice
+Capability.textToSpeech   // [.textIn, .audioOut]   — Kokoro
+Capability.omniAudio      // [.textIn, .audioIn, .textOut] — Qwen-Omni
 ```
+
+## Audio models
+
+Audio models do not route through `Model` / `ModelRegistry` (which
+describe a text-in / text-out causal decoder). They load through
+[`AudioModelRegistry`](../Sources/FFAI/AudioModelRegistry.swift), which
+inspects `config.json`, picks the family (Whisper STT, SenseVoice STT,
+Kokoro TTS, Qwen-Omni), and reports the audio `Capability` set:
+
+```swift
+let loaded = try AudioModelRegistry.load(directory: dir)
+switch loaded {
+case .whisper(let m):    ...   // .speechToText
+case .senseVoice(let m): ...   // .speechToText
+case .kokoro(let m):     ...   // .textToSpeech
+case .qwenOmni(let m):   ...   // .omniAudio
+}
+```
+
+`AudioModelRegistry.capabilities(forConfigAt:)` reports the capability
+set without loading weights — useful for a model picker.
 
 ## What each family declares
 

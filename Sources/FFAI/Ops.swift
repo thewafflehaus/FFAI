@@ -3613,4 +3613,127 @@ public enum Ops {
             fatalError("Ops.moeGatherDequantGemmInt4M1: unsupported dtype \(x.dtype)")
         }
     }
+
+    /// LayerNorm: `out = (x − mean) / sqrt(var + eps) · weight + bias`.
+    /// Backed by `mt_layer_norm_*` (one TG per row, TPG=1024). Used by
+    /// vision-transformer encoders (SigLIP / CLIP) and audio frontends —
+    /// not on the Qwen3.5/3.6 hot path, but kept here so VLM/audio
+    /// models in this package compile against `Ops`.
+    public static func layerNorm(_ x: Tensor, weight: Tensor, bias: Tensor,
+                                 eps: Float, nRows: Int, rowSize: Int,
+                                 on cmd: MTLCommandBuffer,
+                                 into out: Tensor? = nil) -> Tensor {
+        precondition(x.elementCount == nRows * rowSize,
+                     "Ops.layerNorm: x size \(x.elementCount) ≠ nRows*rowSize \(nRows * rowSize)")
+        precondition(weight.elementCount == rowSize,
+                     "Ops.layerNorm: weight must be [rowSize]")
+        precondition(bias.elementCount == rowSize,
+                     "Ops.layerNorm: bias must be [rowSize]")
+        precondition(x.dtype == weight.dtype && weight.dtype == bias.dtype,
+                     "Ops.layerNorm: x/weight/bias dtype mismatch")
+        let result = out ?? Tensor.empty(shape: x.shape, dtype: x.dtype)
+        var epsValue = eps
+        let epsBuf = device.makeBuffer(length: 4)
+        memcpy(epsBuf.contents(), &epsValue, 4)
+        // TPG=1024 per the kernel's reduce-tree contract. One TG per row.
+        let tgWidth = 1024
+        let grid = MTLSize(width: nRows * tgWidth, height: 1, depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+        switch x.dtype {
+        case .f32:
+            MetalTileKernels.mt_layer_norm_f32(
+                x: x.buffer, xOffset: x.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                b: bias.buffer, bOffset: bias.offset,
+                out: result.buffer, outOffset: result.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0, n: UInt32(rowSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_layer_norm_f16(
+                x: x.buffer, xOffset: x.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                b: bias.buffer, bOffset: bias.offset,
+                out: result.buffer, outOffset: result.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0, n: UInt32(rowSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_layer_norm_bf16(
+                x: x.buffer, xOffset: x.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                b: bias.buffer, bOffset: bias.offset,
+                out: result.buffer, outOffset: result.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0, n: UInt32(rowSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.layerNorm: unsupported dtype \(x.dtype)")
+        }
+        return result
+    }
+
+    // ─── VLM / audio stubs ───────────────────────────────────────────
+    //
+    // These ops are wired up on `waffles/ek/aura-port` against a separate
+    // metaltile branch that registers `mt_conv2d_generic_*`,
+    // `mt_patch_embed_*`, `mt_rope_2d_*`, `mt_audio_conv1d_*`,
+    // `mt_mel_spectrogram_*`, `mt_vocoder_istft_*`. Those kernels are NOT
+    // on `clandestine/dev` and therefore not in the metallib this branch
+    // builds against. VLM / audio models (VisionEncoder, AudioEncoder,
+    // Vocos, Kokoro) still need the symbols to compile — stub each with
+    // `fatalError` so the language-model + Qwen3.5/3.6 prefill paths
+    // build cleanly, while any caller of the VLM / audio paths trips
+    // loudly at first use. Follow-up: rebase metaltile-side kernel
+    // sources from `aura-port` onto `clandestine/dev`, re-emit, drop
+    // these stubs.
+    public static func conv2d(
+        input _: Tensor, weight _: Tensor, bias _: Tensor,
+        strideH _: Int, strideW _: Int,
+        padH _: Int = 0, padW _: Int = 0,
+        on _: MTLCommandBuffer,
+        into _: Tensor? = nil
+    ) -> Tensor {
+        fatalError("Ops.conv2d: metaltile kernel mt_conv2d_generic not on clandestine/dev; rebase aura-port kernels first")
+    }
+
+    public static func patchEmbed(
+        image _: Tensor, weight _: Tensor, bias _: Tensor,
+        patchH _: Int, patchW _: Int,
+        on _: MTLCommandBuffer, into _: Tensor? = nil
+    ) -> Tensor {
+        fatalError("Ops.patchEmbed: metaltile kernel mt_patch_embed not on clandestine/dev")
+    }
+
+    public static func rope2D(
+        _: Tensor, positions _: Tensor,
+        nTokens _: Int, nHeads _: Int, headDim _: Int,
+        thetaBase _: Float,
+        on _: MTLCommandBuffer, into _: Tensor? = nil
+    ) -> Tensor {
+        fatalError("Ops.rope2D: metaltile kernel mt_rope_2d not on clandestine/dev")
+    }
+
+    public static func melSpectrogram(
+        audio _: Tensor, window _: Tensor, melWeight _: Tensor,
+        nFFT _: Int, nMels _: Int, hopLength _: Int,
+        nFrames _: Int, logEps _: Float = 1e-10,
+        on _: MTLCommandBuffer, into _: Tensor? = nil
+    ) -> Tensor {
+        fatalError("Ops.melSpectrogram: metaltile kernel mt_mel_spectrogram not on clandestine/dev")
+    }
+
+    public static func audioConv1d(
+        input _: Tensor, weight _: Tensor, bias _: Tensor,
+        batch _: Int, inCh _: Int, inLen _: Int, outCh _: Int,
+        k _: Int, stride _: Int, pad _: Int,
+        on _: MTLCommandBuffer, into _: Tensor? = nil
+    ) -> Tensor {
+        fatalError("Ops.audioConv1d: metaltile kernel mt_audio_conv1d not on clandestine/dev")
+    }
+
+    public static func vocoderISTFT(
+        specRe _: Tensor, specIm _: Tensor, window _: Tensor,
+        nFrames _: Int, nFFT _: Int, hopLength _: Int,
+        on _: MTLCommandBuffer, into _: Tensor? = nil
+    ) -> Tensor {
+        fatalError("Ops.vocoderISTFT: metaltile kernel mt_vocoder_istft not on clandestine/dev")
+    }
 }

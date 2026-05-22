@@ -43,8 +43,32 @@ passed directly to `ffai` (`ffai -m … -p …` is equivalent to
 | Subcommand | One-liner | More |
 |---|---|---|
 | `generate` (default) | Stream a single prompt's continuation to stdout. | `ffai generate --help` |
+| `models` | List every supported model family with copy-paste example repo IDs (bf16 / 8-bit / 4-bit). | `ffai models` |
 | `inspect` | Load a model and dump architecture + tokenization + top-K logits for a fixed probe prompt. The first thing to reach for when a new model produces broken output. | `ffai inspect --help` |
 | `bench` | Run a benchmark method against a model, append to a per-day report. | [benchmarking.md](benchmarking.md) |
+
+### `models` — what can I run?
+
+`ffai models` prints every supported architecture family grouped by
+kind (dense / MoE / SSM-GDN hybrid / diffusion), each with a one-line
+summary and a few example HuggingFace repo IDs you can paste straight
+into `generate` or `bench`:
+
+```bash
+ffai models
+# ── Dense text ──────────────────────────────────────
+#   Qwen 3  [qwen3]
+#     Qwen 3 dense — per-head q/k RMSNorm before RoPE.
+#     • mlx-community/Qwen3-1.7B-bf16
+#     • mlx-community/Qwen3-1.7B-8bit
+#     • mlx-community/Qwen3-1.7B-4bit
+#   …
+```
+
+The example IDs include bf16, 8-bit, and 4-bit conversions where
+published. Any mlx-format 3/4/5/6/8-bit conversion of a listed
+architecture also loads — the IDs are just convenient starting points.
+For sizes exercised + known gaps, see [models.md](models.md).
 
 ### `inspect` — model bring-up diagnostic
 

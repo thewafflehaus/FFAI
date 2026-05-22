@@ -707,6 +707,45 @@ public final class NemotronHModel: LanguageModel {
         let normed = finalNorm(h, on: cmd)
         return lmHead(normed, on: cmd)
     }
+
+    // ─── VLM embedding-input path ────────────────────────────────────
+    //
+    // NemotronH is a VL-target text backbone (Nemotron-VLM wraps it).
+    // The splice supplies a `[hidden]` row directly — a vision-encoder
+    // token or a text-token embedding the VL model looked up. The
+    // forward is identical to `forward(tokenId:...)` minus the embedding
+    // gather; the whole pass queues onto the caller's `cmd` (NemotronH
+    // has no command-buffer-committing layer kind — MoE is rejected).
+
+    public var supportsEmbeddingInput: Bool { true }
+
+    public func forward(inputEmbedding: Tensor, position: Int,
+                        caches: [any LayerCacheProtocol],
+                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(inputEmbedding.elementCount == hidden,
+                     "NemotronHModel.forward(inputEmbedding:): expected [\(hidden)], "
+                     + "got \(inputEmbedding.shape)")
+        var h = inputEmbedding.reshaped(to: [hidden])
+        for (i, layer) in layers.enumerated() {
+            h = layer.decode(h, position: position, cache: caches[i],
+                             cmd: cmd, device: device)
+        }
+        let normed = finalNorm(h, on: cmd)
+        return lmHead(normed, on: cmd)
+    }
+
+    /// Raw embedding-table lookup for one text token.
+    public func textEmbedding(tokenId: Int, device: Device) -> Tensor {
+        let cmd = device.makeCommandBuffer()
+        let tokenBuf = device.makeBuffer(length: 4)
+        var tid = UInt32(tokenId)
+        memcpy(tokenBuf.contents(), &tid, 4)
+        let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
+        let embed = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return embed
+    }
 }
 
 // ─── Load-time host helpers ──────────────────────────────────────────

@@ -742,7 +742,7 @@ rewrites.
    ~800µs for small Llama, ~8ms for Qwen 9B.
 
 
-  ──────── Mode 2: Argument buffers (Phase 5 if needed) ──────────
+  ──────── Mode 2: Argument buffers (Phase 9 if needed) ──────────
 
    at load time, per layer:
      argEncoder = device.makeArgumentEncoder(...)
@@ -765,7 +765,7 @@ rewrites.
    • ~5x reduction in per-kernel encoding cost expected
 
 
-  ──────── Mode 3: ICB pre-recorded (Phase 5+, last resort) ──────
+  ──────── Mode 3: ICB pre-recorded (Phase 9, last resort) ───────
 
    at load time:
      icb = device.makeIndirectCommandBuffer(

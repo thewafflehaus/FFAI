@@ -31,7 +31,7 @@ build-release: regenerate-kernels ## swift build (release)
 	swift build -c release
 
 .PHONY: regenerate-kernels
-regenerate-kernels: ## run `tile build --emit all` to regenerate metallib + Swift wrappers
+regenerate-kernels: ## run `tile emit` to regenerate metallib + Swift wrappers
 	@if [ ! -d "$(METALTILE_DIR)" ]; then \
 	  echo "Error: metaltile not found at $(METALTILE_DIR)"; \
 	  echo "Clone the sibling metaltile repo at ../metaltile."; \
@@ -41,13 +41,13 @@ regenerate-kernels: ## run `tile build --emit all` to regenerate metallib + Swif
 	@# 2024 edition) is honored. Running cargo from FFAI/ would use the
 	@# system default toolchain, which lacks edition=2024 support.
 	@#
-	@# `tile build --emit all` writes:
+	@# `tile emit` writes:
 	@#   $(KERNEL_OUT)/Resources/kernels/<name>.metal     per-kernel MSL
 	@#   $(KERNEL_OUT)/Resources/kernels.metallib         compiled metallib
 	@#   $(KERNEL_OUT)/Resources/manifest.json            IR descriptor
 	@#   $(KERNEL_OUT)/Generated/MetalTileKernels.swift   dispatch wrappers
 	cd $(METALTILE_DIR) && cargo run --release \
-	  --bin tile -- build --emit all --out $(KERNEL_OUT)
+	  --bin tile -- emit --out $(KERNEL_OUT)
 
 # ─── Test ─────────────────────────────────────────────────────────────
 #

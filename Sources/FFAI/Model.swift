@@ -10,14 +10,66 @@ public enum ModelError: Error, CustomStringConvertible {
     case unsupportedArchitecture(String)
     case unsupportedModelType(String)
     case capabilityNotAvailable(Capability)
+    case visionModelNotIntegrated(String)
 
     public var description: String {
         switch self {
         case .unsupportedArchitecture(let a): return "Unsupported architecture: \(a)"
         case .unsupportedModelType(let m): return "Unsupported model_type: \(m)"
         case .capabilityNotAvailable(let c): return "Capability not available: \(c)"
+        case .visionModelNotIntegrated(let a):
+            return "Vision-language checkpoint '\(a)' detected. The FFAI "
+                + "vision foundation (VisionEncoder, ImagePreprocessing, "
+                + "VLModel cross-modal splice, conv2d/patch_embed/rope_2d "
+                + "Ops) is in tree, but this VL family is not yet wired to "
+                + "a checkpoint loader. Load the text-only checkpoint, or "
+                + "compose a VLModel directly from VisionEncoder + the text "
+                + "engine."
         }
     }
+}
+
+/// Architecture strings that identify a vision-language checkpoint. A
+/// VL checkpoint carries a `vision_config` block and prefixes its text
+/// weights under `language_model.*`; the registry recognizes these so a
+/// VL load fails with an actionable `visionModelNotIntegrated` error
+/// rather than a generic "unsupported architecture".
+public enum VisionLanguageArchitectures {
+    public static let architectures: Set<String> = [
+        "Gemma3ForConditionalGeneration",
+        "Qwen2_5_VLForConditionalGeneration",
+        "Qwen2VLForConditionalGeneration",
+        "Qwen3VLForConditionalGeneration",
+        "Qwen3VLMoeForConditionalGeneration",
+        // Note: `Gemma4ForConditionalGeneration` is intentionally NOT
+        // listed — it is shared by text-only Gemma 4 checkpoints. The
+        // `vision_config`-presence check below distinguishes the VL
+        // conversion, which the dispatch routes to `Gemma4VL.load`.
+    ]
+
+    /// True if `config` describes a VL checkpoint — by architecture
+    /// string or by the presence of a `vision_config` block.
+    public static func isVisionLanguage(_ config: ModelConfig) -> Bool {
+        if let arch = config.architecture, architectures.contains(arch) {
+            return true
+        }
+        return config.nested("vision_config") != nil
+    }
+}
+
+/// True if `config` is a Nemotron Nano VL checkpoint — a VL checkpoint
+/// (`vision_config` present) whose text backbone is a NemotronH hybrid
+/// (its `text_config.model_type` is `nemotron_h`). The Nemotron Nano VL
+/// conversion does not carry a single canonical top-level architecture
+/// string, so the text backbone's `model_type` is the reliable signal.
+func isNemotronVisionLanguage(_ config: ModelConfig) -> Bool {
+    guard config.nested("vision_config") != nil,
+          let tc = config.nested("text_config")
+    else { return false }
+    let textModelType = (tc["model_type"] as? String) ?? ""
+    if NemotronH.modelTypes.contains(textModelType) { return true }
+    let textArch = (tc["architectures"] as? [String])?.first ?? ""
+    return NemotronH.architectures.contains(textArch)
 }
 
 /// Routes a config to the right family file. Family files declare which
@@ -30,6 +82,24 @@ public enum ModelRegistry {
     public struct Loaded {
         public let engine: any LanguageModel
         public let defaultGenerationParameters: GenerationParameters
+        /// Capabilities the loaded variant supports. Text-only families
+        /// report `Capability.textOnly`; VL variants add `.visionIn`.
+        public let availableCapabilities: Set<Capability>
+        /// The composed vision-language model, when the checkpoint is a
+        /// VLM. `nil` for text-only families. The `engine` is the VL
+        /// model's text backbone, so text-only generation works
+        /// regardless; `vlModel` adds the cross-modal image path.
+        public let vlModel: VLModel?
+
+        public init(engine: any LanguageModel,
+                    defaultGenerationParameters: GenerationParameters,
+                    availableCapabilities: Set<Capability> = Capability.textOnly,
+                    vlModel: VLModel? = nil) {
+            self.engine = engine
+            self.defaultGenerationParameters = defaultGenerationParameters
+            self.availableCapabilities = availableCapabilities
+            self.vlModel = vlModel
+        }
     }
 
     public static func dispatchAndLoad(
@@ -38,6 +108,106 @@ public enum ModelRegistry {
         options: LoadOptions,
         device: Device
     ) throws -> Loaded {
+        // Vision-language checkpoints carry a nested `vision_config` and
+        // prefix their text weights under `language_model.*`.
+        if VisionLanguageArchitectures.isVisionLanguage(config) {
+            // Gemma 3 VL — SigLIP tower + Gemma 3 text backbone. Fully
+            // wired: the SigLIP architecture is exactly `VisionEncoder`.
+            if config.architecture == "Gemma3ForConditionalGeneration" {
+                let vlm = try Gemma3VL.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: Gemma3Dense.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    vlModel: vlm)
+            }
+            // Qwen 2.5-VL — dynamic-resolution windowed-attention ViT
+            // tower + the Qwen 2.x text backbone (routed through the
+            // Llama dense engine, which now supports embedding-input
+            // forward for the VLM splice).
+            if config.architecture == "Qwen2_5_VLForConditionalGeneration" {
+                let vlm = try Qwen25VL.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: LlamaDense.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    vlModel: vlm)
+            }
+            // Qwen 3-VL — dynamic-resolution full-attention ViT tower
+            // (LayerNorm pre-norms, GELU MLP, learned position table) +
+            // the Qwen 3 dense text backbone, joined by the splice.
+            if config.architecture == "Qwen3VLForConditionalGeneration" {
+                let vlm = try Qwen3VL.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: Qwen3Dense.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    vlModel: vlm)
+            }
+            // Qwen 3-VL-MoE — the Qwen3-VL vision tower + the Qwen 3.5
+            // mixture-of-experts hybrid text backbone (Gated Delta Net ↔
+            // attention, block-sparse MoE FFN), joined by the splice.
+            if config.architecture == "Qwen3VLMoeForConditionalGeneration" {
+                let vlm = try Qwen3VLMoe.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: Qwen35Hybrid.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    vlModel: vlm)
+            }
+            // Gemma 4 VL — the bespoke Gemma 4 ViT tower (RoPE attention,
+            // q/k/v norms, attention-pooling head) + multi-modal embedder
+            // + the Gemma 4 text backbone, joined by the splice.
+            if config.architecture == "Gemma4ForConditionalGeneration" {
+                let vlm = try Gemma4VL.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: Gemma4Dense.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    vlModel: vlm)
+            }
+            // Nemotron-VLM — NVIDIA's Nemotron Nano VL: a ViT tower +
+            // multi-modal projector + the NemotronH stack-interleaved
+            // hybrid text backbone. Detected by a `text_config` whose
+            // `model_type` is `nemotron_h` (the VL conversion does not
+            // carry a single canonical top-level architecture string).
+            if isNemotronVisionLanguage(config) {
+                let vlm = try NemotronVL.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: NemotronHHybrid.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    vlModel: vlm)
+            }
+            // Text-only Qwen3.5 / 3.6 checkpoints with a vestigial
+            // `vision_config` block. The architecture string is a Qwen3.5
+            // MoE family name and we have a text-only loader — route to
+            // it instead of throwing the VL-not-integrated error. The
+            // vision tower is not used.
+            if let arch = config.architecture, Qwen35.architectures.contains(arch) {
+                return try loadQwen35(config: config, weights: weights,
+                                      options: options, device: device)
+            }
+            // Other VL families — the FFAI vision foundation
+            // (VisionEncoder, ImagePreprocessing, VLModel splice,
+            // conv2d/patch_embed/rope_2d Ops) is in tree, but these
+            // towers are not yet wired to a checkpoint loader. Fail with
+            // an actionable error rather than a generic "unsupported".
+            throw ModelError.visionModelNotIntegrated(
+                config.architecture ?? config.modelType ?? "<unknown>")
+        }
         if let arch = config.architecture, Llama.architectures.contains(arch) {
             return try loadLlama(config: config, weights: weights,
                                  options: options, device: device)
@@ -195,6 +365,20 @@ public enum ModelRegistry {
         if let mt = config.modelType, GPTOSS.modelTypes.contains(mt) {
             return try loadGPTOSS(config: config, weights: weights,
                                   options: options, device: device)
+        }
+
+        // LFM2 — LiquidAI's stack-interleaved hybrid (short-conv /
+        // attention layers selected by `layer_types` / `full_attn_idxs`)
+        // with a SwiGLU or block-sparse-MoE feed-forward. Also serves the
+        // LFM2.5 collection (architecturally identical — same `lfm2`
+        // model_type).
+        if let arch = config.architecture, LFM2.architectures.contains(arch) {
+            return try loadLFM2(config: config, weights: weights,
+                                options: options, device: device)
+        }
+        if let mt = config.modelType, LFM2.modelTypes.contains(mt) {
+            return try loadLFM2(config: config, weights: weights,
+                                options: options, device: device)
         }
 
         // Nemotron-Labs-Diffusion — tri-mode (AR / diffusion /
@@ -369,6 +553,19 @@ public enum ModelRegistry {
                       defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
+    public static func loadLFM2(
+        config: ModelConfig, weights: SafeTensorsBundle,
+        options: LoadOptions, device: Device
+    ) throws -> Loaded {
+        let variant = try LFM2.variant(for: config)
+        let engine = try variant.loadModel(
+            config: config, weights: weights,
+            options: options, device: device
+        )
+        return Loaded(engine: engine,
+                      defaultGenerationParameters: variant.defaultGenerationParameters)
+    }
+
     public static func loadNemotronLabsDiffusion(
         config: ModelConfig, weights: SafeTensorsBundle,
         options: LoadOptions, device: Device
@@ -386,13 +583,30 @@ public enum ModelRegistry {
 /// High-level loaded model with tokenizer attached. The public API users
 /// touch.
 public final class Model: @unchecked Sendable {
-    /// The concrete model engine (LlamaModel, Qwen3Model, …).
+    /// The concrete model engine (LlamaModel, Qwen3Model, …). For a VLM
+    /// this is the text backbone — text-only generation works
+    /// regardless of whether `.visionIn` is enabled.
     public let engine: any LanguageModel
     public let tokenizer: any Tokenizer
     public let config: ModelConfig
     public let modelDirectory: URL
     public let availableCapabilities: Set<Capability>
-    public let enabledCapabilities: Set<Capability>
+
+    /// The composed vision-language model — `nil` unless the checkpoint
+    /// is a VLM. Use `vlModel.generate(...)` for an image+text prompt;
+    /// available only when `availableCapabilities` contains `.visionIn`.
+    public let vlModel: VLModel?
+
+    /// Currently-enabled capabilities. Mutated via `enable(_:)` /
+    /// `disable(_:)`; guarded by `capabilityLock` for thread safety.
+    private var _enabledCapabilities: Set<Capability>
+    private let capabilityLock = NSLock()
+
+    /// Snapshot of the enabled-capability set.
+    public var enabledCapabilities: Set<Capability> {
+        capabilityLock.lock(); defer { capabilityLock.unlock() }
+        return _enabledCapabilities
+    }
     /// Default generation parameters declared by the model's family
     /// variant. Use as-is, or call `.with { $0.maxTokens = ... }` to
     /// tweak a field without losing the family-tuned baseline.
@@ -428,6 +642,9 @@ public final class Model: @unchecked Sendable {
     /// Convenience accessor for the GPT-OSS MoE engine.
     public var gptOSS: GPTOSSModel? { engine as? GPTOSSModel }
 
+    /// Convenience accessor for the LFM2 hybrid engine.
+    public var lfm2: LFM2Model? { engine as? LFM2Model }
+
     /// Convenience accessor for the Nemotron-Labs-Diffusion engine.
     public var nemotronLabsDiffusion: NemotronLabsDiffusionModel? {
         engine as? NemotronLabsDiffusionModel
@@ -458,13 +675,20 @@ public final class Model: @unchecked Sendable {
          modelDirectory: URL,
          availableCapabilities: Set<Capability>,
          enabledCapabilities: Set<Capability>,
-         defaultGenerationParameters: GenerationParameters) {
+         defaultGenerationParameters: GenerationParameters,
+         vlModel: VLModel? = nil) {
         self.engine = engine
         self.tokenizer = tokenizer
         self.config = config
         self.modelDirectory = modelDirectory
         self.availableCapabilities = availableCapabilities
-        self.enabledCapabilities = enabledCapabilities
+        self.vlModel = vlModel
+        // textIn / textOut are universal — always enabled. Other
+        // requested capabilities are honored only if the model declares
+        // them available.
+        self._enabledCapabilities = enabledCapabilities
+            .union(Capability.textOnly)
+            .intersection(availableCapabilities.union(Capability.textOnly))
         self.defaultGenerationParameters = defaultGenerationParameters
         // Bounded buffer — when no consumer is reading, keep the most
         // recent `eventsBufferCapacity` events and drop older ones.
@@ -485,6 +709,53 @@ public final class Model: @unchecked Sendable {
         _currentState = event.state
         stateLock.unlock()
         eventsContinuation.yield(event)
+    }
+
+    // ─── Capability enable / disable ─────────────────────────────────
+
+    /// Whether a capability is currently enabled.
+    public func isEnabled(_ capability: Capability) -> Bool {
+        enabledCapabilities.contains(capability)
+    }
+
+    /// Enable a capability at runtime — e.g. `enable(.visionIn)` lights
+    /// up the vision path on a model loaded text-only. No-op if the
+    /// capability isn't in `availableCapabilities` (a text-only model
+    /// can't gain vision) or is already enabled. Emits a lifecycle
+    /// event tagged with the capability so consumers can react.
+    ///
+    /// `textIn` / `textOut` are universal and always enabled — calling
+    /// `enable` / `disable` on them is a harmless no-op.
+    @discardableResult
+    public func enable(_ capability: Capability) -> Bool {
+        guard availableCapabilities.contains(capability)
+            || Capability.textOnly.contains(capability) else { return false }
+        capabilityLock.lock()
+        let changed = !_enabledCapabilities.contains(capability)
+        _enabledCapabilities.insert(capability)
+        capabilityLock.unlock()
+        if changed {
+            eventsContinuation.yield(
+                ModelLifecycleEvent(capability: capability, state: currentState))
+        }
+        return changed
+    }
+
+    /// Disable a capability at runtime. `textIn` / `textOut` are
+    /// universal and cannot be disabled — those calls are a no-op.
+    /// Emits a capability-tagged lifecycle event when the set changes.
+    @discardableResult
+    public func disable(_ capability: Capability) -> Bool {
+        guard !Capability.textOnly.contains(capability) else { return false }
+        capabilityLock.lock()
+        let changed = _enabledCapabilities.contains(capability)
+        _enabledCapabilities.remove(capability)
+        capabilityLock.unlock()
+        if changed {
+            eventsContinuation.yield(
+                ModelLifecycleEvent(capability: capability, state: currentState))
+        }
+        return changed
     }
 
     // ─── Top-level loader ────────────────────────────────────────────
@@ -519,9 +790,10 @@ public final class Model: @unchecked Sendable {
                 return Model(
                     engine: loaded.engine, tokenizer: tokenizer, config: config,
                     modelDirectory: dir,
-                    availableCapabilities: Capability.textOnly,
+                    availableCapabilities: loaded.availableCapabilities,
                     enabledCapabilities: options.capabilities,
-                    defaultGenerationParameters: loaded.defaultGenerationParameters
+                    defaultGenerationParameters: loaded.defaultGenerationParameters,
+                    vlModel: loaded.vlModel
                 )
             }
         }

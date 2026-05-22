@@ -39,6 +39,93 @@ For porting a new architecture, see
 | **Gemma 4** | [`Models/Gemma4.swift`](../Sources/FFAI/Models/Gemma4.swift) | `gemma4`, `gemma4_text` | `Gemma4ForCausalLM`, `Gemma4ForConditionalGeneration` | `Gemma4Dense`, `Gemma4E`, `Gemma4MoE` |
 | **GPT-OSS** | [`Models/GPTOSS.swift`](../Sources/FFAI/Models/GPTOSS.swift) | `gpt_oss` | `GptOssForCausalLM` | `GPTOSSMoEVariant` |
 
+### Audio families (Phase 7)
+
+The audio families do **not** route through `ModelRegistry` /
+`LanguageModel` — those describe a pure text-in / text-out causal
+decoder. An STT model is audio-in / text-out, a TTS model is text-in /
+audio-out. They load through [`AudioModelRegistry`](../Sources/FFAI/AudioModelRegistry.swift)
+instead, which inspects `config.json`, picks the family, and reports
+the audio `Capability` set.
+
+| Family | File | `model_type` | Capability | Notes |
+|---|---|---|---|---|
+| **Whisper** | [`Models/Whisper.swift`](../Sources/FFAI/Models/Whisper.swift) | `whisper` | `speechToText` | STT, tiny → large-v3 (one variant). `AudioEncoder` + a causal text decoder cross-attending to the audio features. |
+| **SenseVoice** | [`Models/SenseVoice.swift`](../Sources/FFAI/Models/SenseVoice.swift) | `sensevoice` | `speechToText` | Non-autoregressive STT — a SAN-M encoder (fused QKV + FSMN depthwise-conv memory block) and a CTC head. Greedy CTC collapse instead of a decoder loop. Kaldi-style FBANK + LFR front-end. |
+| **Kokoro** | [`Models/Kokoro.swift`](../Sources/FFAI/Models/Kokoro.swift) | `kokoro` | `textToSpeech` | TTS. Ships the GPU iSTFTNet vocoder tail (`Ops.vocoderISTFT`); the StyleTTS2 acoustic front-end is a later port. |
+| **Qwen-Omni** | [`Models/QwenOmni.swift`](../Sources/FFAI/Models/QwenOmni.swift) | `qwen2_5_omni`, `qwen3_omni` | `omniAudio` | Audio-in path: a Whisper-style encoder projecting into the text backbone hidden dim. Vision path is the Qwen-VL port. |
+| **LlamaTTS** | [`Models/LlamaTTS.swift`](../Sources/FFAI/Models/LlamaTTS.swift) | `llama_tts`, `orpheus` | `textToSpeech` | Orpheus-style TTS on a Llama 3.x backbone (reuses the `LlamaModel` engine). Adds the Orpheus token protocol + autoregressive SNAC-code decode loop; `generateCodes` emits de-interleaved SNAC code planes. The SNAC neural codec (waveform tail) is a separate codec port. |
+| **Marvis** | [`Models/Marvis.swift`](../Sources/FFAI/Models/Marvis.swift) | `csm`, `marvis` | `textToSpeech` | Sesame CSM dual-transformer TTS — a backbone + depth-decoder (both built on FFAI's `LlamaLayer` blocks), embedding tables + per-codebook audio heads. `generateFrames` emits the `[K, nFrames]` Mimi code matrix. The Mimi neural codec (waveform tail) is a separate codec port. |
+| **Qwen3TTS** | [`Models/Qwen3TTS.swift`](../Sources/FFAI/Models/Qwen3TTS.swift) | `qwen3_tts` | `textToSpeech` | Qwen's four-part TTS (talker + code predictor + ECAPA speaker encoder + intrinsic speech-tokenizer codec). **Staged port** — stage 1 ships config decoding + family detection; the talker (Qwen3 stack + 3D mRoPE), code predictor and codec are follow-on stages. `synthesize` throws `synthesisNotWired` until then. |
+
+Whisper, Kokoro and Qwen-Omni share the
+[`AudioEncoder`](../Sources/FFAI/AudioEncoder.swift)
+module (a Whisper-style conv stem + bidirectional transformer) and the
+[`AudioPreprocessing`](../Sources/FFAI/AudioPreprocessing.swift)
+front-end (log-Mel STFT framing). The three FFAI audio kernels —
+`mel_spectrogram`, `audio_conv1d`, `vocoder_istft` — are wrapped by
+`Ops.melSpectrogram` / `Ops.audioConv1d` / `Ops.vocoderISTFT`.
+
+SenseVoice is a standalone SAN-M family: its Kaldi-style FBANK front-end
+(per-frame mean removal, pre-emphasis, power-of-two FFT, HTK Mel, plain
+log) and low-frame-rate stacking differ from the shared log-Mel
+front-end, so it carries its own `SenseVoiceFrontEnd` CPU path. The
+FSMN memory block is a depthwise (per-channel) 1-D convolution — also a
+CPU path, since `Ops.audioConv1d` is a dense (non-grouped) conv.
+
+### Voice-activity-detection families (Phase 7)
+
+VAD models have a third contract — audio waveform in, per-frame
+speech-probability stream out — so they load through their own
+[`VADModelRegistry`](../Sources/FFAI/VADModelRegistry.swift) rather than
+`ModelRegistry` or `AudioModelRegistry`. Each family exposes
+`loadFromDirectory` / `fromPretrained` and a `detect(audio:sampleRate:)`
+returning a [`VADOutput`](../Sources/FFAI/VADOutput.swift).
+
+| Family | File | `model_type` | Notes |
+|---|---|---|---|
+| **SileroVAD** | [`Models/SileroVAD.swift`](../Sources/FFAI/Models/SileroVAD.swift) | `silero_vad` | Streaming VAD — STFT front-end + a small gated-conv encoder, 16 kHz and 8 kHz branch configs. |
+| **SmartTurn** | [`Models/SmartTurn.swift`](../Sources/FFAI/Models/SmartTurn.swift) | `smart_turn`, `smart_turn_v3` | Conversational endpoint / turn detection. |
+
+Sortformer (multi-speaker diarization) is recognized by the registry;
+its loader is a follow-on port.
+
+### Vision-language families (Phase 6.5)
+
+VL checkpoints store a text backbone under `language_model.` plus a
+vision tower; `SafeTensorsBundle.prefixed(_:)` lets the existing text
+loader run unchanged on the sub-tree, and [`VLModel`](../Sources/FFAI/VLModel.swift)
+splices the projected image tokens into the text stream.
+
+| Family | File | `architectures` | Notes |
+|---|---|---|---|
+| **Gemma 3 VL** | [`Models/Gemma3VL.swift`](../Sources/FFAI/Models/Gemma3VL.swift) | `Gemma3ForConditionalGeneration` | SigLIP ViT tower + multi-modal projector (patch-grid pool) + Gemma 3 text backbone. |
+| **Qwen 2.5-VL** | [`Models/Qwen25VL.swift`](../Sources/FFAI/Models/Qwen25VL.swift) | `Qwen2_5_VLForConditionalGeneration` | Dynamic-resolution windowed-attention ViT tower + the Qwen 2.x text backbone routed through the Llama dense engine (embedding-input forward). |
+| **Qwen 3-VL** | [`Models/Qwen3VL.swift`](../Sources/FFAI/Models/Qwen3VL.swift) | `Qwen3VLForConditionalGeneration` | Dynamic-resolution full-attention ViT tower (LayerNorm pre-norms, GELU MLP, learned position table) + the Qwen 3 dense text backbone (embedding-input forward). |
+| **Qwen 3-VL-MoE** | [`Models/Qwen3VLMoe.swift`](../Sources/FFAI/Models/Qwen3VLMoe.swift) | `Qwen3VLMoeForConditionalGeneration` | The Qwen3-VL ViT tower + the Qwen 3.5 mixture-of-experts hybrid text backbone (Gated Delta Net ↔ attention, block-sparse MoE FFN), embedding-input forward. |
+| **Gemma 4 VL** | [`Models/Gemma4VL.swift`](../Sources/FFAI/Models/Gemma4VL.swift) | `Gemma4ForConditionalGeneration` (+ `vision_config`) | Bespoke Gemma 4 ViT tower (RoPE attention with multi-dimensional positions, q/k/v RMSNorms, four per-block GemmaRMSNorms, attention-pooling head) + multi-modal embedder + Gemma 4 text backbone (embedding-input forward). |
+| **Nemotron-VLM** | [`Models/NemotronVL.swift`](../Sources/FFAI/Models/NemotronVL.swift) | VL checkpoint whose `text_config.model_type` is `nemotron_h` | ViT tower (shared SigLIP-shaped `VisionEncoder`) + two-layer GELU-MLP projector + the NemotronH stack-interleaved hybrid text backbone (Mamba 2 / attention / dense-MLP, embedding-input forward). |
+
+All VL families recognized by `ModelRegistry` are now wired to a
+checkpoint loader.
+
+### Neural audio codecs (Phase 7)
+
+Codecs (encoder + quantizer + decoder) turn a waveform into discrete
+codes and back; the autoregressive TTS families (LlamaTTS, Marvis, …)
+emit codes that a codec renders to audio. They live under
+[`Sources/FFAI/Audio/`](../Sources/FFAI/Audio).
+
+| Codec | File | Notes |
+|---|---|---|
+| **SNAC** | [`Audio/SNAC.swift`](../Sources/FFAI/Audio/SNAC.swift) | Multi-scale residual-VQ codec — the waveform tail for Orpheus-style (LlamaTTS) synthesis. `encode(waveform:)` / `decode(codes:)`. |
+| **Encodec** | [`Audio/Encodec.swift`](../Sources/FFAI/Audio/Encodec.swift) | Meta's EnCodec — SEANet encoder/decoder with a 2-layer LSTM bottleneck and a residual-VQ quantizer. Bandwidth-selectable codebook count; optional per-utterance normalization. Single-frame (no-chunking) path. `encode(waveform:)` / `decode(codes:)`. |
+| **Mimi** | [`Audio/Mimi.swift`](../Sources/FFAI/Audio/Mimi.swift) | Kyutai's Mimi/Moshi codec — SEANet encoder/decoder, an 8-layer latent Transformer (traditional RoPE, LayerScale, windowed-causal attention), and a *split* residual-VQ (semantic codebook + acoustic residual stack). The waveform tail for Mimi-code TTS families (e.g. Marvis). Whole-utterance (non-streaming) port. `encode(waveform:)` / `decode(codes:)`. |
+| **Descript DAC** | [`Audio/DescriptDAC.swift`](../Sources/FFAI/Audio/DescriptDAC.swift) | The Descript Audio Codec — a high-fidelity single-scale residual-VQ codec (Snake-conv encoder/decoder, L2-normalized codebook lookup). Shares the proven `WeightNorm` conv path with SNAC. `encode(waveform:)` / `decode(codes:)`. |
+| **Vocos** | [`Audio/Vocos.swift`](../Sources/FFAI/Audio/Vocos.swift) | A *decode-only* vocoder — a ConvNeXt backbone plus an ISTFT head that turns a mel-spectrogram (or summed EnCodec embeddings) into a waveform. The backbone is CPU-native; the ISTFT head reuses the fused GPU `Ops.vocoderISTFT` kernel. `decode(features:)`. |
+| **BigVGAN** | [`Audio/BigVGAN.swift`](../Sources/FFAI/Audio/BigVGAN.swift) | NVIDIA's BigVGAN GAN vocoder — a *decode-only* mel→waveform model: `conv_pre`, transposed-conv upsample stages interleaved with multi-receptive-field "AMP" residual blocks, anti-aliased Snake/SnakeBeta activations (Kaiser-sinc up/downsampling). Shares the `WeightNorm` conv path with SNAC. `decode(mel:)`. |
+| **DACVAE** | [`Audio/DACVAE.swift`](../Sources/FFAI/Audio/DACVAE.swift) | The VAE-style Descript Audio Codec used by SAM-Audio — a *continuous* (no residual-VQ) codec: a Snake-conv encoder produces a VAE `mean` latent, a mirrored decoder reconstructs the waveform. Conv weights are transposed from MLX `[Cout,K,Cin]` to PyTorch layout at load; shares the `WeightNorm` conv path with SNAC. Standard (non-watermark) path only. `encode(waveform:)` → latent, `decode(latents:)` → waveform. |
+
 **GPT-OSS** is OpenAI's GPT-OSS-20B — a 24-layer mixture-of-experts
 transformer (~20B total / ~3.6B active params). Three structural
 features distinguish it from the dense families: (1) an **alternating
@@ -389,6 +476,27 @@ and linear self-speculation on the 3B checkpoint. The `-Base` repos and
 the `-VLM-8B` vision variant are untested. Self-speculation reports a
 forward-pass count (NFE) on `DiffusionResult` — the diffusion
 efficiency metric.
+
+### Audio (Phase 7)
+
+| Repo | Family | Notes |
+|---|---|---|
+| `openai/whisper-tiny` | Whisper STT | Integration-test baseline — encoder + cross-attending decoder. |
+| `mlx-community/SenseVoiceSmall` | SenseVoice STT | Integration-test baseline — SAN-M encoder + CTC head, greedy CTC decode. |
+| `hexgrad/Kokoro-82M` | Kokoro TTS | Integration-test baseline — the iSTFTNet vocoder tail. |
+| `Qwen/Qwen2.5-Omni-3B` | Qwen-Omni | Integration-test baseline — the audio-in encoder path. |
+| `mlx-community/orpheus-3b-0.1-ft-bf16` | LlamaTTS | Integration-test baseline — the Llama acoustic backbone + Orpheus SNAC-code decode loop. |
+| `Marvis-AI/marvis-tts-250m-v0.2-MLX-fp16` | Marvis (CSM) | Integration-test baseline — the CSM dual-transformer + Mimi frame-generation loop. |
+| `mlx-community/Qwen3-TTS-Flash-bf16` | Qwen3TTS | Integration-test baseline — stage-1 config decode + family detection. |
+
+The Whisper integration test verifies the audio encoder produces
+finite features, the decoder emits a non-degenerate logit distribution
+cross-attending to the audio, and greedy decode runs. The Kokoro test
+verifies the vocoder synthesizes a non-degenerate (finite, non-silent)
+waveform from a predicted spectrogram. The Qwen-Omni test verifies the
+audio tower encodes a waveform into feature tokens in the text-backbone
+hidden dim. Each suite prints a skip and passes when its checkpoint
+cannot be fetched.
 
 ## Quantization
 

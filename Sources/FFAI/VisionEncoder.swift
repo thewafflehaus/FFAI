@@ -1,0 +1,426 @@
+// VisionEncoder — the vision-transformer (ViT) stack a VLM runs an image
+// through before splicing the resulting tokens into the text stream.
+//
+// Declared in Phase 2 for the capability API; lit up here in Phase 6.5.
+// The architecture is the SigLIP / CLIP ViT shape every shipped VLM
+// vision tower uses:
+//
+//   image  ──conv2d patch embed──▶  [num_patches, hidden]
+//          ──+ learned position embedding──▶
+//          ──▶ N × { LayerNorm → MHA (bidirectional) → +residual
+//                    LayerNorm → MLP (GELU)          → +residual }
+//          ──post-LayerNorm──▶
+//          ──projection──▶  [num_patches, text_hidden]
+//
+// The encoder processes ALL patch tokens at once (vision attention is
+// bidirectional — no causal mask, no KV cache), so it uses the
+// multi-query `Ops.sdpaMulti` path rather than the single-token decode
+// SDPA the text backbone uses.
+//
+// Qwen-VL's windowed-attention / dynamic-resolution towers are a
+// superset of this; the family files that need them layer the extra
+// behaviour on top. This file is the shared SigLIP-style core.
+
+import Foundation
+import Metal
+
+// ─── Configuration ───────────────────────────────────────────────────
+
+/// Static shape + hyper-parameters of a ViT vision tower, decoded from
+/// the checkpoint's `vision_config`.
+public struct VisionEncoderConfig: Sendable {
+    /// Channels of the input image (3 for RGB).
+    public let inChannels: Int
+    /// Square input resolution the encoder expects (e.g. 224, 896).
+    public let imageSize: Int
+    /// Square patch side (14 for SigLIP/Qwen-VL, 16 for CLIP/Gemma-VL).
+    public let patchSize: Int
+    /// Encoder hidden dimension.
+    public let hidden: Int
+    /// Encoder feed-forward intermediate dimension.
+    public let intermediate: Int
+    /// Number of transformer blocks.
+    public let nLayers: Int
+    /// Number of attention heads per block.
+    public let nHeads: Int
+    /// LayerNorm epsilon.
+    public let layerNormEps: Float
+    /// Text-model hidden dimension the encoder output is projected into.
+    /// When equal to `hidden` the projection is identity / absent.
+    public let textHidden: Int
+
+    public init(inChannels: Int = 3, imageSize: Int, patchSize: Int,
+                hidden: Int, intermediate: Int, nLayers: Int, nHeads: Int,
+                layerNormEps: Float = 1e-6, textHidden: Int) {
+        self.inChannels = inChannels
+        self.imageSize = imageSize
+        self.patchSize = patchSize
+        self.hidden = hidden
+        self.intermediate = intermediate
+        self.nLayers = nLayers
+        self.nHeads = nHeads
+        self.layerNormEps = layerNormEps
+        self.textHidden = textHidden
+    }
+
+    /// Patches along one axis (`imageSize / patchSize`).
+    public var patchesPerSide: Int { imageSize / patchSize }
+    /// Total patch tokens an image produces (`patchesPerSide²`).
+    public var numPatches: Int { patchesPerSide * patchesPerSide }
+    /// Per-head dimension.
+    public var headDim: Int { hidden / nHeads }
+}
+
+// ─── Encoder block ───────────────────────────────────────────────────
+
+/// One pre-norm ViT transformer block: LayerNorm → bidirectional MHA →
+/// residual, then LayerNorm → GELU MLP → residual.
+public final class VisionEncoderLayer: Module {
+    let layerNorm1: LayerNorm
+    let qProj, kProj, vProj, oProj: Linear
+    let layerNorm2: LayerNorm
+    let fc1, fc2: Linear
+
+    let hidden, nHeads, headDim, intermediate: Int
+    let scale: Float
+
+    init(layerNorm1: LayerNorm,
+         qProj: Linear, kProj: Linear, vProj: Linear, oProj: Linear,
+         layerNorm2: LayerNorm, fc1: Linear, fc2: Linear,
+         hidden: Int, nHeads: Int, intermediate: Int) {
+        self.layerNorm1 = layerNorm1
+        self.qProj = qProj; self.kProj = kProj
+        self.vProj = vProj; self.oProj = oProj
+        self.layerNorm2 = layerNorm2
+        self.fc1 = fc1; self.fc2 = fc2
+        self.hidden = hidden; self.nHeads = nHeads
+        self.headDim = hidden / nHeads
+        self.intermediate = intermediate
+        self.scale = 1.0 / Float(Double(hidden / nHeads).squareRoot())
+    }
+
+    public func parameters() -> [(String, Tensor)] {
+        var out: [(String, Tensor)] = []
+        for (k, v) in layerNorm1.parameters() { out.append(("layer_norm1.\(k)", v)) }
+        for (k, v) in qProj.parameters() { out.append(("self_attn.q_proj.\(k)", v)) }
+        for (k, v) in kProj.parameters() { out.append(("self_attn.k_proj.\(k)", v)) }
+        for (k, v) in vProj.parameters() { out.append(("self_attn.v_proj.\(k)", v)) }
+        for (k, v) in oProj.parameters() { out.append(("self_attn.out_proj.\(k)", v)) }
+        for (k, v) in layerNorm2.parameters() { out.append(("layer_norm2.\(k)", v)) }
+        for (k, v) in fc1.parameters() { out.append(("mlp.fc1.\(k)", v)) }
+        for (k, v) in fc2.parameters() { out.append(("mlp.fc2.\(k)", v)) }
+        return out
+    }
+
+    /// Forward `[nTokens, hidden]` patch-token activations through one
+    /// encoder block. The GEMM-heavy projections + norms run on the GPU
+    /// queued on `cmd`; the bidirectional attention core (scores →
+    /// softmax → context) runs on the CPU.
+    ///
+    /// The CPU attention core is deliberate: `ffai_sdpa_multi` is
+    /// head_dim-128-only, and SigLIP / CLIP vision towers use other head
+    /// dims (72, 64, 80, …). Vision token counts are small (a few
+    /// hundred patches), so a CPU O(nTokens²·headDim) attention per head
+    /// is cheap next to the GPU projection GEMMs — and unambiguously
+    /// correct. A head-dim-agnostic vision SDPA kernel is a later
+    /// performance pass (Phase 6.5 ships correctness first).
+    func forward(_ h: Tensor, nTokens: Int, device: Device,
+                 on cmd: MTLCommandBuffer) -> Tensor {
+        // ── Attention sub-block ──
+        let normed = Ops.layerNorm(h, weight: layerNorm1.weight,
+                                   bias: layerNorm1.bias, eps: layerNorm1.eps,
+                                   nRows: nTokens, rowSize: hidden, on: cmd)
+        // Q/K/V projections over every token, one multi-row GEMM each.
+        let q = projectRows(qProj, normed, nTokens: nTokens, on: cmd)
+        let k = projectRows(kProj, normed, nTokens: nTokens, on: cmd)
+        let v = projectRows(vProj, normed, nTokens: nTokens, on: cmd)
+
+        // Flush the projection GEMMs so their results are CPU-readable
+        // for the attention core.
+        cmd.commit()
+        cmd.waitUntilCompleted()
+
+        // CPU bidirectional multi-head attention.
+        let attnFlat = cpuAttention(q: q, k: k, v: v, nTokens: nTokens,
+                                    device: device)
+
+        // ── Residual + MLP sub-block ──
+        let cmd2 = device.makeCommandBuffer()
+        let attnProj = projectRows(oProj, attnFlat, nTokens: nTokens, on: cmd2)
+        let postAttn = Ops.add(h, attnProj, on: cmd2)
+        let normed2 = Ops.layerNorm(postAttn, weight: layerNorm2.weight,
+                                    bias: layerNorm2.bias, eps: layerNorm2.eps,
+                                    nRows: nTokens, rowSize: hidden, on: cmd2)
+        let ff1 = projectRows(fc1, normed2, nTokens: nTokens,
+                              outDim: intermediate, on: cmd2)
+        let act = Ops.gelu(ff1, on: cmd2)
+        let ff2 = projectRows(fc2, act, nTokens: nTokens,
+                              inDim: intermediate, outDim: hidden, on: cmd2)
+        let result = Ops.add(postAttn, ff2, on: cmd2)
+        cmd2.commit()
+        cmd2.waitUntilCompleted()
+        return result
+    }
+
+    /// CPU bidirectional multi-head attention over `nTokens` patch
+    /// tokens. `q` / `k` / `v` are token-major `[nTokens, nHeads*headDim]`.
+    /// Returns the context, token-major `[nTokens, nHeads*headDim]`,
+    /// ready for the output projection.
+    private func cpuAttention(q: Tensor, k: Tensor, v: Tensor,
+                              nTokens: Int, device: Device) -> Tensor {
+        let qa = q.toFloatArray()
+        let ka = k.toFloatArray()
+        let va = v.toFloatArray()
+        let stride = nHeads * headDim
+        var out = [Float](repeating: 0, count: nTokens * stride)
+
+        for head in 0..<nHeads {
+            let hOff = head * headDim
+            for i in 0..<nTokens {
+                // Scaled dot-product scores against every token.
+                var scores = [Float](repeating: 0, count: nTokens)
+                var maxScore = -Float.greatestFiniteMagnitude
+                for j in 0..<nTokens {
+                    var dot: Float = 0
+                    let qBase = i * stride + hOff
+                    let kBase = j * stride + hOff
+                    for d in 0..<headDim { dot += qa[qBase + d] * ka[kBase + d] }
+                    let s = dot * scale
+                    scores[j] = s
+                    if s > maxScore { maxScore = s }
+                }
+                // Softmax (numerically stable).
+                var sumExp: Float = 0
+                for j in 0..<nTokens {
+                    let e = exp(scores[j] - maxScore)
+                    scores[j] = e
+                    sumExp += e
+                }
+                let inv = sumExp > 0 ? 1 / sumExp : 0
+                // Weighted sum of V.
+                let oBase = i * stride + hOff
+                for j in 0..<nTokens {
+                    let w = scores[j] * inv
+                    let vBase = j * stride + hOff
+                    for d in 0..<headDim { out[oBase + d] += w * va[vBase + d] }
+                }
+            }
+        }
+        let result = Tensor.empty(shape: [nTokens, stride], dtype: q.dtype,
+                                  device: device)
+        ImagePreprocessing.copyFloats(out, into: result)
+        return result
+    }
+
+    /// Apply a `Linear` to every row of a `[nTokens, *]` tensor via
+    /// `Ops.gemm` (one tiled multi-row GEMM), then broadcast-add the
+    /// bias to every row. The vision Linears always carry a bias.
+    /// `outDim` defaults to the block hidden; pass it for the MLP's
+    /// `hidden → intermediate → hidden` shape changes.
+    private func projectRows(_ linear: Linear, _ x: Tensor, nTokens: Int,
+                             inDim: Int? = nil, outDim: Int? = nil,
+                             on cmd: MTLCommandBuffer) -> Tensor {
+        _ = inDim  // kept for call-site documentation symmetry with outDim
+        let outD = outDim ?? hidden
+        let y = Ops.gemm(weight: linear.weight, input: x, nRows: nTokens, on: cmd)
+        guard let bias = linear.bias else { return y }
+        return addRowBias(y, bias: bias, nRows: nTokens, rowSize: outD, on: cmd)
+    }
+
+    /// Add a `[rowSize]` bias to each of `nRows` rows of a flat
+    /// `[nRows, rowSize]` tensor. `Ops.add` is element-wise same-shape,
+    /// so the bias is tiled into a full `[nRows*rowSize]` buffer once.
+    private func addRowBias(_ x: Tensor, bias: Tensor, nRows: Int,
+                            rowSize: Int, on cmd: MTLCommandBuffer) -> Tensor {
+        let tiled = Tensor.empty(shape: [nRows, rowSize], dtype: x.dtype)
+        let biasVals = bias.toFloatArray()
+        var flat = [Float](repeating: 0, count: nRows * rowSize)
+        for r in 0..<nRows {
+            for c in 0..<rowSize { flat[r * rowSize + c] = biasVals[c] }
+        }
+        ImagePreprocessing.copyFloats(flat, into: tiled)
+        return Ops.add(x, tiled, on: cmd)
+    }
+}
+
+// ─── Vision encoder ──────────────────────────────────────────────────
+
+/// A SigLIP / CLIP-style ViT vision tower. Holds the patch-embed conv
+/// weights, the learned position embedding, the encoder block stack,
+/// the post-LayerNorm, and the projection into the text hidden dim.
+// Non-final so family files can subclass it — e.g. Gemma 3 VL's
+// composed encoder+projector tower (`Gemma3VLComposedEncoder`) overrides
+// `encode` to append its multi-modal projector.
+public class VisionEncoder: Module {
+    public let config: VisionEncoderConfig
+
+    /// conv2d patch-embed weight `[hidden, inChannels, patchSize, patchSize]`.
+    public let patchEmbedWeight: Tensor
+    /// conv2d patch-embed bias `[hidden]`.
+    public let patchEmbedBias: Tensor
+    /// Learned position embedding `[numPatches, hidden]`.
+    public let positionEmbedding: Tensor
+    /// Encoder blocks.
+    public let layers: [VisionEncoderLayer]
+    /// Post-encoder LayerNorm.
+    public let postLayerNorm: LayerNorm
+    /// Optional projection into the text hidden dim. `nil` when the
+    /// encoder hidden already equals the text hidden.
+    public let projection: Linear?
+
+    public let dtype: DType
+
+    public init(config: VisionEncoderConfig,
+                patchEmbedWeight: Tensor, patchEmbedBias: Tensor,
+                positionEmbedding: Tensor, layers: [VisionEncoderLayer],
+                postLayerNorm: LayerNorm, projection: Linear?,
+                dtype: DType) {
+        self.config = config
+        self.patchEmbedWeight = patchEmbedWeight
+        self.patchEmbedBias = patchEmbedBias
+        self.positionEmbedding = positionEmbedding
+        self.layers = layers
+        self.postLayerNorm = postLayerNorm
+        self.projection = projection
+        self.dtype = dtype
+    }
+
+    public func parameters() -> [(String, Tensor)] {
+        var out: [(String, Tensor)] = []
+        out.append(("embeddings.patch_embedding.weight", patchEmbedWeight))
+        out.append(("embeddings.patch_embedding.bias", patchEmbedBias))
+        out.append(("embeddings.position_embedding.weight", positionEmbedding))
+        for (i, layer) in layers.enumerated() {
+            for (k, v) in layer.parameters() {
+                out.append(("encoder.layers.\(i).\(k)", v))
+            }
+        }
+        for (k, v) in postLayerNorm.parameters() { out.append(("post_layernorm.\(k)", v)) }
+        if let proj = projection {
+            for (k, v) in proj.parameters() { out.append(("projection.\(k)", v)) }
+        }
+        return out
+    }
+
+    /// Encode a preprocessed image into patch-token embeddings in the
+    /// text hidden dim.
+    ///
+    /// `image` is a normalized NCHW tensor `[1, inChannels, imageSize,
+    /// imageSize]` (the `ImagePreprocessing.preprocess` output).
+    /// Returns `[numPatches, textHidden]` — the tokens a VLM splices
+    /// into its text stream. All GPU work is queued on a private command
+    /// buffer that is committed + waited before returning, since callers
+    /// consume the result on the CPU (the cross-modal splice).
+    public func encode(image: Tensor, device: Device = .shared) -> Tensor {
+        precondition(image.shape == [1, config.inChannels,
+                                     config.imageSize, config.imageSize],
+                     "VisionEncoder.encode: image shape \(image.shape) != "
+                     + "[1,\(config.inChannels),\(config.imageSize),\(config.imageSize)]")
+        let cmd = device.makeCommandBuffer()
+
+        // Patch embedding — fused conv (one thread per output element).
+        // conv2d output is NCHW [1, hidden, patchesPerSide, patchesPerSide];
+        // flatten the spatial grid to [numPatches, hidden] token-major.
+        let conv = Ops.conv2d(
+            input: image, weight: patchEmbedWeight, bias: patchEmbedBias,
+            strideH: config.patchSize, strideW: config.patchSize, on: cmd)
+        // conv is [1, hidden, P, P] channel-major; we need [numPatches, hidden]
+        // token-major — transpose on the CPU after the conv completes.
+        cmd.commit()
+        cmd.waitUntilCompleted()
+
+        var tokens = channelMajorToTokenMajor(
+            conv, hidden: config.hidden, numPatches: config.numPatches,
+            device: device)
+
+        // Add the learned position embedding.
+        let cmd2 = device.makeCommandBuffer()
+        var h = Ops.add(tokens, positionEmbedding, on: cmd2)
+        cmd2.commit()
+        cmd2.waitUntilCompleted()
+
+        // Run the encoder block stack. Each block commits its own work
+        // internally (its attention core needs a CPU sync point).
+        for layer in layers {
+            let cmd = device.makeCommandBuffer()
+            h = layer.forward(h, nTokens: config.numPatches,
+                              device: device, on: cmd)
+        }
+
+        // Post-encoder LayerNorm.
+        let cmdN = device.makeCommandBuffer()
+        h = Ops.layerNorm(h, weight: postLayerNorm.weight,
+                          bias: postLayerNorm.bias, eps: postLayerNorm.eps,
+                          nRows: config.numPatches, rowSize: config.hidden,
+                          on: cmdN)
+        cmdN.commit()
+        cmdN.waitUntilCompleted()
+        tokens = h
+
+        // Project into the text hidden dim if the encoder hidden differs.
+        guard let proj = projection else { return tokens }
+        let cmd3 = device.makeCommandBuffer()
+        var projected = Ops.gemm(weight: proj.weight, input: tokens,
+                                 nRows: config.numPatches, on: cmd3)
+        if let bias = proj.bias {
+            let biasVals = bias.toFloatArray()
+            var flat = [Float](repeating: 0,
+                               count: config.numPatches * config.textHidden)
+            for r in 0..<config.numPatches {
+                for c in 0..<config.textHidden {
+                    flat[r * config.textHidden + c] = biasVals[c]
+                }
+            }
+            let biasTiled = Tensor.empty(
+                shape: [config.numPatches, config.textHidden], dtype: dtype)
+            ImagePreprocessing.copyFloats(flat, into: biasTiled)
+            projected = Ops.add(projected, biasTiled, on: cmd3)
+        }
+        cmd3.commit()
+        cmd3.waitUntilCompleted()
+        return projected
+    }
+
+    /// Reinterpret a conv2d `[1, hidden, P, P]` channel-major output as
+    /// `[numPatches, hidden]` token-major patch tokens. CPU transpose —
+    /// patch counts are at most a few thousand.
+    private func channelMajorToTokenMajor(
+        _ conv: Tensor, hidden: Int, numPatches: Int, device: Device
+    ) -> Tensor {
+        let src = conv.toFloatArray()
+        var dst = [Float](repeating: 0, count: numPatches * hidden)
+        for c in 0..<hidden {
+            for p in 0..<numPatches {
+                dst[p * hidden + c] = src[c * numPatches + p]
+            }
+        }
+        let out = Tensor.empty(shape: [numPatches, hidden], dtype: dtype,
+                               device: device)
+        ImagePreprocessing.copyFloats(dst, into: out)
+        return out
+    }
+}
+
+extension ImagePreprocessing {
+    /// Write a `[Float]` array into an existing `Tensor`, converting to
+    /// the tensor's storage dtype. Shared by the vision encoder for its
+    /// CPU-side transpose / bias-tile staging.
+    static func copyFloats(_ values: [Float], into tensor: Tensor) {
+        precondition(values.count == tensor.elementCount,
+                     "copyFloats: count mismatch \(values.count) vs \(tensor.elementCount)")
+        switch tensor.dtype {
+        case .f32:
+            tensor.copyIn(from: values)
+        case .f16:
+            tensor.copyIn(from: values.map { Float16($0) })
+        case .bf16:
+            tensor.copyIn(from: values.map { v -> UInt16 in
+                let bits = v.bitPattern
+                let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
+                return UInt16(rounded >> 16)
+            })
+        default:
+            fatalError("copyFloats: unsupported dtype \(tensor.dtype)")
+        }
+    }
+}
