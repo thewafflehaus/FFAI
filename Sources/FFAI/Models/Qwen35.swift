@@ -1360,8 +1360,20 @@ public final class Qwen35GDNMixer: Module {
         let bRawAll = inProjB.callMany(xNormFlat, t: t, on: cmd, device: device)
         let aRawAll = inProjA.callMany(xNormFlat, t: t, on: cmd, device: device)
 
+        // ── Batched aRaw/bRaw → f32 cast. The recurrence needs aRaw/bRaw
+        // in f32 (gatedDeltaPrepStep is f32-only). Casting EACH row inside
+        // the loop fires T·2·30 layers = 30 720 dispatches at T=512;
+        // casting the whole `[T, numValueHeads]` once collapses that to 2
+        // dispatches per layer. The per-row slices below alias into the
+        // pre-cast f32 storage — no extra copy.
+        let aRawF32All = Tensor.empty(shape: [t * numValueHeads], dtype: .f32, device: device)
+        let bRawF32All = Tensor.empty(shape: [t * numValueHeads], dtype: .f32, device: device)
+        Ops.castToF32(aRawAll, into: aRawF32All, on: cmd)
+        Ops.castToF32(bRawAll, into: bRawF32All, on: cmd)
+
         // ── Per-token recurrence — scratches reused, T-loop on `cmd`. ────
         let yGatedAll = Tensor.empty(shape: [t * valueDim], dtype: dt, device: device)
+        let f32Bytes = DType.f32.byteSize
         for r in 0..<t {
             let qkvRow = Tensor(buffer: qkvAll.buffer,
                                 offset: qkvAll.offset + r * convDim * dtBytes,
@@ -1369,12 +1381,14 @@ public final class Qwen35GDNMixer: Module {
             let zRow = Tensor(buffer: zAll.buffer,
                               offset: zAll.offset + r * valueDim * dtBytes,
                               shape: [valueDim], dtype: dt)
-            let bRawRow = Tensor(buffer: bRawAll.buffer,
-                                 offset: bRawAll.offset + r * numValueHeads * dtBytes,
-                                 shape: [numValueHeads], dtype: dt)
-            let aRawRow = Tensor(buffer: aRawAll.buffer,
-                                 offset: aRawAll.offset + r * numValueHeads * dtBytes,
-                                 shape: [numValueHeads], dtype: dt)
+            // Pre-cast f32 slices — kernel reads these directly, no per-row
+            // cast dispatch fired in the loop body.
+            let aRawF32Row = Tensor(buffer: aRawF32All.buffer,
+                                    offset: aRawF32All.offset + r * numValueHeads * f32Bytes,
+                                    shape: [numValueHeads], dtype: .f32)
+            let bRawF32Row = Tensor(buffer: bRawF32All.buffer,
+                                    offset: bRawF32All.offset + r * numValueHeads * f32Bytes,
+                                    shape: [numValueHeads], dtype: .f32)
 
             Ops.conv1dCausalStep(
                 x: qkvRow, w: convW, b: convB,
@@ -1392,13 +1406,11 @@ public final class Qwen35GDNMixer: Module {
             } else {
                 Ops.siluCastToF32(convOutScratch, into: convActF32Scratch, on: cmd)
             }
-            Ops.castToF32(aRawRow, into: aRawF32Scratch, on: cmd)
-            Ops.castToF32(bRawRow, into: bRawF32Scratch, on: cmd)
 
             Ops.gatedDeltaPrepStep(
                 convOut: convActF32Scratch,
                 aLog: aLogTF32, dtBias: dtBiasTF32,
-                aRaw: aRawF32Scratch, bRaw: bRawF32Scratch,
+                aRaw: aRawF32Row, bRaw: bRawF32Row,
                 qNormWeight: qNormWeightF32, kNormWeight: kNormWeightF32,
                 stateIn: cache.gdn.current, stateOut: cache.gdn.next,
                 y: yF32Scratch,
