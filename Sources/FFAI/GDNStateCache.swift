@@ -80,6 +80,11 @@ public final class GDNStateCache: LayerCacheProtocol, @unchecked Sendable {
         self.next = Tensor.empty(shape: shape, dtype: .f32, device: device)
         self.current.zero()
         self.next.zero()
+        // GDN state buffers live for the lifetime of a generation. Pin
+        // them in the device residency set — every fused-GDN dispatch
+        // reads + writes them, so skipping per-encode residency
+        // tracking matters at 30 GDN layers × per-token cadence.
+        device.markWeightsResident([self.current.buffer, self.next.buffer])
     }
 
     /// Exchange `current` and `next`. Call this after `Ops.gatedDeltaStep`

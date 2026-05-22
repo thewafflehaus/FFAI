@@ -30,6 +30,10 @@ public final class ConvStateCache: @unchecked Sendable {
         self.state = Tensor.empty(shape: [kernelSize - 1, nChannels],
                                   dtype: dtype, device: device)
         self.state.zero()
+        // Conv state lives for the lifetime of a generation. Pin it in
+        // the device residency set — conv1dCausalStep touches it every
+        // token, every layer.
+        device.markWeightsResident([self.state.buffer])
     }
 
     /// Reset to zero. Used between sessions; cheap (small fp16/bf16 buffer).

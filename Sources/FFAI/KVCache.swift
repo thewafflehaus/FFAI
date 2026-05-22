@@ -174,6 +174,10 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
         self.kBuffer.zero()
         self.vBuffer.zero()
         self._evictionState = KVEvictionState(policy: eviction, bufferCapacity: maxSeq)
+        // KV buffers live for the lifetime of a generation — pin them in
+        // the device's residency set so per-dispatch residency tracking
+        // doesn't fire on the thousands of decode-step appends + reads.
+        device.markWeightsResident([self.kBuffer.buffer, self.vBuffer.buffer])
     }
 
     /// CPU-side legacy append. Caller must have already sync'd the
