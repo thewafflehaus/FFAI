@@ -14,6 +14,8 @@ import Metal
 public enum PSOCacheError: Error, CustomStringConvertible {
     case kernelNotFound(String)
     case psoCompileFailed(String, Error)
+    case metalSourceNotFound(String)
+    case metalSourceCompileFailed(String, Error)
 
     public var description: String {
         switch self {
@@ -21,6 +23,10 @@ public enum PSOCacheError: Error, CustomStringConvertible {
             return "kernel '\(name)' not found in kernels.metallib"
         case .psoCompileFailed(let name, let underlying):
             return "PSO compile failed for '\(name)': \(underlying)"
+        case .metalSourceNotFound(let name):
+            return "MPP live-compile: .metal source not found for '\(name)' in Resources/kernels/"
+        case .metalSourceCompileFailed(let name, let underlying):
+            return "MPP live-compile: makeLibrary(source:) failed for '\(name)': \(underlying)"
         }
     }
 }
@@ -84,8 +90,24 @@ public final class PSOCache: @unchecked Sendable {
         }
         lock.unlock()
 
-        guard let function = library.library.makeFunction(name: name) else {
-            throw PSOCacheError.kernelNotFound(name)
+        // MPP cooperative-tensor kernels (mt_*_mpp_*) must be live-compiled
+        // from their .metal source, NOT loaded from the pre-built metallib.
+        // The MetalPerformancePrimitives header inlines cooperative-tensor
+        // type IDs + descriptor layouts that drift between SDK versions —
+        // when SDK macOS != runtime macOS, an offline-compiled metallib's
+        // baked-in MPP types disagree with the device runtime's, producing
+        // bit-deterministic wrong output (e.g. cos 0.816 vs 0.999 oracle).
+        // Live-compile via `makeLibrary(source:)` resolves MPP against the
+        // running OS's header, dodging the skew. See ollama #15594, #14432,
+        // llama.cpp PR #16634 for the same class of bug.
+        let function: MTLFunction
+        if Self.isMppKernel(name) {
+            function = try liveCompileMppFunction(name)
+        } else {
+            guard let fn = library.library.makeFunction(name: name) else {
+                throw PSOCacheError.kernelNotFound(name)
+            }
+            function = fn
         }
         let pso: MTLComputePipelineState
         do {
@@ -98,5 +120,72 @@ public final class PSOCache: @unchecked Sendable {
         cache[name] = pso
         lock.unlock()
         return pso
+    }
+
+    /// Returns true for kernels that use `mpp::tensor_ops::matmul2d` and
+    /// must be live-compiled from .metal source on the running OS. Detected
+    /// purely by name — every metaltile MPP kernel name contains `_mpp_`
+    /// (e.g. `mt_qmm_mma_mpp_*`, `mt_moe_gather_qmm_mma_int4_bm{8,16,64}_mpp_*`).
+    /// Non-MPP kernels (the bulk of the metallib) still load from
+    /// kernels.metallib — much faster PSO build.
+    private static func isMppKernel(_ name: String) -> Bool {
+        // Opt-out via env var, just in case a future kernel name accidentally
+        // matches `_mpp_` (e.g. an `_mppow_` variant). Default on.
+        if let raw = ProcessInfo.processInfo.environment["FFAI_PSO_LIVE_COMPILE_MPP"],
+           raw == "0" || raw.lowercased() == "false"
+        {
+            return false
+        }
+        return name.contains("_mpp_")
+    }
+
+    private func liveCompileMppFunction(_ name: String) throws -> MTLFunction {
+        let metalURL = try Self.locateMetalSource(name)
+        let source: String
+        do {
+            source = try String(contentsOf: metalURL, encoding: .utf8)
+        } catch {
+            throw PSOCacheError.metalSourceCompileFailed(name, error)
+        }
+        let opts = MTLCompileOptions()
+        let lib: MTLLibrary
+        do {
+            lib = try library.device.makeLibrary(source: source, options: opts)
+        } catch {
+            throw PSOCacheError.metalSourceCompileFailed(name, error)
+        }
+        guard let fn = lib.makeFunction(name: name) else {
+            throw PSOCacheError.kernelNotFound(name)
+        }
+        return fn
+    }
+
+    /// Locate `<name>.metal` next to the loaded metallib. `tile emit` writes
+    /// per-kernel sources to `Resources/kernels/<name>.metal` alongside
+    /// `Resources/kernels.metallib`, so we anchor the lookup off
+    /// `library.metallibURL`.
+    private static func locateMetalSource(_ name: String) throws -> URL {
+        let metallibURL = MetalTileLibrary.shared.metallibURL
+        let kernelsDir = metallibURL.deletingLastPathComponent()
+            .appendingPathComponent("kernels", isDirectory: true)
+        let url = kernelsDir.appendingPathComponent("\(name).metal")
+        if FileManager.default.fileExists(atPath: url.path) {
+            return url
+        }
+        // Fallback: SPM may have flattened Resources/ — try Bundle.module.
+        if let bundleURL = Bundle.module.url(
+            forResource: name, withExtension: "metal", subdirectory: "Resources/kernels"
+        ) {
+            return bundleURL
+        }
+        if let bundleURL = Bundle.module.url(
+            forResource: name, withExtension: "metal", subdirectory: "kernels"
+        ) {
+            return bundleURL
+        }
+        if let bundleURL = Bundle.module.url(forResource: name, withExtension: "metal") {
+            return bundleURL
+        }
+        throw PSOCacheError.metalSourceNotFound(name)
     }
 }
