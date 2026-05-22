@@ -148,7 +148,17 @@ struct Qwen36SmokeTests {
         try await runForwardManyBench(targetT: 512)
     }
 
-    private func runForwardManyBench(targetT: Int) async throws {
+    @Test("Qwen3.6-35B-A3B forwardMany bench — T=2048 batched-only")
+    func forwardManyBench2K() async throws {
+        try await runForwardManyBench(targetT: 2048, skipPerToken: true)
+    }
+
+    @Test("Qwen3.6-35B-A3B forwardMany bench — T=4096 batched-only")
+    func forwardManyBench4K() async throws {
+        try await runForwardManyBench(targetT: 4096, skipPerToken: true)
+    }
+
+    private func runForwardManyBench(targetT: Int, skipPerToken: Bool = false) async throws {
         let path = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
         guard FileManager.default.fileExists(atPath: path) else {
             print("Qwen3.6 forwardManyBench(T=\(targetT)) skipped: \(path) not found")
@@ -193,19 +203,25 @@ struct Qwen36SmokeTests {
             _ = warmIter  // silence
         }
 
-        // Per-token loop baseline (5 runs, median).
-        var perTokenSecs: [Double] = []
-        for _ in 0..<5 {
-            let caches = qwen.makeLayerCaches()
-            let t0 = Date()
-            for (i, tok) in encoded.enumerated() {
-                _ = qwen.forward(tokenId: tok, position: i, caches: caches)
+        // Per-token loop baseline (5 runs, median) — skipped at long
+        // contexts (T≥2K) where per-token would cost ~25-40 min total.
+        var perTokenMedian = 0.0
+        if !skipPerToken {
+            var perTokenSecs: [Double] = []
+            for _ in 0..<5 {
+                let caches = qwen.makeLayerCaches()
+                let t0 = Date()
+                for (i, tok) in encoded.enumerated() {
+                    _ = qwen.forward(tokenId: tok, position: i, caches: caches)
+                }
+                perTokenSecs.append(Date().timeIntervalSince(t0))
             }
-            perTokenSecs.append(Date().timeIntervalSince(t0))
+            perTokenSecs.sort()
+            perTokenMedian = perTokenSecs[perTokenSecs.count / 2]
+            print("per-token T=\(T): runs=\(perTokenSecs.map { String(format: "%.3f", $0) }) median=\(String(format: "%.3f", perTokenMedian))s = \(String(format: "%.2f", Double(T)/perTokenMedian)) tps")
+        } else {
+            print("per-token T=\(T): SKIPPED (--skipPerToken)")
         }
-        perTokenSecs.sort()
-        let perTokenMedian = perTokenSecs[perTokenSecs.count / 2]
-        print("per-token T=\(T): runs=\(perTokenSecs.map { String(format: "%.3f", $0) }) median=\(String(format: "%.3f", perTokenMedian))s = \(String(format: "%.2f", Double(T)/perTokenMedian)) tps")
 
         // Batched forwardMany (5 runs, median).
         var batchedSecs: [Double] = []
@@ -223,8 +239,12 @@ struct Qwen36SmokeTests {
         let batchedMedian = batchedSecs[batchedSecs.count / 2]
         print("batched T=\(T): runs=\(batchedSecs.map { String(format: "%.3f", $0) }) median=\(String(format: "%.3f", batchedMedian))s = \(String(format: "%.2f", Double(T)/batchedMedian)) tps")
 
-        let speedup = perTokenMedian / batchedMedian
-        print("forwardManyBench RESULT T=\(T): per_token=\(String(format: "%.0f", perTokenMedian*1000))ms batched=\(String(format: "%.0f", batchedMedian*1000))ms speedup=\(String(format: "%.2fx", speedup))")
+        if !skipPerToken {
+            let speedup = perTokenMedian / batchedMedian
+            print("forwardManyBench RESULT T=\(T): per_token=\(String(format: "%.0f", perTokenMedian*1000))ms batched=\(String(format: "%.0f", batchedMedian*1000))ms speedup=\(String(format: "%.2fx", speedup))")
+        } else {
+            print("forwardManyBench RESULT T=\(T): batched=\(String(format: "%.0f", batchedMedian*1000))ms = \(String(format: "%.2f", Double(T)/batchedMedian)) tps (best \(String(format: "%.3f", batchedSecs[0]))s = \(String(format: "%.2f", Double(T)/batchedSecs[0])) tps)")
+        }
     }
 
     @Test("Qwen3.6-35B-A3B forwardMany matches per-token forward")
