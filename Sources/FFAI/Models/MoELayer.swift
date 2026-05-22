@@ -608,15 +608,23 @@ public final class MoELayer: Module, DecoderLayer {
         cmd.waitUntilCompleted()
 
         // ── 3. Per-token routing on host ─────────────────────────────────
+        // `router.route` is a pure function over a per-row logit slice —
+        // independent across `r`, so the T calls fan out across CPU cores
+        // via `DispatchQueue.concurrentPerform`. At Qwen3.6-A3B T=512 ×
+        // 40 layers = 20 480 route() calls per prefill; serial they add
+        // up. Pre-allocate the result array sized to `t` so each iteration
+        // writes its own slot (race-free).
         let nExperts = router.nExperts
         let topK = router.topK
         let logitsHost = gateLogitsAll.toFloatArray()  // [T·nExperts]
-        var routings: [MoERouter.Routing] = []
-        routings.reserveCapacity(t)
-        for r in 0..<t {
-            let start = r * nExperts
-            let rowLogits = Array(logitsHost[start..<(start + nExperts)])
-            routings.append(router.route(logits: rowLogits))
+        var routings = [MoERouter.Routing](repeating: MoERouter.Routing(indices: [], weights: []),
+                                           count: t)
+        routings.withUnsafeMutableBufferPointer { buf in
+            DispatchQueue.concurrentPerform(iterations: t) { r in
+                let start = r * nExperts
+                let rowLogits = Array(logitsHost[start..<(start + nExperts)])
+                buf[r] = router.route(logits: rowLogits)
+            }
         }
 
         // ── 4. Build sorted plan over T·topK rows ────────────────────────
