@@ -334,9 +334,17 @@ struct MoEBgemmBm64MppTests {
         let outBuf = mtlDevice.makeBuffer(length: tRows * nOut * 2, options: .storageModeShared)!
         memset(outBuf.contents(), 0, tRows * nOut * 2)
 
-        // Live-compile from the .metal source on disk.
-        let metalPath = "/Users/tom/dev/ffai/Sources/MetalTileSwift/Resources/kernels/mt_moe_gather_qmm_mma_int4_bm64_mpp_bf16.metal"
-        let source = try String(contentsOfFile: metalPath, encoding: .utf8)
+        // Live-compile from the .metal source on disk. Resolve the
+        // kernels dir relative to this test file (#filePath →
+        // <repo>/Tests/FFAITests/…) instead of a hardcoded absolute
+        // path, so the test is machine-independent.
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // FFAITests/
+            .deletingLastPathComponent()  // Tests/
+            .deletingLastPathComponent()  // <repo>/
+        let metalURL = repoRoot.appendingPathComponent(
+            "Sources/MetalTileSwift/Resources/kernels/mt_moe_gather_qmm_mma_int4_bm64_mpp_bf16.metal")
+        let source = try String(contentsOf: metalURL, encoding: .utf8)
         let opts = MTLCompileOptions()
         let lib = try mtlDevice.makeLibrary(source: source, options: opts)
         let fn = lib.makeFunction(name: "mt_moe_gather_qmm_mma_int4_bm64_mpp_bf16")!

@@ -107,6 +107,16 @@ struct MoELayerTests {
         return d * (silu * (u * x))
     }
 
+    /// Flush the shared device queue: submit + wait a no-op command
+    /// buffer so every previously-committed buffer (including the
+    /// internal `work` buffer `MoELayer.decode` commits without
+    /// waiting) is GPU-complete before a host readback.
+    private static func flushQueue() {
+        let flush = Device.shared.makeCommandBuffer()
+        flush.commit()
+        flush.waitUntilCompleted()
+    }
+
     /// Build a 1×1 `Linear` from a single scalar weight.
     private func scalarLinear(_ w: Float) -> AnyLinear {
         let t = Tensor.empty(shape: [1, 1], dtype: .f32)
@@ -154,7 +164,12 @@ struct MoELayerTests {
             out = layer.decode(input, position: 0,
                                cache: StatelessLayerCache(),
                                cmd: cb, device: .shared)
-            // `decode` already committed `cb`; the result is resident.
+            // `decode` commits its internal `work` buffer WITHOUT
+            // waiting — the production caller hazard-tracks the read on
+            // the next GPU cmd. A host readback must flush the queue
+            // first: submit + wait a trailing no-op on the same
+            // in-order MTLCommandQueue so `work` is guaranteed done.
+            Self.flushQueue()
 
             // CPU reference: experts 1 and 2 win, weighted 0.73107 /
             // 0.26893.
@@ -208,6 +223,7 @@ struct MoELayerTests {
             out = layer.decode(input, position: 0,
                                cache: StatelessLayerCache(),
                                cmd: cb, device: .shared)
+            Self.flushQueue()  // see `decode` no-wait note above
 
             let w1: Float = 0.73107
             let w2: Float = 0.26893
