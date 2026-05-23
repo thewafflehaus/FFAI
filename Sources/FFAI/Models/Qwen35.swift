@@ -2152,9 +2152,6 @@ public final class Qwen35GDNLayer: Module, DecoderLayer {
         precondition(hFlat.elementCount == t * hidden,
                      "Qwen35GDNLayer.decodeMany: hFlat size \(hFlat.elementCount) ≠ T·hidden = \(t * hidden)")
 
-        let dt = hFlat.dtype
-        let dtBytes = dt.byteSize
-
         // ── Pre-norm — one rmsNormRows over T rows ──────────────────────
         let xNormFlat = Ops.rmsNormRows(
             hFlat, weight: inputNorm.weight, eps: inputNorm.eps,
@@ -2281,9 +2278,6 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
                      "Qwen35AttentionLayer.decodeMany: hFlat size \(hFlat.elementCount) "
                      + "≠ T·hidden = \(t * hidden)")
 
-        let dt = hFlat.dtype
-        let dtBytes = dt.byteSize
-
         // ── Pre-norm — one rmsNormRows over T rows ──────────────────────
         let xNormFlat = Ops.rmsNormRows(
             hFlat, weight: inputNorm.weight, eps: inputNorm.eps,
@@ -2335,7 +2329,6 @@ private func qwen35FFNParameters(_ ffn: Qwen35FFN) -> [(String, Tensor)] {
 private func qwen35ApplyFFNMany(_ ffn: Qwen35FFN, postMix: Tensor, t: Int,
                                 postNorm: RMSNorm, hidden: Int,
                                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
-    let dt = postMix.dtype
     // Post-norm over T rows of [hidden]. One rmsNormRows kernel.
     let ffnNorm = Ops.rmsNormRows(
         postMix, weight: postNorm.weight, eps: postNorm.eps,
