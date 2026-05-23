@@ -283,6 +283,135 @@ struct IndirectCommandBufferSmokeTests {
         print("ICB smoke: n=\(n), max |Δ| ICB vs direct = \(maxAbsDiff) (zero is expected)")
     }
 
+    @Test("ICB-replay perf — realistic per-dispatch overhead (setPipelineState + setBuffer × 2 each call)")
+    func icbReplayPerfRealisticBindings() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            Issue.record("no Metal device")
+            return
+        }
+        guard let queue = device.makeCommandQueue() else {
+            Issue.record("no command queue")
+            return
+        }
+        let nCommands = 600
+        let vecSize = 256
+        let bytes = vecSize * MemoryLayout<Float>.stride
+        let inputHost: [Float] = (0..<vecSize).map { Float($0) * 0.01 }
+        guard
+            let inBuf = device.makeBuffer(bytes: inputHost, length: bytes,
+                                          options: .storageModeShared),
+            let outBuf = device.makeBuffer(length: bytes, options: .storageModeShared)
+        else {
+            Issue.record("buffer alloc")
+            return
+        }
+        let pso = PSOCache.shared.pipelineState(for: "mt_sigmoid_f32")
+        let tgWidth = min(vecSize, 256)
+        let grid = MTLSize(width: vecSize, height: 1, depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+
+        // Warm.
+        for _ in 0..<3 {
+            guard let cmd = queue.makeCommandBuffer(),
+                  let enc = cmd.makeComputeCommandEncoder() else { return }
+            for _ in 0..<10 {
+                enc.setComputePipelineState(pso)
+                enc.setBuffer(inBuf, offset: 0, index: 0)
+                enc.setBuffer(outBuf, offset: 0, index: 1)
+                enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+            }
+            enc.endEncoding()
+            cmd.commit()
+            cmd.waitUntilCompleted()
+        }
+
+        // Direct encoder — REALISTIC: rebind pipeline + buffers per dispatch
+        // (mirrors what real Ops wrappers do — they each create a fresh
+        // encoder anyway, but even within one encoder the per-call setup
+        // adds significant overhead). This isn't a perfect mirror of FFAI's
+        // per-encoder-per-dispatch pattern but bounds the worst-case ICB
+        // win above what a real model would see.
+        var directTimes: [Double] = []
+        for _ in 0..<5 {
+            guard let cmd = queue.makeCommandBuffer(),
+                  let enc = cmd.makeComputeCommandEncoder() else { return }
+            let t0 = Date()
+            for _ in 0..<nCommands {
+                enc.setComputePipelineState(pso)
+                enc.setBuffer(inBuf, offset: 0, index: 0)
+                enc.setBuffer(outBuf, offset: 0, index: 1)
+                enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+            }
+            enc.endEncoding()
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            directTimes.append(Date().timeIntervalSince(t0))
+        }
+        directTimes.sort()
+        let directMedian = directTimes[directTimes.count / 2]
+
+        // FFAI-style: one encoder PER dispatch (matches each Ops wrapper
+        // doing `cmd.makeComputeCommandEncoder()` independently).
+        var ffaiStyleTimes: [Double] = []
+        for _ in 0..<5 {
+            guard let cmd = queue.makeCommandBuffer() else { return }
+            let t0 = Date()
+            for _ in 0..<nCommands {
+                guard let enc = cmd.makeComputeCommandEncoder() else { return }
+                enc.setComputePipelineState(pso)
+                enc.setBuffer(inBuf, offset: 0, index: 0)
+                enc.setBuffer(outBuf, offset: 0, index: 1)
+                enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+                enc.endEncoding()
+            }
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            ffaiStyleTimes.append(Date().timeIntervalSince(t0))
+        }
+        ffaiStyleTimes.sort()
+        let ffaiStyleMedian = ffaiStyleTimes[ffaiStyleTimes.count / 2]
+
+        // ICB (built once outside the timed loop — that's the whole point
+        // of pre-recording).
+        let icbDescriptor = MTLIndirectCommandBufferDescriptor()
+        icbDescriptor.commandTypes = .concurrentDispatch
+        icbDescriptor.inheritBuffers = false
+        icbDescriptor.maxKernelBufferBindCount = 4
+        icbDescriptor.inheritPipelineState = false
+        guard let icb = device.makeIndirectCommandBuffer(
+            descriptor: icbDescriptor, maxCommandCount: nCommands,
+            options: .storageModeShared) else { return }
+        for i in 0..<nCommands {
+            let c = icb.indirectComputeCommandAt(i)
+            c.setComputePipelineState(pso)
+            c.setKernelBuffer(inBuf, offset: 0, at: 0)
+            c.setKernelBuffer(outBuf, offset: 0, at: 1)
+            c.concurrentDispatchThreads(grid, threadsPerThreadgroup: tg)
+        }
+        var icbTimes: [Double] = []
+        for _ in 0..<5 {
+            guard let cmd = queue.makeCommandBuffer(),
+                  let enc = cmd.makeComputeCommandEncoder() else { return }
+            enc.useResource(inBuf, usage: .read)
+            enc.useResource(outBuf, usage: .write)
+            let t0 = Date()
+            enc.executeCommandsInBuffer(icb, range: 0..<nCommands)
+            enc.endEncoding()
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            icbTimes.append(Date().timeIntervalSince(t0))
+        }
+        icbTimes.sort()
+        let icbMedian = icbTimes[icbTimes.count / 2]
+
+        print("ICB-realistic N=\(nCommands):")
+        print("  direct one-encoder rebound per dispatch: \(String(format: "%.3f", directMedian * 1000)) ms")
+        print("  FFAI-style one-encoder per dispatch:     \(String(format: "%.3f", ffaiStyleMedian * 1000)) ms")
+        print("  ICB executeCommandsInBuffer:             \(String(format: "%.3f", icbMedian * 1000)) ms")
+        print("  speedup vs direct rebound: \(String(format: "%.2f", directMedian / icbMedian))×")
+        print("  speedup vs FFAI per-encoder: \(String(format: "%.2f", ffaiStyleMedian / icbMedian))×")
+    }
+
     @Test("ICB-replay perf — N=600 chained sigmoid dispatches via ICB vs direct encoder")
     func icbReplayPerfVsDirectEncoder() throws {
         guard let device = MTLCreateSystemDefaultDevice() else {
