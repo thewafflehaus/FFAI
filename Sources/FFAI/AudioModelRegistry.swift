@@ -32,6 +32,7 @@ public enum LoadedAudioModel: @unchecked Sendable {
     case lfmAudio(LFMAudioModel)
     case voxtralRealtime(VoxtralRealtimeModel)
     case glmASR(GLMASRModel)
+    case pocketTTS(PocketTTSModel)
 
     /// The capabilities this model exposes — `audioIn` for STT / omni,
     /// `audioOut` for TTS.
@@ -55,6 +56,7 @@ public enum LoadedAudioModel: @unchecked Sendable {
         case .lfmAudio: return Capability.omniAudio
         case .voxtralRealtime: return Capability.speechToText
         case .glmASR: return Capability.speechToText
+        case .pocketTTS: return Capability.textToSpeech
         }
     }
 }
@@ -84,6 +86,7 @@ public enum AudioModelRegistry {
             || LFMAudioModel.handles(config)
             || VoxtralRealtimeModel.handles(config)
             || GLMASRModel.handles(config)
+            || PocketTTSModel.handles(config)
     }
 
     /// The capability set a checkpoint at `directory` would expose,
@@ -119,6 +122,7 @@ public enum AudioModelRegistry {
         if LFMAudioModel.handles(config) { return Capability.omniAudio }
         if VoxtralRealtimeModel.handles(config) { return Capability.speechToText }
         if GLMASRModel.handles(config) { return Capability.speechToText }
+        if PocketTTSModel.handles(config) { return Capability.textToSpeech }
         return nil
     }
 
@@ -205,6 +209,10 @@ public enum AudioModelRegistry {
         }
         if GLMASRModel.handles(config) {
             return .glmASR(try GLMASRModel.load(
+                directory: directory, device: device))
+        }
+        if PocketTTSModel.handles(config) {
+            return .pocketTTS(try PocketTTSModel.load(
                 directory: directory, device: device))
         }
         throw ModelError.unsupportedArchitecture(
