@@ -133,6 +133,65 @@ struct Qwen36SmokeTests {
         print("\(label): RESULT prefill_ms=\(String(format: "%.0f", prefillMs)) decode_tps=\(String(format: "%.2f", decodeTps)) steady_tps=\(String(format: "%.2f", steadyTps)) prefill_tps=\(String(format: "%.1f", prefillTps))")
     }
 
+    @Test("Qwen3.6-35B-A3B forwardManyAllLogits — last-row equals forwardMany")
+    func forwardManyAllLogitsLastRowMatchesForwardMany() async throws {
+        let path = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
+        guard FileManager.default.fileExists(atPath: path) else {
+            print("Qwen3.6 forwardManyAllLogits skipped: \(path) not found")
+            return
+        }
+        var optsBuilder = LoadOptions()
+        optsBuilder.prewarm = false
+        let opts = optsBuilder
+        let m: Model = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(path, options: opts)
+        }
+        guard let qwen = m.qwen35 else {
+            Issue.record("expected Qwen35Model engine")
+            return
+        }
+        let seed = "The history of the printing press began when European craftsmen of the 15th century"
+        let encoded = Array(m.tokenizer.encode(text: seed).prefix(8))
+        let T = encoded.count
+        precondition(T >= 4, "need at least 4 tokens to test")
+
+        // Path 1: forwardMany returns [vocab] for last row.
+        let cachesA = qwen.makeLayerCaches()
+        let cmdA = Device.shared.makeCommandBuffer()
+        let lastRowLogits = qwen.forwardMany(tokenIds: encoded, startPosition: 0,
+                                              caches: cachesA, on: cmdA, device: Device.shared)
+        cmdA.commit()
+        await cmdA.completed()
+        let lastRowHost = lastRowLogits.toFloatArray()
+
+        // Path 2: forwardManyAllLogits returns [T, vocab].
+        let cachesB = qwen.makeLayerCaches()
+        let cmdB = Device.shared.makeCommandBuffer()
+        let allLogits = qwen.forwardManyAllLogits(tokenIds: encoded, startPosition: 0,
+                                                   caches: cachesB, on: cmdB, device: Device.shared)
+        cmdB.commit()
+        await cmdB.completed()
+        let allHost = allLogits.toFloatArray()
+        let vocab = lastRowHost.count
+        #expect(allHost.count == T * vocab,
+                "forwardManyAllLogits returned \(allHost.count) elements; expected T·vocab = \(T * vocab)")
+
+        // Compare last row to forwardMany's last-row-only logits.
+        let lastRowSlice = Array(allHost[(T - 1) * vocab ..< T * vocab])
+        var maxAbsDiff: Float = 0
+        for (a, b) in zip(lastRowSlice, lastRowHost) {
+            maxAbsDiff = max(maxAbsDiff, abs(a - b))
+        }
+        print("forwardManyAllLogits T=\(T) last-row max |Δ| = \(String(format: "%.4f", maxAbsDiff))")
+        #expect(maxAbsDiff < 0.1,
+                "last-row logits diverged by \(maxAbsDiff) > 0.1")
+        let refMax = lastRowHost.enumerated().max { $0.element < $1.element }!.offset
+        let allMax = lastRowSlice.enumerated().max { $0.element < $1.element }!.offset
+        #expect(refMax == allMax,
+                "argmax mismatch: forwardMany=\(refMax) vs allLogits last row=\(allMax)")
+        print("forwardManyAllLogits T=\(T) argmax match: \(refMax)")
+    }
+
     @Test("Qwen3.6-35B-A3B forwardMany bench — T=2 spec-decode ceiling probe")
     func forwardManyBench2() async throws {
         try await runForwardManyBench(targetT: 2)

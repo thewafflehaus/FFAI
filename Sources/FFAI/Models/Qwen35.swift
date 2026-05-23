@@ -2344,6 +2344,27 @@ public final class Qwen35Model: LanguageModel {
         return _forwardManyBatched(tokenIds: tokenIds,
                                    startPosition: startPosition,
                                    caches: caches,
+                                   returnAllLogits: false,
+                                   on: cmd, device: device)
+    }
+
+    /// Multi-token forward returning logits at EVERY position — `[T, vocab]`.
+    /// Same KV/GDN-cache-writing semantics as `forwardMany`; differs only
+    /// in the output: instead of slicing the last row's hidden, applies
+    /// final RMSNorm + lm_head row-wise to all T positions.
+    ///
+    /// Spec-decode driver: a drafter proposes `γ` candidate tokens, the
+    /// target verifies via `forwardManyAllLogits(prefix + candidates)` to
+    /// get the per-position logits, then accepts up to the first reject.
+    public func forwardManyAllLogits(tokenIds: [Int], startPosition: Int,
+                                     caches: [any LayerCacheProtocol],
+                                     on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(!tokenIds.isEmpty,
+                     "Qwen35Model.forwardManyAllLogits: tokenIds must not be empty")
+        return _forwardManyBatched(tokenIds: tokenIds,
+                                   startPosition: startPosition,
+                                   caches: caches,
+                                   returnAllLogits: true,
                                    on: cmd, device: device)
     }
 
@@ -2378,6 +2399,7 @@ public final class Qwen35Model: LanguageModel {
     private func _forwardManyBatched(
         tokenIds: [Int], startPosition: Int,
         caches: [any LayerCacheProtocol],
+        returnAllLogits: Bool,
         on cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
         let t = tokenIds.count
@@ -2459,12 +2481,30 @@ public final class Qwen35Model: LanguageModel {
             workCmd.waitUntilCompleted()
         }
 
-        // ── Final norm + lm_head on the LAST row only ────────────────────
-        let lastRow = Tensor(buffer: h.buffer,
-                             offset: h.offset + (t - 1) * hidden * dtBytes,
-                             shape: [hidden], dtype: dt)
-        let normed = finalNorm(lastRow, on: cmd)
-        return lmHead(normed, on: cmd)
+        // ── Final norm + lm_head ─────────────────────────────────────────
+        //
+        // Two output shapes:
+        //   * `returnAllLogits == false` (default, prefill driver): logits
+        //     of the LAST row only — `[vocab]`. The (T-1) preceding rows'
+        //     logits are consumed only by the KV / GDN cache writes inside
+        //     the layer loop. This is what `Generate.swift` uses for
+        //     batched prefill that only needs the sample-from-last-token.
+        //   * `returnAllLogits == true` (spec-decode verify): logits at
+        //     EVERY position — `[T, vocab]`. The spec-decode driver needs
+        //     the per-position logits to verify each candidate draft token.
+        if !returnAllLogits {
+            let lastRow = Tensor(buffer: h.buffer,
+                                 offset: h.offset + (t - 1) * hidden * dtBytes,
+                                 shape: [hidden], dtype: dt)
+            let normed = finalNorm(lastRow, on: cmd)
+            return lmHead(normed, on: cmd)
+        }
+        // All-T path: batched RMSNorm over T rows + batched lm_head.
+        let normedAll = Ops.rmsNormRows(
+            h, weight: finalNorm.weight, eps: finalNorm.eps,
+            nRows: t, rowSize: hidden, on: cmd)
+        return lmHead.callMany(normedAll.reshaped(to: [t, hidden]),
+                               t: t, on: cmd, device: device)
     }
 
     // ─── VLM embedding-input path ────────────────────────────────────
