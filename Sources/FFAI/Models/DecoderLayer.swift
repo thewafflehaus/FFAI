@@ -39,6 +39,57 @@ public protocol DecoderLayer: Module {
     func decode(_ h: Tensor, position: Int,
                 cache: any LayerCacheProtocol,
                 cmd: MTLCommandBuffer, device: Device) -> Tensor
+
+    /// Layer-local **multi-token** decode — process `nRows` consecutive
+    /// positions in one logical call. `h` is `[nRows, hidden]`; the
+    /// returned tensor is `[nRows, hidden]`. The starting absolute
+    /// position is `position` (rows take `position + 0 ..< position +
+    /// nRows`).
+    ///
+    /// The default implementation loops `decode(...)` per row on the
+    /// supplied `cmd` (correct-but-slow; commit-count win only).
+    /// Attention-style layers override this to collapse the N SDPA
+    /// dispatches into one `Ops.sdpaMulti(causal: true)` + batched
+    /// `Ops.gemm` projections (the Phase 6.6 TTFT win). Recurrent
+    /// layers (Mamba 2 selective scan, GDN delta) keep the default
+    /// because their recurrence is inherently sequential — they can't
+    /// batch state updates without giving up correctness.
+    func decodeMulti(_ h: Tensor, startingAt position: Int,
+                     cache: any LayerCacheProtocol,
+                     cmd: MTLCommandBuffer, device: Device) -> Tensor
+}
+
+public extension DecoderLayer {
+    /// Default `decodeMulti`: loop `decode(...)` per row on the same
+    /// `cmd`. Correct + commit-count-batched, but every dispatch
+    /// inside `decode(...)` still runs per-token. Attention layers
+    /// override with the chunked path; recurrent layers (Mamba 2 /
+    /// GDN) inherit this default because their step is intrinsically
+    /// sequential.
+    ///
+    /// Result is allocated up front and zero-initialised host-side
+    /// (`Tensor.zero()` is a synchronous `memset`, safe because no
+    /// GPU work has touched the fresh buffer yet). Each row's
+    /// `decode(...)` result is written into the matching `result`
+    /// slice via `Ops.add(...into: dst)` — the only "row-copy onto
+    /// the same `cmd`" primitive available without a dedicated
+    /// `Ops.copy` kernel.
+    func decodeMulti(_ h: Tensor, startingAt position: Int,
+                     cache: any LayerCacheProtocol,
+                     cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        let nRows = h.shape[0]
+        let hidden = h.shape.last!
+        let result = Tensor.empty(shape: h.shape, dtype: h.dtype, device: device)
+        result.zero()
+        for i in 0..<nRows {
+            let row = h.slicedRows(start: i, count: 1).reshaped(to: [hidden])
+            let out = decode(row, position: position + i,
+                             cache: cache, cmd: cmd, device: device)
+            let dst = result.slicedRows(start: i, count: 1).reshaped(to: [hidden])
+            _ = Ops.add(out, dst, on: cmd, into: dst)
+        }
+        return result
+    }
 }
 
 /// A no-op `LayerCacheProtocol` for layers that hold no per-token state
