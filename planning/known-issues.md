@@ -99,11 +99,19 @@ fixed inline:
   shadowing `Tensor.toFloatArray()` extension, made `textEmbedding(...)`
   public.
 
-**Remaining follow-up.** Wrap each engine in a proper `VLModel` adapter
-exposing `vlModel` on the `Model.Loaded` tuple so callers don't need to
-downcast `m.engine`. PaliGemma's integration test currently asserts only
-load + shape; the full image+text dog-photo assertion lands once
-`VLMTestSupport` gets a CHW preprocessing helper at 448 resolution.
+**Design note — engine downcast is intentional for these three.**
+FFAI's `VLModel` adapter wraps `VisionEncoder + LanguageModel + splice`
+for families that cleanly factor into those three layers (Pixtral,
+Mistral3, Qwen3VL, SmolVLM2, MiniCPM-V, Gemma3/4-VL …). Idefics3,
+PaliGemma, and GLM-OCR all inline image substitution *into* the
+engine's `forward(tokenId:...)`: at every image-token position the
+forward swaps the text embedding for a precomputed vision feature.
+That keeps their forward path identical to a plain text decode (no
+adapter intermediation needed for the splice), so the `Model.engine`
+downcast is the supported access pattern. `VLMTestSupport` now ships
+`dogImageCHW(targetSize:)` + `dogImageCHWNormalized(targetSize:
+normalization:)` so each of these tests can run the full image+text
+dog assertion at its native resolution.
 
 ## Indirect-dispatch test gap on metaltile
 

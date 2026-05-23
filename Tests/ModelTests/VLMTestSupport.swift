@@ -41,6 +41,53 @@ enum VLMTestSupport {
         }
     }
 
+    /// Load the dog fixture, resize to `targetSize × targetSize`, and
+    /// return a planar **CHW** float array — the layout PaliGemma /
+    /// SigLIP-style towers consume directly. No mean/std normalization is
+    /// applied here (each caller picks its own); pixels are in `[0,1]`.
+    ///
+    /// `count = 3 * targetSize * targetSize`. CPU-only — the dog image is
+    /// small, this helper is dwarfed by the rest of the vision encoder
+    /// cost, so a simple bilinear resize is fine.
+    static func dogImageCHW(targetSize: Int) throws -> [Float] {
+        let img = try dogImage()
+        let resized = ImagePreprocessing.resize(
+            img, targetW: targetSize, targetH: targetSize)
+        var planar = [Float](repeating: 0, count: 3 * targetSize * targetSize)
+        let plane = targetSize * targetSize
+        for y in 0..<targetSize {
+            for x in 0..<targetSize {
+                let srcBase = (y * targetSize + x) * 3
+                let dstBase = y * targetSize + x
+                planar[0 * plane + dstBase] = resized.pixels[srcBase]
+                planar[1 * plane + dstBase] = resized.pixels[srcBase + 1]
+                planar[2 * plane + dstBase] = resized.pixels[srcBase + 2]
+            }
+        }
+        return planar
+    }
+
+    /// Same as `dogImageCHW(targetSize:)` but applies per-channel
+    /// normalization in the same pass. Use this when the family expects
+    /// CLIP-mean (`[0.48145466, 0.4578275, 0.40821073]`) /
+    /// CLIP-std (`[0.26862954, 0.26130258, 0.27577711]`) or its own
+    /// ImageNormalization preset.
+    static func dogImageCHWNormalized(
+        targetSize: Int, normalization: ImageNormalization
+    ) throws -> [Float] {
+        var pixels = try dogImageCHW(targetSize: targetSize)
+        let plane = targetSize * targetSize
+        let means = [normalization.mean.0, normalization.mean.1, normalization.mean.2]
+        let stds  = [normalization.std.0,  normalization.std.1,  normalization.std.2]
+        for c in 0..<3 {
+            let m = means[c], s = stds[c]
+            for i in (c * plane)..<((c + 1) * plane) {
+                pixels[i] = (pixels[i] - m) / s
+            }
+        }
+        return pixels
+    }
+
     /// Assert a decoded VLM caption actually describes the dog photo.
     /// Mirrors the mlx-swift-lm VLM benchmark check: a lowercased
     /// substring match on "dog" — wide enough to accept "dog", "Golden

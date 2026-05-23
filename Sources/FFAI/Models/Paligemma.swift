@@ -821,7 +821,10 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
     private let postLNW: [Float]
     private let postLNB: [Float]
     let visHidden: Int
-    let numImageTokens: Int
+    /// Number of image tokens this checkpoint contributes per image
+    /// (`(imgSize/patchSize)²`). Exposed so callers can pad their prompt
+    /// with the right count of image-placeholder tokens.
+    public let numImageTokens: Int
     let visNumChannels: Int
     let visPatchSize: Int
     let visImgSize: Int
@@ -831,7 +834,10 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
     let projDim: Int        // == hidden (textHidden)
 
     // ── Shared ───────────────────────────────────────────────────────────
-    let imageTokenIndex: Int
+    /// Token id the chat template emits as an image placeholder. The
+    /// forward path substitutes precomputed image features at every
+    /// position equal to this id.
+    public let imageTokenIndex: Int
 
     // ── Runtime state ────────────────────────────────────────────────────
     /// Precomputed image features [numImageTokens, hidden] on GPU.
