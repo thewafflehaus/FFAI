@@ -1757,6 +1757,9 @@ public final class Qwen35AttentionMixer: Module {
     /// ITER 40: cached sliceHeadHalves35 gather outputs.
     private var queriesScratch: Tensor?
     private var gateSliceScratch: Tensor?
+    /// ITER 43: cached sdpaDecode output + sigmoidMul output.
+    private var attnOutScratch: Tensor?
+    private var attnFlatGatedScratch: Tensor?
 
     init(qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
          qNorm: RMSNorm, kNorm: RMSNorm,
@@ -1908,18 +1911,25 @@ public final class Qwen35AttentionMixer: Module {
                        vFlat: v.reshaped(to: [nKVHeads, headDim]), on: cmd)
 
         let (cacheK, cacheV) = kv.prepareForAttention(on: cmd)
+        if attnOutScratch == nil
+            || attnOutScratch!.elementCount != nHeads * headDim
+            || attnOutScratch!.dtype != qNormed.dtype {
+            attnOutScratch = Tensor.empty(shape: [nHeads, headDim], dtype: qNormed.dtype)
+            attnFlatGatedScratch = Tensor.empty(shape: [nHeads * headDim], dtype: qNormed.dtype)
+        }
         let attnOut = Ops.sdpaDecode(
             q: qNormed.reshaped(to: [nHeads, headDim]), k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
             nKV: kv.length, kvStride: kv.maxSeq,
-            scale: scale, on: cmd)
+            scale: scale, on: cmd, into: attnOutScratch)
 
         // Gated output: attnOut * sigmoid(gate), then o_proj.
         // ITER 11: fused sigmoid+mul via mt_sigmoid_mul saves 1 encoder
         // per attn layer × 10 attn layers = ~170 µs/decode token.
         var attnFlat = attnOut.reshaped(to: [nHeads * headDim])
         if let gate {
-            attnFlat = Ops.sigmoidMul(attnFlat, gate, on: cmd)
+            attnFlat = Ops.sigmoidMul(attnFlat, gate, on: cmd,
+                                      into: attnFlatGatedScratch)
         }
         return oProj(attnFlat, on: cmd)
     }
