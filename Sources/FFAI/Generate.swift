@@ -199,10 +199,13 @@ public extension Model {
         continuation: AsyncThrowingStream<GenerationChunk, Error>.Continuation
     ) async throws {
         let caches = engine.makeLayerCaches()
-        let eos = config.eosTokenId
+        // Gemma 3+, several Qwen variants, and a few llama-tuned models
+        // publish `eos_token_id` as a *list* (model EOS plus end-of-turn
+        // tokens like `<|im_end|>`). Stop on any of them.
+        let eosIds = config.eosTokenIds
         let stopSet: Set<Int> = {
             var s = params.extraStopTokens
-            if params.stopOnEOS, let e = eos { s.insert(e) }
+            if params.stopOnEOS { s.formUnion(eosIds) }
             return s
         }()
         let weightsBytes = engine.parameters().reduce(0) { $0 + $1.1.byteCount }

@@ -63,7 +63,7 @@ struct LFM2VLIntegrationTests {
 
         let generated = try vlm.generate(
             promptTokens: promptTokens, image: image,
-            maxTokens: 64, eosTokenId: m.config.eosTokenId)
+            maxTokens: 64, eosTokenId: m.config.eosTokenId, eosTokenIds: m.config.eosTokenIds)
 
         // Coherence first: at least 8 tokens generated, no degenerate
         // repeats — then the content check.

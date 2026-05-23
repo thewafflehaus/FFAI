@@ -140,6 +140,7 @@ public final class VLModel: @unchecked Sendable {
     /// engine grows a public embedding-prefill entry point.
     public func generate(promptTokens: [Int], image: RGBImage?,
                          maxTokens: Int, eosTokenId: Int?,
+                         eosTokenIds: [Int] = [],
                          device: Device = .shared) throws -> [Int] {
         let caches = engine.makeLayerCaches(device: device)
 
@@ -174,10 +175,15 @@ public final class VLModel: @unchecked Sendable {
         }
 
         // Decode: ordinary token-id forward from the prefill tail.
+        // Stop on any EOS — Gemma 3+ etc. publish `eos_token_id` as a
+        // list; the caller passes both `eosTokenId` (back-compat single
+        // id) and the optional `eosTokenIds` list.
+        var stopSet: Set<Int> = Set(eosTokenIds)
+        if let single = eosTokenId { stopSet.insert(single) }
         var generated: [Int] = []
         var pos = stream.count
         for _ in 0..<maxTokens {
-            if let eos = eosTokenId, nextToken == eos { break }
+            if stopSet.contains(nextToken) { break }
             generated.append(nextToken)
             let prior = nextToken
             nextToken = engine.forwardSample(

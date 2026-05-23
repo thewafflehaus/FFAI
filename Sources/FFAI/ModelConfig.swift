@@ -110,6 +110,16 @@ public struct ModelConfig: @unchecked Sendable {
         if let v = (raw["eos_token_id"] as? [Int])?.first { return v }
         return nil
     }
+    /// All `eos_token_id` entries — Gemma 3+ and several Qwen variants
+    /// publish a list of EOS-equivalent ids (model-EOS plus end-of-turn,
+    /// `<|im_end|>`, etc.). Returns every id when the field is a list;
+    /// returns the single id wrapped when it's a scalar; empty array
+    /// when absent. Generation should stop on any of these.
+    public var eosTokenIds: [Int] {
+        if let arr = raw["eos_token_id"] as? [Int] { return arr }
+        if let v = int("eos_token_id") { return [v] }
+        return []
+    }
     /// `bos_token_id`
     public var bosTokenId: Int? { int("bos_token_id") }
 
