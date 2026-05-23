@@ -64,22 +64,42 @@ the owner flagged — sweep their decode path next pass.
 
 ## Marvis TTS — loader rejects quantized weights
 
-Every published Marvis checkpoint on HuggingFace is mlx-affine-quantized
-(`-4bit` / `-8bit`); FFAI's `MarvisModel.buildTransformer` hard-codes
-`loadLinear(..., quantization: nil)`. Loading those through the
-nil-quantization path binds a U32-packed tensor as a dense `Linear`
-weight → broken model. The integration test is `@Suite(.disabled(...))`
-with a precise reason.
-
-**Fix.** Plumb `config.quantization` from `MarvisModel.load` into
-`buildTransformer`, OR find an unquantized Marvis checkpoint.
+**Fixed in commit `6fd6a87`.** `MarvisConfig.quantization` is now
+plumbed through `build` → `buildTransformer` → `loadLinear` /
+`loadEmbedding`, and the `MarvisModel` fields switched from
+`Embedding`/`Linear` to `AnyEmbedding`/`AnyLinear`. Every
+`mlx-community` `-4bit`/`-8bit` Marvis checkpoint now binds to
+`QuantizedLinear`/`QuantizedEmbedding`. Suite re-enabled.
 
 ## NemotronVL — no MLX checkpoint exists upstream
 
-The integration test is `@Suite(.disabled)` because there is no
-`mlx-community` conversion of `nvidia/Llama-3.1-Nemotron-Nano-VL-8B-V1`
-on HuggingFace today. Loader is wired and ready; re-enable when a
-checkpoint lands.
+**Self-skipping in commit `69306a6`.** The suite no longer carries
+`.disabled`; instead each test calls `nemotronVLIsCached()` which
+probes the HF cache for the candidate snapshot names and exits
+early when none is present. Drop an mlx-style Nemotron-VL
+conversion into the cache and the suite auto-enables on the next
+run — no code change needed.
+
+## Idefics3 + Paligemma — agent-ported, awaiting LanguageModel-protocol surgery
+
+Both family files (`Sources/FFAI/Models/Idefics3.swift`,
+`Sources/FFAI/Models/Paligemma.swift`) were ported by background agents
+but stashed at `/tmp/*.stale` because the agent versions:
+- Don't conform fully to FFAI's `LanguageModel` protocol (missing
+  required methods).
+- Paligemma duplicates the existing `bfloat16ToFloat` helper.
+- Paligemma has a non-exhaustive `switch` over dtype.
+- Both expose `loadModel(...)` returning the concrete model class
+  instead of FFAI's `Loaded` tuple shape.
+
+**Fix.** Restore from `/tmp/Idefics3.swift.stale` and
+`/tmp/Paligemma.swift.stale`, rename their `loadModel` to match the
+established `static func load(config:weights:options:device:) throws
+-> VLModel` shape used by Pixtral / Mistral3 / SmolVLM2, drop the
+duplicate `bfloat16ToFloat`, and complete the `LanguageModel`
+conformance. Both have cached checkpoints
+(`mlx-community/paligemma-3b-mix-448-8bit`; no Idefics3 cached
+but the loader should still build).
 
 ## Indirect-dispatch test gap on metaltile
 
