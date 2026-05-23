@@ -1099,7 +1099,12 @@ public final class Qwen35GDNMixer: Module {
         self.aLogTF32 = makeF32Tensor35(aLog, device: device)
         self.dtBiasTF32 = makeF32Tensor35(dtBias, device: device)
         self.epsBufFused = makeF32Tensor35([eps], device: device)
-        self.fused = ProcessInfo.processInfo.environment["FFAI_GDN_FUSED_PREP"] != nil
+        // ITER 19: fused-prep is DEFAULT ON for Qwen3.6-A3B. Bench:
+        //   fused on: 42 tps best decode T=1
+        //   fused off: 9.33 tps decode T=1 (4.5× slower)
+        // The legacy path lives behind FFAI_GDN_NO_FUSED_PREP=1 for
+        // debug / precision comparison.
+        self.fused = ProcessInfo.processInfo.environment["FFAI_GDN_NO_FUSED_PREP"] == nil
 
         // Per-decode-token scratch — pre-allocated once at init so the
         // fused GDN path doesn't pay 6 × MTLBuffer allocations per call.
