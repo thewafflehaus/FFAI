@@ -1760,6 +1760,19 @@ public final class Qwen35AttentionMixer: Module {
     /// ITER 43: cached sdpaDecode output + sigmoidMul output.
     private var attnOutScratch: Tensor?
     private var attnFlatGatedScratch: Tensor?
+    /// ITER 53: cached Flash-Decoding 2-pass partial buffers. Allocated
+    /// lazily on first 2-pass dispatch (when kv.length >= threshold).
+    /// Sized for the (nHeads, blocks=32, headDim) geometry, ~192KB total
+    /// per attn layer on Qwen3.6 bf16.
+    private var partialOScratch: Tensor?
+    private var partialMScratch: Tensor?
+    private var partialLScratch: Tensor?
+    private let sdpa2PassBlocks: Int = 32
+    private let sdpa2PassThreshold: Int = {
+        if let raw = ProcessInfo.processInfo.environment["FFAI_SDPA_2PASS_THRESHOLD"],
+           let n = Int(raw) { return n }
+        return 1024  // default: only kick in at long KV
+    }()
 
     init(qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
          qNorm: RMSNorm, kNorm: RMSNorm,
@@ -1917,11 +1930,39 @@ public final class Qwen35AttentionMixer: Module {
             attnOutScratch = Tensor.empty(shape: [nHeads, headDim], dtype: qNormed.dtype)
             attnFlatGatedScratch = Tensor.empty(shape: [nHeads * headDim], dtype: qNormed.dtype)
         }
-        let attnOut = Ops.sdpaDecode(
-            q: qNormed.reshaped(to: [nHeads, headDim]), k: cacheK, v: cacheV,
-            nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: kv.length, kvStride: kv.maxSeq,
-            scale: scale, on: cmd, into: attnOutScratch)
+        // ITER 53: Flash-Decoding 2-pass at long KV. Splits KV across
+        // `blocks` threadgroups in pass1, merges in pass2. Wins over
+        // single-pass when nKV >= ~1024 (default threshold); env var
+        // `FFAI_SDPA_2PASS_THRESHOLD` overrides for benchmarking.
+        let attnOut: Tensor
+        if kv.length >= sdpa2PassThreshold {
+            if partialOScratch == nil
+                || partialOScratch!.elementCount != nHeads * sdpa2PassBlocks * headDim
+                || partialOScratch!.dtype != qNormed.dtype {
+                partialOScratch = Tensor.empty(
+                    shape: [nHeads, sdpa2PassBlocks, headDim], dtype: qNormed.dtype)
+                partialMScratch = Tensor.empty(
+                    shape: [nHeads, sdpa2PassBlocks], dtype: .f32)
+                partialLScratch = Tensor.empty(
+                    shape: [nHeads, sdpa2PassBlocks], dtype: .f32)
+            }
+            Ops.sdpaDecode2Pass(
+                q: qNormed.reshaped(to: [nHeads, headDim]), k: cacheK, v: cacheV,
+                nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
+                nKV: kv.length, kvStride: kv.maxSeq, blocks: sdpa2PassBlocks,
+                scale: scale,
+                partialO: partialOScratch!,
+                partialM: partialMScratch!,
+                partialL: partialLScratch!,
+                into: attnOutScratch!, on: cmd)
+            attnOut = attnOutScratch!
+        } else {
+            attnOut = Ops.sdpaDecode(
+                q: qNormed.reshaped(to: [nHeads, headDim]), k: cacheK, v: cacheV,
+                nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
+                nKV: kv.length, kvStride: kv.maxSeq,
+                scale: scale, on: cmd, into: attnOutScratch)
+        }
 
         // Gated output: attnOut * sigmoid(gate), then o_proj.
         // ITER 11: fused sigmoid+mul via mt_sigmoid_mul saves 1 encoder
