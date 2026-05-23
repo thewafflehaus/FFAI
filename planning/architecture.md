@@ -192,8 +192,14 @@ entirely.
    ├─ Mistral.swift        (Mistral 7B, Mixtral 8x7B/8x22B)
    ├─ Phi.swift            (Phi-3, Phi-3.5)
    ├─ GPTOSS.swift         (GPT-OSS 20B, …)
-   ├─ Whisper.swift        (STT family)
-   └─ Bark.swift           (TTS family)
+   ├─ Whisper.swift        (STT family — see also SenseVoice, Parakeet,
+   │                        FireRedASR2, Qwen3ASR, VoxtralRealtime,
+   │                        GLMASR, CohereTranscribe, GraniteSpeech)
+   ├─ Kokoro.swift         (TTS family — see also Marvis, Chatterbox,
+   │                        EchoTTS, MossTTS/Nano, PocketTTS, Soprano,
+   │                        StyleTTS2, FishSpeech, Qwen3TTS/Base, LlamaTTS)
+   └─ SileroVAD.swift      (VAD family — see also SmartTurn, Sortformer,
+                            TenVAD, FireRedVAD)
 
   Inside Qwen3.swift:
   ┌──────────────────────────────────────────────────────────┐
