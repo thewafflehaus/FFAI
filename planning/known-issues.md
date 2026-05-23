@@ -40,6 +40,74 @@ default since the wrong-dispatch GPU-pin post-mortem in
 prevents the runaway queue from OOMing the device — that's why the
 pin is annoying but not fatal.
 
+### 2026-05-23 status — post-Phase 6.5 / 7 wave + recent metaltile churn
+
+**Hypothesis stack (ranked).** The Phase 6.5 (Vision) + Phase 7 (Audio)
+wave landed 18 commits on `ek/aura-port` without re-running any kernel
+or integration tests — every sub-agent prompt was "swift build only,
+don't run swift test on ModelTests". On the metaltile side, the
+`Sources/MetalTileSwift/Resources/kernels.metallib` was regenerated
+2026-05-23 01:24 against `metaltile@840d281`. That regen pulled in:
+
+- **#150** `mt_gated_delta_prep_chunk` — new chunked GDN prep+recurrence kernel.
+- **#149** "remove all hand-written InlineMsl — port the MPP kernels to the coop_tile DSL" — the int4/int8/fp16 spread the user has been working on in another session.
+- **#147** "All the remaining kernels" — large surface, broad.
+- **#144** bm8 MoE BGEMM + dynamic-M qmm + naming standardisation.
+
+Most likely cause: a kernel in #147 or #149 with a dispatch shape that
+goes pathological at production sizes but isn't caught by the small-N
+unit tests. The MPP coop_tile DSL port is the highest-suspicion bucket
+because cooperative-tensor type IDs drift across SDK versions and the
+DSL refactor reshuffled the lowering path.
+
+**Test plan to localise (when the machine has been rebooted and the
+pin cleared).**
+
+1. **Spot-check unit suite first.** `make test-unit` runs FFAITests +
+   MetalTileSwiftTests at small problem sizes against the real GPU. If
+   it fails, the failing test name pins down the broken kernel
+   immediately. ~3 minutes.
+2. **If unit suite passes, drop in a small integration.**
+   `make test-integration --filter LlamaIntegrationTests` — Llama 3.2 1B
+   exercises the core decode path (RMSNorm, RoPE, SDPA d128, gemv,
+   argmax) without the multi-modal or hybrid kernels. If this pins
+   the GPU, the bug is on a core kernel.
+3. **Bisect by family if step 2 passes.**
+   `make test-integration --filter <Qwen3 | Gemma3 | NemotronH |
+   Jamba | GraniteMoeHybrid | GPTOSS | Pixtral | Mistral3 |
+   Whisper | Marvis>` — pick the families that cover the most
+   distinct kernels (MoE, GDN, SSM, AURA, VLM, audio).
+4. **Once a family pins reliably:**
+   - **Path A — capture in Instruments (Metal System Trace).**
+     Launch the failing test under Instruments → Metal System Trace.
+     The trace shows the in-flight command buffer + its current
+     dispatch. Read off the kernel name. If it's specialised
+     (e.g. `mt_qmm_int4_f16_bm8_*`), that's our suspect.
+   - **Path B — `MTLCaptureManager` Metal frame capture from FFAI.**
+     Wrap the suspect dispatch with `MTLCaptureManager.shared()`
+     `.startCapture` / `.stopCapture`. Saves a `.gputrace` you can
+     open in Xcode and step through.
+5. **Localised? Audit the kernel's `## DISPATCH INVARIANTS` block in
+   metaltile vs the FFAI `Ops.*` wrapper that calls it.**
+   Reduction-mode kernel encoded as `elementwiseGrid` is the
+   canonical freeze pattern (see
+   `papers/optimizing-kernels-for-apple-m-series-architecture.md`).
+
+**Capturing the pin live (if it can be done without reboot).** It's
+possible to attach Instruments to an already-pinned process and see
+which command buffer is in flight — `xcrun xctrace record --template
+"Metal System Trace" --attach <PID>`. Stop after ~5 seconds; the
+trace shows the queue depth and the hung dispatch. This is preferable
+to a reboot+rerun because we get the actual culprit rather than a
+candidate from rerunning.
+
+**Live signal at the moment.** The user reports the pin reproduces
+right now (2026-05-23) after a fresh reboot — i.e. it's not a
+sticky-from-previous-session situation. Some path the OS goes through
+on this branch's `kernels.metallib` is enough to trigger it. That
+makes the kernel-side hypothesis (one of the freshly-regenerated
+kernels) substantially more likely than an FFAI-side busy-loop.
+
 ## CPU attention single-threaded sweep — in flight
 
 `VisionEncoder.cpuAttention` and `AudioEncoder.cpuAttention` were
