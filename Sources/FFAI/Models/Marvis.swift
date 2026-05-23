@@ -80,16 +80,25 @@ public struct MarvisConfig: Sendable {
     public let audioNumCodebooks: Int
     /// Output waveform sample rate (24 kHz for Mimi).
     public let sampleRate: Int
+    /// MLX affine quantization, when the checkpoint is `-4bit` / `-8bit`.
+    /// `nil` for full-precision weights. Threaded through the load path
+    /// so `QuantizedLinear` / `QuantizedEmbedding` are bound for the
+    /// matching weights — without this, mlx-community's quantized
+    /// Marvis checkpoints silently bind U32-packed tensors to a dense
+    /// `Linear` and produce garbage output.
+    public let quantization: ModelConfig.QuantizationConfig?
 
     public init(backbone: CSMTransformerConfig, decoder: CSMTransformerConfig,
                 textVocabSize: Int, audioVocabSize: Int,
-                audioNumCodebooks: Int, sampleRate: Int = 24_000) {
+                audioNumCodebooks: Int, sampleRate: Int = 24_000,
+                quantization: ModelConfig.QuantizationConfig? = nil) {
         self.backbone = backbone
         self.decoder = decoder
         self.textVocabSize = textVocabSize
         self.audioVocabSize = audioVocabSize
         self.audioNumCodebooks = audioNumCodebooks
         self.sampleRate = sampleRate
+        self.quantization = quantization
     }
 
     /// Decode a CSM `config.json`. The depth decoder is nested under
@@ -143,7 +152,8 @@ public struct MarvisConfig: Sendable {
             backbone: backbone, decoder: decoder,
             textVocabSize: textVocab, audioVocabSize: audioVocab,
             audioNumCodebooks: nCodebooks,
-            sampleRate: config.int("sample_rate") ?? 24_000)
+            sampleRate: config.int("sample_rate") ?? 24_000,
+            quantization: config.quantization)
     }
 }
 
@@ -254,15 +264,16 @@ public final class MarvisModel: @unchecked Sendable {
     public let backbone: CSMTransformer
     public let decoder: CSMTransformer
     /// Text-token embedding table `[textVocab, backboneHidden]`.
-    public let textEmbeddings: Embedding
+    /// `AnyEmbedding` so quantized (`-4bit` / `-8bit`) checkpoints work.
+    public let textEmbeddings: AnyEmbedding
     /// Audio-codebook embedding table — all K codebooks share one table
     /// of `[K * audioVocab, backboneHidden]`, indexed with a per-
-    /// codebook offset.
-    public let audioEmbeddings: Embedding
+    /// codebook offset. `AnyEmbedding` for quantization support.
+    public let audioEmbeddings: AnyEmbedding
     /// Backbone-hidden → decoder-hidden projection.
-    public let projection: Linear
+    public let projection: AnyLinear
     /// Codebook-0 logits head `[audioVocab, backboneHidden]`.
-    public let codebook0Head: Linear
+    public let codebook0Head: AnyLinear
     /// Per-codebook audio heads for codebooks 1…K-1, stacked as
     /// `[K-1, decoderHidden, audioVocab]`.
     public let audioHead: Tensor
@@ -272,9 +283,9 @@ public final class MarvisModel: @unchecked Sendable {
     public var mimiDecoder: (any MimiDecoding)?
 
     public init(config: MarvisConfig, backbone: CSMTransformer,
-                decoder: CSMTransformer, textEmbeddings: Embedding,
-                audioEmbeddings: Embedding, projection: Linear,
-                codebook0Head: Linear, audioHead: Tensor,
+                decoder: CSMTransformer, textEmbeddings: AnyEmbedding,
+                audioEmbeddings: AnyEmbedding, projection: AnyLinear,
+                codebook0Head: AnyLinear, audioHead: Tensor,
                 tokenizer: any Tokenizer, dtype: DType,
                 mimiDecoder: (any MimiDecoding)? = nil) {
         self.config = config
@@ -552,23 +563,37 @@ extension MarvisModel {
         // `decoder.` (mlx conversions also carry a leading `model.`).
         let prefix = bundle.has("model.backbone.layers.0.input_layernorm.weight")
             ? "model." : ""
-        let dtype = try bundle.tensor(named: "\(prefix)text_embeddings.weight").dtype
+        // Dtype probe — the unquantized text-embedding scales (or weight
+        // itself if not quantized) reveals the activation precision.
+        let dtypeProbe = bundle.isQuantized("\(prefix)text_embeddings")
+            ? try bundle.tensor(named: "\(prefix)text_embeddings.scales").dtype
+            : try bundle.tensor(named: "\(prefix)text_embeddings.weight").dtype
+        let dtype = dtypeProbe
+
+        // mlx-community publishes every Marvis checkpoint quantized
+        // (`-4bit` / `-8bit`); plumb `quantization` from the parsed config
+        // so the load path actually instantiates `QuantizedLinear` /
+        // `QuantizedEmbedding` instead of binding U32-packed tensors to
+        // dense Linear/Embedding modules (which silently produces garbage).
+        let quant = mc.quantization
 
         let backboneT = try buildTransformer(
             base: "\(prefix)backbone", config: mc.backbone,
-            bundle: bundle, dtype: dtype)
+            bundle: bundle, dtype: dtype, quantization: quant)
         let decoderT = try buildTransformer(
             base: "\(prefix)decoder", config: mc.decoder,
-            bundle: bundle, dtype: dtype)
+            bundle: bundle, dtype: dtype, quantization: quant)
 
-        let textEmb = Embedding(
-            weight: try bundle.tensor(named: "\(prefix)text_embeddings.weight"))
-        let audioEmb = Embedding(
-            weight: try bundle.tensor(named: "\(prefix)audio_embeddings.weight"))
-        let projection = Linear(
-            weight: try bundle.tensor(named: "\(prefix)projection.weight"))
-        let codebook0 = Linear(
-            weight: try bundle.tensor(named: "\(prefix)codebook0_head.weight"))
+        let textEmb = try loadEmbedding(
+            base: "\(prefix)text_embeddings", in: bundle,
+            hidden: mc.backbone.hidden, quantization: quant)
+        let audioEmb = try loadEmbedding(
+            base: "\(prefix)audio_embeddings", in: bundle,
+            hidden: mc.backbone.hidden, quantization: quant)
+        let projection = try loadLinear(
+            base: "\(prefix)projection", in: bundle, quantization: quant)
+        let codebook0 = try loadLinear(
+            base: "\(prefix)codebook0_head", in: bundle, quantization: quant)
         // audio_head is stored `[K-1, decoderHidden, audioVocab]`; the
         // per-codebook gemm wants `[audioVocab, decoderHidden]`. Transpose
         // each plane once at load so `audioHeadRow` is a contiguous slice.
@@ -588,20 +613,21 @@ extension MarvisModel {
     /// from `base`-prefixed checkpoint weights.
     private static func buildTransformer(
         base: String, config c: CSMTransformerConfig,
-        bundle: SafeTensorsBundle, dtype: DType
+        bundle: SafeTensorsBundle, dtype: DType,
+        quantization q: ModelConfig.QuantizationConfig?
     ) throws -> CSMTransformer {
         var layers: [LlamaLayer] = []
         layers.reserveCapacity(c.nLayers)
         for i in 0..<c.nLayers {
             let p = "\(base).layers.\(i)"
             layers.append(LlamaLayer(
-                qProj: try loadLinear(base: "\(p).self_attn.q_proj", in: bundle, quantization: nil),
-                kProj: try loadLinear(base: "\(p).self_attn.k_proj", in: bundle, quantization: nil),
-                vProj: try loadLinear(base: "\(p).self_attn.v_proj", in: bundle, quantization: nil),
-                oProj: try loadLinear(base: "\(p).self_attn.o_proj", in: bundle, quantization: nil),
-                gateProj: try loadLinear(base: "\(p).mlp.gate_proj", in: bundle, quantization: nil),
-                upProj: try loadLinear(base: "\(p).mlp.up_proj", in: bundle, quantization: nil),
-                downProj: try loadLinear(base: "\(p).mlp.down_proj", in: bundle, quantization: nil),
+                qProj: try loadLinear(base: "\(p).self_attn.q_proj", in: bundle, quantization: q),
+                kProj: try loadLinear(base: "\(p).self_attn.k_proj", in: bundle, quantization: q),
+                vProj: try loadLinear(base: "\(p).self_attn.v_proj", in: bundle, quantization: q),
+                oProj: try loadLinear(base: "\(p).self_attn.o_proj", in: bundle, quantization: q),
+                gateProj: try loadLinear(base: "\(p).mlp.gate_proj", in: bundle, quantization: q),
+                upProj: try loadLinear(base: "\(p).mlp.up_proj", in: bundle, quantization: q),
+                downProj: try loadLinear(base: "\(p).mlp.down_proj", in: bundle, quantization: q),
                 inputNorm: RMSNorm(
                     weight: try bundle.tensor(named: "\(p).input_layernorm.weight"),
                     eps: c.rmsNormEps),

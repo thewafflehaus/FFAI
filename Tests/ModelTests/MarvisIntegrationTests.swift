@@ -11,28 +11,17 @@
 // model loads and `generateFrames` emits a finite Mimi code matrix —
 // the contract the codec consumes.
 //
-// ── DISABLED ──────────────────────────────────────────────────────────
-// `MarvisModel.buildTransformer` loads every projection with
-// `loadLinear(..., quantization: nil)` — i.e. the CSM loader only
-// supports an unquantized (fp16 / bf16) checkpoint. The only Marvis
-// checkpoints published on HuggingFace (and the only ones in the local
-// HF cache) are mlx affine-quantized: `Marvis-AI/marvis-tts-250m-v0.2-
-// MLX-4bit` and `-8bit`, whose `*_proj.weight` tensors are U32-packed
-// with separate `scales` / `biases`. Loading those through the
-// nil-quantization path binds a U32 packed tensor as a dense `Linear`
-// weight and produces a broken model. The non-quantized
-// `Marvis-AI/marvis-tts-250m-v0.2-MLX` snapshot is not present on disk.
-// Until `MarvisModel.load` plumbs `config.quantization` into
-// `buildTransformer` (so `loadLinear` takes the quantized branch), no
-// loadable Marvis checkpoint exists — the suite is disabled rather than
-// silently skipped.
+// Quantization is plumbed through `MarvisConfig.quantization` →
+// `build` → `buildTransformer` → `loadLinear` / `loadEmbedding` so
+// every mlx-community `-4bit` / `-8bit` Marvis checkpoint binds to
+// `QuantizedLinear` / `QuantizedEmbedding` instead of a dense Linear
+// pointed at U32-packed weights.
 
 import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Marvis (CSM) TTS integration", .serialized,
-       .disabled("MarvisModel.buildTransformer hard-codes quantization nil; every cached Marvis checkpoint is mlx affine-quantized (U32-packed weights). Re-enable once MarvisModel.load plumbs config.quantization into buildTransformer, or an unquantized checkpoint is cached."))
+@Suite("Marvis (CSM) TTS integration", .serialized)
 struct MarvisIntegrationTests {
 
     /// Load Marvis from the HF cache. Throws on failure so a missing
