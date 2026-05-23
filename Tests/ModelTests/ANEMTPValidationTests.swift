@@ -62,28 +62,40 @@ struct ANEMTPValidationTests {
         precondition(promptLen >= 4, "test needs ≥4 prompt tokens")
 
         let caches = qwen.makeLayerCaches()
-        // Prefill up to position promptLen - 1 (inclusive). The LAST
-        // forward should give us hidden_t for the last prompt token
-        // and the logits for "what comes next".
-        var lastHidden: Tensor!
+        // Prefill — capture BOTH pre-finalNorm and post-finalNorm
+        // hidden states on the last step to A/B which one MTP expects.
+        var lastPre: Tensor!
+        var lastPost: Tensor!
         var lastLogits: Tensor!
         for (i, tok) in promptTokens.enumerated() {
             let cmd = device.makeCommandBuffer()
-            let (h, l) = qwen.forwardWithHidden(tokenId: tok, position: i,
-                                                 caches: caches,
-                                                 on: cmd, device: device)
+            let (pre, post, l) = qwen.forwardWithBothHiddens(tokenId: tok, position: i,
+                                                              caches: caches,
+                                                              on: cmd, device: device)
             cmd.commit()
             await cmd.completed()
-            lastHidden = h
+            lastPre = pre
+            lastPost = post
             lastLogits = l
         }
         let lastToken = promptTokens[promptLen - 1]
         let groundTruthToken = argmaxHost(lastLogits)
         print("ANEMTPValidation: last prompt token=\(lastToken), main model predicts next token=\(groundTruthToken)")
+        _ = lastPre  // shut up unused warning
+        // Use post-finalNorm by default; flip via env to try pre-norm.
+        let usePre = ProcessInfo.processInfo.environment["ANEMTP_USE_PRENORM"] == "1"
+        let lastHidden: Tensor = usePre ? lastPre : lastPost
+        print("ANEMTPValidation: using \(usePre ? "PRE-finalNorm" : "post-finalNorm") hidden state")
 
-        // Get embed_t = embed_tokens[lastToken].
+        // Get embed_t. Default = embed_tokens[lastToken] (input token at t).
+        // Env flip: embed_tokens[groundTruthToken] (DeepSeek-MTP style:
+        // embed of the FUTURE token, "cheating" with the ground truth
+        // to validate that the architecture works at all).
+        let useGroundTruthEmbed = ProcessInfo.processInfo.environment["ANEMTP_EMBED_GROUND_TRUTH"] == "1"
+        let embedToken = useGroundTruthEmbed ? groundTruthToken : lastToken
+        print("ANEMTPValidation: embed_t source = \(useGroundTruthEmbed ? "GROUND TRUTH (cheat)" : "lastInputToken") = \(embedToken)")
         let tokBuf = device.makeBuffer(length: 4)
-        var tid = UInt32(lastToken)
+        var tid = UInt32(embedToken)
         memcpy(tokBuf.contents(), &tid, 4)
         let tokTensor = Tensor(buffer: tokBuf, offset: 0, shape: [1], dtype: .u32)
         let embedCmd = device.makeCommandBuffer()

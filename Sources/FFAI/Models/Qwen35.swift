@@ -2296,6 +2296,52 @@ public final class Qwen35Model: LanguageModel {
         return lmHead(normed, on: cmd)
     }
 
+    /// Like `forward(...)` but also returns hidden states. Used by the
+    /// ANE MTP drafter — the drafter consumes the last decode step's
+    /// hidden state as input to predict the next position's hidden
+    /// state, which we then project via `lmHead` to get a candidate
+    /// token.
+    ///
+    /// Returns `(hiddenPreNorm, hiddenPostNorm, logits)`. The MTP head
+    /// can take either depending on training convention; expose both
+    /// so the drafter can A/B compare. Tensors are on the caller's
+    /// `cmd` and become resident once it commits.
+    public func forwardWithBothHiddens(tokenId: Int, position: Int,
+                                       caches: [any LayerCacheProtocol],
+                                       on cmd: MTLCommandBuffer,
+                                       device: Device) -> (preNorm: Tensor, postNorm: Tensor, logits: Tensor) {
+        let tokenBuf = device.makeBuffer(length: 4)
+        var tid = UInt32(tokenId)
+        memcpy(tokenBuf.contents(), &tid, 4)
+        let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
+
+        var workCmd = device.makeCommandBuffer()
+        var h = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
+
+        for (i, layer) in layers.enumerated() {
+            if let attn = layer as? Qwen35AttentionLayer {
+                h = attn.decode(h, position: position, cache: caches[i],
+                                cmd: workCmd, device: device)
+                if attn.commitsCommandBuffer { workCmd = device.makeCommandBuffer() }
+            } else if let gdn = layer as? Qwen35GDNLayer {
+                h = gdn.decode(h, position: position, cache: caches[i],
+                               cmd: workCmd, device: device)
+                if gdn.commitsCommandBuffer { workCmd = device.makeCommandBuffer() }
+            } else {
+                h = layer.decode(h, position: position, cache: caches[i],
+                                 cmd: workCmd, device: device)
+            }
+        }
+        // Commit + wait so `h` (pre-finalNorm) is resident on the
+        // host. Otherwise the drafter can't snapshot it.
+        workCmd.commit()
+        workCmd.waitUntilCompleted()
+
+        let normed = finalNorm(h, on: cmd)
+        let logits = lmHead(normed, on: cmd)
+        return (h, normed, logits)
+    }
+
     /// Like `forward(...)` but also returns the post-final-norm hidden
     /// state. Used by the ANE MTP drafter — the drafter consumes the
     /// last decode step's hidden state as input to predict the next
