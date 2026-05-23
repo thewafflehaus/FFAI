@@ -29,15 +29,18 @@ public enum AudioModelKind: String, Sendable, CaseIterable {
     case sortformer
     /// TenVAD — TEN-framework lightweight VAD (native macOS framework).
     case tenVAD
+    /// FireRedVAD — FireRedTeam DFSMN-based VAD.
+    case fireRedVAD
 
     /// The `model_type` strings (from `config.json`) that map to this
     /// architecture.
     var modelTypes: Set<String> {
         switch self {
-        case .sileroVAD:  return ["silero_vad"]
-        case .smartTurn:  return ["smart_turn", "smart_turn_v3", "smart-turn"]
-        case .sortformer: return ["sortformer", "diar_sortformer"]
-        case .tenVAD:     return ["ten_vad", "ten-vad", "tenvad"]
+        case .sileroVAD:   return ["silero_vad"]
+        case .smartTurn:   return ["smart_turn", "smart_turn_v3", "smart-turn"]
+        case .sortformer:  return ["sortformer", "diar_sortformer"]
+        case .tenVAD:      return ["ten_vad", "ten-vad", "tenvad"]
+        case .fireRedVAD:  return ["firered_vad", "firered-vad", "fireredvad"]
         }
     }
 }
@@ -68,13 +71,15 @@ public enum LoadedVADModel: @unchecked Sendable {
     case smartTurn(SmartTurnModel)
     case sortformer(SortformerModel)
     case tenVAD(TenVADModel)
+    case fireRedVAD(FireRedVADModel)
 
     public var kind: AudioModelKind {
         switch self {
-        case .sileroVAD:  return .sileroVAD
-        case .smartTurn:  return .smartTurn
-        case .sortformer: return .sortformer
-        case .tenVAD:     return .tenVAD
+        case .sileroVAD:   return .sileroVAD
+        case .smartTurn:   return .smartTurn
+        case .sortformer:  return .sortformer
+        case .tenVAD:      return .tenVAD
+        case .fireRedVAD:  return .fireRedVAD
         }
     }
 }
@@ -106,6 +111,9 @@ public enum VADModelRegistry {
         if name.contains("ten-vad") || name.contains("ten_vad") || name.contains("tenvad") {
             return .tenVAD
         }
+        if name.contains("firered") && name.contains("vad") {
+            return .fireRedVAD
+        }
         throw AudioModelError.unknownArchitecture(directory.lastPathComponent)
     }
 
@@ -123,6 +131,8 @@ public enum VADModelRegistry {
             return .sortformer(try SortformerModel.loadFromDirectory(directory, device: device))
         case .tenVAD:
             return .tenVAD(try TenVADModel.loadFromDirectory(directory, device: device))
+        case .fireRedVAD:
+            return .fireRedVAD(try FireRedVADModel.loadFromDirectory(directory, device: device))
         }
     }
 
