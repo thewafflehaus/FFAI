@@ -283,6 +283,125 @@ struct IndirectCommandBufferSmokeTests {
         print("ICB smoke: n=\(n), max |Δ| ICB vs direct = \(maxAbsDiff) (zero is expected)")
     }
 
+    @Test("ICB-replay perf — heavyweight kernel (mt_qmm_bf16, 5 buffers + 3 scalars, realistic decode shape)")
+    func icbReplayPerfHeavyweightKernel() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            Issue.record("no Metal device")
+            return
+        }
+        guard let queue = device.makeCommandQueue() else {
+            Issue.record("no command queue")
+            return
+        }
+        // Realistic decode-shape qmm: k=hidden=2048, n=hidden=2048 (an
+        // attention projection at decode T=1). Per-call binds 5 buffers
+        // + 3 scalars — matches the per-dispatch overhead the real
+        // production decode kernels pay.
+        let k: UInt32 = 2048
+        let n: UInt32 = 2048
+        let groupSize: UInt32 = 64
+        let gsPerRow = k / groupSize
+
+        // Weight: [n, k/8] packed 4-bit u32. Scales/biases: [n, k/group]
+        // bf16. x: [k] bf16. out: [n] bf16.
+        let wBytes = Int(n) * Int(k) / 2  // 4-bit packed
+        let scalesBytes = Int(n) * Int(gsPerRow) * 2  // bf16
+        let biasesBytes = Int(n) * Int(gsPerRow) * 2  // bf16
+        let xBytes = Int(k) * 2  // bf16
+        let outBytes = Int(n) * 2  // bf16
+        guard
+            let wBuf = device.makeBuffer(length: wBytes, options: .storageModeShared),
+            let scalesBuf = device.makeBuffer(length: scalesBytes, options: .storageModeShared),
+            let biasesBuf = device.makeBuffer(length: biasesBytes, options: .storageModeShared),
+            let xBuf = device.makeBuffer(length: xBytes, options: .storageModeShared),
+            let outBuf = device.makeBuffer(length: outBytes, options: .storageModeShared)
+        else { Issue.record("buffer alloc"); return }
+
+        let pso = PSOCache.shared.pipelineState(for: "mt_qmm_bf16")
+        // qmm grid is (n/8, ceil(m/?), 1) with m=1 here. Use the kernel's
+        // canonical dispatch — one thread per (out-row, threadgroup-stride).
+        let tgWidth = 32
+        let grid = MTLSize(width: Int(n / 8) * tgWidth, height: 1, depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+
+        // Warm.
+        for _ in 0..<3 {
+            guard let cmd = queue.makeCommandBuffer() else { return }
+            for _ in 0..<10 {
+                MetalTileKernels.mt_qmm_bf16(
+                    w: wBuf, scales: scalesBuf, biases: biasesBuf,
+                    x: xBuf, out: outBuf,
+                    k: k, n: n, gs_per_row: gsPerRow,
+                    gridSize: grid, threadgroupSize: tg, on: cmd)
+            }
+            cmd.commit()
+            cmd.waitUntilCompleted()
+        }
+
+        let nCommands = 200  // a realistic concentration of one kernel's worth at decode
+
+        // FFAI-style direct dispatch (each call = fresh encoder).
+        var directTimes: [Double] = []
+        for _ in 0..<5 {
+            guard let cmd = queue.makeCommandBuffer() else { return }
+            let t0 = Date()
+            for _ in 0..<nCommands {
+                MetalTileKernels.mt_qmm_bf16(
+                    w: wBuf, scales: scalesBuf, biases: biasesBuf,
+                    x: xBuf, out: outBuf,
+                    k: k, n: n, gs_per_row: gsPerRow,
+                    gridSize: grid, threadgroupSize: tg, on: cmd)
+            }
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            directTimes.append(Date().timeIntervalSince(t0))
+        }
+        directTimes.sort()
+        let directMedian = directTimes[directTimes.count / 2]
+
+        // ICB recording — uses the generated `_record` wrapper.
+        let paramsBudget = nCommands * MetalTileKernels.mt_qmm_bf16_params_size
+        let rec = ICBRecorder(device: device,
+                              maxCommands: nCommands,
+                              paramsBytes: paramsBudget,
+                              maxKernelBufferBindCount: 12)
+        rec.use(wBuf, usage: .read)
+        rec.use(scalesBuf, usage: .read)
+        rec.use(biasesBuf, usage: .read)
+        rec.use(xBuf, usage: .read)
+        rec.use(outBuf, usage: .write)
+        for _ in 0..<nCommands {
+            let slot = rec.next(paramsSize: MetalTileKernels.mt_qmm_bf16_params_size)
+            MetalTileKernels.mt_qmm_bf16_record(
+                w: wBuf, scales: scalesBuf, biases: biasesBuf,
+                x: xBuf, out: outBuf,
+                k: k, n: n, gs_per_row: gsPerRow,
+                paramsBuffer: rec.paramsBuffer, paramsBufferOffset: slot.paramsOffset,
+                gridSize: grid, threadgroupSize: tg,
+                into: slot.command)
+        }
+        var icbTimes: [Double] = []
+        for _ in 0..<5 {
+            guard let cmd = queue.makeCommandBuffer() else { return }
+            let t0 = Date()
+            rec.execute(on: cmd)
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            icbTimes.append(Date().timeIntervalSince(t0))
+        }
+        icbTimes.sort()
+        let icbMedian = icbTimes[icbTimes.count / 2]
+
+        let directPerDispatchUs = directMedian * 1e6 / Double(nCommands)
+        let icbPerDispatchUs = icbMedian * 1e6 / Double(nCommands)
+
+        print("ICB-heavy mt_qmm_bf16 N=\(nCommands), k=\(k), n=\(n):")
+        print("  direct (FFAI-style): \(String(format: "%.3f", directMedian * 1000)) ms  (\(String(format: "%.2f", directPerDispatchUs)) µs/dispatch)")
+        print("  ICB execute:         \(String(format: "%.3f", icbMedian * 1000)) ms  (\(String(format: "%.2f", icbPerDispatchUs)) µs/dispatch)")
+        print("  speedup: \(String(format: "%.2f", directMedian / icbMedian))×")
+        print("  saved per dispatch: \(String(format: "%.2f", directPerDispatchUs - icbPerDispatchUs)) µs")
+    }
+
     @Test("ICB-replay perf — realistic per-dispatch overhead (setPipelineState + setBuffer × 2 each call)")
     func icbReplayPerfRealisticBindings() throws {
         guard let device = MTLCreateSystemDefaultDevice() else {
