@@ -63,11 +63,13 @@ public enum AudioModelError: Error, CustomStringConvertible {
 public enum LoadedVADModel: @unchecked Sendable {
     case sileroVAD(SileroVADModel)
     case smartTurn(SmartTurnModel)
+    case sortformer(SortformerModel)
 
     public var kind: AudioModelKind {
         switch self {
-        case .sileroVAD: return .sileroVAD
-        case .smartTurn: return .smartTurn
+        case .sileroVAD:  return .sileroVAD
+        case .smartTurn:  return .smartTurn
+        case .sortformer: return .sortformer
         }
     }
 }
@@ -110,8 +112,7 @@ public enum VADModelRegistry {
         case .smartTurn:
             return .smartTurn(try SmartTurnModel.loadFromDirectory(directory, device: device))
         case .sortformer:
-            // Loader lands in a later commit.
-            throw AudioModelError.unknownArchitecture(kind.rawValue)
+            return .sortformer(try SortformerModel.loadFromDirectory(directory, device: device))
         }
     }
 
