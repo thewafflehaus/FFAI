@@ -1082,8 +1082,26 @@ public final class MoELayer: Module, DecoderLayer {
     private func swiGLU(_ x: Tensor,
                         gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
                         on cmd: MTLCommandBuffer) -> Tensor {
-        let g = gateProj(x, on: cmd)
-        let u = upProj(x, on: cmd)
+        // ITER 25: when gate+up are both int4 QuantizedLinear with same
+        // groupSize, batch them via shared encoder. Saves 1 encoder
+        // begin/end per expert × 8 experts × 40 layers = ~5.4 ms/token.
+        let g: Tensor
+        let u: Tensor
+        if let qGate = gateProj.inner as? QuantizedLinear,
+           let qUp = upProj.inner as? QuantizedLinear,
+           qGate.bits == 4 && qUp.bits == 4 && qGate.groupSize == qUp.groupSize {
+            let outDim = qGate.weight.shape[0]
+            g = Tensor.empty(shape: [outDim], dtype: x.dtype)
+            u = Tensor.empty(shape: [outDim], dtype: x.dtype)
+            Ops.dequantGemvInt4Two(
+                input: x,
+                w0: qGate.weight, s0: qGate.scales, b0: qGate.biases, out0: g,
+                w1: qUp.weight,   s1: qUp.scales,   b1: qUp.biases,   out1: u,
+                groupSize: qGate.groupSize, on: cmd)
+        } else {
+            g = gateProj(x, on: cmd)
+            u = upProj(x, on: cmd)
+        }
         let inner = Ops.swiglu(gate: g, up: u, on: cmd)
         return downProj(inner, on: cmd)
     }
