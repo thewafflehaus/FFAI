@@ -293,6 +293,16 @@ public enum AudioPreprocessing {
 
     // ─── End-to-end log-Mel ──────────────────────────────────────────
 
+    /// Whisper's log-Mel dynamic-range floor: values more than this many
+    /// decades below the clip maximum are clamped up to it.
+    private static let whisperLogFloorDecades: Float = 8.0
+    /// Whisper's log-Mel affine normalisation — `(log10 + 4) / 4` maps
+    /// the clamped log-Mel into roughly `[-1, +1]`.
+    private static let whisperNormOffset: Float = 4.0
+    private static let whisperNormScale: Float = 4.0
+    /// `ln(10)` — converts the kernel's natural log into a base-10 log.
+    private static let lnOf10: Float = 2.302_585_092_994_046
+
     /// Compute the `[nFrames, nMels]` log-Mel spectrogram of a mono
     /// waveform on the GPU. Reflect-pads by `nFFT/2`, uploads the
     /// padded signal + window + filterbank, dispatches
@@ -301,10 +311,28 @@ public enum AudioPreprocessing {
     /// `window` and `melWeight` are caller-supplied so a model can build
     /// them once at load time and reuse across clips; pass `nil` to have
     /// this helper build them per call (convenient for tests).
+    ///
+    /// When `whisperNormalize` is true (the default — every shipped STT /
+    /// audio-in tower is Whisper-derived and expects it), the raw kernel
+    /// output is post-processed exactly as OpenAI's reference
+    /// `log_mel_spectrogram` does: the natural-log kernel output is
+    /// rescaled to base-10, clamped to `max - 8` decades, then mapped by
+    /// `(x + 4) / 4` into roughly `[-1, +1]`. Without this step the conv
+    /// stem — trained on the normalised features — sees a wrong scale
+    /// and offset and produces finite-but-meaningless audio features.
+    ///
+    /// - Important: the `cmd` commit contract differs by mode.
+    ///   * `whisperNormalize == true`  — this helper **commits and waits
+    ///     on `cmd`** itself (the CPU-side normalisation needs the kernel
+    ///     result). The returned Tensor is CPU-synced; the caller MUST
+    ///     NOT commit `cmd` again.
+    ///   * `whisperNormalize == false` — the kernel is only *queued* on
+    ///     `cmd`; the caller commits + waits as usual.
     public static func logMelSpectrogram(
         waveform: [Float], cfg: AudioFrontEndConfig,
         window: Tensor? = nil, melWeight: Tensor? = nil,
-        dtype: DType = .f32, device: Device = .shared,
+        dtype: DType = .f32, whisperNormalize: Bool = true,
+        device: Device = .shared,
         on cmd: MTLCommandBuffer
     ) -> Tensor {
         precondition(dtype == .f32 || dtype == .f16,
@@ -336,10 +364,51 @@ public enum AudioPreprocessing {
             copyFloats(melFilterbank(cfg), into: melT)
         }
 
-        return Ops.melSpectrogram(
+        let raw = Ops.melSpectrogram(
             audio: audioT, window: winT, melWeight: melT,
             nFFT: cfg.nFFT, nMels: cfg.nMels, hopLength: cfg.hopLength,
             nFrames: nFrames, on: cmd)
+        guard whisperNormalize else { return raw }
+        // The GPU kernel emits a *natural*-log mel; Whisper's front-end
+        // is a base-10 log with a dynamic-range clamp + affine norm.
+        // Apply that post-processing on the CPU (nFrames*nMels is tiny).
+        return applyWhisperLogMelNorm(raw, device: device, on: cmd)
+    }
+
+    /// Post-process the raw natural-log mel from `Ops.melSpectrogram`
+    /// into Whisper's normalised log-Mel. Mirrors OpenAI's reference
+    /// `log_mel_spectrogram`:
+    ///
+    ///   log10  = ln_mel / ln(10)
+    ///   log10  = max(log10, log10.max() - 8)
+    ///   out    = (log10 + 4) / 4
+    ///
+    /// The kernel must already have been dispatched on `cmd`; this waits
+    /// for it, reads the result back, normalises on the CPU and uploads
+    /// the result with the same dtype.
+    private static func applyWhisperLogMelNorm(
+        _ rawNaturalLog: Tensor, device: Device, on cmd: MTLCommandBuffer
+    ) -> Tensor {
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        var vals = rawNaturalLog.toFloatArray()
+        // Natural log → base-10 log.
+        let invLn10 = 1.0 / lnOf10
+        var maxLog = -Float.greatestFiniteMagnitude
+        for i in vals.indices {
+            vals[i] *= invLn10
+            if vals[i] > maxLog { maxLog = vals[i] }
+        }
+        // Dynamic-range clamp + affine normalisation.
+        let floor = maxLog - whisperLogFloorDecades
+        for i in vals.indices {
+            let clamped = max(vals[i], floor)
+            vals[i] = (clamped + whisperNormOffset) / whisperNormScale
+        }
+        let out = Tensor.empty(shape: rawNaturalLog.shape,
+                               dtype: rawNaturalLog.dtype, device: device)
+        copyFloats(vals, into: out)
+        return out
     }
 
     /// Convert a tensor to a different storage dtype via a CPU

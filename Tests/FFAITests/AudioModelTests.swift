@@ -293,6 +293,62 @@ struct AudioModelTests {
         #expect(wc?.frontEnd.nMels == 80)
     }
 
+    @Test("SenseVoiceConfig — decodes nested encoder + front-end blocks")
+    func senseVoiceConfigParse() {
+        // SenseVoice nests the encoder hyper-parameters under
+        // `encoder_conf` and the FBANK front-end under `frontend_conf`.
+        let config = ModelConfig(
+            architecture: "SenseVoiceSmall", modelType: "sensevoice",
+            raw: ["model_type": "sensevoice", "vocab_size": 25055,
+                  "input_size": 560,
+                  "encoder_conf": ["output_size": 512,
+                                   "attention_heads": 4,
+                                   "linear_units": 2048,
+                                   "num_blocks": 50, "tp_blocks": 20,
+                                   "kernel_size": 11, "sanm_shift": 0],
+                  "frontend_conf": ["fs": 16_000, "n_mels": 80,
+                                    "lfr_m": 7, "lfr_n": 6]])
+        let sc = SenseVoiceConfig.from(config)
+        #expect(sc != nil)
+        #expect(sc?.vocab == 25055)
+        #expect(sc?.inputSize == 560)
+        #expect(sc?.hidden == 512)
+        #expect(sc?.heads == 4)
+        #expect(sc?.headDim == 128)
+        #expect(sc?.numBlocks == 50)
+        #expect(sc?.tpBlocks == 20)
+        #expect(sc?.fsmnKernel == 11)
+        #expect(sc?.frontEnd.nMels == 80)
+        #expect(sc?.frontEnd.lfrM == 7)
+        // The feature row size is nMels * lfrM = inputSize.
+        #expect((sc?.frontEnd.nMels ?? 0) * (sc?.frontEnd.lfrM ?? 0) == 560)
+    }
+
+    @Test("SenseVoiceConfig — falls back to defaults for omitted fields")
+    func senseVoiceConfigDefaults() {
+        // Only `vocab_size` is mandatory; encoder + front-end fields
+        // fall back to the published SenseVoiceSmall defaults.
+        let config = ModelConfig(
+            architecture: nil, modelType: "sensevoice",
+            raw: ["model_type": "sensevoice", "vocab_size": 25055])
+        let sc = SenseVoiceConfig.from(config)
+        #expect(sc != nil)
+        #expect(sc?.hidden == 512)
+        #expect(sc?.heads == 4)
+        #expect(sc?.numBlocks == 50)
+        #expect(sc?.tpBlocks == 20)
+        #expect(sc?.inputSize == 560)
+        #expect(sc?.frontEnd.sampleRate == 16_000)
+    }
+
+    @Test("SenseVoiceConfig — missing vocab_size yields nil")
+    func senseVoiceConfigMissingVocab() {
+        let config = ModelConfig(
+            architecture: nil, modelType: "sensevoice",
+            raw: ["model_type": "sensevoice"])
+        #expect(SenseVoiceConfig.from(config) == nil)
+    }
+
     @Test("QwenOmniAudioConfig — pulls text hidden from text_config")
     func qwenOmniConfigParse() {
         let config = ModelConfig(

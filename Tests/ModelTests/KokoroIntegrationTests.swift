@@ -1,12 +1,18 @@
-// Slow integration test: downloads (or hits cache) a Kokoro TTS
-// checkpoint and exercises the GPU iSTFTNet vocoder tail. Skipped
-// automatically if the network or the checkpoint isn't available —
-// mirrors the other ModelTests suites.
+// Integration test: loads a real Kokoro-82M checkpoint from the HF
+// cache and exercises the GPU iSTFTNet vocoder tail. A load failure
+// FAILS the suite — `loadKokoro()` is `throws` and the checkpoint is a
+// hard requirement, not a "skip if missing".
 //
 // Kokoro-82M is the published checkpoint; FFAI's Phase 7 contribution
 // is the iSTFTNet vocoder (Ops.vocoderISTFT). This suite verifies the
-// model loads, the vocoder constructs from the checkpoint config, and
-// a synthesized waveform is non-degenerate (finite, non-silent).
+// model loads, the vocoder constructs from the checkpoint config, and a
+// synthesized waveform is non-degenerate (finite, non-silent).
+//
+// KokoroModel.load is config-driven — the vocoder geometry comes from
+// `config.json`'s `istftnet` block and no safetensors weights are read
+// (the StyleTTS2 acoustic stack is a separate port). The suite resolves
+// the mlx-audio Kokoro-82M-bf16 snapshot, which carries the canonical
+// config.
 
 import Foundation
 import Testing
@@ -15,30 +21,18 @@ import Testing
 @Suite("Kokoro TTS integration", .serialized)
 struct KokoroIntegrationTests {
 
-    /// Load Kokoro from the HF cache / network, or return nil with a
-    /// printed skip reason.
-    private func loadKokoro() async -> KokoroModel? {
-        // Try the common published Kokoro repo ids in order.
-        for repoId in ["hexgrad/Kokoro-82M", "prince-canuma/Kokoro-82M"] {
-            do {
-                let locator = ModelLocator()
-                let dir = try await ModelLoadLock.shared.loadSerially {
-                    try await locator.resolve(idOrPath: repoId)
-                }
-                return try KokoroModel.load(directory: dir)
-            } catch {
-                print("Kokoro load from \(repoId) skipped: \(error)")
-            }
-        }
-        return nil
+    /// Load Kokoro from the HF cache. Throws on failure so a missing
+    /// checkpoint fails the test instead of skipping it.
+    private func loadKokoro() async throws -> KokoroModel {
+        let dir = try await AudioFixtures.resolveCheckpoint(
+            mlxAudioSlugs: ["mlx-community_Kokoro-82M-bf16"],
+            repoIds: ["mlx-community/Kokoro-82M-bf16", "hexgrad/Kokoro-82M"])
+        return try KokoroModel.load(directory: dir)
     }
 
     @Test("load — Kokoro config binds the iSTFTNet vocoder")
     func loadKokoro_bindsVocoder() async throws {
-        guard let model = await loadKokoro() else {
-            print("Kokoro integration test skipped: checkpoint unavailable")
-            return
-        }
+        let model = try await loadKokoro()
         // Kokoro's iSTFTNet head uses a tiny FFT (20) with hop 5.
         #expect(model.vocoder.nFFT > 0)
         #expect(model.vocoder.hopLength > 0)
@@ -49,10 +43,7 @@ struct KokoroIntegrationTests {
 
     @Test("synthesize — vocoder produces a non-degenerate waveform")
     func synthesize_nonDegenerateWaveform() async throws {
-        guard let model = await loadKokoro() else {
-            print("Kokoro integration test skipped: checkpoint unavailable")
-            return
-        }
+        let model = try await loadKokoro()
         // A predicted complex spectrogram (the acoustic decoder's
         // output) — frequency-sweep content so the reconstruction is
         // a real, non-constant utterance-length waveform.

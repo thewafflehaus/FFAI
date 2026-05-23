@@ -92,9 +92,13 @@ struct OpsAudioTests {
                                     / Float(cfg.sampleRate))
             }
             var out: Tensor!
+            // `whisperNormalize: false` keeps the kernel only *queued*
+            // on `cb` so `runAndWait` owns the commit (the normalised
+            // path commits internally — that would double-commit here).
             runAndWait { cb in
                 out = AudioPreprocessing.logMelSpectrogram(
-                    waveform: wave, cfg: cfg, on: cb)
+                    waveform: wave, cfg: cfg, whisperNormalize: false,
+                    on: cb)
             }
             #expect(out.shape[1] == cfg.nMels)
             let got = out.toFloatArray()

@@ -147,9 +147,13 @@ struct AudioEncoderTests {
                 wave[i] = 0.4 * sin(2.0 * Float.pi * 300.0 * Float(i) / 16_000.0)
             }
             var mel: Tensor!
+            // `whisperNormalize: false` keeps the kernel only *queued*
+            // on `cb` so `runAndWait` owns the commit (the normalised
+            // path commits internally — that would double-commit here).
             runAndWait { cb in
                 mel = AudioPreprocessing.logMelSpectrogram(
-                    waveform: wave, cfg: cfg, on: cb)
+                    waveform: wave, cfg: cfg, whisperNormalize: false,
+                    on: cb)
             }
             // mel is frame-major [nFrames, nMels].
             let out = enc.encode(mel: mel, melFrameMajor: true)

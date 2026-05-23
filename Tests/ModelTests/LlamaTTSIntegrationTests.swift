@@ -1,7 +1,8 @@
-// Slow integration test: downloads (or hits cache) an Orpheus-style
-// LlamaTTS checkpoint and exercises the Llama acoustic backbone +
-// Orpheus token protocol. Skipped automatically if the network or the
-// checkpoint isn't available — mirrors the other ModelTests suites.
+// Integration test: loads a real Orpheus-style LlamaTTS checkpoint from
+// the HF cache and exercises the Llama acoustic backbone + Orpheus token
+// protocol. A load failure FAILS the suite — `loadLlamaTTS()` is
+// `throws` and the checkpoint is a hard requirement, not a "skip if
+// missing".
 //
 // LlamaTTS reuses FFAI's `LlamaModel` engine for the acoustic backbone
 // and adds the Orpheus prompt framing + autoregressive SNAC-code decode
@@ -17,24 +18,14 @@ import Testing
 @Suite("LlamaTTS (Orpheus) integration", .serialized)
 struct LlamaTTSIntegrationTests {
 
-    /// Load LlamaTTS from the HF cache / network, or return nil with a
-    /// printed skip reason.
-    private func loadLlamaTTS() async -> LlamaTTSModel? {
-        for repoId in [
-            "mlx-community/orpheus-3b-0.1-ft-bf16",
-            "canopylabs/orpheus-3b-0.1-ft",
-        ] {
-            do {
-                let locator = ModelLocator()
-                let dir = try await ModelLoadLock.shared.loadSerially {
-                    try await locator.resolve(idOrPath: repoId)
-                }
-                return try await LlamaTTSModel.load(directory: dir)
-            } catch {
-                print("LlamaTTS load from \(repoId) skipped: \(error)")
-            }
+    /// Load LlamaTTS from the HF cache / network. Throws on failure so a
+    /// missing checkpoint fails the test instead of skipping it.
+    private func loadLlamaTTS() async throws -> LlamaTTSModel {
+        let dir = try await AudioFixtures.resolveCheckpoint(
+            repoIds: ["mlx-community/orpheus-3b-0.1-ft-bf16"])
+        return try await ModelLoadLock.shared.loadSerially {
+            try await LlamaTTSModel.load(directory: dir)
         }
-        return nil
     }
 
     @Test("deinterleave — SNAC code planes have the right shape")
@@ -54,10 +45,7 @@ struct LlamaTTSIntegrationTests {
 
     @Test("load — Orpheus checkpoint binds the Llama backbone")
     func loadLlamaTTS_bindsBackbone() async throws {
-        guard let model = await loadLlamaTTS() else {
-            print("LlamaTTS integration test skipped: checkpoint unavailable")
-            return
-        }
+        let model = try await loadLlamaTTS()
         #expect(model.backbone.nLayers > 0)
         #expect(model.backbone.vocab > OrpheusTokens.audioTokenOffset)
         #expect(model.sampleRate == 24_000)
@@ -65,10 +53,7 @@ struct LlamaTTSIntegrationTests {
 
     @Test("promptTokens — Orpheus framing is well-formed")
     func promptTokens_framing() async throws {
-        guard let model = await loadLlamaTTS() else {
-            print("LlamaTTS integration test skipped: checkpoint unavailable")
-            return
-        }
+        let model = try await loadLlamaTTS()
         let ids = model.promptTokens(text: "Hello there.", voice: "tara")
         // [SOH] ... [EOT][EOH] — start, end-of-text, end-of-human.
         #expect(ids.first == OrpheusTokens.startOfHuman)
@@ -79,17 +64,13 @@ struct LlamaTTSIntegrationTests {
 
     @Test("generateCodes — decode emits finite SNAC code planes")
     func generateCodes_emitsCodes() async throws {
-        guard let model = await loadLlamaTTS() else {
-            print("LlamaTTS integration test skipped: checkpoint unavailable")
-            return
-        }
+        let model = try await loadLlamaTTS()
         // Greedy decode, capped short for test runtime.
         let planes = try model.generateCodes(
             text: "Hi.", voice: "tara", maxFrames: 16, temperature: 0)
         #expect(planes.count == 3)
         // Non-empty: at least one complete SNAC frame was emitted.
-        #expect(!planes[0].isEmpty,
-                "LlamaTTS produced no SNAC codes")
+        #expect(!planes[0].isEmpty, "LlamaTTS produced no SNAC codes")
         // SNAC up-sampling: layer2 is 2×, layer3 is 4× layer1's length.
         #expect(planes[1].count == 2 * planes[0].count)
         #expect(planes[2].count == 4 * planes[0].count)

@@ -167,11 +167,12 @@ public final class QwenOmniModel: @unchecked Sendable {
         // the model's activation dtype before the conv stem.
         let melDtype: DType = dtype == .f16 ? .f16 : .f32
         let cmd = device.makeCommandBuffer()
+        // `whisperNormalize: true` — `logMelSpectrogram` commits + waits
+        // on `cmd` itself (it normalises the kernel result on the CPU),
+        // so the result is already CPU-synced; do NOT re-commit `cmd`.
         let melRaw = AudioPreprocessing.logMelSpectrogram(
             waveform: waveform, cfg: config.frontEnd, dtype: melDtype,
-            device: device, on: cmd)
-        cmd.commit()
-        cmd.waitUntilCompleted()
+            whisperNormalize: true, device: device, on: cmd)
         let mel = AudioPreprocessing.castTensor(melRaw, to: dtype,
                                                 device: device)
 

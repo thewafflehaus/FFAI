@@ -185,6 +185,15 @@ public final class WhisperModel: @unchecked Sendable {
         self.dtype = dtype
     }
 
+    /// Whisper's fixed analysis window: 30 s of 16 kHz audio. OpenAI's
+    /// reference pads or trims every clip to exactly this length before
+    /// the log-Mel front-end, so the encoder always sees a fixed
+    /// `[nMels, 3000]` spectrogram → 1500 audio-context rows (the size of
+    /// the baked positional table). whisper-tiny was trained only on
+    /// 30 s-padded inputs; feeding a raw short clip starves the decoder's
+    /// cross-attention of the positional structure it expects.
+    public static let whisperWindowSamples = 30 * 16_000
+
     /// Run the audio encoder over a waveform, producing the
     /// `[nAudioCtx, hidden]` audio features the decoder cross-attends
     /// to. The waveform is resampled / framed by `AudioPreprocessing`.
@@ -194,15 +203,44 @@ public final class WhisperModel: @unchecked Sendable {
         // gets the front-end run in f32, then the spectrogram cast to
         // the model's activation dtype before the conv stem.
         let melDtype: DType = dtype == .f16 ? .f16 : .f32
+        // Pad / trim to Whisper's fixed 30 s window — the encoder's
+        // positional table and the checkpoint's training regime both
+        // assume it (OpenAI's `pad_or_trim`).
+        let framed = WhisperModel.padOrTrim(
+            waveform, to: WhisperModel.whisperWindowSamples)
         let cmd = device.makeCommandBuffer()
+        // `whisperNormalize: true` — `logMelSpectrogram` commits + waits
+        // on `cmd` itself (it normalises the kernel result on the CPU),
+        // so the result is already CPU-synced; do NOT re-commit `cmd`.
         let melRaw = AudioPreprocessing.logMelSpectrogram(
-            waveform: waveform, cfg: config.frontEnd, dtype: melDtype,
-            device: device, on: cmd)
-        cmd.commit()
-        cmd.waitUntilCompleted()
-        let mel = AudioPreprocessing.castTensor(melRaw, to: dtype,
+            waveform: framed, cfg: config.frontEnd, dtype: melDtype,
+            whisperNormalize: true, device: device, on: cmd)
+        var mel = AudioPreprocessing.castTensor(melRaw, to: dtype,
                                                 device: device)
+        // The kernel's frame walk yields one extra frame versus
+        // Whisper's reference (`torch.stft(center=True)` produces
+        // `n_samples/hop + 1` columns, then drops the last as
+        // `stft[..., :-1]`). After the stride-2 conv2 that surplus frame
+        // would push `nAudioCtx` to `maxAudioCtx + 1` and overrun the
+        // 1500-row positional table — so trim the log-Mel to exactly
+        // `2 * maxAudioCtx` frames here.
+        let maxMelFrames = 2 * config.maxAudioCtx
+        if mel.shape[0] > maxMelFrames {
+            mel = mel.slicedRows(start: 0, count: maxMelFrames)
+        }
         return encoder.encode(mel: mel, melFrameMajor: true, device: device)
+    }
+
+    /// Pad (with trailing zeros) or trim a waveform to exactly `length`
+    /// samples — OpenAI Whisper's `pad_or_trim`. A clip shorter than the
+    /// 30 s window is zero-padded; a longer one is truncated to the
+    /// first window. Trailing zeros become near-floor log-Mel frames,
+    /// exactly the silence representation the decoder is trained on.
+    public static func padOrTrim(_ waveform: [Float], to length: Int)
+        -> [Float] {
+        if waveform.count == length { return waveform }
+        if waveform.count > length { return Array(waveform[0..<length]) }
+        return waveform + [Float](repeating: 0, count: length - waveform.count)
     }
 
     /// One decoder step: embed `tokenIds` (the transcript so far),
