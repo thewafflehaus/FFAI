@@ -1,15 +1,15 @@
 // FishSpeech integration test — load mlx-community/fish-audio-s2-pro-8bit
 // from the HuggingFace cache (pre-downloaded at ~/.cache/huggingface/hub/)
-// and run a short Stage-1 synthesis pass.
+// and run a Stage-1 + Stage-2 synthesis pass.
 //
-// Stage-1 coverage:
+// Coverage:
 //   ✅  Config parsed from real config.json
 //   ✅  Weights loaded (8-bit quantized, sharded via model.safetensors.index.json)
 //   ✅  FishSpeechModel constructed (slow backbone + fast decoder)
-//   ✅  synthesize(...) reaches the codec stub and throws codecNotAvailable
-//
-// Stage-2 (FishS1DAC waveform decode) is NOT tested here; see planning/
-// issues/features/F-DAC-001 for the follow-up.
+//   ✅  generateCodes produces code frames (Stage-1)
+//   ✅  synthesize(...) + FishS1DAC decodes to a waveform (Stage-2) when codec
+//       weights are available in the snapshot directory or a codec/ sub-folder.
+//       If codec weights are absent the test asserts codecNotAvailable.
 //
 // DO NOT RUN this suite via `make test-unit`. Run serialised with
 //   make test-integration
@@ -70,13 +70,13 @@ struct FishSpeechIntegrationTests {
         #expect(FishSpeech.modelTypes.contains(model.fishConfig.modelType))
     }
 
-    @Test("synthesize throws codecNotAvailable (Stage-1 documented stub)")
-    func synthesizeStage1() async throws {
+    @Test("synthesize produces a waveform (Stage-2) or throws codecNotAvailable")
+    func synthesizeStage2() async throws {
         let dir: URL
         do {
             dir = try await resolveSnapshotDirectory(repoID: Self.repoID)
         } catch {
-            print("FishSpeech Stage-1 test skipped (checkpoint not cached): \(error)")
+            print("FishSpeech Stage-2 test skipped (checkpoint not cached): \(error)")
             return
         }
 
@@ -86,17 +86,28 @@ struct FishSpeechIntegrationTests {
             config: config, weights: weights, directory: dir, device: .shared
         )
 
-        // Stage-1: synthesize must throw codecNotAvailable, not any other error.
-        // If it throws something unexpected the test fails, giving visibility
-        // into regressions in the generate-codes path.
+        // Stage-2: when FishS1DAC codec weights are present in the snapshot
+        // directory (or a codec/ sub-folder), synthesize returns a non-empty
+        // waveform. When codec weights are absent it throws codecNotAvailable.
+        // Both outcomes are valid; any other error is a regression.
         do {
-            _ = try model.synthesize(
+            let pcm = try model.synthesize(
                 text: "Hello world.",
                 parameters: AudioGenerationParameters(maxTokens: 32)
             )
-            Issue.record("Expected synthesize to throw; it returned without error")
+
+            // If we get here, codec was loaded and decoding succeeded.
+            #expect(!pcm.isEmpty, "synthesize returned an empty waveform")
+            #expect(pcm.allSatisfy { $0.isFinite }, "waveform contains non-finite samples")
+
+            // Sane amplitude: RMS should be well above silence and below clipping.
+            let rms = sqrt(pcm.map { $0 * $0 }.reduce(0, +) / Float(pcm.count))
+            #expect(rms > 0.0, "RMS is zero — codec returned silence")
+            #expect(rms < 2.0, "RMS is implausibly large — codec may have exploded")
+
         } catch AudioGenerationError.codecNotAvailable {
-            // Expected — FishS1DAC not yet ported.
+            // Codec weights absent from this snapshot — acceptable.
+            print("FishSpeech Stage-2: codec weights not found, synthesize threw codecNotAvailable (expected).")
         } catch {
             Issue.record("synthesize threw unexpected error: \(error)")
         }

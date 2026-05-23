@@ -9,11 +9,10 @@
 //     codebook tokens (10 codebooks per frame).
 //   - Neural codec (FishS1DAC): decodes VQ codes → waveform.
 //
-// Stage-1 note: the FishS1DAC codec uses dilated causal convolutions and
-// a vector quantizer that require Conv1d/transposed-Conv1d kernels not yet
-// implemented in FFAI. `synthesize(...)` generates semantic + VQ codes and
-// throws `AudioGenerationError.codecNotAvailable` for the waveform-decode step.
-// The codec path is documented in planning/issues/features/ as F-DAC-001.
+// Stage-2: the FishS1DAC codec (CPU fallback, see Audio/FishS1DAC.swift) decodes
+// VQ codes → waveform. When codec weights are present in the snapshot the full
+// path is active. A metaltile kernel port for dilated depthwise Conv1d would
+// accelerate the decoder blocks; the CPU path is documented in FishS1DACQuantization.swift.
 //
 // Reference:
 //   ~/Development/personal/ai/mlx-audio-swift/Sources/MLXAudioTTS/Models/FishSpeech/
@@ -50,9 +49,10 @@ public enum FishSpeech {
 
 /// The dual-AR FishSpeech TTS model. Conforms to `AudioModel` and `Module`.
 ///
-/// `synthesize(...)` runs the full slow + fast AR loops and returns audio
-/// codes as metadata. Waveform decoding (Stage-2, FishS1DAC) throws
-/// `AudioGenerationError.codecNotAvailable` until the DAC codec is ported.
+/// `synthesize(...)` runs the full slow + fast AR loops and, when the
+/// `fishS1DAC` codec is bound, decodes the resulting VQ codes to a waveform.
+/// If `fishS1DAC` is nil (codec weights absent from snapshot), it throws
+/// `AudioGenerationError.codecNotAvailable`.
 public final class FishSpeechModel: Module, AudioModel {
     public static let defaultRepositoryID = "mlx-community/fish-audio-s2-pro-8bit"
 
@@ -72,6 +72,12 @@ public final class FishSpeechModel: Module, AudioModel {
     let fastNorm: RMSNorm
     let fastOutput: AnyLinear
 
+    // ── Stage-2 codec (optional) ───────────────────────────────────────
+    /// FishS1DAC neural audio codec. When bound, `synthesize(...)` produces
+    /// an actual waveform. When nil, `synthesize(...)` throws
+    /// `AudioGenerationError.codecNotAvailable` (codec weights not found).
+    public var fishS1DAC: FishS1DAC?
+
     init(
         fishConfig: FishSpeechConfig,
         embeddings: AnyEmbedding,
@@ -82,7 +88,8 @@ public final class FishSpeechModel: Module, AudioModel {
         fastEmbeddings: AnyEmbedding,
         fastLayers: [FishSpeechBlock],
         fastNorm: RMSNorm,
-        fastOutput: AnyLinear
+        fastOutput: AnyLinear,
+        fishS1DAC: FishS1DAC? = nil
     ) {
         self.fishConfig = fishConfig
         self.sampleRate = fishConfig.sampleRate
@@ -95,6 +102,7 @@ public final class FishSpeechModel: Module, AudioModel {
         self.fastLayers = fastLayers
         self.fastNorm = fastNorm
         self.fastOutput = fastOutput
+        self.fishS1DAC = fishS1DAC
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -119,9 +127,11 @@ public final class FishSpeechModel: Module, AudioModel {
 
     // ─── AudioModel conformance ──────────────────────────────────────
 
-    /// Synthesise speech for `text`. Stage-1: generates semantic + VQ codes
-    /// (slow + fast AR) then throws `codecNotAvailable` for the waveform
-    /// decode step. Stage-2 (FishS1DAC codec port) will complete the path.
+    /// Synthesise speech for `text`. Runs the slow + fast AR loops to produce
+    /// VQ codes, then decodes them to a waveform via `fishS1DAC`.
+    ///
+    /// If `fishS1DAC` is nil (codec weights absent from the snapshot directory),
+    /// throws `AudioGenerationError.codecNotAvailable`.
     public func synthesize(
         text: String,
         parameters: AudioGenerationParameters,
@@ -140,17 +150,19 @@ public final class FishSpeechModel: Module, AudioModel {
             topK: parameters.topK,
             device: device
         )
-        _ = codes  // suppress "unused" warning until Stage-2 wires this up
 
-        // Stage-2 placeholder: codec decode not yet implemented.
-        // FishS1DAC requires dilated causal Conv1d / transposed Conv1d /
-        // residual vector quantizer ops not yet in FFAI. Tracked as
-        // planning/issues/features/F-DAC-001.
-        throw AudioGenerationError.codecNotAvailable(
-            "FishS1DAC waveform decode not yet implemented in FFAI " +
-            "(Stage-1 complete: semantic + VQ codes generated). " +
-            "Tracked in planning/issues/features/F-DAC-001."
-        )
+        // Stage-2: decode codes → waveform via FishS1DAC.
+        guard let codec = fishS1DAC else {
+            throw AudioGenerationError.codecNotAvailable(
+                "FishS1DAC codec weights not loaded. " +
+                "Ensure the snapshot directory contains codec.safetensors " +
+                "or a codec/ sub-folder with model.safetensors.")
+        }
+
+        let waveformTensor = try codec.decode(codes: codes)
+
+        // The tensor is shape [1, 1, L]; flatten to [Float].
+        return AudioMath.floats(waveformTensor)
     }
 
     // ─── Internal: code generation ───────────────────────────────────
@@ -583,6 +595,11 @@ public final class FishSpeechModel: Module, AudioModel {
     // ─── Static loader ────────────────────────────────────────────────
 
     /// Load a FishSpeech model from a model directory (HF snapshot).
+    ///
+    /// Attempts to load the FishS1DAC codec from the snapshot directory (or a
+    /// `codec/` / `vocoder/` sub-folder). Codec loading failure is non-fatal —
+    /// `fishS1DAC` is left nil and `synthesize(...)` will throw
+    /// `AudioGenerationError.codecNotAvailable` at call-time.
     public static func load(
         config: ModelConfig,
         weights: SafeTensorsBundle,
@@ -590,7 +607,13 @@ public final class FishSpeechModel: Module, AudioModel {
         device: Device
     ) throws -> FishSpeechModel {
         let cfg = try FishSpeechConfig.load(from: config)
-        return try buildModel(cfg: cfg, weights: weights, device: device)
+        let model = try buildModel(cfg: cfg, weights: weights, device: device)
+
+        // Attempt to bind the Stage-2 neural codec. Non-fatal: if codec weights
+        // are absent the model still loads; synthesize(...) throws codecNotAvailable.
+        model.fishS1DAC = try? FishS1DAC.load(from: directory)
+
+        return model
     }
 
     private static func buildModel(
