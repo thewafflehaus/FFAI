@@ -130,6 +130,46 @@ The remaining single-threaded sites being swept now:
 The same fix likely applies to the Granite-H / Jamba decode-hang
 the owner flagged — sweep their decode path next pass.
 
+## Gap 3 (GPU vision attention) — blocked on metaltile
+
+Closing this gap was scoped as wiring the four CPU-bound vision
+towers (Idefics3, PaliGemma, GlmOcr, FastVLM) through
+`Ops.sdpaMulti(causal: false)` for bidirectional attention plus
+adding `Ops.conv2dDepthwise(...)` for FastVLM's FastViTHD chain.
+
+**Audit finding (2026-05-23):** `Ops.sdpaMulti` is **head_dim-128
+only** by hard kernel constraint — each lane owns 4 elements
+unconditionally (`OpsValidation.validateSdpaMulti`:158). SigLIP /
+CLIP / FastViT vision towers use head_dim in {64, 72, 80, …}; none
+match. Migrating the four families to GPU SDPA therefore needs a new
+metaltile kernel with parametric head_dim (`ffai/sdpa_bidirectional_*`
+or extending `sdpa_multi` per-head-dim like the decode kernel does
+for d64 / d128 / d256 / d512). FFAI-side, none of this can be
+unblocked yet.
+
+FastVLM additionally needs `conv2d_depthwise_*` (depthwise +
+pointwise conv chain in FastViTHD's RepMixerBlock — `Ops.gemm`
+covers pointwise, but no depthwise wrapper exists).
+
+What's already mitigated in FFAI today:
+- All four families' CPU attention is **parallelised across (head,
+  token)** with `DispatchQueue.concurrentPerform` (see the
+  "CPU attention single-threaded sweep" entry above). That collapsed
+  Whisper / SigLIP-896 from minutes to seconds. The remaining cold-
+  inference tail is FastVLM at 1024px specifically — its early
+  stages run 256×256×96 + 128×128×192 depthwise convs that need
+  the GPU port.
+
+**Re-scoped Phase 6.5b (metaltile work):**
+1. `ffai_sdpa_bidirectional_{d64,d72,d80,d128}_{f16,bf16}` — single
+   kernel parametric over head_dim via constexpr lane geometry, or
+   per-head-dim specialised variants matching the SDPA decode pattern.
+2. `conv2d_depthwise_{kh}_{kw}_{stride}_{f16,bf16}` — direct
+   sliding-window MAC, no im2col blow-up.
+3. FFAI Ops wrappers + migrate the four families.
+
+Tracked, but blocked outside this session.
+
 ## Marvis TTS — loader rejects quantized weights
 
 **Fixed in commit `6fd6a87`.** `MarvisConfig.quantization` is now
