@@ -1989,6 +1989,15 @@ public final class Qwen35Model: LanguageModel {
     /// every GDN layer commits the command buffer regardless).
     public let hasMoE: Bool
 
+    /// Qwen 3.5 prefill chunk size — matches mlx-swift-lm's tuning:
+    /// 4096 when any layer is MoE (the per-expert dispatch amortises
+    /// well over a fatter chunk), 1024 for pure dense (the generic
+    /// default). The hybrid GDN layers run their recurrence per-token
+    /// regardless; the chunk size only affects attention-layer prefill.
+    public var defaultPrefillStepSize: Int {
+        hasMoE ? 4096 : 1024
+    }
+
     init(embedTokens: AnyEmbedding, layers: [any DecoderLayer],
          finalNorm: RMSNorm, lmHead: AnyLinear,
          hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,

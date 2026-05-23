@@ -30,11 +30,14 @@ public struct GenerationParameters: Sendable, Equatable {
 
     // ─── Prefill ─────────────────────────────────────────────────────
 
-    /// Prefill chunk size (tokens). The slow per-token prefill path used
-    /// today ignores this; once chunked prefill lands (Phase 5) it picks
-    /// up automatically. Per-family defaults match mlx-swift-lm's
-    /// `defaultPrefillStepSize`.
-    public var prefillStepSize: Int
+    /// Prefill chunk size (tokens) — how many prompt tokens flow
+    /// through `engine.forwardMulti(...)` per dispatch. `nil` (the
+    /// default) defers to the engine's `defaultPrefillStepSize` (1024
+    /// generic, 2048 GPT-OSS, 4096 Gemma 4 / Qwen 3.5 MoE — the values
+    /// `mlx-swift-lm` benched). Explicit non-nil value overrides the
+    /// engine default. Used as the chunk size in
+    /// `Generate.driveGeneration` (the Phase 6.6 chunked-prefill path).
+    public var prefillStepSize: Int?
 
     // ─── Sampling (Phase 5; no-op today on the greedy path) ──────────
 
@@ -65,7 +68,7 @@ public struct GenerationParameters: Sendable, Equatable {
         maxTokens: Int = 256,
         stopOnEOS: Bool = true,
         extraStopTokens: Set<Int> = [],
-        prefillStepSize: Int = 1024,
+        prefillStepSize: Int? = nil,
         temperature: Float = 0.6,
         topP: Float = 1.0,
         topK: Int = 0,

@@ -273,7 +273,11 @@ public extension Model {
         var nextToken = 0
         try profile.signpost("prefill") {
             let n = promptTokens.count
-            let chunkSize = max(1, params.prefillStepSize)
+            // Honour the caller's explicit `prefillStepSize` if set;
+            // otherwise fall through to the engine's tuned default
+            // (1024 generic, 2048 GPT-OSS, 4096 Gemma 4 / Qwen 3.5 MoE).
+            let chunkSize = max(1, params.prefillStepSize
+                                ?? engine.defaultPrefillStepSize)
             var pos = 0
             while pos < n - 1 {
                 try Task.checkCancellation()

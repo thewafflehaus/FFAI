@@ -348,6 +348,110 @@ public final class Qwen3Layer: Module {
         Ops.rmsNormRows(x, weight: weight, eps: eps,
                         nRows: nHeads, rowSize: headDim, on: cmd)
     }
+
+    /// Chunked forward — process `nRows` tokens at once. See
+    /// `LlamaLayer.forwardMulti` for the design + perf notes; the only
+    /// shape difference vs Llama is the per-head q_norm / k_norm step
+    /// that Qwen 3 applies between projection and RoPE.
+    ///
+    /// **Cache compatibility.** AURA caches need Q π-rotation; the
+    /// fast path skips it. `Qwen3Model.forwardMulti` falls back to the
+    /// per-token loop when any layer's cache is `AURAQuantizedKVCache`.
+    func forwardMulti(_ h: Tensor, startingAt position: Int,
+                      cache: any KVCacheProtocol,
+                      cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        let nRows = h.shape[0]
+        precondition(h.shape == [nRows, hidden],
+                     "Qwen3Layer.forwardMulti: h shape \(h.shape) ≠ [nRows, hidden]")
+
+        // ── Attention ───────────────────────────────────────────────────
+        let xNorm = Ops.rmsNormRows(
+            h.reshaped(to: [nRows * hidden]),
+            weight: inputNorm.weight, eps: inputNorm.eps,
+            nRows: nRows, rowSize: hidden, on: cmd
+        ).reshaped(to: [nRows, hidden])
+
+        let q = qProj.callMany(xNorm, t: nRows, on: cmd, device: device)   // [N, nHeads*headDim]
+        let k = kProj.callMany(xNorm, t: nRows, on: cmd, device: device)   // [N, nKVHeads*headDim]
+        let v = vProj.callMany(xNorm, t: nRows, on: cmd, device: device)   // [N, nKVHeads*headDim]
+
+        // Per-head q_norm / k_norm — flatten to one big [nRows*nHeads,
+        // headDim] (resp. [nRows*nKVHeads, headDim]) row stack so the
+        // single rmsNormRows dispatch normalises every (token, head)
+        // pair at once.
+        let qFlat = q.reshaped(to: [nRows * nHeads * headDim])
+        let qNormedFlat = Ops.rmsNormRows(
+            qFlat, weight: qNorm.weight, eps: qNorm.eps,
+            nRows: nRows * nHeads, rowSize: headDim, on: cmd
+        )
+        let qNormed = qNormedFlat.reshaped(to: [nRows, nHeads * headDim])
+
+        let kFlat = k.reshaped(to: [nRows * nKVHeads * headDim])
+        let kNormedFlat = Ops.rmsNormRows(
+            kFlat, weight: kNorm.weight, eps: kNorm.eps,
+            nRows: nRows * nKVHeads, rowSize: headDim, on: cmd
+        )
+        let kNormed = kNormedFlat.reshaped(to: [nRows, nKVHeads * headDim])
+
+        // RoPE — single-position kernel looped per row on the same cmd.
+        let qRot = Tensor.empty(shape: [nRows, nHeads * headDim],
+                                dtype: q.dtype, device: device)
+        let kRot = Tensor.empty(shape: [nRows, nKVHeads * headDim],
+                                dtype: k.dtype, device: device)
+        for i in 0..<nRows {
+            let qRow = qNormed.slicedRows(start: i, count: 1).reshaped(to: [nHeads * headDim])
+            let qOut = qRot.slicedRows(start: i, count: 1).reshaped(to: [nHeads * headDim])
+            _ = Ops.rope(qRow, position: position + i, headDim: headDim,
+                         thetaBase: ropeTheta, scaling: ropeScaling,
+                         on: cmd, into: qOut)
+            let kRow = kNormed.slicedRows(start: i, count: 1).reshaped(to: [nKVHeads * headDim])
+            let kOut = kRot.slicedRows(start: i, count: 1).reshaped(to: [nKVHeads * headDim])
+            _ = Ops.rope(kRow, position: position + i, headDim: headDim,
+                         thetaBase: ropeTheta, scaling: ropeScaling,
+                         on: cmd, into: kOut)
+            cache.appendOnGPU(
+                kFlat: kOut.reshaped(to: [nKVHeads, headDim]),
+                vFlat: v.slicedRows(start: i, count: 1).reshaped(to: [nKVHeads, headDim]),
+                on: cmd
+            )
+        }
+
+        // SDPA — ONE dispatch over the chunk with causal mask.
+        let qForSdpa = qRot.reshaped(to: [nRows, nHeads, headDim])
+        let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
+        let attnOut = Ops.sdpaMulti(
+            q: qForSdpa, k: cacheK, v: cacheV,
+            nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
+            baseKV: position, nQuery: nRows, kvStride: cache.maxSeq,
+            causal: true, scale: scale, on: cmd
+        )
+
+        let attnFlat = attnOut.reshaped(to: [nRows, nHeads * headDim])
+        let oOut = oProj.callMany(attnFlat, t: nRows, on: cmd, device: device)
+        let postAttn = Ops.add(
+            h.reshaped(to: [nRows * hidden]),
+            oOut.reshaped(to: [nRows * hidden]),
+            on: cmd
+        ).reshaped(to: [nRows, hidden])
+
+        // ── MLP — SwiGLU, batched ───────────────────────────────────────
+        let mlpNorm = Ops.rmsNormRows(
+            postAttn.reshaped(to: [nRows * hidden]),
+            weight: postAttnNorm.weight, eps: postAttnNorm.eps,
+            nRows: nRows, rowSize: hidden, on: cmd
+        ).reshaped(to: [nRows, hidden])
+        let gate = gateProj.callMany(mlpNorm, t: nRows, on: cmd, device: device)
+        let up = upProj.callMany(mlpNorm, t: nRows, on: cmd, device: device)
+        let siluGate = Ops.silu(gate, on: cmd)
+        let mlpInner = Ops.mul(siluGate, up, on: cmd)
+        let mlpOut = downProj.callMany(mlpInner, t: nRows, on: cmd, device: device)
+
+        return Ops.add(
+            postAttn.reshaped(to: [nRows * hidden]),
+            mlpOut.reshaped(to: [nRows * hidden]),
+            on: cmd
+        ).reshaped(to: [nRows, hidden])
+    }
 }
 
 // ─── Qwen3Model ──────────────────────────────────────────────────────
@@ -503,6 +607,49 @@ public final class Qwen3Model: LanguageModel {
             workCmd.waitUntilCompleted()
         }
         return logits
+    }
+
+    /// Chunked multi-token forward — Phase 6.6 prefill fast path. See
+    /// `LlamaModel.forwardMulti` for the design notes; Qwen3's layer
+    /// fast path differs only in the per-head q_norm / k_norm step.
+    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
+                             caches: [any LayerCacheProtocol],
+                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(!tokenIds.isEmpty,
+                     "Qwen3Model.forwardMulti: tokenIds must be non-empty")
+
+        // AURA fallback — see Qwen3Layer.forwardMulti doc comment.
+        let hasAura = caches.contains { $0 is AURAQuantizedKVCache }
+        if hasAura {
+            var logits: Tensor!
+            for (i, tok) in tokenIds.enumerated() {
+                logits = forward(tokenId: tok, position: position + i,
+                                 caches: caches, on: cmd, device: device)
+            }
+            return logits
+        }
+
+        let n = tokenIds.count
+        let idsBuf = device.makeBuffer(length: n * 4)
+        idsBuf.contents().withMemoryRebound(to: UInt32.self, capacity: n) { p in
+            for (i, t) in tokenIds.enumerated() { p[i] = UInt32(t) }
+        }
+        let idsTensor = Tensor(buffer: idsBuf, offset: 0, shape: [n], dtype: .u32)
+        var h = embedTokens(idsTensor, on: cmd)
+        precondition(h.shape == [n, hidden],
+                     "Qwen3Model.forwardMulti: embedding shape \(h.shape) ≠ [n, hidden]")
+
+        for (i, layer) in layers.enumerated() {
+            h = layer.forwardMulti(
+                h, startingAt: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                cmd: cmd, device: device
+            )
+        }
+
+        let tail = h.slicedRows(start: n - 1, count: 1).reshaped(to: [hidden])
+        let normed = finalNorm(tail, on: cmd)
+        return lmHead(normed, on: cmd)
     }
 
     /// Embedding-input forward — the VLM splice path. Identical to

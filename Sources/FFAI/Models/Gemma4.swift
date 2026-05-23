@@ -1441,6 +1441,13 @@ public final class Gemma4Model: LanguageModel {
     public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxSeq: Int
     public let dtype: DType
 
+    /// Gemma 4 prefills 4096 tokens per chunk — the value tuned in
+    /// `mlx-swift-lm`'s `Libraries/MLXLLM/Models/Gemma4.swift`. The
+    /// sliding-window every-other-layer schedule means alternating
+    /// layers attend a tiny KV stripe, so amortising over more rows
+    /// pays off bigger than the dense default.
+    public var defaultPrefillStepSize: Int { 4096 }
+
     /// Gemma 4 is BOS-critical and its `tokenizer.json` post-processor's
     /// `single` template is bare (`[Sequence A]`, no `<bos>` special
     /// token) — unlike Gemma 3, whose post-processor lists `<bos>`. So

@@ -740,6 +740,12 @@ public final class GPTOSSModel: LanguageModel {
     public let finalNorm: RMSNorm
     public let lmHead: AnyLinear
 
+    /// GPT-OSS 20B prefills 2048 tokens per chunk — the value tuned in
+    /// `mlx-swift-lm`'s `Libraries/MLXLLM/Models/GPTOSS.swift`. Larger
+    /// than the 1024 dense default because GPT-OSS's MoE FFN amortises
+    /// well across more rows.
+    public var defaultPrefillStepSize: Int { 2048 }
+
     public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxSeq: Int
     /// Sliding-window size for sliding-attention layers.
     public let slidingWindow: Int

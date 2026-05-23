@@ -46,6 +46,13 @@ public final class Linear: Module {
     /// `[T, outDim]` flat. Dispatches `Ops.gemm` (one kernel, no per-row
     /// host overhead). Bias path is unimplemented — the families that
     /// currently call this (Qwen3-series) do not use linear biases.
+    ///
+    /// (Rebase 2026-05-23: keep Tom's `callMany` API, drop my parallel
+    /// `batched(_:nRows:)` from `3a87b78`. Both did the same job;
+    /// Tom's QuantizedLinear.callMany variant actually wraps the
+    /// `mt_qmm_mma`-backed `Ops.dequantGemmDynamicM` kernel — what my
+    /// doc comment had flagged as a TODO. Caller updates in Llama /
+    /// Qwen3 forwardMulti come in this same rebase commit.)
     public func callMany(_ x: Tensor, t: Int, on cmd: MTLCommandBuffer) -> Tensor {
         precondition(bias == nil,
                      "Linear.callMany: bias broadcast over T rows not implemented; no Qwen3-series caller needs it today")

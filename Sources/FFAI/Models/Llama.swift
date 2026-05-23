@@ -308,6 +308,111 @@ public final class LlamaLayer: Module {
         let mlpOut = downProj(mlpInner, on: cmd)
         return Ops.add(postAttn, mlpOut, on: cmd)
     }
+
+    /// Chunked forward — process `nRows` tokens at once. `h` is the
+    /// `[nRows, hidden]` residual stream; `position` is the absolute
+    /// sequence index of the FIRST row (subsequent rows take
+    /// `position + 1`, `+2`, …). Returns the `[nRows, hidden]`
+    /// updated residual stream.
+    ///
+    /// Hot path for Phase 6.6 chunked prefill. The collapse vs the
+    /// per-token loop:
+    /// - inputNorm / postAttnNorm: `Ops.rmsNormRows` instead of `nRows`
+    ///   single-row RMSNorms.
+    /// - q/k/v/o/gate/up/down projections: batched `AnyLinear.batched`
+    ///   instead of `nRows` `gemv`/`dequantGemv` calls (full-precision
+    ///   path collapses to one `Ops.gemm` per projection).
+    /// - Attention: one `Ops.sdpaMulti(causal: true)` over the full
+    ///   chunk instead of `nRows` separate `Ops.sdpaDecode` calls —
+    ///   the biggest single dispatch saving.
+    /// - RoPE + cache append: still loop `nRows` times (single-position
+    ///   kernels) but all queued on the same `cmd`; the GPU pipelines
+    ///   them, the CPU-side cost is just enqueueing.
+    ///
+    /// **Cache compatibility.** AURA caches need Q π-rotation +
+    /// post-SDPA π^T-unrotation; this fast path doesn't apply them.
+    /// `LlamaModel.forwardMulti` checks the cache type and falls back
+    /// to the per-token loop when any layer's cache is `AURAQuantizedKVCache`.
+    func forwardMulti(_ h: Tensor, startingAt position: Int,
+                      cache: any KVCacheProtocol,
+                      cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        let nRows = h.shape[0]
+        precondition(h.shape == [nRows, hidden],
+                     "LlamaLayer.forwardMulti: h shape \(h.shape) ≠ [nRows, hidden]")
+
+        // ── Attention ───────────────────────────────────────────────────
+        let xNorm = Ops.rmsNormRows(
+            h.reshaped(to: [nRows * hidden]),
+            weight: inputNorm.weight, eps: inputNorm.eps,
+            nRows: nRows, rowSize: hidden, on: cmd
+        ).reshaped(to: [nRows, hidden])
+
+        let q = qProj.callMany(xNorm, t: nRows, on: cmd, device: device)   // [N, nHeads*headDim]
+        let k = kProj.callMany(xNorm, t: nRows, on: cmd, device: device)   // [N, nKVHeads*headDim]
+        let v = vProj.callMany(xNorm, t: nRows, on: cmd, device: device)   // [N, nKVHeads*headDim]
+
+        // RoPE — single-position kernel, looped per row on the same cmd.
+        // Allocates rotated buffers up front, RoPE writes in place.
+        let qRot = Tensor.empty(shape: [nRows, nHeads * headDim],
+                                dtype: q.dtype, device: device)
+        let kRot = Tensor.empty(shape: [nRows, nKVHeads * headDim],
+                                dtype: k.dtype, device: device)
+        for i in 0..<nRows {
+            let qRow = q.slicedRows(start: i, count: 1).reshaped(to: [nHeads * headDim])
+            let qOut = qRot.slicedRows(start: i, count: 1).reshaped(to: [nHeads * headDim])
+            _ = Ops.rope(qRow, position: position + i, headDim: headDim,
+                         thetaBase: ropeTheta, scaling: ropeScaling,
+                         on: cmd, into: qOut)
+            let kRow = k.slicedRows(start: i, count: 1).reshaped(to: [nKVHeads * headDim])
+            let kOut = kRot.slicedRows(start: i, count: 1).reshaped(to: [nKVHeads * headDim])
+            _ = Ops.rope(kRow, position: position + i, headDim: headDim,
+                         thetaBase: ropeTheta, scaling: ropeScaling,
+                         on: cmd, into: kOut)
+            // Append this token's rotated K + raw V to the cache.
+            cache.appendOnGPU(
+                kFlat: kOut.reshaped(to: [nKVHeads, headDim]),
+                vFlat: v.slicedRows(start: i, count: 1).reshaped(to: [nKVHeads, headDim]),
+                on: cmd
+            )
+        }
+
+        // SDPA — ONE dispatch over the chunk. Causal masking means
+        // query row r attends [0, position + r + 1).
+        let qForSdpa = qRot.reshaped(to: [nRows, nHeads, headDim])
+        let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
+        let attnOut = Ops.sdpaMulti(
+            q: qForSdpa, k: cacheK, v: cacheV,
+            nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
+            baseKV: position, nQuery: nRows, kvStride: cache.maxSeq,
+            causal: true, scale: scale, on: cmd
+        )
+
+        let attnFlat = attnOut.reshaped(to: [nRows, nHeads * headDim])
+        let oOut = oProj.callMany(attnFlat, t: nRows, on: cmd, device: device)
+        let postAttn = Ops.add(
+            h.reshaped(to: [nRows * hidden]),
+            oOut.reshaped(to: [nRows * hidden]),
+            on: cmd
+        ).reshaped(to: [nRows, hidden])
+
+        // ── MLP — SwiGLU, batched ───────────────────────────────────────
+        let mlpNorm = Ops.rmsNormRows(
+            postAttn.reshaped(to: [nRows * hidden]),
+            weight: postAttnNorm.weight, eps: postAttnNorm.eps,
+            nRows: nRows, rowSize: hidden, on: cmd
+        ).reshaped(to: [nRows, hidden])
+        let gate = gateProj.callMany(mlpNorm, t: nRows, on: cmd, device: device)
+        let up = upProj.callMany(mlpNorm, t: nRows, on: cmd, device: device)
+        let siluGate = Ops.silu(gate, on: cmd)
+        let mlpInner = Ops.mul(siluGate, up, on: cmd)
+        let mlpOut = downProj.callMany(mlpInner, t: nRows, on: cmd, device: device)
+
+        return Ops.add(
+            postAttn.reshaped(to: [nRows * hidden]),
+            mlpOut.reshaped(to: [nRows * hidden]),
+            on: cmd
+        ).reshaped(to: [nRows, hidden])
+    }
 }
 
 // ─── Whole model ─────────────────────────────────────────────────────
@@ -495,6 +600,63 @@ public final class LlamaModel: LanguageModel {
     // `LanguageModel`'s default extension — they compose
     // `forward(...on cmd:)` above with the appropriate output kernel on
     // the same command buffer. No family-specific override needed.
+
+    /// Chunked multi-token forward — Phase 6.6 prefill fast path.
+    /// Embeds `tokenIds.count` tokens, runs the layer stack with
+    /// `LlamaLayer.forwardMulti` (one `Ops.sdpaMulti(causal: true)`
+    /// per layer + batched projections), and returns the
+    /// **tail-position logits only** — the contract `Generate.swift`
+    /// consumes (only the final position is sampled).
+    ///
+    /// **Fallback.** AURA caches use a π-rotated K/V layout that the
+    /// chunked path doesn't implement; if any layer's cache is
+    /// `AURAQuantizedKVCache`, we fall back to the protocol-default
+    /// per-token loop (still on one cmd, just one SDPA dispatch per
+    /// token). Affine-quantized + raw KV caches take the fast path.
+    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
+                             caches: [any LayerCacheProtocol],
+                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(!tokenIds.isEmpty,
+                     "LlamaModel.forwardMulti: tokenIds must be non-empty")
+
+        // AURA fallback — see doc comment.
+        let hasAura = caches.contains { $0 is AURAQuantizedKVCache }
+        if hasAura {
+            var logits: Tensor!
+            for (i, tok) in tokenIds.enumerated() {
+                logits = forward(tokenId: tok, position: position + i,
+                                 caches: caches, on: cmd, device: device)
+            }
+            return logits
+        }
+
+        let n = tokenIds.count
+
+        // Embedding — single gather for all N tokens, returns [N, hidden].
+        let idsBuf = device.makeBuffer(length: n * 4)
+        idsBuf.contents().withMemoryRebound(to: UInt32.self, capacity: n) { p in
+            for (i, t) in tokenIds.enumerated() { p[i] = UInt32(t) }
+        }
+        let idsTensor = Tensor(buffer: idsBuf, offset: 0, shape: [n], dtype: .u32)
+        var h = embedTokens(idsTensor, on: cmd)
+        precondition(h.shape == [n, hidden],
+                     "LlamaModel.forwardMulti: embedding shape \(h.shape) ≠ [n, hidden]")
+
+        // Layers — each runs its chunked forward over [N, hidden].
+        for (i, layer) in layers.enumerated() {
+            h = layer.forwardMulti(
+                h, startingAt: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                cmd: cmd, device: device
+            )
+        }
+
+        // Final norm + LM head on the LAST row only — we only need the
+        // tail logits (only the final position is sampled).
+        let tail = h.slicedRows(start: n - 1, count: 1).reshaped(to: [hidden])
+        let normed = finalNorm(tail, on: cmd)
+        return lmHead(normed, on: cmd)
+    }
 
     /// Embedding-input forward — the VLM splice path. Identical to
     /// `forward(tokenId:...)` minus the embedding gather: the `[hidden]`
