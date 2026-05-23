@@ -609,28 +609,53 @@ public final class MoELayer: Module, DecoderLayer {
             }
 
             if canBatchDown {
-                // Phase 1a: per-expert gate+up batched, collect (g, u) pairs.
+                // Phase 1a: ITER 31 — batch ALL 16 (gate+up) qmms
+                // across 8 experts in ONE encoder via
+                // dequantGemvInt4Many. All share input h. Saves 7
+                // encoder begin/end pairs per layer × 40 = 280/token
+                // vs ITER 25's per-expert batching.
                 var gs: [Tensor] = []
                 var us: [Tensor] = []
+                var gateUpWeights: [Tensor] = []
+                var gateUpScales: [Tensor] = []
+                var gateUpBiases: [Tensor] = []
+                var gateUpOuts: [Tensor] = []
+                var gateUpGroupSize: Int = 0
+                var allInt4 = true
                 for expertId in routing.indices {
-                    let g: Tensor, u: Tensor
                     if let qg = gateProj[expertId].inner as? QuantizedLinear,
                        let qu = upProj[expertId].inner as? QuantizedLinear,
                        qg.bits == 4 && qu.bits == 4 && qg.groupSize == qu.groupSize {
+                        if gateUpGroupSize == 0 { gateUpGroupSize = qg.groupSize }
+                        if qg.groupSize != gateUpGroupSize { allInt4 = false; break }
                         let outDim = qg.weight.shape[0]
-                        g = Tensor.empty(shape: [outDim], dtype: h.dtype)
-                        u = Tensor.empty(shape: [outDim], dtype: h.dtype)
-                        Ops.dequantGemvInt4Two(
-                            input: h,
-                            w0: qg.weight, s0: qg.scales, b0: qg.biases, out0: g,
-                            w1: qu.weight, s1: qu.scales, b1: qu.biases, out1: u,
-                            groupSize: qg.groupSize, on: work)
+                        let g = Tensor.empty(shape: [outDim], dtype: h.dtype)
+                        let u = Tensor.empty(shape: [outDim], dtype: h.dtype)
+                        gateUpWeights.append(qg.weight); gateUpScales.append(qg.scales); gateUpBiases.append(qg.biases)
+                        gateUpOuts.append(g)
+                        gateUpWeights.append(qu.weight); gateUpScales.append(qu.scales); gateUpBiases.append(qu.biases)
+                        gateUpOuts.append(u)
+                        gs.append(g)
+                        us.append(u)
                     } else {
-                        g = gateProj[expertId](h, on: work)
-                        u = upProj[expertId](h, on: work)
+                        allInt4 = false
+                        break
                     }
-                    gs.append(g)
-                    us.append(u)
+                }
+                if allInt4 {
+                    let hRepeated = Array(repeating: h, count: gateUpWeights.count)
+                    Ops.dequantGemvInt4Many(
+                        weights: gateUpWeights, scales: gateUpScales, biases: gateUpBiases,
+                        inputs: hRepeated, outputs: gateUpOuts,
+                        groupSize: gateUpGroupSize, on: work)
+                } else {
+                    gs.removeAll(); us.removeAll()
+                    for expertId in routing.indices {
+                        let g = gateProj[expertId](h, on: work)
+                        let u = upProj[expertId](h, on: work)
+                        gs.append(g)
+                        us.append(u)
+                    }
                 }
                 // Phase 1b (ITER 30): batched 8-expert swiglu in shared
                 // encoder. Saves 7 encoders/layer × 40 = 280/token.
