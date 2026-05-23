@@ -2062,6 +2062,9 @@ public final class Qwen35GDNLayer: Module, DecoderLayer {
     let mixer: Qwen35GDNMixer
     let ffn: Qwen35FFN
     let hidden: Int
+    /// ITER 41: cached residual-add outputs (postMix + final result).
+    private var postMixScratch: Tensor?
+    private var resultScratch: Tensor?
 
     public let commitsCommandBuffer: Bool = true
 
@@ -2102,10 +2105,16 @@ public final class Qwen35GDNLayer: Module, DecoderLayer {
         let mixerOut = mixer.forward(xNorm, cache: gc, cmd: cmd, device: device)
 
         let ffnCmd = mixer.fused ? cmd : device.makeCommandBuffer()
-        let postMix = Ops.add(h, mixerOut, on: ffnCmd)
+        if postMixScratch == nil || postMixScratch!.elementCount != h.elementCount
+            || postMixScratch!.dtype != h.dtype {
+            postMixScratch = Tensor.empty(shape: h.shape, dtype: h.dtype)
+            resultScratch = Tensor.empty(shape: h.shape, dtype: h.dtype)
+        }
+        let postMix = Ops.add(h, mixerOut, on: ffnCmd, into: postMixScratch)
         return qwen35ApplyFFN(ffn, postMix: postMix, postNorm: postNorm,
                               position: position, cmd: ffnCmd,
-                              commitCmd: true, device: device)
+                              commitCmd: true, device: device,
+                              resultScratch: resultScratch)
     }
 
     /// T-batched layer forward for batched prefill. Mirrors the attention
@@ -2173,6 +2182,9 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
     let mixer: Qwen35AttentionMixer
     let ffn: Qwen35FFN
     let hidden: Int
+    /// ITER 41: cached residual-add outputs.
+    private var postMixScratch: Tensor?
+    private var resultScratch: Tensor?
 
     public let commitsCommandBuffer: Bool
 
@@ -2208,7 +2220,12 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
         let xNorm = inputNorm(h, on: cmd)
         let mixerOut = mixer.forward(xNorm, position: position, cache: kv,
                                      cmd: cmd, device: device)
-        let postMix = Ops.add(h, mixerOut, on: cmd)
+        if postMixScratch == nil || postMixScratch!.elementCount != h.elementCount
+            || postMixScratch!.dtype != h.dtype {
+            postMixScratch = Tensor.empty(shape: h.shape, dtype: h.dtype)
+            resultScratch = Tensor.empty(shape: h.shape, dtype: h.dtype)
+        }
+        let postMix = Ops.add(h, mixerOut, on: cmd, into: postMixScratch)
 
         // ── Feed-forward half ─────────────────────────────────────────
         // `cmd` is the host model's `workCmd`; the model owns its commit
@@ -2216,7 +2233,8 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
         // for the dense path.
         return qwen35ApplyFFN(ffn, postMix: postMix, postNorm: postNorm,
                               position: position, cmd: cmd,
-                              commitCmd: false, device: device)
+                              commitCmd: false, device: device,
+                              resultScratch: resultScratch)
     }
 
     /// T-batched layer forward for batched prefill. `hFlat` is
@@ -2341,12 +2359,13 @@ private func qwen35ApplyFFNMany(_ ffn: Qwen35FFN, postMix: Tensor, t: Int,
 ///   locally-committed buffer so the returned tensor is resident.
 private func qwen35ApplyFFN(_ ffn: Qwen35FFN, postMix: Tensor, postNorm: RMSNorm,
                             position: Int, cmd: MTLCommandBuffer,
-                            commitCmd: Bool, device: Device) -> Tensor {
+                            commitCmd: Bool, device: Device,
+                            resultScratch: Tensor? = nil) -> Tensor {
     let ffnNorm = postNorm(postMix, on: cmd)
     switch ffn {
     case .dense(let mlp):
         let ffnOut = mlp.forward(ffnNorm, cmd: cmd)
-        let result = Ops.add(postMix, ffnOut, on: cmd)
+        let result = Ops.add(postMix, ffnOut, on: cmd, into: resultScratch)
         if commitCmd {
             // NOTE: commit without waitUntilCompleted. The returned
             // `result` tensor is on the in-flight cmd; the engine spins
@@ -2365,7 +2384,7 @@ private func qwen35ApplyFFN(_ ffn: Qwen35FFN, postMix: Tensor, postNorm: RMSNorm
         let ffnOut = moe.forward(ffnNorm, position: position,
                                  cmd: cmd, device: device)
         let addCmd = device.makeCommandBuffer()
-        let result = Ops.add(postMix, ffnOut, on: addCmd)
+        let result = Ops.add(postMix, ffnOut, on: addCmd, into: resultScratch)
         addCmd.commit()
         return result
     }
