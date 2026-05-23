@@ -4572,6 +4572,72 @@ public enum Ops {
         }
     }
 
+    /// ITER 58 (Bagel 2): batched per-expert indexed int4 dequant-GEMV on
+    /// ONE encoder. Same kernel as `dequantGemvInt4ExpertIndexed` but N
+    /// dispatches share one `makeComputeCommandEncoder() ... endEncoding()`,
+    /// matching the ITER 26 pattern. All N calls MUST share `in_dim` +
+    /// `out_dim` + `group_size` + dtype (i.e., same PSO + constexpr set).
+    ///
+    /// Saves N-1 encoder begin/end pairs. For ITER 56's GPU MoE router
+    /// path at Qwen3.6-A3B (topK=8), the gate+up phase = 16 calls on one
+    /// encoder, the down phase = 8 calls on a second encoder. Two
+    /// encoders/layer × 40 layers = 80, vs the 24·40=960 of the naive
+    /// per-call wrappers.
+    public static func dequantGemvInt4ExpertIndexedMany(
+        weightsStacked: [Tensor], scalesStacked: [Tensor], biasesStacked: [Tensor],
+        inputs: [Tensor], expertIndices: [Tensor], outputs: [Tensor],
+        groupSize: Int = 64,
+        on cmd: MTLCommandBuffer
+    ) {
+        let n = weightsStacked.count
+        precondition(scalesStacked.count == n && biasesStacked.count == n
+                      && inputs.count == n && expertIndices.count == n
+                      && outputs.count == n,
+                     "dequantGemvInt4ExpertIndexedMany: count mismatch")
+        guard n > 0 else { return }
+        let dtype = inputs[0].dtype
+        let psoName: String
+        switch dtype {
+        case .f32:  psoName = "dequant_gemv_int4_expert_indexed_f32"
+        case .f16:  psoName = "dequant_gemv_int4_expert_indexed_f16"
+        case .bf16: psoName = "dequant_gemv_int4_expert_indexed_bf16"
+        default: fatalError("dequantGemvInt4ExpertIndexedMany: unsupported dtype \(dtype)")
+        }
+        // INVARIANT: kernel pins tpg=32 (one simdgroup per row, Reduction
+        // mode). All N calls share constexprs (in_dim, out_dim, group_size).
+        let outDim = weightsStacked[0].shape[1]
+        let packedPerRow = weightsStacked[0].shape[2]
+        let inDim = packedPerRow * 8 // int4 → 8 vals/u32
+        var inDimV = UInt32(inDim)
+        var outDimV = UInt32(outDim)
+        var groupSizeV = UInt32(groupSize)
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        enc.setBytes(&inDimV, length: 4, index: 6)
+        enc.setBytes(&outDimV, length: 4, index: 7)
+        enc.setBytes(&groupSizeV, length: 4, index: 8)
+        let tg = MTLSize(width: 32, height: 1, depth: 1)
+        let grid = MTLSize(width: outDim, height: 1, depth: 1)
+        for i in 0..<n {
+            precondition(weightsStacked[i].shape[1] == outDim
+                          && weightsStacked[i].shape[2] == packedPerRow,
+                         "dequantGemvInt4ExpertIndexedMany: weight shape varies at \(i)")
+            precondition(inputs[i].dtype == dtype && outputs[i].dtype == dtype,
+                         "dequantGemvInt4ExpertIndexedMany: dtype varies at \(i)")
+            precondition(expertIndices[i].dtype == .u32 && expertIndices[i].elementCount == 1,
+                         "dequantGemvInt4ExpertIndexedMany: expertIndices[\(i)] must be [1] u32")
+            enc.setBuffer(weightsStacked[i].buffer, offset: weightsStacked[i].offset, index: 0)
+            enc.setBuffer(scalesStacked[i].buffer, offset: scalesStacked[i].offset, index: 1)
+            enc.setBuffer(biasesStacked[i].buffer, offset: biasesStacked[i].offset, index: 2)
+            enc.setBuffer(inputs[i].buffer, offset: inputs[i].offset, index: 3)
+            enc.setBuffer(expertIndices[i].buffer, offset: expertIndices[i].offset, index: 4)
+            enc.setBuffer(outputs[i].buffer, offset: outputs[i].offset, index: 5)
+            enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        }
+        enc.endEncoding()
+    }
+
     // ─── Indirect dequant GEMV ────────────────────────────────────────
     //
     // Variant of `dequantGemv` that takes its dispatch shape from a GPU

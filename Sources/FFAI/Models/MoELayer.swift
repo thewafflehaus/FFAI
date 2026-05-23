@@ -592,47 +592,66 @@ public final class MoELayer: Module, DecoderLayer {
                 normTopkProb: router.normTopKProb,
                 on: cmd)
 
-            // 8 × gate qmm + 8 × up qmm, each reading expert id from the
-            // router's GPU-resident indices buffer at `slot·4` offset.
+            // ITER 58 (Bagel 2): batched per-expert indexed qmms on ONE
+            // encoder per phase. Gate (8 calls) + up (8 calls) share
+            // in_dim/out_dim/group_size → one Many encoder. Down (8 calls)
+            // has different out_dim → second Many encoder.
+            // 2 encoders/layer × 40 layers = 80, vs the 24·40=960 of
+            // per-call wrappers. Same kernel + math, just amortised
+            // begin/end pairs.
+            var expertIdxScratches: [Tensor] = []
+            expertIdxScratches.reserveCapacity(router.topK)
             for slot in 0..<router.topK {
-                let expertIdx = Tensor(buffer: routerIndicesScratch!.buffer,
-                                       offset: routerIndicesScratch!.offset + slot * 4,
-                                       shape: [1], dtype: .u32)
-                Ops.dequantGemvInt4ExpertIndexed(
-                    weightsStacked: stacked.gateWeight,
-                    scalesStacked: stacked.gateScales,
-                    biasesStacked: stacked.gateBiases,
-                    input: h, expertIndex: expertIdx,
-                    groupSize: stacked.groupSize,
-                    on: cmd, into: expertGScratches[slot])
-                Ops.dequantGemvInt4ExpertIndexed(
-                    weightsStacked: stacked.upWeight,
-                    scalesStacked: stacked.upScales,
-                    biasesStacked: stacked.upBiases,
-                    input: h, expertIndex: expertIdx,
-                    groupSize: stacked.groupSize,
-                    on: cmd, into: expertUScratches[slot])
+                expertIdxScratches.append(Tensor(buffer: routerIndicesScratch!.buffer,
+                                                   offset: routerIndicesScratch!.offset + slot * 4,
+                                                   shape: [1], dtype: .u32))
             }
 
-            // Batched 8-slot SwiGLU on shared encoder (ITER 39 pattern).
+            // Phase 1a: 16 calls (8 gate + 8 up) on one encoder.
+            var ws: [Tensor] = [], ss: [Tensor] = [], bs: [Tensor] = []
+            var ins: [Tensor] = [], idxs: [Tensor] = [], outs0: [Tensor] = []
+            ws.reserveCapacity(router.topK * 2)
+            ss.reserveCapacity(router.topK * 2)
+            bs.reserveCapacity(router.topK * 2)
+            ins.reserveCapacity(router.topK * 2)
+            idxs.reserveCapacity(router.topK * 2)
+            outs0.reserveCapacity(router.topK * 2)
+            for slot in 0..<router.topK {
+                ws.append(stacked.gateWeight); ss.append(stacked.gateScales); bs.append(stacked.gateBiases)
+                ins.append(h); idxs.append(expertIdxScratches[slot]); outs0.append(expertGScratches[slot])
+                ws.append(stacked.upWeight); ss.append(stacked.upScales); bs.append(stacked.upBiases)
+                ins.append(h); idxs.append(expertIdxScratches[slot]); outs0.append(expertUScratches[slot])
+            }
+            Ops.dequantGemvInt4ExpertIndexedMany(
+                weightsStacked: ws, scalesStacked: ss, biasesStacked: bs,
+                inputs: ins, expertIndices: idxs, outputs: outs0,
+                groupSize: stacked.groupSize, on: cmd)
+
+            // Phase 1b: batched 8-slot SwiGLU on shared encoder.
             let gs = Array(expertGScratches.prefix(router.topK))
             let us = Array(expertUScratches.prefix(router.topK))
             let inners = Array(expertInnerScratches.prefix(router.topK))
             Ops.swigluMany(gates: gs, ups: us, outs: inners, on: cmd)
 
-            // 8 × down qmm, same indexed-expert pattern as gate/up.
+            // Phase 2: 8 down calls on second encoder.
+            var dws: [Tensor] = [], dss: [Tensor] = [], dbs: [Tensor] = []
+            var dins: [Tensor] = [], didxs: [Tensor] = [], douts: [Tensor] = []
+            dws.reserveCapacity(router.topK)
+            dss.reserveCapacity(router.topK)
+            dbs.reserveCapacity(router.topK)
+            dins.reserveCapacity(router.topK)
+            didxs.reserveCapacity(router.topK)
+            douts.reserveCapacity(router.topK)
             for slot in 0..<router.topK {
-                let expertIdx = Tensor(buffer: routerIndicesScratch!.buffer,
-                                       offset: routerIndicesScratch!.offset + slot * 4,
-                                       shape: [1], dtype: .u32)
-                Ops.dequantGemvInt4ExpertIndexed(
-                    weightsStacked: stacked.downWeight,
-                    scalesStacked: stacked.downScales,
-                    biasesStacked: stacked.downBiases,
-                    input: expertInnerScratches[slot], expertIndex: expertIdx,
-                    groupSize: stacked.groupSize,
-                    on: cmd, into: expertOutScratches[slot])
+                dws.append(stacked.downWeight); dss.append(stacked.downScales); dbs.append(stacked.downBiases)
+                dins.append(expertInnerScratches[slot])
+                didxs.append(expertIdxScratches[slot])
+                douts.append(expertOutScratches[slot])
             }
+            Ops.dequantGemvInt4ExpertIndexedMany(
+                weightsStacked: dws, scalesStacked: dss, biasesStacked: dbs,
+                inputs: dins, expertIndices: didxs, outputs: douts,
+                groupSize: stacked.groupSize, on: cmd)
 
             // Phase 3 chain8 — fused 8-way weighted accumulator reading
             // per-slot scalar from router's GPU weights buffer. Writes
