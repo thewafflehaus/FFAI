@@ -67,6 +67,16 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
     public let maxSeq: Int
     public let dtype: DType
     public let scheme: AURAScheme
+    /// Which decode-time attention path this cache uses. Set at load
+    /// time from `LoadOptions.auraDecodePath`; default `.compressed`.
+    /// Today both paths take the dequant-mirror code in
+    /// `prepareForAttention(on:)` — the `.compressed` path's
+    /// `Ops.auraFlashP1` / `auraFlashPass2` wrappers haven't been
+    /// authored yet; until they ship, `.compressed` quietly falls back
+    /// to the same mirror dispatch as `.dequantMirror`. The flag is
+    /// wired now so callers can opt-in to the compressed path the
+    /// moment the wrappers land — no API change needed at that point.
+    public let decodePath: AURADecodePath
 
     public let kPackedWidth: Int
     public let vPackedWidth: Int
@@ -120,6 +130,7 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         kCodebook: Tensor, kBoundaries: Tensor,
         vCodebook: Tensor, vBoundaries: Tensor,
         sharedWorkingK: Tensor, sharedWorkingV: Tensor,
+        decodePath: AURADecodePath = .compressed,
         device: Device = .shared
     ) {
         self.init(nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
@@ -129,7 +140,8 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
                   kCodebook: kCodebook, kBoundaries: kBoundaries,
                   vCodebook: vCodebook, vBoundaries: vBoundaries,
                   sharedWorkingK: sharedWorkingK, sharedWorkingV: sharedWorkingV,
-                  eviction: .unbounded, device: device)
+                  eviction: .unbounded, decodePath: decodePath,
+                  device: device)
     }
 
     public init(
@@ -141,6 +153,7 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         vCodebook: Tensor, vBoundaries: Tensor,
         sharedWorkingK: Tensor, sharedWorkingV: Tensor,
         eviction: KVEviction,
+        decodePath: AURADecodePath = .compressed,
         device: Device = .shared
     ) {
         precondition(rotation.shape == [headDim, headDim],
@@ -172,6 +185,7 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         self.maxSeq = maxSeq
         self.dtype = dtype
         self.scheme = scheme
+        self.decodePath = decodePath
         self.rotation = rotation
         self.rotationT = rotationT
         self.rotationDtype = rotationDtype

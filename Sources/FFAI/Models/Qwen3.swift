@@ -206,7 +206,8 @@ public struct Qwen3Dense: Qwen3Variant {
             nKVHeads: nKVHeads, headDim: headDim, vocab: vocab,
             maxSeq: maxSeq, ropeTheta: theta, dtype: activationDtype,
             kvCacheKind: options.kvCache,
-            kvEviction: options.kvEviction
+            kvEviction: options.kvEviction,
+            auraDecodePath: options.auraDecodePath
         )
     }
 }
@@ -467,13 +468,18 @@ public final class Qwen3Model: LanguageModel {
     public let dtype: DType
     public let kvCacheKind: KVCacheKind
     public let kvEviction: KVEviction
+    /// AURA decode-time attention path. Forwarded into every
+    /// `AURAQuantizedKVCache` instantiated by `makeLayerCaches`. See
+    /// `AURADecodePath` for the path semantics.
+    public let auraDecodePath: AURADecodePath
 
     init(embedTokens: AnyEmbedding, layers: [Qwen3Layer],
          finalNorm: RMSNorm, lmHead: AnyLinear,
          hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
          vocab: Int, maxSeq: Int, ropeTheta: Float, dtype: DType,
          kvCacheKind: KVCacheKind = .raw,
-         kvEviction: KVEviction = .unbounded) {
+         kvEviction: KVEviction = .unbounded,
+         auraDecodePath: AURADecodePath = .compressed) {
         self.embedTokens = embedTokens
         self.layers = layers
         self.finalNorm = finalNorm
@@ -483,6 +489,7 @@ public final class Qwen3Model: LanguageModel {
         self.maxSeq = maxSeq; self.ropeTheta = ropeTheta; self.dtype = dtype
         self.kvCacheKind = kvCacheKind
         self.kvEviction = kvEviction
+        self.auraDecodePath = auraDecodePath
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -560,6 +567,7 @@ public final class Qwen3Model: LanguageModel {
                     vCodebook: vCodebook, vBoundaries: vBoundaries,
                     sharedWorkingK: sharedK, sharedWorkingV: sharedV,
                     eviction: eviction,
+                    decodePath: auraDecodePath,
                     device: device
                 )
             }

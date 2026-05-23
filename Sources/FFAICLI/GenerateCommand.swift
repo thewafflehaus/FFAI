@@ -70,6 +70,9 @@ struct GenerateCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Number of initial positions kept across FIFO eviction (attention sinks). Default 0. Only meaningful when --kv-window-size is set.")
     var kvWindowKeep: Int?
 
+    @Option(name: .long, help: "AURA decode-time attention path: \"compressed\" (default — attend directly on packed K/V codes via aura_flash_p1/pass2; realises AURA's ~4x memory savings) or \"dequant-mirror\" (Stage 1a — bulk-dequant the compressed cache into a full-precision mirror buffer per layer and use sdpaDecode; loses the memory savings but matches the Stage 1a code path for A/B benching). Ignored when --kv-cache isn't an aura scheme.")
+    var auraDecodePath: String?
+
     // ─── Nemotron-Labs-Diffusion tri-mode decoding ───────────────────
 
     @Option(name: .long, help: "Decoding mode: \"ar\" (autoregressive, default), \"diffusion\" (block-wise parallel), or \"self-spec\" (diffusion draft + AR verify). diffusion / self-spec require a Nemotron-Labs-Diffusion model.")
@@ -131,6 +134,18 @@ struct GenerateCommand: AsyncParsableCommand {
             loadOpts.kvEviction = .window(maxSize: size, keep: keep)
         } else if (kvWindowKeep ?? 0) != 0 {
             throw ValidationError("--kv-window-keep requires --kv-window-size to be set.")
+        }
+
+        // AURA decode-path A/B selection.
+        if let raw = auraDecodePath?.lowercased() {
+            switch raw {
+            case "compressed":
+                loadOpts.auraDecodePath = .compressed
+            case "dequant-mirror", "dequant_mirror", "mirror":
+                loadOpts.auraDecodePath = .dequantMirror
+            default:
+                throw ValidationError("Unknown --aura-decode-path \"\(auraDecodePath ?? "")\". Use \"compressed\" or \"dequant-mirror\".")
+            }
         }
         let m = try await Model.load(model, options: loadOpts)
         print("loaded in \(String(format: "%.2f", Date().timeIntervalSince(loadStart)))s")

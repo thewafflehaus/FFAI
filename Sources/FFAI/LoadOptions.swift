@@ -39,6 +39,32 @@ public enum DispatchMode: Sendable {
     // .icb             — Phase 5+
 }
 
+/// How an AURA-quantized KV cache services attention at decode time.
+/// Only relevant when `LoadOptions.kvCache == .auraQuantized(...)` —
+/// raw / affine caches ignore this setting.
+public enum AURADecodePath: Sendable, Equatable {
+    /// **Default.** Compressed-domain attention via the
+    /// `aura_flash_p1` + `aura_flash_pass2` kernel pair. Q is rotated,
+    /// scored directly against the packed K codes (no full-precision
+    /// dequant), then combined with the packed V codes — the kernel
+    /// dequantises per-tile on chip, never materialising a maxSeq-sized
+    /// f16 mirror buffer. Realises AURA's full memory savings (~4× at
+    /// `aura4v2`).
+    case compressed
+
+    /// Stage 1a behaviour. `prepareForAttention(on:)` dequantises the
+    /// full compressed K/V cache into per-layer shared working buffers
+    /// (`sharedWorkingK` / `sharedWorkingV`, sized
+    /// `[nKVHeads, maxSeq, headDim]`), and the standard
+    /// `Ops.sdpaDecode` reads those. Preserves AURA's quality but
+    /// **gives back the memory savings** — the mirror is the same size
+    /// as a raw fp16 cache. Kept as an opt-in path for A/B benching
+    /// (`compressed` vs `dequantMirror` speed at production shapes)
+    /// and for callers with the memory headroom who want
+    /// matrix-engine SDPA.
+    case dequantMirror
+}
+
 public struct LoadOptions: Sendable {
     /// Which capabilities to load. textIn + textOut implicitly always on.
     public var capabilities: Set<Capability>
@@ -73,6 +99,15 @@ public struct LoadOptions: Sendable {
     /// entire advertised window, or a smaller value to bound memory.
     public var maxContextLength: Int?
 
+    /// Selects the AURA decode path. Defaults to `.compressed` (Stage
+    /// 1b: attend on packed K/V codes directly via the `aura_flash_*`
+    /// kernel pair — full ~4× memory savings). Set to `.dequantMirror`
+    /// for the Stage 1a path that maintains a full-precision
+    /// `[nKVHeads, maxSeq, headDim]` mirror buffer and runs the
+    /// standard `Ops.sdpaDecode` against it — useful for A/B speed
+    /// benching. Has no effect when `kvCache != .auraQuantized(...)`.
+    public var auraDecodePath: AURADecodePath
+
     public init(
         capabilities: Set<Capability> = Capability.textOnly,
         kvCache: KVCacheKind = .raw,
@@ -82,7 +117,8 @@ public struct LoadOptions: Sendable {
         lazyCapabilities: Bool = true,
         revision: String = "main",
         cacheDirectory: URL? = nil,
-        maxContextLength: Int? = nil
+        maxContextLength: Int? = nil,
+        auraDecodePath: AURADecodePath = .compressed
     ) {
         self.capabilities = capabilities.union(Capability.textOnly)
         self.kvCache = kvCache
@@ -93,5 +129,6 @@ public struct LoadOptions: Sendable {
         self.revision = revision
         self.cacheDirectory = cacheDirectory
         self.maxContextLength = maxContextLength
+        self.auraDecodePath = auraDecodePath
     }
 }
