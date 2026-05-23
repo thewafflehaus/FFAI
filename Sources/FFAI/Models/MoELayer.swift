@@ -516,20 +516,43 @@ public final class MoELayer: Module, DecoderLayer {
             accumulator = batchedSwiGLU(h, stacked: stacked, routing: routing,
                                         on: work, device: device)
         } else {
+            // Pack the topK routing weights into a single [topK] scalar
+            // buffer once, then dispatch one `scalar_fma` per expert
+            // instead of the old `Tensor.filled([hidden]) + Ops.mul +
+            // Ops.add` chain. Saves a host alloc + 2 dispatches per
+            // expert; at Qwen3.6-A3B topK=8 × 40 layers that's 320
+            // allocations + 640 dispatches per decode token.
+            //
+            // First iteration: bootstrap the accumulator by allocating
+            // [hidden] zeros so scalar_fma can read it as base. The
+            // zero buffer itself is cheap (1 dispatch on a small tensor
+            // OR one Tensor.empty + .zero); we hold it until the loop
+            // is done. Subsequent iterations alias `accumulator` as
+            // both base and out (safe — the kernel reads at idx then
+            // writes at idx).
+            let scalarBuf = Self.packTopKScalars(routing.weights,
+                                                  dtype: h.dtype,
+                                                  device: device)
             for (slot, expertId) in routing.indices.enumerated() {
-                // Broadcast the CPU combine weight into a [hidden] constant
-                // tensor so the element-wise `Ops.mul` can scale the expert
-                // output — avoids a dedicated scalar-multiply kernel.
-                let weightTensor = Tensor.filled(routing.weights[slot],
-                                                 shape: [hidden], dtype: h.dtype,
-                                                 device: device)
                 let expertOut = swiGLU(h,
                                        gateProj: gateProj[expertId],
                                        upProj: upProj[expertId],
                                        downProj: downProj[expertId],
                                        on: work)
-                let scaled = Ops.mul(expertOut, weightTensor, on: work)
-                accumulator = accumulator.map { Ops.add($0, scaled, on: work) } ?? scaled
+                let scalarT = Tensor(buffer: scalarBuf,
+                                     offset: slot * h.dtype.byteSize,
+                                     shape: [1], dtype: h.dtype)
+                if let acc = accumulator {
+                    Ops.scalarFMA(scalar: scalarT, value: expertOut, base: acc,
+                                  into: acc, on: work)
+                } else {
+                    let acc = Tensor.empty(shape: [hidden], dtype: h.dtype,
+                                            device: device)
+                    acc.zero()
+                    Ops.scalarFMA(scalar: scalarT, value: expertOut, base: acc,
+                                  into: acc, on: work)
+                    accumulator = acc
+                }
             }
         }
 
@@ -1109,6 +1132,42 @@ public final class MoELayer: Module, DecoderLayer {
     /// values in the activation dtype instead of u32-packed int8s).
     /// Supports 8-bit only — the path that `QuantizedLinear.callMany`
     /// falls into a T-loop for.
+    /// Pack a small Swift `[Float]` of length topK (typically 8) into a
+    /// fresh MTLBuffer of the target dtype. Caller indexes into it via
+    /// `slot * dtype.byteSize` to read individual scalars from the
+    /// per-expert FMA dispatches.
+    ///
+    /// Replaces the 8 × `Tensor.filled([hidden])` allocations that the
+    /// per-expert weighted-sum loop used to do — one buffer holds all
+    /// 8 scalars, no per-iter host alloc.
+    private static func packTopKScalars(_ weights: [Float],
+                                          dtype: DType,
+                                          device: Device) -> MTLBuffer {
+        let topK = weights.count
+        let buf = device.makeBuffer(length: topK * dtype.byteSize)
+        switch dtype {
+        case .f32:
+            var arr = weights
+            memcpy(buf.contents(), &arr, topK * 4)
+        case .f16:
+            var arr = weights.map { Float16($0) }
+            memcpy(buf.contents(), &arr, topK * 2)
+        case .bf16:
+            // bf16 = high 16 bits of f32, with round-to-nearest bias.
+            var arr = [UInt16]()
+            arr.reserveCapacity(topK)
+            for v in weights {
+                let bits = v.bitPattern
+                let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
+                arr.append(UInt16(rounded >> 16))
+            }
+            memcpy(buf.contents(), &arr, topK * 2)
+        default:
+            fatalError("packTopKScalars: unsupported dtype \(dtype)")
+        }
+        return buf
+    }
+
     private static func dequantizeQuantizedLinear(
         _ q: QuantizedLinear, device: Device
     ) -> Tensor? {

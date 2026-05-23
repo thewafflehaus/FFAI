@@ -3615,6 +3615,62 @@ public enum Ops {
         }
     }
 
+    /// Scalar-broadcast FMA: `out[i] = base[i] + scalar[0] * value[i]`.
+    /// `scalar` is a 1-element buffer; the kernel broadcasts it across
+    /// the [n] output.
+    ///
+    /// Replaces FFAI's MoE per-expert weighted-add chain at decode T=1:
+    /// `Tensor.filled([hidden], weight)` (host alloc + memcpy) +
+    /// `Ops.mul(expertOut, broadcast)` + `Ops.add(accumulator, scaled)`
+    /// collapses to a single dispatch + a 4-byte scalar buffer write.
+    /// Saves 8 host allocations + 16 dispatches per MoE layer × 40
+    /// layers = 320 allocations + 640 dispatches per Qwen3.6-A3B decode
+    /// token.
+    ///
+    /// Aliasing: `out` may equal `base` — kernel reads both `value[idx]`
+    /// and `base[idx]` then writes `out[idx]` (one read of each at the
+    /// same offset, then one write — safe).
+    public static func scalarFMA(
+        scalar: Tensor, value: Tensor, base: Tensor,
+        into out: Tensor, on cmd: MTLCommandBuffer
+    ) {
+        precondition(scalar.dtype == value.dtype && value.dtype == base.dtype && base.dtype == out.dtype,
+                     "Ops.scalarFMA: all tensors must share dtype")
+        precondition(scalar.elementCount == 1,
+                     "Ops.scalarFMA: scalar must be [1] (got \(scalar.elementCount))")
+        precondition(value.elementCount == base.elementCount && base.elementCount == out.elementCount,
+                     "Ops.scalarFMA: value / base / out must have matching elementCount")
+        let n = value.elementCount
+        let tgWidth = min(n, 256)
+        let grid = MTLSize(width: n, height: 1, depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+        switch out.dtype {
+        case .f32:
+            MetalTileKernels.mt_scalar_fma_f32(
+                scalar: scalar.buffer, scalarOffset: scalar.offset,
+                value: value.buffer, valueOffset: value.offset,
+                base: base.buffer, baseOffset: base.offset,
+                out: out.buffer, outOffset: out.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_scalar_fma_f16(
+                scalar: scalar.buffer, scalarOffset: scalar.offset,
+                value: value.buffer, valueOffset: value.offset,
+                base: base.buffer, baseOffset: base.offset,
+                out: out.buffer, outOffset: out.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_scalar_fma_bf16(
+                scalar: scalar.buffer, scalarOffset: scalar.offset,
+                value: value.buffer, valueOffset: value.offset,
+                base: base.buffer, baseOffset: base.offset,
+                out: out.buffer, outOffset: out.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.scalarFMA: unsupported dtype \(out.dtype)")
+        }
+    }
+
     // ─── Indirect dequant GEMV ────────────────────────────────────────
     //
     // Variant of `dequantGemv` that takes its dispatch shape from a GPU
