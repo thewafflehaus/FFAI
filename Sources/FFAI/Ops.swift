@@ -3434,6 +3434,44 @@ public enum Ops {
     /// calls. Used when the third cast in the GDN inner loop is folded
     /// into a `siluCastToF32` upstream — only aRaw + bRaw need raw
     /// casts then.
+    /// Fused elementwise `out = a * sigmoid(b)`. Replaces the
+    /// `Ops.mul(a, Ops.sigmoid(b))` 2-dispatch chain with 1 fused
+    /// dispatch. Used by Qwen3 attention output gate.
+    public static func sigmoidMul(_ a: Tensor, _ b: Tensor,
+                                  on cmd: MTLCommandBuffer,
+                                  into out: Tensor? = nil) -> Tensor {
+        precondition(a.shape == b.shape, "Ops.sigmoidMul: shape mismatch")
+        precondition(a.dtype == b.dtype, "Ops.sigmoidMul: dtype mismatch")
+        let result = out ?? Tensor.empty(shape: a.shape, dtype: a.dtype)
+        let n = a.elementCount
+        let tgWidth = min(n, 256)
+        let grid = MTLSize(width: n, height: 1, depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+        switch a.dtype {
+        case .f32:
+            MetalTileKernels.mt_sigmoid_mul_f32(
+                a: a.buffer, aOffset: a.offset,
+                b: b.buffer, bOffset: b.offset,
+                out: result.buffer, outOffset: result.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_sigmoid_mul_f16(
+                a: a.buffer, aOffset: a.offset,
+                b: b.buffer, bOffset: b.offset,
+                out: result.buffer, outOffset: result.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_sigmoid_mul_bf16(
+                a: a.buffer, aOffset: a.offset,
+                b: b.buffer, bOffset: b.offset,
+                out: result.buffer, outOffset: result.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.sigmoidMul: unsupported dtype \(a.dtype)")
+        }
+        return result
+    }
+
     public static func castToF32Two(
         _ a: Tensor, into outA: Tensor,
         _ b: Tensor, into outB: Tensor,

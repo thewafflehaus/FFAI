@@ -1705,9 +1705,11 @@ public final class Qwen35AttentionMixer: Module {
             scale: scale, on: cmd)
 
         // Gated output: attnOut * sigmoid(gate), then o_proj.
+        // ITER 11: fused sigmoid+mul via mt_sigmoid_mul saves 1 encoder
+        // per attn layer × 10 attn layers = ~170 µs/decode token.
         var attnFlat = attnOut.reshaped(to: [nHeads * headDim])
         if let gate {
-            attnFlat = Ops.mul(attnFlat, Ops.sigmoid(gate, on: cmd), on: cmd)
+            attnFlat = Ops.sigmoidMul(attnFlat, gate, on: cmd)
         }
         return oProj(attnFlat, on: cmd)
     }
