@@ -473,6 +473,53 @@ public enum Ops {
     ///     any width at a fixed TPG of 1024 (large-hidden models such
     ///     as Gemma 4 31B, hidden 5376).
     /// One threadgroup per row in both cases.
+    /// Batched int4 dequantGemv on THREE projections sharing one input.
+    /// Used by Qwen3.5/3.6 attention mixer for the q/k/v projection
+    /// triplet. Saves 2 encoder begin/end pairs per attn layer × 10 =
+    /// ~340 µs / decode token.
+    public static func dequantGemvInt4Three(
+        input: Tensor,
+        w0: Tensor, s0: Tensor, b0: Tensor, out0: Tensor,
+        w1: Tensor, s1: Tensor, b1: Tensor, out1: Tensor,
+        w2: Tensor, s2: Tensor, b2: Tensor, out2: Tensor,
+        groupSize: Int = 64,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(input.dtype == out0.dtype, "dequantGemvInt4Three: dtype mismatch")
+        let psoName: String
+        switch input.dtype {
+        case .f32:  psoName = "dequant_gemv_int4_f32"
+        case .f16:  psoName = "dequant_gemv_int4_f16"
+        case .bf16: psoName = "dequant_gemv_int4_bf16"
+        default: fatalError("dequantGemvInt4Three: unsupported dtype \(input.dtype)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        enc.setBuffer(input.buffer, offset: input.offset, index: 3)
+        let packedPerRow = w0.shape[1]
+        let inDim = packedPerRow * 32 / 4
+        var inDimV = UInt32(inDim), groupSizeV = UInt32(groupSize)
+        enc.setBytes(&inDimV, length: 4, index: 5)
+        enc.setBytes(&groupSizeV, length: 4, index: 6)
+        let tgWidth = 256
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+        @inline(__always)
+        func dispatch(_ w: Tensor, _ s: Tensor, _ b: Tensor, _ out: Tensor) {
+            enc.setBuffer(w.buffer, offset: w.offset, index: 0)
+            enc.setBuffer(s.buffer, offset: s.offset, index: 1)
+            enc.setBuffer(b.buffer, offset: b.offset, index: 2)
+            enc.setBuffer(out.buffer, offset: out.offset, index: 4)
+            let outDim = w.shape[0]
+            let grid = MTLSize(width: outDim * tgWidth, height: 1, depth: 1)
+            enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        }
+        dispatch(w0, s0, b0, out0)
+        dispatch(w1, s1, b1, out1)
+        dispatch(w2, s2, b2, out2)
+        enc.endEncoding()
+    }
+
     /// Batched int4 dequantGemv on FOUR projections sharing one input
     /// in ONE encoder. Used by the Qwen3.5/3.6 GDN mixer where the 4
     /// input projections (qkv, z, b, a) all read the same xNorm.

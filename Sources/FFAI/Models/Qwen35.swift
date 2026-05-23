@@ -1692,6 +1692,18 @@ public final class Qwen35AttentionMixer: Module {
     /// fresh MTLBuffer per attn layer per decode token.
     let sliceFirstIdx: Tensor?   // [nHeads] u32 — 0, 2, 4, ...
     let sliceSecondIdx: Tensor?  // [nHeads] u32 — 1, 3, 5, ...
+    /// ITER 24: cached QKV-projection batched fast path. When all 3
+    /// projections (q, k, v) are QuantizedLinear int4 with same
+    /// groupSize, the mixer routes through `Ops.dequantGemvInt4Three`
+    /// — 3 qmms in one encoder. Saves 2 encoder begin/end pairs per
+    /// attn layer × 10 = ~340 µs/decode token.
+    private var batchedQKV: (qW: Tensor, qS: Tensor, qB: Tensor,
+                              kW: Tensor, kS: Tensor, kB: Tensor,
+                              vW: Tensor, vS: Tensor, vB: Tensor,
+                              groupSize: Int)?
+    private var qOutScratch: Tensor?
+    private var kOutScratch: Tensor?
+    private var vOutScratch: Tensor?
 
     init(qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
          qNorm: RMSNorm, kNorm: RMSNorm,
@@ -1721,6 +1733,17 @@ public final class Qwen35AttentionMixer: Module {
             self.sliceFirstIdx = nil
             self.sliceSecondIdx = nil
         }
+        // ITER 24: detect batched qkv-proj fast path.
+        if let qQL = qProj.inner as? QuantizedLinear,
+           let kQL = kProj.inner as? QuantizedLinear,
+           let vQL = vProj.inner as? QuantizedLinear,
+           qQL.bits == 4 && kQL.bits == 4 && vQL.bits == 4,
+           qQL.groupSize == kQL.groupSize, qQL.groupSize == vQL.groupSize {
+            self.batchedQKV = (qW: qQL.weight, qS: qQL.scales, qB: qQL.biases,
+                                kW: kQL.weight, kS: kQL.scales, kB: kQL.biases,
+                                vW: vQL.weight, vS: vQL.scales, vB: vQL.biases,
+                                groupSize: qQL.groupSize)
+        }
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -1742,7 +1765,39 @@ public final class Qwen35AttentionMixer: Module {
         // q_proj projects 2× heads when attn_output_gate is set: the
         // first `nHeads · headDim` elements are the queries, the second
         // half is the per-head sigmoid gate.
-        let qOut = qProj(xNorm, on: cmd)
+        // ITER 24: batch q+k+v projections into one encoder when all
+        // 3 are QuantizedLinear int4.
+        let qOut: Tensor
+        let kPre: Tensor
+        let vPre: Tensor
+        if let bq = batchedQKV {
+            let qDim = bq.qW.shape[0]
+            let kDim = bq.kW.shape[0]
+            let vDim = bq.vW.shape[0]
+            // Lazy-init scratches.
+            if qOutScratch == nil || qOutScratch!.elementCount != qDim {
+                qOutScratch = Tensor.empty(shape: [qDim], dtype: xNorm.dtype)
+            }
+            if kOutScratch == nil || kOutScratch!.elementCount != kDim {
+                kOutScratch = Tensor.empty(shape: [kDim], dtype: xNorm.dtype)
+            }
+            if vOutScratch == nil || vOutScratch!.elementCount != vDim {
+                vOutScratch = Tensor.empty(shape: [vDim], dtype: xNorm.dtype)
+            }
+            qOut = qOutScratch!
+            kPre = kOutScratch!
+            vPre = vOutScratch!
+            Ops.dequantGemvInt4Three(
+                input: xNorm,
+                w0: bq.qW, s0: bq.qS, b0: bq.qB, out0: qOut,
+                w1: bq.kW, s1: bq.kS, b1: bq.kB, out1: kPre,
+                w2: bq.vW, s2: bq.vS, b2: bq.vB, out2: vPre,
+                groupSize: bq.groupSize, on: cmd)
+        } else {
+            qOut = qProj(xNorm, on: cmd)
+            kPre = kProj(xNorm, on: cmd)
+            vPre = vProj(xNorm, on: cmd)
+        }
         let queries: Tensor
         let gate: Tensor?
         if attnOutputGate {
@@ -1759,8 +1814,11 @@ public final class Qwen35AttentionMixer: Module {
             queries = qOut
             gate = nil
         }
-        let k = kProj(xNorm, on: cmd)
-        let v = vProj(xNorm, on: cmd)
+        // ITER 24: k + v already produced by batched qkv path. The
+        // legacy fallback above sets kPre / vPre to fresh per-call
+        // outputs.
+        let k = kPre
+        let v = vPre
 
         // Per-head q_norm / k_norm (weighted RMSNorm over headDim).
         // ITER 12: shared encoder saves 1 begin/end pair per attn
