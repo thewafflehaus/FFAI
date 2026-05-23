@@ -73,7 +73,11 @@ public final class MetalTileLibrary: @unchecked Sendable {
         {
             return parsed
         }
-        return 16
+        // ITER 20: 64 is bench-verified optimal for Qwen3.6-A3B decode
+        // (decode runs 24-25 tps at 16, 42 tps at 64). Earlier conserv-
+        // ative default of 16 was a leftover from before the decode
+        // path got pipelined. Override via FFAI_MAX_COMMAND_BUFFERS.
+        return 64
     }()
 
     /// Process-wide singleton. Lazily initialized; throws on first access if
