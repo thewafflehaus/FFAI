@@ -400,6 +400,16 @@ public final class MoELayer: Module, DecoderLayer {
     ///   holding the 8 routing weights packed in the model dtype.
     private var accumulatorScratch: Tensor?
     private var topKScalarsBuf: MTLBuffer?
+    /// ITER 32 (post-OOM): per-expert g/u scratches cached at init.
+    /// Replaces the per-call `Tensor.empty([moeIntermediate])` in the
+    /// swiGLU helper that caused 640 fresh tensor allocations per
+    /// Qwen3.6-A3B decode token (8 experts × 40 layers × 2 = 640).
+    /// Each [moeIntermediate] bf16 = 2 KiB; 16 KiB per layer total.
+    /// Safe across decode tokens because the caller commits + waits
+    /// the layer's cmd before the next forward starts.
+    /// Indexed by slot (0..topK-1).
+    private var expertGScratches: [Tensor] = []
+    private var expertUScratches: [Tensor] = []
 
     /// - gate: hidden → nExperts router projection.
     /// - gateProj/upProj/downProj: `nExperts`-long arrays of per-expert
@@ -585,7 +595,7 @@ public final class MoELayer: Module, DecoderLayer {
             let acc = accumulatorScratch!
 
             for (slot, expertId) in routing.indices.enumerated() {
-                let expertOut = swiGLU(h,
+                let expertOut = swiGLU(h, slot: slot,
                                        gateProj: gateProj[expertId],
                                        upProj: upProj[expertId],
                                        downProj: downProj[expertId],
@@ -601,7 +611,10 @@ public final class MoELayer: Module, DecoderLayer {
 
         // ── 5. Optional always-on shared expert ──────────────────────
         if let sg = sharedGateProj, let su = sharedUpProj, let sd = sharedDownProj {
-            let sharedOut = swiGLU(h, gateProj: sg, upProj: su, downProj: sd, on: work)
+            // Shared expert uses slot = topK to avoid collision with
+            // per-expert scratches (e.g., slot 8 when topK = 8).
+            let sharedOut = swiGLU(h, slot: router.topK,
+                                   gateProj: sg, upProj: su, downProj: sd, on: work)
             accumulator = accumulator.map { Ops.add($0, sharedOut, on: work) } ?? sharedOut
         }
 
@@ -891,7 +904,8 @@ public final class MoELayer: Module, DecoderLayer {
                 let hRow = Tensor(buffer: hFlat.buffer,
                                   offset: hFlat.offset + r * hidden * dtBytes,
                                   shape: [hidden], dtype: dt)
-                let sharedOut = swiGLU(hRow, gateProj: sg, upProj: su, downProj: sd,
+                let sharedOut = swiGLU(hRow, slot: router.topK,
+                                       gateProj: sg, upProj: su, downProj: sd,
                                        on: work)
                 let outRow = Tensor(buffer: outFlat.buffer,
                                     offset: outFlat.offset + r * hidden * dtBytes,
@@ -1079,20 +1093,28 @@ public final class MoELayer: Module, DecoderLayer {
     /// the per-expert intermediate is [moeIntermediate=768] so the win
     /// is small per dispatch, but the loop runs 8 experts × ≤40 MoE
     /// layers per token, so the per-token saving compounds.
-    private func swiGLU(_ x: Tensor,
+    private func swiGLU(_ x: Tensor, slot: Int,
                         gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
                         on cmd: MTLCommandBuffer) -> Tensor {
-        // ITER 25: when gate+up are both int4 QuantizedLinear with same
-        // groupSize, batch them via shared encoder. Saves 1 encoder
-        // begin/end per expert × 8 experts × 40 layers = ~5.4 ms/token.
+        // ITER 25 + ITER 32 (post-OOM): when gate+up are both int4
+        // QuantizedLinear with same groupSize, batch them via shared
+        // encoder using PRE-CACHED scratches. Allocating fresh Tensors
+        // here per call caused OOM under the bench's pipelined
+        // cmd buffer fan-out (cmd_buf=64 in flight × 8 experts × 40
+        // layers worth of Tensor.empty unable to retire fast enough).
         let g: Tensor
         let u: Tensor
         if let qGate = gateProj.inner as? QuantizedLinear,
            let qUp = upProj.inner as? QuantizedLinear,
            qGate.bits == 4 && qUp.bits == 4 && qGate.groupSize == qUp.groupSize {
+            // Ensure scratch pool sized for `slot`.
             let outDim = qGate.weight.shape[0]
-            g = Tensor.empty(shape: [outDim], dtype: x.dtype)
-            u = Tensor.empty(shape: [outDim], dtype: x.dtype)
+            while expertGScratches.count <= slot {
+                expertGScratches.append(Tensor.empty(shape: [outDim], dtype: x.dtype))
+                expertUScratches.append(Tensor.empty(shape: [outDim], dtype: x.dtype))
+            }
+            g = expertGScratches[slot]
+            u = expertUScratches[slot]
             Ops.dequantGemvInt4Two(
                 input: x,
                 w0: qGate.weight, s0: qGate.scales, b0: qGate.biases, out0: g,
