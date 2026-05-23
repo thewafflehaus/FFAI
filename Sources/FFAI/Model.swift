@@ -43,6 +43,7 @@ public enum VisionLanguageArchitectures {
         "Qwen2VLForConditionalGeneration",
         "Qwen3VLForConditionalGeneration",
         "Qwen3VLMoeForConditionalGeneration",
+        "SmolVLMForConditionalGeneration",
         // Note: `Gemma4ForConditionalGeneration` is intentionally NOT
         // listed — it is shared by text-only Gemma 4 checkpoints. The
         // `vision_config`-presence check below distinguishes the VL
@@ -256,6 +257,30 @@ public enum ModelRegistry {
             if let arch = config.architecture, Qwen35.architectures.contains(arch) {
                 return try loadQwen35(config: config, weights: weights,
                                       options: options, device: device)
+            }
+            // SmolVLM2 — handles image+text internally via the
+            // `prefillWithImage` API on its `LanguageModel` engine
+            // (a Llama backbone wrapped with a CPU SigLIP vision tower
+            // + pixel-shuffle connector). Does NOT use the VLModel
+            // splice; returns a plain `Loaded` whose `engine` is the
+            // composite `SmolVLM2Model` and exposes `.visionIn`.
+            if let arch = config.architecture, SmolVLM2.architectures.contains(arch) {
+                let engine = try SmolVLM2Dense.loadModel(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: engine,
+                    defaultGenerationParameters: SmolVLM2Dense.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]))
+            }
+            if let mt = config.modelType, SmolVLM2.modelTypes.contains(mt) {
+                let engine = try SmolVLM2Dense.loadModel(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: engine,
+                    defaultGenerationParameters: SmolVLM2Dense.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]))
             }
             // Other VL families — the FFAI vision foundation
             // (VisionEncoder, ImagePreprocessing, VLModel splice,
@@ -678,6 +703,9 @@ public final class Model: @unchecked Sendable {
 
     /// Convenience accessor for the Mamba 2 engine.
     public var mamba2: Mamba2Model? { engine as? Mamba2Model }
+
+    /// Convenience accessor for the SmolVLM2 engine.
+    public var smolVLM2: SmolVLM2Model? { engine as? SmolVLM2Model }
 
     /// Convenience accessor for the FalconH1 hybrid engine.
     public var falconH1: FalconH1Model? { engine as? FalconH1Model }
