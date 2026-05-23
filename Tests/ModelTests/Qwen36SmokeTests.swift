@@ -133,6 +133,26 @@ struct Qwen36SmokeTests {
         print("\(label): RESULT prefill_ms=\(String(format: "%.0f", prefillMs)) decode_tps=\(String(format: "%.2f", decodeTps)) steady_tps=\(String(format: "%.2f", steadyTps)) prefill_tps=\(String(format: "%.1f", prefillTps))")
     }
 
+    @Test("Qwen3.6-35B-A3B forwardMany bench — T=2 spec-decode ceiling probe")
+    func forwardManyBench2() async throws {
+        try await runForwardManyBench(targetT: 2)
+    }
+
+    @Test("Qwen3.6-35B-A3B forwardMany bench — T=4 spec-decode ceiling probe")
+    func forwardManyBench4() async throws {
+        try await runForwardManyBench(targetT: 4)
+    }
+
+    @Test("Qwen3.6-35B-A3B forwardMany bench — T=8 spec-decode ceiling probe")
+    func forwardManyBench8() async throws {
+        try await runForwardManyBench(targetT: 8)
+    }
+
+    @Test("Qwen3.6-35B-A3B forwardMany bench — T=16 spec-decode ceiling probe")
+    func forwardManyBench16() async throws {
+        try await runForwardManyBench(targetT: 16)
+    }
+
     @Test("Qwen3.6-35B-A3B forwardMany bench — T=32 prefill, batched vs per-token")
     func forwardManyBench() async throws {
         try await runForwardManyBench(targetT: 32)
