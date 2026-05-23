@@ -410,6 +410,8 @@ public final class MoELayer: Module, DecoderLayer {
     /// Indexed by slot (0..topK-1).
     private var expertGScratches: [Tensor] = []
     private var expertUScratches: [Tensor] = []
+    /// ITER 36: cache swiglu inner output per expert slot.
+    private var expertInnerScratches: [Tensor] = []
 
     /// - gate: hidden → nExperts router projection.
     /// - gateProj/upProj/downProj: `nExperts`-long arrays of per-expert
@@ -1112,6 +1114,7 @@ public final class MoELayer: Module, DecoderLayer {
             while expertGScratches.count <= slot {
                 expertGScratches.append(Tensor.empty(shape: [outDim], dtype: x.dtype))
                 expertUScratches.append(Tensor.empty(shape: [outDim], dtype: x.dtype))
+                expertInnerScratches.append(Tensor.empty(shape: [outDim], dtype: x.dtype))
             }
             g = expertGScratches[slot]
             u = expertUScratches[slot]
@@ -1120,6 +1123,8 @@ public final class MoELayer: Module, DecoderLayer {
                 w0: qGate.weight, s0: qGate.scales, b0: qGate.biases, out0: g,
                 w1: qUp.weight,   s1: qUp.scales,   b1: qUp.biases,   out1: u,
                 groupSize: qGate.groupSize, on: cmd)
+            _ = Ops.swiglu(gate: g, up: u, on: cmd, into: expertInnerScratches[slot])
+            return downProj(expertInnerScratches[slot], on: cmd)
         } else {
             g = gateProj(x, on: cmd)
             u = upProj(x, on: cmd)
