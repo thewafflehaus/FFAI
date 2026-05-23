@@ -630,27 +630,73 @@ public final class MoELayer: Module, DecoderLayer {
             }
 
             if canBatchDown {
-                // Phase 1a: per-expert gate+up batched (ITER 25), each
-                // expert is one shared-encoder dispatch of 2 qmms.
+                // Phase 1a: all 16 gate+up qmms (8 experts × 2 projs)
+                // on ONE shared encoder (ITER 46/Bagel2). Replaces 8
+                // dequantGemvInt4Two calls (8 encoders) with one
+                // dequantGemvInt4Many (1 encoder). Saves 7 encoder
+                // begin/end pairs per layer × 40 = 280/decode token.
+                // Falls back to per-expert Two if groupSize differs
+                // (rare — Qwen3.6 all int4 weights share groupSize=64).
+                var gateUpCanBatch = true
+                var gateUpGS = 0
+                for expertId in routing.indices {
+                    guard let qg = gateProj[expertId].inner as? QuantizedLinear,
+                          let qu = upProj[expertId].inner as? QuantizedLinear,
+                          qg.bits == 4, qu.bits == 4 else {
+                        gateUpCanBatch = false; break
+                    }
+                    if gateUpGS == 0 { gateUpGS = qg.groupSize }
+                    if qg.groupSize != gateUpGS || qu.groupSize != gateUpGS {
+                        gateUpCanBatch = false; break
+                    }
+                }
+                // Allocate scratches up to slot count (unconditional —
+                // both batched + fallback paths read them).
                 for (slot, expertId) in routing.indices.enumerated() {
-                    let qg = gateProj[expertId].inner as! QuantizedLinear
-                    let qu = upProj[expertId].inner as! QuantizedLinear
-                    while expertGScratches.count <= slot {
+                    if let qg = gateProj[expertId].inner as? QuantizedLinear {
                         let outDim = qg.weight.shape[0]
-                        expertGScratches.append(Tensor.empty(shape: [outDim], dtype: h.dtype))
-                        expertUScratches.append(Tensor.empty(shape: [outDim], dtype: h.dtype))
-                        expertInnerScratches.append(Tensor.empty(shape: [outDim], dtype: h.dtype))
+                        while expertGScratches.count <= slot {
+                            expertGScratches.append(Tensor.empty(shape: [outDim], dtype: h.dtype))
+                            expertUScratches.append(Tensor.empty(shape: [outDim], dtype: h.dtype))
+                            expertInnerScratches.append(Tensor.empty(shape: [outDim], dtype: h.dtype))
+                        }
                     }
                     while expertOutScratches.count <= slot {
                         expertOutScratches.append(Tensor.empty(shape: [hidden], dtype: h.dtype))
                     }
-                    Ops.dequantGemvInt4Two(
-                        input: h,
-                        w0: qg.weight, s0: qg.scales, b0: qg.biases,
-                        out0: expertGScratches[slot],
-                        w1: qu.weight, s1: qu.scales, b1: qu.biases,
-                        out1: expertUScratches[slot],
-                        groupSize: qg.groupSize, on: work)
+                }
+                if gateUpCanBatch {
+                    var ws: [Tensor] = [], ss: [Tensor] = [], bs: [Tensor] = []
+                    var ins: [Tensor] = [], outs: [Tensor] = []
+                    ws.reserveCapacity(routing.indices.count * 2)
+                    ss.reserveCapacity(routing.indices.count * 2)
+                    bs.reserveCapacity(routing.indices.count * 2)
+                    ins.reserveCapacity(routing.indices.count * 2)
+                    outs.reserveCapacity(routing.indices.count * 2)
+                    for (slot, expertId) in routing.indices.enumerated() {
+                        let qg = gateProj[expertId].inner as! QuantizedLinear
+                        let qu = upProj[expertId].inner as! QuantizedLinear
+                        ws.append(qg.weight); ss.append(qg.scales); bs.append(qg.biases)
+                        ins.append(h); outs.append(expertGScratches[slot])
+                        ws.append(qu.weight); ss.append(qu.scales); bs.append(qu.biases)
+                        ins.append(h); outs.append(expertUScratches[slot])
+                    }
+                    Ops.dequantGemvInt4Many(
+                        weights: ws, scales: ss, biases: bs,
+                        inputs: ins, outputs: outs,
+                        groupSize: gateUpGS, on: work)
+                } else {
+                    for (slot, expertId) in routing.indices.enumerated() {
+                        let qg = gateProj[expertId].inner as! QuantizedLinear
+                        let qu = upProj[expertId].inner as! QuantizedLinear
+                        Ops.dequantGemvInt4Two(
+                            input: h,
+                            w0: qg.weight, s0: qg.scales, b0: qg.biases,
+                            out0: expertGScratches[slot],
+                            w1: qu.weight, s1: qu.scales, b1: qu.biases,
+                            out1: expertUScratches[slot],
+                            groupSize: qg.groupSize, on: work)
+                    }
                 }
                 // Phase 1b (ITER 39): batched 8-expert swiglu in ONE
                 // encoder using cached scratches. Saves 7 begin/end
