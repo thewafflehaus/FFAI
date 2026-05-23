@@ -21,6 +21,7 @@ public enum LoadedAudioModel: @unchecked Sendable {
     case llamaTTS(LlamaTTSModel)
     case marvis(MarvisModel)
     case qwen3TTS(Qwen3TTSModel)
+    case echoTTS(EchoTTSModel)
 
     /// The capabilities this model exposes — `audioIn` for STT / omni,
     /// `audioOut` for TTS.
@@ -33,6 +34,7 @@ public enum LoadedAudioModel: @unchecked Sendable {
         case .llamaTTS: return Capability.textToSpeech
         case .marvis: return Capability.textToSpeech
         case .qwen3TTS: return Capability.textToSpeech
+        case .echoTTS: return Capability.textToSpeech
         }
     }
 }
@@ -51,6 +53,7 @@ public enum AudioModelRegistry {
             || LlamaTTSModel.handles(config)
             || MarvisModel.handles(config)
             || Qwen3TTSModel.handles(config)
+            || EchoTTSModel.handles(config)
     }
 
     /// The capability set a checkpoint at `directory` would expose,
@@ -75,6 +78,7 @@ public enum AudioModelRegistry {
         if KokoroModel.handles(config) { return Capability.textToSpeech }
         if MarvisModel.handles(config) { return Capability.textToSpeech }
         if LlamaTTSModel.handles(config) { return Capability.textToSpeech }
+        if EchoTTSModel.handles(config) { return Capability.textToSpeech }
         return nil
     }
 
@@ -116,6 +120,10 @@ public enum AudioModelRegistry {
         if KokoroModel.handles(config) {
             return .kokoro(try KokoroModel.load(directory: directory,
                                                 device: device))
+        }
+        if EchoTTSModel.handles(config) {
+            return .echoTTS(try EchoTTSModel.load(directory: directory,
+                                                  device: device))
         }
         throw ModelError.unsupportedArchitecture(
             config.architecture ?? config.modelType ?? "<unknown audio model>")
