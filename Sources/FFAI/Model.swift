@@ -37,6 +37,7 @@ public enum ModelError: Error, CustomStringConvertible {
 public enum VisionLanguageArchitectures {
     public static let architectures: Set<String> = [
         "Gemma3ForConditionalGeneration",
+        "Lfm2VlForConditionalGeneration",
         "MiniCPMV4_6ForConditionalGeneration",
         "Qwen2_5_VLForConditionalGeneration",
         "Qwen2VLForConditionalGeneration",
@@ -121,6 +122,23 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: vlm.engine,
                     defaultGenerationParameters: Gemma3Dense.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    vlModel: vlm)
+            }
+            // LFM2-VL — SigLIP2 ViT + LiquidAI LFM2 conv+attention text
+            // backbone, joined by a pixel-unshuffle + MLP projector that
+            // collapses 256 patch tokens to 64 fused image tokens.
+            if config.architecture == "Lfm2VlForConditionalGeneration" {
+                let vlm = try LFM2VL.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                let lfm2DefaultParams = GenerationParameters(
+                    maxTokens: 256, prefillStepSize: 1024,
+                    temperature: 0.0, topP: 1.0, topK: 0,
+                    minP: 0.0, repetitionPenalty: 1.0)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: lfm2DefaultParams,
                     availableCapabilities: Capability.textOnly.union([.visionIn]),
                     vlModel: vlm)
             }
