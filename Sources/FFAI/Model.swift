@@ -37,6 +37,7 @@ public enum ModelError: Error, CustomStringConvertible {
 public enum VisionLanguageArchitectures {
     public static let architectures: Set<String> = [
         "Gemma3ForConditionalGeneration",
+        "MiniCPMV4_6ForConditionalGeneration",
         "Qwen2_5_VLForConditionalGeneration",
         "Qwen2VLForConditionalGeneration",
         "Qwen3VLForConditionalGeneration",
@@ -173,6 +174,23 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: vlm.engine,
                     defaultGenerationParameters: Gemma4Dense.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    vlModel: vlm)
+            }
+            // MiniCPM-V 4.6 — SigLIP2-400M encoder + `vit_merger` (window
+            // cross-attn merger injected after encoder layer 6 in the
+            // default 16× mode) + final `merger` (2×2 reduction + project
+            // to text hidden) + Qwen 3.5 text backbone, joined by the
+            // splice. v1 ships a fixed 448×448 single-tile input.
+            if config.architecture == "MiniCPMV4_6ForConditionalGeneration"
+                || config.modelType == "minicpmv4_6"
+            {
+                let vlm = try MiniCPMV4_6.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: Qwen35Hybrid.defaultGenerationParameters,
                     availableCapabilities: Capability.textOnly.union([.visionIn]),
                     vlModel: vlm)
             }

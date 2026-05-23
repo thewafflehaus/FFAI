@@ -313,6 +313,25 @@ public final class SafeTensorsBundle: @unchecked Sendable {
                                  index: remapped, keyTranslation: translation)
     }
 
+    /// A view onto this bundle with `prefix` *prepended* to every
+    /// lookup key. Composes with `prefixed(_:)` to do strip-then-add
+    /// prefix translations — e.g. a MiniCPM-V checkpoint stores text
+    /// weights under `model.language_model.X` (no inner `model.`), but
+    /// the Qwen3.5 loader reads `model.X`; chain
+    /// `weights.prefixed("model.language_model.").withAddedPrefix("model.")`
+    /// to materialize `model.X` keys against the underlying tensors.
+    public func withAddedPrefix(_ prefix: String) -> SafeTensorsBundle {
+        var remapped: [String: Int] = [:]
+        var translation: [String: String] = [:]
+        for (key, fileIndex) in index {
+            let added = prefix + key
+            remapped[added] = fileIndex
+            translation[added] = keyTranslation[key] ?? key
+        }
+        return SafeTensorsBundle(files: files, directory: directory,
+                                 index: remapped, keyTranslation: translation)
+    }
+
     public var allKeys: [String] { Array(index.keys).sorted() }
     public var has: (String) -> Bool { { [self] name in index[name] != nil } }
 
