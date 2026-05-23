@@ -37,6 +37,8 @@ public enum LoadedAudioModel: @unchecked Sendable {
     case styleTTS2(StyleTTS2Model)
     case graniteSpeech(GraniteSpeechModel)
     case deepFilterNet(DeepFilterNetModel)
+    case cohereTranscribe(CohereTranscribeModel)
+    case mossFormer2SE(MossFormer2SEModel)
 
     /// The capabilities this model exposes — `audioIn` for STT / omni,
     /// `audioOut` for TTS.
@@ -65,6 +67,8 @@ public enum LoadedAudioModel: @unchecked Sendable {
         case .styleTTS2: return Capability.textToSpeech
         case .graniteSpeech: return Capability.speechToText
         case .deepFilterNet: return Capability.speechToSpeech
+        case .cohereTranscribe: return Capability.speechToText
+        case .mossFormer2SE: return Capability.speechToSpeech
         }
     }
 }
@@ -99,6 +103,8 @@ public enum AudioModelRegistry {
             || StyleTTS2Model.handles(config)
             || GraniteSpeech.handles(config)
             || DeepFilterNetModel.handles(config)
+            || CohereTranscribeModel.handles(config)
+            || MossFormer2SEModel.handles(config)
     }
 
     /// The capability set a checkpoint at `directory` would expose,
@@ -139,6 +145,8 @@ public enum AudioModelRegistry {
         if StyleTTS2Model.handles(config) { return Capability.textToSpeech }
         if GraniteSpeech.handles(config) { return Capability.speechToText }
         if DeepFilterNetModel.handles(config) { return Capability.speechToSpeech }
+        if CohereTranscribeModel.handles(config) { return Capability.speechToText }
+        if MossFormer2SEModel.handles(config) { return Capability.speechToSpeech }
         return nil
     }
 
@@ -246,6 +254,14 @@ public enum AudioModelRegistry {
         if DeepFilterNetModel.handles(config) {
             return .deepFilterNet(try DeepFilterNetModel.load(
                 from: directory, device: device))
+        }
+        if CohereTranscribeModel.handles(config) {
+            return .cohereTranscribe(try await CohereTranscribeModel.load(
+                directory: directory, device: device))
+        }
+        if MossFormer2SEModel.handles(config) {
+            return .mossFormer2SE(try MossFormer2SEModel.load(
+                directory: directory, device: device))
         }
         throw ModelError.unsupportedArchitecture(
             config.architecture ?? config.modelType ?? "<unknown audio model>")
