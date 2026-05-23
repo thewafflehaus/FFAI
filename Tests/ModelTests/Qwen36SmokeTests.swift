@@ -153,8 +153,17 @@ struct Qwen36SmokeTests {
         try await runForwardManyBench(targetT: 2048, skipPerToken: true)
     }
 
+    @Test("Qwen3.6-35B-A3B forwardMany profile — T=2048 phase breakdown")
+    func forwardManyProfile2K() async throws {
+        try await runForwardManyProfile(targetT: 2048)
+    }
+
     @Test("Qwen3.6-35B-A3B forwardMany profile — T=512 phase breakdown")
     func forwardManyProfile512() async throws {
+        try await runForwardManyProfile(targetT: 512)
+    }
+
+    private func runForwardManyProfile(targetT: Int) async throws {
         let path = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
         guard FileManager.default.fileExists(atPath: path) else {
             print("Qwen3.6 forwardManyProfile skipped: \(path) not found")
@@ -170,12 +179,12 @@ struct Qwen36SmokeTests {
             Issue.record("expected Qwen35Model engine")
             return
         }
-        // Build a T=512 prompt.
+        // Build a targetT-token prompt.
         let seed = "The history of the printing press began when European craftsmen of the 15th century combined movable metal type with oil based ink screw presses paper to mass produce printed books pamphlets and broadsheets revolutionising communication"
         let seedEncoded = m.tokenizer.encode(text: seed)
         var encoded = seedEncoded
-        while encoded.count < 512 { encoded.append(contentsOf: seedEncoded) }
-        encoded = Array(encoded.prefix(512))
+        while encoded.count < targetT { encoded.append(contentsOf: seedEncoded) }
+        encoded = Array(encoded.prefix(targetT))
         let T = encoded.count
 
         // Warm-up — same convention as the bench.
