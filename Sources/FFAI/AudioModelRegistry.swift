@@ -39,6 +39,7 @@ public enum LoadedAudioModel: @unchecked Sendable {
     case deepFilterNet(DeepFilterNetModel)
     case cohereTranscribe(CohereTranscribeModel)
     case mossFormer2SE(MossFormer2SEModel)
+    case samAudio(SAMAudioModel)
 
     /// The capabilities this model exposes — `audioIn` for STT / omni,
     /// `audioOut` for TTS.
@@ -69,6 +70,7 @@ public enum LoadedAudioModel: @unchecked Sendable {
         case .deepFilterNet: return Capability.speechToSpeech
         case .cohereTranscribe: return Capability.speechToText
         case .mossFormer2SE: return Capability.speechToSpeech
+        case .samAudio: return Capability.speechToSpeech
         }
     }
 }
@@ -105,6 +107,7 @@ public enum AudioModelRegistry {
             || DeepFilterNetModel.handles(config)
             || CohereTranscribeModel.handles(config)
             || MossFormer2SEModel.handles(config)
+            || SAMAudio.handles(config)
     }
 
     /// The capability set a checkpoint at `directory` would expose,
@@ -147,6 +150,7 @@ public enum AudioModelRegistry {
         if DeepFilterNetModel.handles(config) { return Capability.speechToSpeech }
         if CohereTranscribeModel.handles(config) { return Capability.speechToText }
         if MossFormer2SEModel.handles(config) { return Capability.speechToSpeech }
+        if SAMAudio.handles(config) { return Capability.speechToSpeech }
         return nil
     }
 
@@ -262,6 +266,15 @@ public enum AudioModelRegistry {
         if MossFormer2SEModel.handles(config) {
             return .mossFormer2SE(try MossFormer2SEModel.load(
                 directory: directory, device: device))
+        }
+        if SAMAudio.handles(config) {
+            let samConfig = SAMAudioModel.loadConfig(from: directory)
+            let bundle = try SafeTensorsBundle(directory: directory, device: device)
+            let variant = try SAMAudio.variant(for: config)
+            let model = try variant.loadModel(
+                directory: directory, config: samConfig,
+                weights: bundle, device: device)
+            return .samAudio(model)
         }
         throw ModelError.unsupportedArchitecture(
             config.architecture ?? config.modelType ?? "<unknown audio model>")

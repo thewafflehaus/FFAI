@@ -269,6 +269,22 @@ public enum ModelRegistry {
                     availableCapabilities: Capability.textOnly.union([.visionIn]),
                     vlModel: vlm)
             }
+            // Idefics3 — HuggingFace Idefics3 (SmolVLM ancestor). SigLIP
+            // encoder + pixel-shuffle connector + Llama text backbone.
+            // The engine is itself an Idefics3Model exposing
+            // `encodeImage(...)` + `prefillWithImage(...)` directly;
+            // VLModel adapter integration is a follow-up.
+            if Idefics3.modelTypes.contains(config.modelType ?? "")
+                || Idefics3.architectures.contains(config.architecture ?? "")
+            {
+                let m = try Idefics3Dense.loadModel(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: m,
+                    defaultGenerationParameters: Idefics3Dense.defaultGenerationParameters,
+                    availableCapabilities: Idefics3Dense.availableCapabilities)
+            }
             // MiniCPM-V 4.6 — SigLIP2-400M encoder + `vit_merger` (window
             // cross-attn merger injected after encoder layer 6 in the
             // default 16× mode) + final `merger` (2×2 reduction + project
