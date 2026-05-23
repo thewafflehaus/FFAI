@@ -80,26 +80,30 @@ early when none is present. Drop an mlx-style Nemotron-VL
 conversion into the cache and the suite auto-enables on the next
 run — no code change needed.
 
-## Idefics3 + Paligemma — agent-ported, awaiting LanguageModel-protocol surgery
+## Idefics3 + Paligemma + GlmOcr — landed; full VLModel adapter pending
 
-Both family files (`Sources/FFAI/Models/Idefics3.swift`,
-`Sources/FFAI/Models/Paligemma.swift`) were ported by background agents
-but stashed at `/tmp/*.stale` because the agent versions:
-- Don't conform fully to FFAI's `LanguageModel` protocol (missing
-  required methods).
-- Paligemma duplicates the existing `bfloat16ToFloat` helper.
-- Paligemma has a non-exhaustive `switch` over dtype.
-- Both expose `loadModel(...)` returning the concrete model class
-  instead of FFAI's `Loaded` tuple shape.
+All three were ported by background agents and landed (commits
+`0f33924`, `777cf63`). Each ships as a `LanguageModel` engine — the
+test casts `m.engine` to the concrete family type to access the vision
+APIs (`encodeImage(...)` / `setImagePixels(_:)` / etc). Conformance gaps
+fixed inline:
 
-**Fix.** Restore from `/tmp/Idefics3.swift.stale` and
-`/tmp/Paligemma.swift.stale`, rename their `loadModel` to match the
-established `static func load(config:weights:options:device:) throws
--> VLModel` shape used by Pixtral / Mistral3 / SmolVLM2, drop the
-duplicate `bfloat16ToFloat`, and complete the `LanguageModel`
-conformance. Both have cached checkpoints
-(`mlx-community/paligemma-3b-mix-448-8bit`; no Idefics3 cached
-but the loader should still build).
+- Idefics3 + GlmOcr: added the missing `forward(...:on:device:)` overload
+  that `LanguageModel` requires for command-buffer chaining.
+- Paligemma: same `forward(...:on:device:)` overload, plus the missing
+  `.auraQuantized` case in `makeLayerCaches` (falls back to raw KV cache),
+  plus renamed `bfloat16ToFloat` → `paligemmaBfloat16ToFloat` to dodge
+  the file-scope collision with FishSpeechLayers' helper.
+- GlmOcr: renamed its custom `SafeTensorsBundle.prefixed(...)` extension
+  to `glmOcrPrefixed(...)` to dodge the public-API collision, dropped a
+  shadowing `Tensor.toFloatArray()` extension, made `textEmbedding(...)`
+  public.
+
+**Remaining follow-up.** Wrap each engine in a proper `VLModel` adapter
+exposing `vlModel` on the `Model.Loaded` tuple so callers don't need to
+downcast `m.engine`. PaliGemma's integration test currently asserts only
+load + shape; the full image+text dog-photo assertion lands once
+`VLMTestSupport` gets a CHW preprocessing helper at 448 resolution.
 
 ## Indirect-dispatch test gap on metaltile
 
