@@ -17,6 +17,89 @@ import Testing
 @Suite("ICB plumbing smoke")
 struct IndirectCommandBufferSmokeTests {
 
+    @Test("Auto-generated `_record` ICB wrapper produces identical output to direct dispatch")
+    func generatedRecordWrapperMatchesDirectDispatch() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            Issue.record("no Metal device")
+            return
+        }
+        guard let queue = device.makeCommandQueue() else {
+            Issue.record("no command queue")
+            return
+        }
+        let n = 256
+        let inputHost: [Float] = (0..<n).map { Float($0) * 0.05 - 6.0 }
+        let inBytes = n * MemoryLayout<Float>.stride
+        guard
+            let inBuf = device.makeBuffer(bytes: inputHost, length: inBytes, options: .storageModeShared),
+            let outDirect = device.makeBuffer(length: inBytes, options: .storageModeShared),
+            let outIcb = device.makeBuffer(length: inBytes, options: .storageModeShared),
+            // sigmoid_f32 has no scalars, but the generated wrapper still
+            // takes a paramsBuffer arg. Provide a small placeholder.
+            let paramsBuf = device.makeBuffer(
+                length: max(MetalTileKernels.mt_sigmoid_f32_params_size, 16),
+                options: .storageModeShared)
+        else {
+            Issue.record("buffer alloc")
+            return
+        }
+
+        let tgWidth = min(n, 256)
+        let grid = MTLSize(width: n, height: 1, depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+
+        // ── Direct dispatch via the generated wrapper.
+        do {
+            guard let cmd = queue.makeCommandBuffer() else { Issue.record("cmd"); return }
+            MetalTileKernels.mt_sigmoid_f32(
+                a: inBuf, out: outDirect,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+            cmd.commit()
+            cmd.waitUntilCompleted()
+        }
+
+        // ── ICB recording via the generated `_record` wrapper.
+        let icbDescriptor = MTLIndirectCommandBufferDescriptor()
+        icbDescriptor.commandTypes = .concurrentDispatch
+        icbDescriptor.inheritBuffers = false
+        icbDescriptor.maxKernelBufferBindCount = 4
+        icbDescriptor.inheritPipelineState = false
+        guard let icb = device.makeIndirectCommandBuffer(
+            descriptor: icbDescriptor, maxCommandCount: 1,
+            options: .storageModeShared) else {
+            Issue.record("ICB alloc")
+            return
+        }
+        MetalTileKernels.mt_sigmoid_f32_record(
+            a: inBuf, out: outIcb,
+            paramsBuffer: paramsBuf, paramsBufferOffset: 0,
+            gridSize: grid, threadgroupSize: tg,
+            into: icb.indirectComputeCommandAt(0))
+
+        do {
+            guard let cmd = queue.makeCommandBuffer(),
+                  let enc = cmd.makeComputeCommandEncoder() else { Issue.record("enc"); return }
+            enc.useResource(inBuf, usage: .read)
+            enc.useResource(outIcb, usage: .write)
+            enc.useResource(paramsBuf, usage: .read)
+            enc.executeCommandsInBuffer(icb, range: 0..<1)
+            enc.endEncoding()
+            cmd.commit()
+            cmd.waitUntilCompleted()
+        }
+
+        let directPtr = outDirect.contents().bindMemory(to: Float.self, capacity: n)
+        let icbPtr = outIcb.contents().bindMemory(to: Float.self, capacity: n)
+        var maxAbsDiff: Float = 0
+        for i in 0..<n {
+            maxAbsDiff = max(maxAbsDiff, abs(directPtr[i] - icbPtr[i]))
+        }
+        #expect(maxAbsDiff == 0,
+                "generated `_record` wrapper output exactly matches direct dispatch (max |Δ| = \(maxAbsDiff))")
+        print("generated_record_smoke: n=\(n), max |Δ| = \(maxAbsDiff) (zero is expected)")
+    }
+
+
     @Test("ICB executes a recorded compute command and produces the same result as direct dispatch")
     func icbExecutesRecordedSigmoidF32() throws {
         guard let device = MTLCreateSystemDefaultDevice() else {
