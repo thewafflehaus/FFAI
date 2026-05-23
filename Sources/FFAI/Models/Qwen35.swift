@@ -846,7 +846,7 @@ public final class Qwen35MoEFFN: Module {
         let work = device.makeCommandBuffer()
         let sg = sharedGateProj(xNorm, on: work)
         let su = sharedUpProj(xNorm, on: work)
-        let sharedInner = Ops.mul(Ops.silu(sg, on: work), su, on: work)
+        let sharedInner = Ops.swiglu(gate: sg, up: su, on: work)
         let sharedOut = sharedDownProj(sharedInner, on: work)
         let gateLogit = sharedExpertGate(xNorm, on: work)
         work.commit()
@@ -886,7 +886,7 @@ public final class Qwen35MoEFFN: Module {
         let xRows = xNormFlat.reshaped(to: [t, hidden])
         let sgAll = sharedGateProj.callMany(xRows, t: t, on: work, device: device)
         let suAll = sharedUpProj.callMany(xRows, t: t, on: work, device: device)
-        let sharedInnerAll = Ops.mul(Ops.silu(sgAll, on: work), suAll, on: work)
+        let sharedInnerAll = Ops.swiglu(gate: sgAll, up: suAll, on: work)
         let sharedOutAll = sharedDownProj.callMany(sharedInnerAll, t: t,
                                                     on: work, device: device)
         // sharedExpertGate is `hidden → 1`; per row this is one scalar.
