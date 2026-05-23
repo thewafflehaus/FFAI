@@ -473,6 +473,51 @@ public enum Ops {
     ///     any width at a fixed TPG of 1024 (large-hidden models such
     ///     as Gemma 4 31B, hidden 5376).
     /// One threadgroup per row in both cases.
+    /// Two rmsNormRows calls in ONE encoder. Used by the attention
+    /// layer's q_norm + k_norm pair (different shapes, same kernel).
+    /// Saves one encoder begin/end pair per attn layer × 10 = ~170 µs
+    /// per Qwen3.6-A3B decode token.
+    public static func rmsNormRowsTwo(
+        _ x1: Tensor, weight w1: Tensor, eps1: Float, nRows1: Int, rowSize1: Int,
+        into out1: Tensor,
+        _ x2: Tensor, weight w2: Tensor, eps2: Float, nRows2: Int, rowSize2: Int,
+        into out2: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(x1.dtype == w1.dtype && x2.dtype == w2.dtype && x1.dtype == x2.dtype,
+                     "Ops.rmsNormRowsTwo: dtype mismatch")
+        precondition(rowSize1 <= 4096 && rowSize2 <= 4096,
+                     "Ops.rmsNormRowsTwo: wide rmsNorm path not batched (rowSize must be ≤ 4096)")
+        let psoName: String
+        switch x1.dtype {
+        case .f32:  psoName = "mt_rms_norm_f32"
+        case .f16:  psoName = "mt_rms_norm_f16"
+        case .bf16: psoName = "mt_rms_norm_bf16"
+        default: fatalError("Ops.rmsNormRowsTwo: unsupported dtype \(x1.dtype)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        @inline(__always)
+        func dispatch(_ x: Tensor, _ w: Tensor, _ result: Tensor,
+                      _ eps: Float, _ n: Int, _ nRows: Int) {
+            let epsBuf = epsBuffer(eps)
+            let tgWidth = n / 4
+            let grid = MTLSize(width: nRows * tgWidth, height: 1, depth: 1)
+            let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+            enc.setBuffer(x.buffer, offset: x.offset, index: 0)
+            enc.setBuffer(w.buffer, offset: w.offset, index: 1)
+            enc.setBuffer(result.buffer, offset: result.offset, index: 2)
+            enc.setBuffer(epsBuf, offset: 0, index: 3)
+            var nU = UInt32(n)
+            enc.setBytes(&nU, length: 4, index: 4)
+            enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        }
+        dispatch(x1, w1, out1, eps1, rowSize1, nRows1)
+        dispatch(x2, w2, out2, eps2, rowSize2, nRows2)
+        enc.endEncoding()
+    }
+
     /// Cache of 4-byte eps-buffer instances keyed by eps value. Every
     /// RMSNorm dispatch needs a 1-element fp32 buffer holding `eps`;
     /// previously each call did a fresh `device.makeBuffer(length: 4)`

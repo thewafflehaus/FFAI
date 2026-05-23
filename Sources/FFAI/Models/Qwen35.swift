@@ -1677,12 +1677,16 @@ public final class Qwen35AttentionMixer: Module {
         let v = vProj(xNorm, on: cmd)
 
         // Per-head q_norm / k_norm (weighted RMSNorm over headDim).
-        let qNormed = Ops.rmsNormRows(
-            queries, weight: qNorm.weight, eps: qNorm.eps,
-            nRows: nHeads, rowSize: headDim, on: cmd)
-        let kNormed = Ops.rmsNormRows(
-            k, weight: kNorm.weight, eps: kNorm.eps,
-            nRows: nKVHeads, rowSize: headDim, on: cmd)
+        // ITER 12: shared encoder saves 1 begin/end pair per attn
+        // layer × 10 = ~170 µs/decode token.
+        let qNormed = Tensor.empty(shape: queries.shape, dtype: queries.dtype)
+        let kNormed = Tensor.empty(shape: k.shape, dtype: k.dtype)
+        Ops.rmsNormRowsTwo(
+            queries, weight: qNorm.weight, eps1: qNorm.eps,
+            nRows1: nHeads, rowSize1: headDim, into: qNormed,
+            k, weight: kNorm.weight, eps2: kNorm.eps,
+            nRows2: nKVHeads, rowSize2: headDim, into: kNormed,
+            on: cmd)
 
         // Partial RoPE — rotate only the first `rotaryDim` dims of each
         // head, in place.
