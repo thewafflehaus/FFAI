@@ -1830,9 +1830,12 @@ public final class Qwen35AttentionMixer: Module {
         }
 
         // ── Gated output * o_proj ────────────────────────────────────────
+        // ITER 14: use fused sigmoidMul (same kernel as ITER 11) for
+        // the prefill path. Saves 1 dispatch per attn layer per prefill
+        // call.
         var attnFlat = attnAll
         if let gateFlat {
-            attnFlat = Ops.mul(attnFlat, Ops.sigmoid(gateFlat, on: cmd), on: cmd)
+            attnFlat = Ops.sigmoidMul(attnFlat, gateFlat, on: cmd)
         }
         let attnRows = attnFlat.reshaped(to: [t, qDim])
         return oProj.callMany(attnRows, t: t, on: cmd, device: device)
