@@ -765,7 +765,7 @@ public final class Qwen35DenseMLP: Module {
     func forward(_ xNorm: Tensor, cmd: MTLCommandBuffer) -> Tensor {
         let g = gateProj(xNorm, on: cmd)
         let u = upProj(xNorm, on: cmd)
-        let inner = Ops.mul(Ops.silu(g, on: cmd), u, on: cmd)
+        let inner = Ops.swiglu(gate: g, up: u, on: cmd)
         return downProj(inner, on: cmd)
     }
 
@@ -777,7 +777,7 @@ public final class Qwen35DenseMLP: Module {
         let xRows = xNormFlat.reshaped(to: [t, xNormFlat.elementCount / t])
         let g = gateProj.callMany(xRows, t: t, on: cmd, device: device)
         let u = upProj.callMany(xRows, t: t, on: cmd, device: device)
-        let inner = Ops.mul(Ops.silu(g, on: cmd), u, on: cmd)
+        let inner = Ops.swiglu(gate: g, up: u, on: cmd)
         return downProj.callMany(inner, t: t, on: cmd, device: device)
     }
 }
