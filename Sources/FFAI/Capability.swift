@@ -25,4 +25,7 @@ extension Capability {
     public static let textToSpeech: Set<Capability> = [.textIn, .audioOut]
     /// Omni-modal models (Qwen-Omni): text + audio in, text out.
     public static let omniAudio: Set<Capability> = [.textIn, .audioIn, .textOut]
+    /// Speech enhancement / source separation / audio segmentation
+    /// (DeepFilterNet, MossFormer2-SE, SAMAudio): audio in, audio out.
+    public static let speechToSpeech: Set<Capability> = [.audioIn, .audioOut]
 }
