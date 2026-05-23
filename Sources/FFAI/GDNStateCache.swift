@@ -118,9 +118,16 @@ public final class GDNStateCache: LayerCacheProtocol, @unchecked Sendable {
     /// aggregate — negligible against a ~60 ms decode step.
     ///
     /// Returns the snapshot tensor; caller stores it until needed.
+    /// Cached snapshot tensor. Reused across snapshot calls so
+    /// spec-decode doesn't churn ~2 MB per layer per verify step.
+    private var cachedSnapshot: Tensor?
+
     public func snapshot(device: Device = .shared) -> Tensor {
         let shape = [numValueHeads, valueHeadDim, keyHeadDim]
-        let snap = Tensor.empty(shape: shape, dtype: .f32, device: device)
+        if cachedSnapshot == nil {
+            cachedSnapshot = Tensor.empty(shape: shape, dtype: .f32, device: device)
+        }
+        let snap = cachedSnapshot!
         // Use a blit encoder to copy on the GPU side — keeps the host
         // out of the loop. Both buffers are shared-storage, so the
         // copy is just a unified-memory blit.

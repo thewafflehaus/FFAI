@@ -51,9 +51,15 @@ public final class ConvStateCache: @unchecked Sendable {
     /// 3 * 5120 * 2 = 30 720 bytes per layer × 30 GDN layers ≈ 900 KB
     /// — small enough to snapshot every spec step without measurable
     /// host overhead.
+    /// Cached snapshot tensor (ITER 33 — bound spec-decode churn).
+    private var cachedSnapshot: Tensor?
+
     public func snapshot(device: Device = .shared) -> Tensor {
-        let snap = Tensor.empty(shape: [kernelSize - 1, nChannels],
-                                 dtype: dtype, device: device)
+        if cachedSnapshot == nil {
+            cachedSnapshot = Tensor.empty(shape: [kernelSize - 1, nChannels],
+                                           dtype: dtype, device: device)
+        }
+        let snap = cachedSnapshot!
         let cmd = device.makeCommandBuffer()
         guard let blit = cmd.makeBlitCommandEncoder() else {
             preconditionFailure("ConvStateCache.snapshot: makeBlitCommandEncoder failed")
