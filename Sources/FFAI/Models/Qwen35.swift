@@ -1758,6 +1758,8 @@ public final class Qwen35AttentionMixer: Module {
             secondRows.withUnsafeBytes { _ = memcpy(secondBuf.contents(), $0.baseAddress!, nHeads * 4) }
             self.sliceFirstIdx = Tensor(buffer: firstBuf, offset: 0, shape: [nHeads], dtype: .u32)
             self.sliceSecondIdx = Tensor(buffer: secondBuf, offset: 0, shape: [nHeads], dtype: .u32)
+            // ITER 28: pin idx scratches.
+            device.markWeightsResident([firstBuf, secondBuf])
         } else {
             self.sliceFirstIdx = nil
             self.sliceSecondIdx = nil
