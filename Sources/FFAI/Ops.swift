@@ -2240,6 +2240,124 @@ public enum Ops {
     /// `windowStart = max(0, nKV - W)` and `sinkEnd = S`. The d64 /
     /// d256 kernel variants are dense-only — passing non-zero sink /
     /// window with those head dims is a precondition failure.
+    /// ITER 53 (Bagel 2): Flash-Decoding 2-pass SDPA. Splits the KV
+    /// sequence into `blocks` tiles, runs pass1 to compute per-block
+    /// partial outputs + running max/sum, then pass2 merges across
+    /// blocks. Wins over single-pass `sdpaDecode` at long KV (≥1024
+    /// typical) where the GPU is underutilised in single-pass because
+    /// each q-head only gets one threadgroup. Splits across `blocks`
+    /// threadgroups instead — 2-3× attention speedup at KV=4K+.
+    ///
+    /// Companion metaltile kernels: `sdpa_decode_2pass_pass1` +
+    /// `sdpa_decode_2pass_pass2`. Caller provides `partialO`, `partialM`,
+    /// `partialL` scratch buffers sized for the (nQHeads, blocks)
+    /// geometry (see preconditions).
+    public static func sdpaDecode2Pass(
+        q: Tensor, k: Tensor, v: Tensor,
+        nQHeads: Int, nKVHeads: Int, headDim: Int,
+        nKV: Int, kvStride: Int, blocks: Int,
+        scale: Float,
+        partialO: Tensor, partialM: Tensor, partialL: Tensor,
+        into out: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(nQHeads % nKVHeads == 0,
+                     "sdpaDecode2Pass: nQHeads must be multiple of nKVHeads")
+        let gqaFactor = nQHeads / nKVHeads
+        precondition(blocks > 0 && (blocks & (blocks - 1)) == 0,
+                     "sdpaDecode2Pass: blocks must be power of 2")
+        precondition(partialO.elementCount == nQHeads * blocks * headDim,
+                     "sdpaDecode2Pass: partialO must be [nQHeads, blocks, headDim]")
+        precondition(partialM.elementCount == nQHeads * blocks
+                     && partialM.dtype == .f32,
+                     "sdpaDecode2Pass: partialM must be [nQHeads, blocks] f32")
+        precondition(partialL.elementCount == nQHeads * blocks
+                     && partialL.dtype == .f32,
+                     "sdpaDecode2Pass: partialL must be [nQHeads, blocks] f32")
+        precondition(partialO.dtype == q.dtype && out.dtype == q.dtype,
+                     "sdpaDecode2Pass: partialO/out dtype must match q")
+
+        // Pass 1: per-block partials. Grid = (nKVHeads, blocks); each
+        // TG has gqa_factor simdgroups × 32 lanes (one simd per q-head,
+        // lane handles headDim/32 = 4 contiguous elements).
+        let pass1TgWidth = gqaFactor * 32
+        let pass1Grid = MTLSize(
+            width: nKVHeads * pass1TgWidth, height: blocks, depth: 1)
+        let pass1Tg = MTLSize(width: pass1TgWidth, height: 1, depth: 1)
+
+        // Pass 2: merge across blocks. Grid = (nQHeads); each TG runs
+        // 32 simdgroups × 32 lanes = 1024 threads.
+        let pass2TgWidth = 1024
+        let pass2Grid = MTLSize(
+            width: nQHeads * pass2TgWidth, height: 1, depth: 1)
+        let pass2Tg = MTLSize(width: pass2TgWidth, height: 1, depth: 1)
+
+        switch q.dtype {
+        case .f32:
+            MetalTileKernels.sdpa_decode_2pass_pass1_f32(
+                q: q.buffer, qOffset: q.offset,
+                k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                partial_o: partialO.buffer, partial_oOffset: partialO.offset,
+                partial_m: partialM.buffer, partial_mOffset: partialM.offset,
+                partial_l: partialL.buffer, partial_lOffset: partialL.offset,
+                head_dim: UInt32(headDim), n_kv: UInt32(nKV),
+                kv_stride: UInt32(kvStride),
+                gqa_factor: UInt32(gqaFactor), blocks: UInt32(blocks),
+                scale: scale,
+                gridSize: pass1Grid, threadgroupSize: pass1Tg, on: cmd)
+            MetalTileKernels.sdpa_decode_2pass_pass2_f32(
+                partial_o: partialO.buffer, partial_oOffset: partialO.offset,
+                partial_m: partialM.buffer, partial_mOffset: partialM.offset,
+                partial_l: partialL.buffer, partial_lOffset: partialL.offset,
+                out: out.buffer, outOffset: out.offset,
+                head_dim: UInt32(headDim), blocks: UInt32(blocks),
+                gridSize: pass2Grid, threadgroupSize: pass2Tg, on: cmd)
+        case .f16:
+            MetalTileKernels.sdpa_decode_2pass_pass1_f16(
+                q: q.buffer, qOffset: q.offset,
+                k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                partial_o: partialO.buffer, partial_oOffset: partialO.offset,
+                partial_m: partialM.buffer, partial_mOffset: partialM.offset,
+                partial_l: partialL.buffer, partial_lOffset: partialL.offset,
+                head_dim: UInt32(headDim), n_kv: UInt32(nKV),
+                kv_stride: UInt32(kvStride),
+                gqa_factor: UInt32(gqaFactor), blocks: UInt32(blocks),
+                scale: scale,
+                gridSize: pass1Grid, threadgroupSize: pass1Tg, on: cmd)
+            MetalTileKernels.sdpa_decode_2pass_pass2_f16(
+                partial_o: partialO.buffer, partial_oOffset: partialO.offset,
+                partial_m: partialM.buffer, partial_mOffset: partialM.offset,
+                partial_l: partialL.buffer, partial_lOffset: partialL.offset,
+                out: out.buffer, outOffset: out.offset,
+                head_dim: UInt32(headDim), blocks: UInt32(blocks),
+                gridSize: pass2Grid, threadgroupSize: pass2Tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.sdpa_decode_2pass_pass1_bf16(
+                q: q.buffer, qOffset: q.offset,
+                k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                partial_o: partialO.buffer, partial_oOffset: partialO.offset,
+                partial_m: partialM.buffer, partial_mOffset: partialM.offset,
+                partial_l: partialL.buffer, partial_lOffset: partialL.offset,
+                head_dim: UInt32(headDim), n_kv: UInt32(nKV),
+                kv_stride: UInt32(kvStride),
+                gqa_factor: UInt32(gqaFactor), blocks: UInt32(blocks),
+                scale: scale,
+                gridSize: pass1Grid, threadgroupSize: pass1Tg, on: cmd)
+            MetalTileKernels.sdpa_decode_2pass_pass2_bf16(
+                partial_o: partialO.buffer, partial_oOffset: partialO.offset,
+                partial_m: partialM.buffer, partial_mOffset: partialM.offset,
+                partial_l: partialL.buffer, partial_lOffset: partialL.offset,
+                out: out.buffer, outOffset: out.offset,
+                head_dim: UInt32(headDim), blocks: UInt32(blocks),
+                gridSize: pass2Grid, threadgroupSize: pass2Tg, on: cmd)
+        default:
+            fatalError("sdpaDecode2Pass: unsupported dtype \(q.dtype)")
+        }
+    }
+
     public static func sdpaDecode(q: Tensor, k: Tensor, v: Tensor,
                                   nQHeads: Int, nKVHeads: Int, headDim: Int,
                                   nKV: Int, kvStride: Int,
