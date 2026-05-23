@@ -2460,7 +2460,13 @@ public enum Ops {
                     group_size: groupSizeU,
                     gridSize: grid, threadgroupSize: tg, on: cmd)
             default:
-                fatalError("Ops.moeGatherDequantGemmInt4: MPP variant only emits f32/f16 (got \(input.dtype))")
+                // NOTE: bm16_mpp bf16 variant exists in metaltile (stages
+                // through `half` like bm64_mpp) but benches show it loses
+                // to non-MPP bm16 at T=32 (148 vs 195 tps) and T=64
+                // (207 vs 274 tps) — same NAX setup-overhead trap. At
+                // T=128+ mTotal already hits the bm64_mpp threshold, so
+                // bm16_mpp has no production sweet spot at bf16.
+                fatalError("Ops.moeGatherDequantGemmInt4: MPP variant unsupported dtype \(input.dtype)")
             }
             return
         }
