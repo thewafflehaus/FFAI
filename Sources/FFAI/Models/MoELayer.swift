@@ -415,6 +415,8 @@ public final class MoELayer: Module, DecoderLayer {
     /// ITER 38: cached per-expert down output for the batched 8-expert
     /// down qmm path. Indexed by slot.
     private var expertOutScratches: [Tensor] = []
+    /// ITER 42: cached output of dense gate gemv (ITER 15).
+    private var gateLogitsScratch: Tensor?
 
     /// - gate: hidden → nExperts router projection.
     /// - gateProj/upProj/downProj: `nExperts`-long arrays of per-expert
@@ -520,7 +522,13 @@ public final class MoELayer: Module, DecoderLayer {
             }
         }
         if let dense = dequantizedGateCache {
-            logitsTensor = Ops.gemv(weight: dense, input: h, on: cmd)
+            if gateLogitsScratch == nil
+                || gateLogitsScratch!.elementCount != router.nExperts
+                || gateLogitsScratch!.dtype != h.dtype {
+                gateLogitsScratch = Tensor.empty(shape: [router.nExperts], dtype: h.dtype)
+            }
+            logitsTensor = Ops.gemv(weight: dense, input: h, on: cmd,
+                                     into: gateLogitsScratch)
         } else {
             logitsTensor = gate(h, on: cmd)
         }
