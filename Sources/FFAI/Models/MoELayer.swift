@@ -666,14 +666,18 @@ public final class MoELayer: Module, DecoderLayer {
                     weights: downWeights, scales: downScales, biases: downBiases,
                     inputs: inners, outputs: outs,
                     groupSize: downGroupSize, on: work)
-                // Phase 3: scalarFMA accumulate.
-                for (slot, expertOut) in outs.enumerated() {
-                    let scalarT = Tensor(buffer: scalarBuf,
-                                         offset: slot * h.dtype.byteSize,
-                                         shape: [1], dtype: h.dtype)
-                    Ops.scalarFMA(scalar: scalarT, value: expertOut, base: acc,
-                                  into: acc, on: work)
+                // Phase 3: scalarFMA chain on ONE shared encoder
+                // (ITER 45/Bagel2). 8 dispatches per layer × 40 layers
+                // = 280 encoder begin/end pairs saved per decode token.
+                var scalars: [Tensor] = []
+                scalars.reserveCapacity(outs.count)
+                for slot in 0..<outs.count {
+                    scalars.append(Tensor(buffer: scalarBuf,
+                                          offset: slot * h.dtype.byteSize,
+                                          shape: [1], dtype: h.dtype))
                 }
+                Ops.scalarFMAMany(scalars: scalars, values: outs, acc: acc,
+                                  on: work)
             } else {
                 // Legacy: per-expert swiGLU chain.
                 for (slot, expertId) in routing.indices.enumerated() {

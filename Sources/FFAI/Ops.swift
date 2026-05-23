@@ -4196,6 +4196,54 @@ public enum Ops {
         }
     }
 
+    /// ITER 45 (Bagel 2): N scalarFMA dispatches accumulating into the
+    /// same `acc` tensor on ONE shared encoder. Saves N-1 encoder
+    /// begin/end pairs per call. Used by MoELayer.decode's top-K expert
+    /// accumulator path (N=topK=8 × 40 layers = 280 encoders saved/
+    /// decode token). Dispatches serialize correctly within the encoder
+    /// because Metal guarantees in-order execution.
+    public static func scalarFMAMany(
+        scalars: [Tensor], values: [Tensor], acc: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(scalars.count == values.count, "scalarFMAMany: count mismatch")
+        precondition(!scalars.isEmpty, "scalarFMAMany: empty")
+        let dt = acc.dtype
+        for (i, s) in scalars.enumerated() {
+            precondition(s.elementCount == 1,
+                         "scalarFMAMany: scalar[\(i)] must be [1]")
+            precondition(s.dtype == dt && values[i].dtype == dt,
+                         "scalarFMAMany: dtype mismatch at \(i)")
+            precondition(values[i].elementCount == acc.elementCount,
+                         "scalarFMAMany: value[\(i)] / acc size mismatch")
+        }
+        let n = acc.elementCount
+        let tgWidth = min(n, 256)
+        let grid = MTLSize(width: n, height: 1, depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        let psoName: String
+        switch dt {
+        case .f32:  psoName = "mt_scalar_fma_f32"
+        case .f16:  psoName = "mt_scalar_fma_f16"
+        case .bf16: psoName = "mt_scalar_fma_bf16"
+        default: fatalError("scalarFMAMany: unsupported dtype \(dt)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        enc.setComputePipelineState(pso)
+        // Buffer bindings:
+        //   0: scalar, 1: value, 2: base, 3: out
+        // Base + out are always `acc`; scalar/value rotate per dispatch.
+        enc.setBuffer(acc.buffer, offset: acc.offset, index: 2)
+        enc.setBuffer(acc.buffer, offset: acc.offset, index: 3)
+        for i in 0..<scalars.count {
+            enc.setBuffer(scalars[i].buffer, offset: scalars[i].offset, index: 0)
+            enc.setBuffer(values[i].buffer, offset: values[i].offset, index: 1)
+            enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        }
+        enc.endEncoding()
+    }
+
     // ─── Indirect dequant GEMV ────────────────────────────────────────
     //
     // Variant of `dequantGemv` that takes its dispatch shape from a GPU
