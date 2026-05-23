@@ -4249,6 +4249,41 @@ public enum Ops {
     // Used by FFAI's per-expert MoE SwiGLU + Qwen3 dense MLPs. fp32 path
     // is the canonical reference; f16 / bf16 narrow on store, accumulate
     // in fp32.
+    /// Batched mt_swiglu across N (gate, up, out) tuples in ONE
+    /// encoder. Same PSO across all dispatches; rebind buffers
+    /// between each. Used by MoE per-expert inner SwiGLU when the
+    /// 8 experts share dtype.
+    public static func swigluMany(
+        gates: [Tensor], ups: [Tensor], outs: [Tensor],
+        on cmd: MTLCommandBuffer
+    ) {
+        let n = gates.count
+        precondition(ups.count == n && outs.count == n,
+                     "swigluMany: count mismatch")
+        guard n > 0 else { return }
+        let dtype = gates[0].dtype
+        let psoName: String
+        switch dtype {
+        case .f32:  psoName = "mt_swiglu_f32"
+        case .f16:  psoName = "mt_swiglu_f16"
+        case .bf16: psoName = "mt_swiglu_bf16"
+        default: fatalError("swigluMany: unsupported dtype \(dtype)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        for i in 0..<n {
+            let count = gates[i].elementCount
+            let tgWidth = min(count, 256)
+            enc.setBuffer(gates[i].buffer, offset: gates[i].offset, index: 0)
+            enc.setBuffer(ups[i].buffer, offset: ups[i].offset, index: 1)
+            enc.setBuffer(outs[i].buffer, offset: outs[i].offset, index: 2)
+            enc.dispatchThreads(MTLSize(width: count, height: 1, depth: 1),
+                                threadsPerThreadgroup: MTLSize(width: tgWidth, height: 1, depth: 1))
+        }
+        enc.endEncoding()
+    }
+
     public static func swiglu(
         gate: Tensor, up: Tensor, on cmd: MTLCommandBuffer,
         into out: Tensor? = nil

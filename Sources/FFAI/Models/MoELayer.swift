@@ -609,8 +609,9 @@ public final class MoELayer: Module, DecoderLayer {
             }
 
             if canBatchDown {
-                // Phase 1: per-expert gate+up batched + swiglu, collect inners.
-                var inners: [Tensor] = []
+                // Phase 1a: per-expert gate+up batched, collect (g, u) pairs.
+                var gs: [Tensor] = []
+                var us: [Tensor] = []
                 for expertId in routing.indices {
                     let g: Tensor, u: Tensor
                     if let qg = gateProj[expertId].inner as? QuantizedLinear,
@@ -628,9 +629,16 @@ public final class MoELayer: Module, DecoderLayer {
                         g = gateProj[expertId](h, on: work)
                         u = upProj[expertId](h, on: work)
                     }
-                    let inner = Ops.swiglu(gate: g, up: u, on: work)
-                    inners.append(inner)
+                    gs.append(g)
+                    us.append(u)
                 }
+                // Phase 1b (ITER 30): batched 8-expert swiglu in shared
+                // encoder. Saves 7 encoders/layer × 40 = 280/token.
+                var inners: [Tensor] = []
+                for g in gs {
+                    inners.append(Tensor.empty(shape: g.shape, dtype: h.dtype))
+                }
+                Ops.swigluMany(gates: gs, ups: us, outs: inners, on: work)
                 // Phase 2: batched down across all 8 experts in one encoder.
                 var expertOuts: [Tensor] = []
                 for _ in inners {
