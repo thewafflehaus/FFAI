@@ -213,12 +213,13 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
         precondition(kFlat.dtype == dtype && vFlat.dtype == dtype, "KVCache: dtype mismatch")
         lengthLock.withLock {
             let pos = _evictionState.reserveNextSlot()
-            Ops.kvCacheUpdate(src: kFlat, into: kBuffer,
-                              nKVHeads: nKVHeads, headDim: headDim,
-                              maxSeq: maxSeq, position: pos, on: cmd)
-            Ops.kvCacheUpdate(src: vFlat, into: vBuffer,
-                              nKVHeads: nKVHeads, headDim: headDim,
-                              maxSeq: maxSeq, position: pos, on: cmd)
+            // ITER 10: shared encoder for K + V — saves 1 encoder
+            // begin/end pair per attn layer × 10 attn = ~170 µs/token.
+            Ops.kvCacheUpdateKV(
+                kSrc: kFlat, kCache: kBuffer,
+                vSrc: vFlat, vCache: vBuffer,
+                nKVHeads: nKVHeads, headDim: headDim,
+                maxSeq: maxSeq, position: pos, on: cmd)
         }
     }
 
