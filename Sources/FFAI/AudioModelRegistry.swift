@@ -30,6 +30,8 @@ public enum LoadedAudioModel: @unchecked Sendable {
     case mossTTS(MossTTSModel)
     case mossTTSNano(MossTTSNanoModel)
     case lfmAudio(LFMAudioModel)
+    case voxtralRealtime(VoxtralRealtimeModel)
+    case glmASR(GLMASRModel)
 
     /// The capabilities this model exposes — `audioIn` for STT / omni,
     /// `audioOut` for TTS.
@@ -51,6 +53,8 @@ public enum LoadedAudioModel: @unchecked Sendable {
         case .mossTTS: return Capability.textToSpeech
         case .mossTTSNano: return Capability.textToSpeech
         case .lfmAudio: return Capability.omniAudio
+        case .voxtralRealtime: return Capability.speechToText
+        case .glmASR: return Capability.speechToText
         }
     }
 }
@@ -78,6 +82,8 @@ public enum AudioModelRegistry {
             || MossTTSNanoModel.handles(config)
             || MossTTSModel.handles(config)
             || LFMAudioModel.handles(config)
+            || VoxtralRealtimeModel.handles(config)
+            || GLMASRModel.handles(config)
     }
 
     /// The capability set a checkpoint at `directory` would expose,
@@ -111,6 +117,8 @@ public enum AudioModelRegistry {
         if MossTTSNanoModel.handles(config) { return Capability.textToSpeech }
         if MossTTSModel.handles(config) { return Capability.textToSpeech }
         if LFMAudioModel.handles(config) { return Capability.omniAudio }
+        if VoxtralRealtimeModel.handles(config) { return Capability.speechToText }
+        if GLMASRModel.handles(config) { return Capability.speechToText }
         return nil
     }
 
@@ -189,6 +197,14 @@ public enum AudioModelRegistry {
         }
         if LFMAudioModel.handles(config) {
             return .lfmAudio(try LFMAudioModel.load(
+                directory: directory, device: device))
+        }
+        if VoxtralRealtimeModel.handles(config) {
+            return .voxtralRealtime(try VoxtralRealtimeModel.load(
+                directory: directory, device: device))
+        }
+        if GLMASRModel.handles(config) {
+            return .glmASR(try GLMASRModel.load(
                 directory: directory, device: device))
         }
         throw ModelError.unsupportedArchitecture(
