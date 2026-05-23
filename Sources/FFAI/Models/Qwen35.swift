@@ -2129,12 +2129,17 @@ public final class Qwen35GDNLayer: Module, DecoderLayer {
             postMixScratch = Tensor.empty(shape: h.shape, dtype: h.dtype)
             resultScratch = Tensor.empty(shape: h.shape, dtype: h.dtype)
         }
-        let postMix = Ops.add(h, mixerOut, on: ffnCmd, into: postMixScratch)
-        return qwen35ApplyFFN(ffn, postMix: postMix, postNorm: postNorm,
+        // ITER 50 (Bagel 2): fused residual-add + RMSNorm in ONE dispatch.
+        // Replaces Ops.add + Ops.rmsNorm (was 2 dispatches/layer × 40
+        // layers = 80 dispatches per decode token).
+        Ops.addRmsNorm(
+            a: h, b: mixerOut, weight: postNorm.weight, eps: postNorm.eps,
+            residualOut: postMixScratch!, normedOut: ffnNormScratch!,
+            on: ffnCmd)
+        return qwen35ApplyFFN(ffn, postMix: postMixScratch!, ffnNorm: ffnNormScratch!,
                               position: position, cmd: ffnCmd,
                               commitCmd: true, device: device,
-                              resultScratch: resultScratch,
-                              ffnNormScratch: ffnNormScratch)
+                              resultScratch: resultScratch)
     }
 
     /// T-batched layer forward for batched prefill. Mirrors the attention
@@ -2251,17 +2256,20 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
             postMixScratch = Tensor.empty(shape: h.shape, dtype: h.dtype)
             resultScratch = Tensor.empty(shape: h.shape, dtype: h.dtype)
         }
-        let postMix = Ops.add(h, mixerOut, on: cmd, into: postMixScratch)
+        // ITER 50 (Bagel 2): fused residual-add + RMSNorm.
+        Ops.addRmsNorm(
+            a: h, b: mixerOut, weight: postNorm.weight, eps: postNorm.eps,
+            residualOut: postMixScratch!, normedOut: ffnNormScratch!,
+            on: cmd)
 
         // ── Feed-forward half ─────────────────────────────────────────
         // `cmd` is the host model's `workCmd`; the model owns its commit
         // (or swaps it after an MoE FFN). This layer does not commit it
         // for the dense path.
-        return qwen35ApplyFFN(ffn, postMix: postMix, postNorm: postNorm,
+        return qwen35ApplyFFN(ffn, postMix: postMixScratch!, ffnNorm: ffnNormScratch!,
                               position: position, cmd: cmd,
                               commitCmd: false, device: device,
-                              resultScratch: resultScratch,
-                              ffnNormScratch: ffnNormScratch)
+                              resultScratch: resultScratch)
     }
 
     /// T-batched layer forward for batched prefill. `hFlat` is
@@ -2380,13 +2388,10 @@ private func qwen35ApplyFFNMany(_ ffn: Qwen35FFN, postMix: Tensor, t: Int,
 ///   `cmd` is the host model's `workCmd`). When the FFN is an MoE block,
 ///   it commits `cmd` regardless; the residual add then runs on a fresh,
 ///   locally-committed buffer so the returned tensor is resident.
-private func qwen35ApplyFFN(_ ffn: Qwen35FFN, postMix: Tensor, postNorm: RMSNorm,
+private func qwen35ApplyFFN(_ ffn: Qwen35FFN, postMix: Tensor, ffnNorm: Tensor,
                             position: Int, cmd: MTLCommandBuffer,
                             commitCmd: Bool, device: Device,
-                            resultScratch: Tensor? = nil,
-                            ffnNormScratch: Tensor? = nil) -> Tensor {
-    let ffnNorm = Ops.rmsNorm(postMix, weight: postNorm.weight, eps: postNorm.eps,
-                              on: cmd, into: ffnNormScratch)
+                            resultScratch: Tensor? = nil) -> Tensor {
     switch ffn {
     case .dense(let mlp):
         let ffnOut = mlp.forward(ffnNorm, cmd: cmd)

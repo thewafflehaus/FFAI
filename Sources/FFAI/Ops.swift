@@ -440,6 +440,72 @@ public enum Ops {
         return result
     }
 
+    /// ITER 50 (Bagel 2): fused residual-add + RMSNorm.
+    /// Computes per row:
+    ///   residualOut[i] = a[i] + b[i]
+    ///   normedOut[i]   = (a[i] + b[i]) * w[i] / sqrt(mean((a+b)^2) + eps)
+    /// Replaces an `Ops.add` + `Ops.rmsNorm` pair with one dispatch.
+    /// Saves ~17µs encoder overhead per fusion × up to 80 fusion sites
+    /// per Qwen3.6-A3B decode token (2 per layer × 40 layers if both
+    /// layer-boundary residuals fuse).
+    /// Single-row form (decode T=1).
+    public static func addRmsNorm(
+        a: Tensor, b: Tensor, weight: Tensor, eps: Float,
+        residualOut: Tensor, normedOut: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(a.shape == b.shape && a.shape == weight.shape,
+                     "addRmsNorm: a/b/weight shape mismatch")
+        precondition(a.dtype == b.dtype && a.dtype == weight.dtype,
+                     "addRmsNorm: dtype mismatch")
+        precondition(residualOut.shape == a.shape && normedOut.shape == a.shape,
+                     "addRmsNorm: outputs must match a.shape")
+        precondition(residualOut.dtype == a.dtype && normedOut.dtype == a.dtype,
+                     "addRmsNorm: output dtype mismatch")
+        let n = a.elementCount
+        if let reason = OpsValidation.validateRmsNorm(n: n) {
+            preconditionFailure("Ops.addRmsNorm: \(reason)")
+        }
+        let epsBuf = epsBuffer(eps)
+        let tgWidth = n / 4
+        let grid = MTLSize(width: tgWidth, height: 1, depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+        switch a.dtype {
+        case .f32:
+            MetalTileKernels.mt_add_rms_norm_f32(
+                a: a.buffer, aOffset: a.offset,
+                b: b.buffer, bOffset: b.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                residual_out: residualOut.buffer, residual_outOffset: residualOut.offset,
+                normed_out: normedOut.buffer, normed_outOffset: normedOut.offset,
+                n: UInt32(n),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_add_rms_norm_f16(
+                a: a.buffer, aOffset: a.offset,
+                b: b.buffer, bOffset: b.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                residual_out: residualOut.buffer, residual_outOffset: residualOut.offset,
+                normed_out: normedOut.buffer, normed_outOffset: normedOut.offset,
+                n: UInt32(n),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_add_rms_norm_bf16(
+                a: a.buffer, aOffset: a.offset,
+                b: b.buffer, bOffset: b.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                residual_out: residualOut.buffer, residual_outOffset: residualOut.offset,
+                normed_out: normedOut.buffer, normed_outOffset: normedOut.offset,
+                n: UInt32(n),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.addRmsNorm: unsupported dtype \(a.dtype)")
+        }
+    }
+
     /// Multi-row RMSNorm. Input is [nRows, n]; weight is [n] (shared
     /// across all rows). Each row gets its own threadgroup. Used by
     /// Qwen3 to dispatch all per-head q_norm / k_norm in one call
