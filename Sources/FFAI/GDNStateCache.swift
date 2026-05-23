@@ -104,6 +104,64 @@ public final class GDNStateCache: LayerCacheProtocol, @unchecked Sendable {
         length = 0
     }
 
+    /// Snapshot the current state to a fresh `Tensor`. Used by
+    /// speculative-decode to remember the pre-speculative state so it
+    /// can be restored if drafted tokens are rejected.
+    ///
+    /// GDN is recurrent — once the kernel has folded a wrong token
+    /// into `current`, you cannot subtract it back. Snapshot before
+    /// each speculative forward, restore on full rejection.
+    ///
+    /// Snapshot cost: one `memcpy` of `[Hv, Dv, Dk]` fp32 = ~2 MiB on
+    /// Qwen3.6-A3B per layer × 30 layers = ~60 MiB. On Apple silicon
+    /// unified memory at ~400 GB/s this is ~150 µs per layer in
+    /// aggregate — negligible against a ~60 ms decode step.
+    ///
+    /// Returns the snapshot tensor; caller stores it until needed.
+    public func snapshot(device: Device = .shared) -> Tensor {
+        let shape = [numValueHeads, valueHeadDim, keyHeadDim]
+        let snap = Tensor.empty(shape: shape, dtype: .f32, device: device)
+        // Use a blit encoder to copy on the GPU side — keeps the host
+        // out of the loop. Both buffers are shared-storage, so the
+        // copy is just a unified-memory blit.
+        let cmd = device.makeCommandBuffer()
+        guard let blit = cmd.makeBlitCommandEncoder() else {
+            preconditionFailure("GDNStateCache.snapshot: makeBlitCommandEncoder failed")
+        }
+        let bytes = numValueHeads * valueHeadDim * keyHeadDim * DType.f32.byteSize
+        blit.copy(from: current.buffer, sourceOffset: current.offset,
+                  to: snap.buffer, destinationOffset: snap.offset,
+                  size: bytes)
+        blit.endEncoding()
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return snap
+    }
+
+    /// Restore from a snapshot taken via `snapshot()`. Overwrites
+    /// `current` with the snapshot contents; leaves `next` alone (it'll
+    /// be overwritten on the next kernel dispatch). Does NOT decrement
+    /// `length` — caller is responsible for matching the position
+    /// counter to the restored state.
+    public func restore(from snapshot: Tensor, device: Device = .shared) {
+        let expected = numValueHeads * valueHeadDim * keyHeadDim
+        precondition(snapshot.elementCount == expected,
+                     "GDNStateCache.restore: snapshot has \(snapshot.elementCount) elements, expected \(expected)")
+        precondition(snapshot.dtype == .f32,
+                     "GDNStateCache.restore: snapshot must be f32 (matches state buffer dtype)")
+        let cmd = device.makeCommandBuffer()
+        guard let blit = cmd.makeBlitCommandEncoder() else {
+            preconditionFailure("GDNStateCache.restore: makeBlitCommandEncoder failed")
+        }
+        let bytes = expected * DType.f32.byteSize
+        blit.copy(from: snapshot.buffer, sourceOffset: snapshot.offset,
+                  to: current.buffer, destinationOffset: current.offset,
+                  size: bytes)
+        blit.endEncoding()
+        cmd.commit()
+        cmd.waitUntilCompleted()
+    }
+
     /// Bytes physically allocated — both state buffers. Independent of
     /// how many tokens have been processed (the GDN compression win).
     public var bytesAllocated: Int {
