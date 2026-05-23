@@ -23,6 +23,7 @@ public enum LoadedAudioModel: @unchecked Sendable {
     case qwen3TTS(Qwen3TTSModel)
     case echoTTS(EchoTTSModel)
     case qwen3TTSBase(Qwen3TTSBaseModel)
+    case parakeet(ParakeetModel)
 
     /// The capabilities this model exposes — `audioIn` for STT / omni,
     /// `audioOut` for TTS.
@@ -37,6 +38,7 @@ public enum LoadedAudioModel: @unchecked Sendable {
         case .qwen3TTS: return Capability.textToSpeech
         case .echoTTS: return Capability.textToSpeech
         case .qwen3TTSBase: return Capability.textToSpeech
+        case .parakeet: return Capability.speechToText
         }
     }
 }
@@ -57,6 +59,7 @@ public enum AudioModelRegistry {
             || Qwen3TTSModel.handles(config)
             || EchoTTSModel.handles(config)
             || Qwen3TTSBaseModel.handles(config)
+            || ParakeetModel.handles(config)
     }
 
     /// The capability set a checkpoint at `directory` would expose,
@@ -83,6 +86,7 @@ public enum AudioModelRegistry {
         if LlamaTTSModel.handles(config) { return Capability.textToSpeech }
         if EchoTTSModel.handles(config) { return Capability.textToSpeech }
         if Qwen3TTSBaseModel.handles(config) { return Capability.textToSpeech }
+        if ParakeetModel.handles(config) { return Capability.speechToText }
         return nil
     }
 
@@ -132,6 +136,10 @@ public enum AudioModelRegistry {
         if Qwen3TTSBaseModel.handles(config) {
             return .qwen3TTSBase(try await Qwen3TTSBaseModel.load(
                 directory: directory, device: device))
+        }
+        if ParakeetModel.handles(config) {
+            return .parakeet(try ParakeetModel.load(directory: directory,
+                                                    device: device))
         }
         throw ModelError.unsupportedArchitecture(
             config.architecture ?? config.modelType ?? "<unknown audio model>")
