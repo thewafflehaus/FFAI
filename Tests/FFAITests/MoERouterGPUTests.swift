@@ -61,15 +61,13 @@ struct MoERouterGPUTests {
             .route(logits: logits)
         let gpu = Self.runGPU(logitsArr: logits, nExperts: 4, k: 2,
                               normTopkProb: true, dtype: .f32)
-        #expect(gpu.indices.map { Int($0) } == cpu.indices,
-                "GPU indices \(gpu.indices) ≠ CPU \(cpu.indices)")
+        #expect(gpu.indices.map { Int($0) } == cpu.indices)
         for i in 0..<cpu.weights.count {
-            #expect(abs(gpu.weights[i] - cpu.weights[i]) < 1e-4,
-                    "weight[\(i)] mismatch: gpu=\(gpu.weights[i]) cpu=\(cpu.weights[i])")
+            #expect(abs(gpu.weights[i] - cpu.weights[i]) < 1e-4)
         }
         // Mode 1 invariant: chosen-k weights sum to 1.
         let sum = gpu.weights.reduce(0, +)
-        #expect(abs(sum - 1) < 1e-4, "mode 1 weights must sum to 1, got \(sum)")
+        #expect(abs(sum - 1) < 1e-4)
     }
 
     /// Mode 0 (Qwen3-Next): same inputs, weights are raw softmax probs
