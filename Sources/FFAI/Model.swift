@@ -38,6 +38,7 @@ public enum VisionLanguageArchitectures {
     public static let architectures: Set<String> = [
         "Gemma3ForConditionalGeneration",
         "Lfm2VlForConditionalGeneration",
+        "LlavaForConditionalGeneration",     // Pixtral-12B
         "MiniCPMV4_6ForConditionalGeneration",
         "Qwen2_5_VLForConditionalGeneration",
         "Qwen2VLForConditionalGeneration",
@@ -206,6 +207,22 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: vlm.engine,
                     defaultGenerationParameters: Gemma4Dense.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    vlModel: vlm)
+            }
+            // Pixtral — Mistral AI's Pixtral-12B vision-language model.
+            // The mlx-community conversion ships `model_type = "pixtral"`
+            // and (from HF auto-model mapping) architecture
+            // `LlavaForConditionalGeneration`. Dispatch via model_type so
+            // the same code handles any future Pixtral variant regardless
+            // of architecture string.
+            if let mt = config.modelType, Pixtral.modelTypes.contains(mt) {
+                let vlm = try Pixtral.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: LlamaDense.defaultGenerationParameters,
                     availableCapabilities: Capability.textOnly.union([.visionIn]),
                     vlModel: vlm)
             }
