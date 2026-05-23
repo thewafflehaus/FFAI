@@ -390,6 +390,17 @@ public final class MoELayer: Module, DecoderLayer {
     private var dequantizedGateCacheKN: Tensor?
     private var dequantizedGateAttempted = false
 
+    /// Cached scratch buffers for the per-expert weighted-sum loop at
+    /// decode T=1. Reused across decode calls — avoids 1 host alloc +
+    /// 1 host memset per layer per token (~10 µs × 40 layers = 400 µs
+    /// per Qwen3.6-A3B decode token).
+    /// * `accumulatorScratch`: [hidden] tensor; zeroed at the start of
+    ///   each decode call, then accumulated into via `Ops.scalarFMA`.
+    /// * `topKScalarsBuf`: small [topK × dtype.byteSize] MTLBuffer
+    ///   holding the 8 routing weights packed in the model dtype.
+    private var accumulatorScratch: Tensor?
+    private var topKScalarsBuf: MTLBuffer?
+
     /// - gate: hidden → nExperts router projection.
     /// - gateProj/upProj/downProj: `nExperts`-long arrays of per-expert
     ///   SwiGLU projections, index-aligned with the expert id.
@@ -530,9 +541,26 @@ public final class MoELayer: Module, DecoderLayer {
             // is done. Subsequent iterations alias `accumulator` as
             // both base and out (safe — the kernel reads at idx then
             // writes at idx).
-            let scalarBuf = Self.packTopKScalars(routing.weights,
-                                                  dtype: h.dtype,
-                                                  device: device)
+            // Reuse cached scratch slots — see field comment on
+            // `accumulatorScratch` + `topKScalarsBuf`.
+            let scalarBufBytes = routing.weights.count * h.dtype.byteSize
+            if topKScalarsBuf == nil || topKScalarsBuf!.length < scalarBufBytes {
+                topKScalarsBuf = device.makeBuffer(length: scalarBufBytes)
+            }
+            Self.writeTopKScalars(routing.weights, dtype: h.dtype,
+                                   into: topKScalarsBuf!)
+            let scalarBuf = topKScalarsBuf!
+
+            // Lazy-init + zero the accumulator scratch.
+            if accumulatorScratch == nil
+                || accumulatorScratch!.dtype != h.dtype
+                || accumulatorScratch!.elementCount != hidden {
+                accumulatorScratch = Tensor.empty(shape: [hidden], dtype: h.dtype,
+                                                   device: device)
+            }
+            accumulatorScratch!.zero()
+            let acc = accumulatorScratch!
+
             for (slot, expertId) in routing.indices.enumerated() {
                 let expertOut = swiGLU(h,
                                        gateProj: gateProj[expertId],
@@ -542,18 +570,10 @@ public final class MoELayer: Module, DecoderLayer {
                 let scalarT = Tensor(buffer: scalarBuf,
                                      offset: slot * h.dtype.byteSize,
                                      shape: [1], dtype: h.dtype)
-                if let acc = accumulator {
-                    Ops.scalarFMA(scalar: scalarT, value: expertOut, base: acc,
-                                  into: acc, on: work)
-                } else {
-                    let acc = Tensor.empty(shape: [hidden], dtype: h.dtype,
-                                            device: device)
-                    acc.zero()
-                    Ops.scalarFMA(scalar: scalarT, value: expertOut, base: acc,
-                                  into: acc, on: work)
-                    accumulator = acc
-                }
+                Ops.scalarFMA(scalar: scalarT, value: expertOut, base: acc,
+                              into: acc, on: work)
             }
+            accumulator = acc
         }
 
         // ── 5. Optional always-on shared expert ──────────────────────
@@ -1132,19 +1152,13 @@ public final class MoELayer: Module, DecoderLayer {
     /// values in the activation dtype instead of u32-packed int8s).
     /// Supports 8-bit only — the path that `QuantizedLinear.callMany`
     /// falls into a T-loop for.
-    /// Pack a small Swift `[Float]` of length topK (typically 8) into a
-    /// fresh MTLBuffer of the target dtype. Caller indexes into it via
-    /// `slot * dtype.byteSize` to read individual scalars from the
-    /// per-expert FMA dispatches.
-    ///
-    /// Replaces the 8 × `Tensor.filled([hidden])` allocations that the
-    /// per-expert weighted-sum loop used to do — one buffer holds all
-    /// 8 scalars, no per-iter host alloc.
-    private static func packTopKScalars(_ weights: [Float],
-                                          dtype: DType,
-                                          device: Device) -> MTLBuffer {
+    /// Write the routing weights into an existing MTLBuffer — the
+    /// buffer is cached on the MoELayer instance via `topKScalarsBuf`
+    /// to avoid a fresh alloc per decode token. Caller indexes into
+    /// the buffer via `slot * dtype.byteSize`.
+    private static func writeTopKScalars(_ weights: [Float], dtype: DType,
+                                          into buf: MTLBuffer) {
         let topK = weights.count
-        let buf = device.makeBuffer(length: topK * dtype.byteSize)
         switch dtype {
         case .f32:
             var arr = weights
@@ -1153,7 +1167,6 @@ public final class MoELayer: Module, DecoderLayer {
             var arr = weights.map { Float16($0) }
             memcpy(buf.contents(), &arr, topK * 2)
         case .bf16:
-            // bf16 = high 16 bits of f32, with round-to-nearest bias.
             var arr = [UInt16]()
             arr.reserveCapacity(topK)
             for v in weights {
@@ -1163,9 +1176,8 @@ public final class MoELayer: Module, DecoderLayer {
             }
             memcpy(buf.contents(), &arr, topK * 2)
         default:
-            fatalError("packTopKScalars: unsupported dtype \(dtype)")
+            fatalError("writeTopKScalars: unsupported dtype \(dtype)")
         }
-        return buf
     }
 
     private static func dequantizeQuantizedLinear(
