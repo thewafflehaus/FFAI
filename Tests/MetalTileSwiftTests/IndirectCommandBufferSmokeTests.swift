@@ -17,6 +17,88 @@ import Testing
 @Suite("ICB plumbing smoke")
 struct IndirectCommandBufferSmokeTests {
 
+    @Test("ICBRecorder + generated `_record` wrappers chain 600 commands and execute correctly")
+    func icbRecorderChainsCommandsAndExecutes() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            Issue.record("no Metal device")
+            return
+        }
+        guard let queue = device.makeCommandQueue() else {
+            Issue.record("no command queue")
+            return
+        }
+
+        // 600 dispatches = Qwen3.6-A3B decode T=1 dispatch count.
+        let nCommands = 600
+        let vecSize = 256
+        let bytes = vecSize * MemoryLayout<Float>.stride
+        let inputHost: [Float] = (0..<vecSize).map { Float($0) * 0.01 }
+        guard
+            let inBuf = device.makeBuffer(bytes: inputHost, length: bytes,
+                                          options: .storageModeShared),
+            let outBuf = device.makeBuffer(length: bytes, options: .storageModeShared)
+        else {
+            Issue.record("buffer alloc")
+            return
+        }
+
+        // ICBRecorder holds 600 commands; sigmoid has 0 scalars so
+        // paramsBytes is a token amount.
+        let paramsBudget = nCommands * max(MetalTileKernels.mt_sigmoid_f32_params_size, 1)
+        let rec = ICBRecorder(device: device,
+                              maxCommands: nCommands,
+                              paramsBytes: paramsBudget)
+        rec.use(inBuf, usage: .read)
+        rec.use(outBuf, usage: .write)
+
+        let tgWidth = min(vecSize, 256)
+        let grid = MTLSize(width: vecSize, height: 1, depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+
+        for _ in 0..<nCommands {
+            let slot = rec.next(paramsSize: MetalTileKernels.mt_sigmoid_f32_params_size)
+            MetalTileKernels.mt_sigmoid_f32_record(
+                a: inBuf, out: outBuf,
+                paramsBuffer: rec.paramsBuffer, paramsBufferOffset: slot.paramsOffset,
+                gridSize: grid, threadgroupSize: tg,
+                into: slot.command)
+        }
+        #expect(rec.recordedCount == nCommands,
+                "expected \(nCommands) commands recorded, got \(rec.recordedCount)")
+
+        // Warm-up.
+        do {
+            guard let cmd = queue.makeCommandBuffer() else { return }
+            rec.execute(on: cmd)
+            cmd.commit()
+            cmd.waitUntilCompleted()
+        }
+
+        // Time ICBRecorder.execute over 5 runs.
+        var icbTimes: [Double] = []
+        for _ in 0..<5 {
+            guard let cmd = queue.makeCommandBuffer() else { return }
+            let t0 = Date()
+            rec.execute(on: cmd)
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            icbTimes.append(Date().timeIntervalSince(t0))
+        }
+        icbTimes.sort()
+        let icbMedian = icbTimes[icbTimes.count / 2]
+        print("ICBRecorder N=\(nCommands): median=\(String(format: "%.3f", icbMedian * 1000))ms runs=\(icbTimes.map { String(format: "%.3f", $0 * 1000) })")
+
+        // Sanity-verify output: sigmoid(inputHost) all positive in (0, 1)
+        // since input range is [0, 2.56].
+        // Inputs are 0.01 × index ∈ [0, 2.56] → sigmoid in [0.5, 0.928].
+        // Allow exact 0.5 for input=0; upper-bound strict.
+        let outPtr = outBuf.contents().bindMemory(to: Float.self, capacity: vecSize)
+        for i in 0..<vecSize {
+            #expect(outPtr[i] >= 0.5 && outPtr[i] < 1.0,
+                    "sigmoid output[\(i)] = \(outPtr[i]) not in [0.5, 1.0)")
+        }
+    }
+
     @Test("Auto-generated `_record` ICB wrapper produces identical output to direct dispatch")
     func generatedRecordWrapperMatchesDirectDispatch() throws {
         guard let device = MTLCreateSystemDefaultDevice() else {
