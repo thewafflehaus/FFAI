@@ -692,7 +692,7 @@ public final class GraniteMoeHybridDenseMLP: Module {
     func forward(_ xNorm: Tensor, cmd: MTLCommandBuffer) -> Tensor {
         let g = gateProj(xNorm, on: cmd)
         let u = upProj(xNorm, on: cmd)
-        let inner = Ops.mul(Ops.silu(g, on: cmd), u, on: cmd)
+        let inner = Ops.swiglu(gate: g, up: u, on: cmd)
         return downProj(inner, on: cmd)
     }
 }
