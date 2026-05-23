@@ -967,16 +967,48 @@ Each model gets:
 
 ---
 
-## Phase 6.1 — Sliding-window SDPA fast path
+## Phase 6.1 — Sliding-window SDPA fast path  ❌ ARCHITECTURALLY MOOT (2026-05-23)
 
-Plumb `sink_end` + `window_start` (metaltile PR #50's
-`ffai_sdpa_decode` head_dim=128 constexprs) through `Ops.sdpaDecode`.
-Today FFAI passes both as 0 (full attention) and handles sinks +
-sliding window at the KV-cache layer via FIFO eviction with
-sink-slot preservation. Threading the real values takes the kernel's
-fast path — ~4× decode at 16K context, ~8× at 32K. Wire from
-`SlidingWindowKVCache` + the GPT-OSS attention-sinks path; verify the
-speedup.
+The original plan was to thread `sink_end` + `window_start` (metaltile
+PR #50's `ffai_sdpa_decode` head_dim=128 constexprs) through
+`Ops.sdpaDecode` so the kernel could skip the stale K/V slot range
+`[sink_end, window_start)` at the loop-bound level.
+
+**Audit finding:** the kernel fast path only delivers a speedup when
+the cache layout has *stale slots* — i.e. linear-grow-with-skip,
+where positions beyond the window stay in the buffer but should be
+masked out of attention. FFAI's sliding-window cache uses
+**rotating-eviction** instead (`KVEviction.window(maxSize:keep:)` in
+`KVCacheEviction.swift`): when the buffer fills, the oldest non-sink
+slot is overwritten by the next append. Every slot in `[0, length)`
+is a live K/V vector we want to attend. The kernel's skip range is
+always empty for our cache; threading `sinkEnd`/`windowStart` would
+be a no-op.
+
+Compounding factor: the two sliding-window consumers in tree don't
+qualify anyway — **GPT-OSS uses `head_dim = 64`** and **Gemma 3 / 4
+use `head_dim = 256`**; the kernel fast path only exists on the
+head_dim=128 variant.
+
+Real wins still available in this space (re-scoping Phase 6.1):
+
+1. **Port `has_sink + sink_logit` to head_dim=64 in metaltile.** GPT-OSS
+   today commits the cmdbuf mid-attention, reads K + Q back to CPU,
+   computes a per-head sink-correction factor, scales the SDPA output
+   on the host. The kernel feature exists on head_dim=128; porting it
+   to head_dim=64 eliminates one per-token CPU readback per attention
+   layer.
+2. **Switch sliding-window cache to linear-grow-with-skip.** Enables
+   the existing head_dim=128 kernel fast path on Llama / Mistral /
+   Phi / Qwen. Cost: cache memory grows from `min(maxSize, length)` to
+   `length` (up to `maxSeq`). Probably not worth it for our memory
+   constraints; revisit only if the head_dim=128 sliding-window
+   layers become a measurable bottleneck.
+
+Decision: drop the "Phase 6.1" milestone from the active plan, leave
+the rescoped wins (#1, #2) on the backlog. The architecturally-moot
+nature of the original phase is documented here so a future reader
+doesn't re-pick it up under the old framing.
 
 ---
 
@@ -1157,7 +1189,52 @@ vision-encode wall-time drop by ≥ 4× vs the parallelised-CPU baseline.
 
 ---
 
-## Phase 6.6 — Chunked (batched) prefill
+## Phase 6.6 — Chunked (batched) prefill  🟡 SCAFFOLD SHIPPED (2026-05-23)
+
+**Scaffold shipped** (commit `017e954`):
+- `LanguageModel.forwardMulti(tokenIds:startingAt:caches:on:device:) -> Tensor`
+  protocol method (default loop on a single command buffer, returns
+  tail-position logits).
+- `Generate.driveGeneration` prefill restructured to call
+  `engine.forwardMulti(chunk, startingAt: pos, on: cmd)` per
+  `prefillStepSize`-sized chunk, then `sampleNext` only on the final
+  position. **Commit count drops from N to ceil(N/chunkSize) + 1** —
+  for a 1024-token prompt with the default `prefillStepSize=1024`
+  that's 1024 → 2 commits, eliminating ~milliseconds of CPU↔GPU
+  sync per discarded commit.
+
+**Next session — family-optimised `forwardMulti` overrides.** The
+default loop calls `forward(tokenId:)` N times on the same cmdbuf;
+the real Phase 6.6 perf win is overriding `forwardMulti` per family
+to batch the QKV / MLP projections via `Ops.gemm(weight:, input:
+[N, hidden], nRows: N)` and collapse the N per-token SDPA dispatches
+into one `Ops.sdpaMulti(causal: true)` call. All primitives exist
+(`Ops.gemm` ships batched matmul; `Ops.rmsNormRows` ships batched
+RMSNorm; `Ops.sdpaMulti` ships causal multi-query SDPA). The work is:
+
+1. **`LlamaLayer.forwardMulti(chunk:positions:cache:cmd:device:)`** —
+   restructure the per-token layer forward to take `[N, hidden]`
+   inputs and produce `[N, hidden]` outputs. The hot wins are
+   `Ops.gemm(...)` for {q,k,v,o,gate,up,down}_proj, `Ops.sdpaMulti`
+   for attention, `Ops.rmsNormRows` for the two layer norms.
+2. **`KVCacheProtocol.appendChunkOnGPU(kChunk:vChunk:positions:on:)`** —
+   loop the existing single-position `kv_cache_update` N times on
+   the same cmdbuf (cheap; the K/V append isn't the bottleneck) OR
+   add a batched kernel to metaltile if the loop overhead shows up
+   in profiles.
+3. **`LlamaModel.forwardMulti(...)`** — embed N tokens, run the layer
+   stack via `LlamaLayer.forwardMulti`, final norm batched, lm_head
+   only on the tail position.
+4. **Test** — chunked-vs-per-token logit equality (within numerical
+   tolerance) on a tiny Llama. Smoke at production size: a TTFT
+   regression check on Llama 3.2 1B with 2048-token prompt.
+
+The same shape applies to Qwen 3, Mistral, Phi, Gemma 3 / 4 dense.
+Hybrid families (NemotronH, Jamba, GraniteMoeHybrid, FalconH1, LFM2)
+can chunk the attention layers but keep SSM / GDN steps per-token —
+their recurrence is inherently sequential.
+
+Original phase text preserved below.
 
 Today FFAI prefills a prompt one token per dispatch (`Generate.swift`
 — `prefillStepSize` is a no-op placeholder). Batch the prompt into
