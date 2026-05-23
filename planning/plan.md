@@ -93,6 +93,65 @@ tests alongside code, not after.
   `fatalError` on programmer bugs etc.) are excluded from the
   coverage denominator via `// coverage:ignore` markers.
 
+---
+
+## Performance & testing gaps (current state, 2026-05-23)
+
+After Phase 6.5 (Vision) and Phase 7 (Audio) landed, this is the
+honest list of where the codebase is soft. Tracked in detail in
+`planning/session-plan.md` under "Performance gaps" + "Testing gaps".
+
+### Performance
+1. **One-token-per-dispatch prefill** — `Generate.swift` ignores
+   `prefillStepSize`. TTFT scales linearly with prompt length.
+   Closed by Phase 6.6.
+2. **Sliding-window SDPA full-attention fall-through** — `Ops.sdpaDecode`
+   passes `sink_end = 0`, `window_start = 0` even when the cache is
+   sliding-window. 4×–8× decode tax at 16K–32K context.
+   Closed by Phase 6.1.
+3. **VLM cold inference on Idefics3 / PaliGemma / GlmOcr / FastVLM**
+   — vision-tower attention + depthwise conv run on parallelised CPU,
+   not GPU. Minutes-per-first-image at 1024px on FastVLM.
+   Closed by Phase 6.5b.
+4. **AURA persistent K/V mirror** — Stage 1a snapshots a full
+   `[maxSeq, kvHeads, headDim]` mirror per layer. Closed by Phase 6.3
+   Stage 1b (compressed-domain `aura_flash` as default decode path).
+5. **GPU 100% pin (unknown root cause)** — deferred per user; needs
+   a Metal System Trace to localise. Mitigation: `FFAI_MAX_COMMAND_BUFFERS=16`
+   caps the queue so it stays annoying-but-survivable.
+6. **Per-token `commit + wait` + 4-byte readback**  [#93] — partially
+   shipped under Phase C #6 (1-cmdbuf default path); full GPU-resident
+   decode is a Phase 9 dispatch-mode win.
+7. **FishSpeech Conv1d on CPU** — codec ports run dilated /
+   transposed Conv1d in Swift until the metaltile kernels land.
+   Synthesise path produces a waveform but slowly.
+8. **Marvis Mimi codec — not wired** — `MarvisModel` frame-generates
+   but `mimiDecoder` is nil. Hook in `Audio/Mimi.swift`.
+
+### Testing
+1. **Integration tests written but unrun** — every family added in
+   the Phase 6.5 (16 VLMs) + Phase 7 (35+ audio families) wave
+   ships an assertive integration test that has not yet been run
+   against a cached checkpoint. The first
+   `make test-integration --filter <Family>` pass against each gives
+   the real coherence verdict.
+2. **No GPU correctness tests** for the CPU vision towers (Phase 6.5b
+   prerequisite). Each new metaltile kernel under that phase needs
+   its paired `*_gpu_correctness.rs`.
+3. **No per-layer forward tests** for most new families — they ship
+   config-parse + registry-detection unit tests but no
+   `<Family>ForwardTests.swift` running one decoder layer against a
+   known input. These catch regressions earlier than the
+   integration suite.
+4. **No AURA MSL snapshots** — Phase 6.2 still open.
+5. **FishSpeech integration test asserts the staged path** — flip
+   the assertion once the Conv1d codec primitives land.
+6. **VLMTestSupport has one fixture** — `dog.jpeg`. A text-rendering
+   fixture (for GLM-OCR) and an alpha-channel fixture (for SmolVLM)
+   would harden the preprocessing pipeline.
+7. **`steel_gemm_splitk` flakiness**  [#92] — intermittent under the
+   full suite; needs a deterministic repro.
+
 **Test layout:**
 
 ```
@@ -978,7 +1037,44 @@ continuous decode Phase 8 introduces (see the concurrency audit
 
 ---
 
-## Phase 6.5 — Vision (VLM)
+## Phase 6.5 — Vision (VLM) ✅ SHIPPED
+
+**16 VL families landed**, well past the original plan scope.
+Shipped: Qwen 2-VL (`Qwen2VL.swift`), Qwen 2.5-VL (`Qwen25VL.swift`),
+Qwen 3-VL (`Qwen3VL.swift`), Qwen 3-VL-MoE (`Qwen3VLMoe.swift`),
+Gemma 3-VL (`Gemma3VL.swift`), Gemma 4-VL (`Gemma4VL.swift`),
+LFM2-VL (`LFM2VL.swift`), MiniCPM-V 4.6 (`MiniCPMV.swift`),
+NemotronVL (`NemotronVL.swift`), SmolVLM2 (`SmolVLM2.swift`),
+Pixtral (`Pixtral.swift` — Mistral 2D-RoPE ViT), Mistral 3
+(`Mistral3.swift`), FastVLM (`FastVLM.swift` — Apple FastViTHD),
+GlmOcr (`GlmOcr.swift`), Idefics3 (`Idefics3.swift`),
+Paligemma (`Paligemma.swift`).
+
+Phase 6.5 deliverables ✅ on disk:
+- `Sources/FFAI/VisionEncoder.swift` (with parallelised CPU
+  bidirectional `cpuAttention` — fix for the original VLM "image
+  hang").
+- `Sources/FFAI/ImagePreprocessing.swift` (resize / normalize /
+  patchify + CHW conversion).
+- `Tests/ModelTests/VLMTestSupport.swift` with
+  `dogImageCHW(targetSize:)` /
+  `dogImageCHWNormalized(targetSize:normalization:)` /
+  `expectMentionsDog(...)`.
+- Metaltile kernels: `conv2d`, `patch_embed`, `audio_conv1d`,
+  `rope_2d`.
+- Every VL family ships with a `<Family>IntegrationTests.swift`
+  asserting "dog" in the caption of `dog.jpeg`. **The tests are
+  written but most have not yet been run against a cached
+  checkpoint** — see session-plan testing gaps.
+
+**Phase 6.5b deferred follow-up (perf):** Idefics3, PaliGemma,
+GlmOcr, and FastVLM still run their vision-tower attention +
+depthwise conv on CPU (parallelised but not GPU). FastVLM cold
+inference at 1024px is the loudest signal. Slot a GPU
+vision-attention kernel + depthwise conv2d port under 6.5b before
+Phase 8 starts.
+
+Original 6.5 goal text preserved for context below.
 
 **Goal:** Stress-test the Capability + lifecycle infrastructure with
 real multi-modal models. Validate that disabled-by-default modalities
@@ -1018,6 +1114,49 @@ that lifecycle events stream correctly to consumers.
 
 ---
 
+## Phase 6.5b — VLM vision-tower GPU port
+
+**Why this exists.** Phase 6.5 shipped 16 VL families, but four of
+them — Idefics3, PaliGemma, GlmOcr, FastVLM — still run their
+vision-tower attention + depthwise conv on CPU (parallelised via
+`DispatchQueue.concurrentPerform`, but not GPU). FastVLM cold
+inference at 1024px is flagged at minutes per first-image in the
+agent return notes; the others have similar tails.
+
+The Phase 6.5 vision encoder reused FFAI's `VisionEncoder` for any VL
+family whose tower is a standard ViT + LayerNorm + GELU stack. The
+four CPU-bound stragglers each ship a custom tower:
+- **Idefics3** — bidirectional pre-norm SigLIP-ish with pixel-shuffle
+  connector; CPU bidirectional attention in `Idefics3VisionEncoder`.
+- **PaliGemma** — SigLIP variant; CPU bidirectional in
+  `PaligemmaModel`'s embedded vision branch.
+- **GlmOcr** — dynamic-resolution ViT; CPU bidirectional in
+  `GlmOcrVisionBlock`.
+- **FastVLM** — Apple FastViTHD; depthwise + pointwise conv chain
+  with CPU depthwise (pointwise = `Ops.gemm`, GPU); CPU SE gates +
+  CPU bidirectional MHSA.
+
+**Deliverables:**
+- New metaltile kernel(s):
+  - `conv2d_depthwise_{kh}_{kw}_{stride}` (fp16 / bf16) — depthwise
+    pass via direct sliding-window MAC; no im2col blow-up.
+  - Vision bidirectional attention (no causal mask, no KV cache) —
+    likely a thin variant of `sdpa_decode` or `sdpa_decode_batched_prefill`
+    with the mask disabled, exposed as `Ops.sdpaBidirectional(...)`.
+- FFAI:
+  - `Ops.conv2dDepthwise(...)` wrapper.
+  - Migrate each custom tower's CPU attention to `Ops.sdpaBidirectional`.
+  - Migrate FastVLM ConvFFN depthwise to `Ops.conv2dDepthwise`.
+- Tests: each kernel ships `*_gpu_correctness.rs` in metaltile;
+  per-family integration test confirms speedup + identical caption
+  vs CPU oracle.
+
+**Done-gate:** FastVLM cold inference at 1024px completes inside
+30 s on a representative M-series device. The other three see their
+vision-encode wall-time drop by ≥ 4× vs the parallelised-CPU baseline.
+
+---
+
 ## Phase 6.6 — Chunked (batched) prefill
 
 Today FFAI prefills a prompt one token per dispatch (`Generate.swift`
@@ -1045,7 +1184,58 @@ identical logits) + a TTFT regression check.
 
 ---
 
-## Phase 7 — Audio (STT + TTS + Omni)
+## Phase 7 — Audio (STT + TTS + Omni) ✅ SHIPPED (overshipped)
+
+Phase 7 was scoped as Whisper + Kokoro + Qwen-Omni. Reality shipped
+the full mlx-audio-swift surface plus VAD + STS (audio enhancement /
+source separation / segmentation), plus the FishSpeech dual-AR
+family and its FishS1DAC codec.
+
+Shipped families:
+- **STT:** `Whisper.swift`, `SenseVoice.swift`, `Parakeet.swift`,
+  `FireRedASR2.swift`, `Qwen3ASR.swift`, `VoxtralRealtime.swift`
+  (Mistral streaming), `GLMASR.swift`, `CohereTranscribe.swift`,
+  `GraniteSpeech.swift`.
+- **TTS:** `Kokoro.swift`, `LlamaTTS.swift`, `Marvis.swift` (CSM
+  acoustic; Mimi codec wired separately, codec-port follow-up),
+  `Qwen3TTS.swift`, `Qwen3TTSBase.swift`, `EchoTTS.swift`,
+  `Chatterbox.swift` (Resemble T3 + S3Gen + HiFi-GAN),
+  `MossTTS.swift`, `MossTTSNano.swift`, `PocketTTS.swift`,
+  `Soprano.swift`, `StyleTTS2.swift`, `FishSpeech.swift` +
+  `FishS1DAC.swift` codec.
+- **Omni:** `QwenOmni.swift`, `LFMAudio.swift` (Liquid AI Conformer
+  + LFM2 backbone).
+- **VAD (separate `VADModelRegistry`):** `SileroVAD.swift`,
+  `SmartTurn.swift`, `Sortformer.swift` (diarization),
+  `TenVAD.swift` (TEN-framework), `FireRedVAD.swift`.
+- **STS / audio enhancement** (new `Capability.speechToSpeech`):
+  `DeepFilterNet.swift`, `MossFormer2SE.swift`, `SAMAudio.swift`
+  (audio segmentation).
+- **Codecs:** `BigVGAN.swift`, `Vocos.swift`, `DACVAE.swift`,
+  `DescriptDAC.swift`, `Encodec.swift`, `Mimi.swift`, `SNAC.swift`,
+  `FishS1DAC.swift`.
+- **Infrastructure:** `AudioEncoder.swift` (with parallelised
+  `cpuAttention` — Whisper transcribe fix), `AudioPreprocessing.swift`
+  (mel + framing + log10 / Slaney variants), `AudioGenerationModel`
+  protocol + `AudioGenerationParameters` + `AudioGenerationError`,
+  shared `AudioFixtures.swift` (clean_001.wav fixture +
+  `resolveCheckpoint(mlxAudioSlugs:repoIds:)`).
+- **Kernels (metaltile `ffai/`):** `mel_spectrogram`, `audio_conv1d`.
+
+Same testing-gap caveat as Phase 6.5: every family ships an assertive
+integration test, but most have not yet been run against a cached
+checkpoint. The first `make test-integration --filter <Family>` pass
+will surface any remaining bugs.
+
+Codec follow-ups:
+- Marvis Mimi-decoder wiring — `MarvisModel.mimiDecoder` is nil;
+  hook the existing `Sources/FFAI/Audio/Mimi.swift` in.
+- FishSpeech end-to-end — codec wired, integration test still
+  asserts the staged path because dilated/transposed Conv1d
+  primitives haven't landed. Switch the assertion once those kernels
+  ship.
+
+Original 7 goal text preserved below for context.
 
 Audio modality is interleaved with vision rather than deferred:
 Whisper STT + Qwen-Omni audio + at least one TTS family
