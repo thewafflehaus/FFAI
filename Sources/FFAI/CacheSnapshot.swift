@@ -97,25 +97,21 @@ public extension Array where Element == any LayerCacheProtocol {
 // Spec decode needs to move backward on reject.
 
 public extension GDNStateCache {
+    /// Rewind the position counter without touching tensor state.
+    /// Used by spec-decode AFTER the buffers have been restored via
+    /// `restore(from:)`. Was previously implemented as reset+swap loop,
+    /// which zeroed the state buffers — see `setLength` for the safe
+    /// path.
     func restoreLength(to length: Int) {
-        precondition(length >= 0, "GDNStateCache.restoreLength: length must be ≥ 0")
-        // `length` is `public private(set)` — go through the snapshot's
-        // value by resetting and re-incrementing. Cheap (counter only;
-        // state buffers already restored separately).
-        self.reset()
-        for _ in 0..<length { self.swap() }
+        self.setLength(length)
     }
 }
 
 public extension Qwen35GDNLayerCache {
+    /// Composite-level length-only restore. Tensor state is restored
+    /// separately by the caller; this fixes the position counter
+    /// without disturbing the just-restored conv/gdn buffers.
     func restoreLength(to length: Int) {
-        precondition(length >= 0, "Qwen35GDNLayerCache.restoreLength: length must be ≥ 0")
-        // Mirror GDN's reset-then-advance pattern at the composite
-        // level. The cache's `length` is bumped via `advance()` on
-        // each token; rewinding by re-running advance from a known
-        // baseline is the cleanest path without changing the
-        // public API surface.
-        self.reset()
-        for _ in 0..<length { self.advance() }
+        self.setLength(length)
     }
 }

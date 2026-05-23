@@ -168,6 +168,15 @@ public final class GDNStateCache: LayerCacheProtocol, @unchecked Sendable {
         2 * numValueHeads * valueHeadDim * keyHeadDim * DType.f32.byteSize
     }
 
+    /// Set the position counter directly without zeroing buffers.
+    /// Spec-decode restore path uses this after writing the snapshot
+    /// tensor into `current`. `reset()` + `swap()` would wipe the
+    /// just-restored state.
+    public func setLength(_ length: Int) {
+        precondition(length >= 0, "GDNStateCache.setLength: must be ≥ 0")
+        self.length = length
+    }
+
     /// GDN state storage is constant-size; "in use" equals allocated
     /// once any step has executed, zero before then.
     public var bytesInUse: Int {

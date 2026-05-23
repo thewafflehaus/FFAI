@@ -974,6 +974,16 @@ public final class Qwen35GDNLayerCache: LayerCacheProtocol, @unchecked Sendable 
 
     public func advance() { length += 1 }
 
+    /// Set the position counter directly without touching tensor state.
+    /// Spec-decode uses this after manually restoring conv + gdn state
+    /// from a snapshot: tensors are restored separately; this fixes the
+    /// position counter back to the snapshotted value. Going through
+    /// `reset()` would zero the just-restored tensors.
+    public func setLength(_ length: Int) {
+        precondition(length >= 0, "Qwen35GDNLayerCache.setLength: must be ≥ 0")
+        self.length = length
+    }
+
     public var bytesAllocated: Int {
         conv.bytesAllocated + gdn.bytesAllocated
     }
