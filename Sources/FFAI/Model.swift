@@ -138,6 +138,19 @@ public enum ModelRegistry {
                     availableCapabilities: Capability.textOnly.union([.visionIn]),
                     vlModel: vlm)
             }
+            // Qwen 2-VL — dynamic-resolution full-attention ViT tower
+            // (LayerNorm pre-norms, GELU MLP, pure M-RoPE, no windowing) +
+            // the Qwen 2 text backbone (routed through the Llama dense engine).
+            if config.architecture == "Qwen2VLForConditionalGeneration" {
+                let vlm = try Qwen2VL.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: LlamaDense.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    vlModel: vlm)
+            }
             // Qwen 3-VL — dynamic-resolution full-attention ViT tower
             // (LayerNorm pre-norms, GELU MLP, learned position table) +
             // the Qwen 3 dense text backbone, joined by the splice.
