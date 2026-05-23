@@ -3361,6 +3361,49 @@ public enum Ops {
         }
     }
 
+    /// Cast two same-dtype tensors to f32 in ONE encoder. Saves one
+    /// encoder begin/end pair per call vs two separate `castToF32`
+    /// calls. Used when the third cast in the GDN inner loop is folded
+    /// into a `siluCastToF32` upstream — only aRaw + bRaw need raw
+    /// casts then.
+    public static func castToF32Two(
+        _ a: Tensor, into outA: Tensor,
+        _ b: Tensor, into outB: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(a.dtype == b.dtype,
+                     "Ops.castToF32Two: inputs must share dtype")
+        precondition(outA.dtype == .f32 && outB.dtype == .f32,
+                     "Ops.castToF32Two: outputs must be f32")
+        precondition(a.elementCount == outA.elementCount,
+                     "Ops.castToF32Two: a/outA count mismatch")
+        precondition(b.elementCount == outB.elementCount,
+                     "Ops.castToF32Two: b/outB count mismatch")
+        let psoName: String
+        switch a.dtype {
+        case .bf16: psoName = "mt_cast_to_f32_bf16"
+        case .f16:  psoName = "mt_cast_to_f32_f16"
+        case .f32:  psoName = "mt_cast_to_f32_f32"
+        default: fatalError("Ops.castToF32Two: unsupported dtype \(a.dtype)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        @inline(__always)
+        func dispatch(_ input: Tensor, _ out: Tensor) {
+            enc.setBuffer(input.buffer, offset: input.offset, index: 0)
+            enc.setBuffer(out.buffer, offset: out.offset, index: 1)
+            let n = input.elementCount
+            let tgWidth = min(n, 256)
+            enc.dispatchThreads(
+                MTLSize(width: n, height: 1, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: tgWidth, height: 1, depth: 1))
+        }
+        dispatch(a, outA)
+        dispatch(b, outB)
+        enc.endEncoding()
+    }
+
     /// Cast three same-dtype tensors to f32 in ONE encoder. Saves two
     /// encoder begin/end pairs per call vs three separate `castToF32`
     /// calls. Used in GDN mixer's fused-prep path where convAct, aRaw,

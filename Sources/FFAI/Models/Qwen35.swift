@@ -1154,7 +1154,22 @@ public final class Qwen35GDNMixer: Module {
             x: qkv, w: convW, b: convB,
             state: cache.conv.state, into: convOutScratch,
             nChannels: convDim, kernelSize: convKernel, on: cmd)
-        let convAct = Ops.silu(convOutScratch, on: cmd)   // [conv_dim]
+        // `convAct` is the silu of convOutScratch in the same dtype as
+        // the model (bf16/f16). In the fused path below we then cast
+        // it to f32 — so when `fused` is on, we route through the
+        // fused `siluCastToF32` instead, saving 1 elementwise silu
+        // dispatch + 1 castToF32 dispatch (= 1 fused dispatch) per
+        // GDN layer. Outside the fused path we still need the bf16
+        // silu output for the legacy host phase.
+        let convAct: Tensor
+        if fused {
+            // Output goes DIRECTLY into the f32 scratch — fused kernel
+            // reads bf16/f16, computes silu at f32 precision, writes f32.
+            convAct = convOutScratch  // unused later in fused branch
+            Ops.siluCastToF32(convOutScratch, into: convActF32Scratch, on: cmd)
+        } else {
+            convAct = Ops.silu(convOutScratch, on: cmd)   // [conv_dim]
+        }
 
         // ── Fused GDN prep + recurrence path (opt-in) ─────────────────
         //
@@ -1181,10 +1196,11 @@ public final class Qwen35GDNMixer: Module {
             // fused step runs the recurrence in fp32 against the
             // existing fp32 state slots, matching the canonical
             // precision of the legacy path.
-            Ops.castToF32Three(
-                convAct, into: convActF32Scratch,
-                aRaw,    into: aRawF32Scratch,
-                bRaw,    into: bRawF32Scratch,
+            // convAct → convActF32Scratch was already done above via
+            // siluCastToF32. Just batch the remaining 2 casts.
+            Ops.castToF32Two(
+                aRaw, into: aRawF32Scratch,
+                bRaw, into: bRawF32Scratch,
                 on: cmd)
 
             Ops.gatedDeltaPrepStep(
