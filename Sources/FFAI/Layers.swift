@@ -89,6 +89,13 @@ public final class QuantizedLinear: Module {
     }
 
     public func callAsFunction(_ x: Tensor, on cmd: MTLCommandBuffer) -> Tensor {
+        // NOTE (ITER 7 revert): tried caching outScratch across decode
+        // steps to eliminate ~1300 Tensor.empty allocs per token, but
+        // bench showed slight regression (~1.5%). Hypothesis: Metal's
+        // hazard tracking added more fences across decode steps with
+        // shared scratch than the cost of fresh-buffer allocations
+        // (which MTLDevice likely pools internally). Fresh alloc per
+        // call is the verified faster path.
         Ops.dequantGemv(
             weight: weight, scales: scales, biases: biases,
             input: x, bits: bits, groupSize: groupSize, on: cmd
