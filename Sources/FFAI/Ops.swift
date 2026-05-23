@@ -4196,6 +4196,96 @@ public enum Ops {
         }
     }
 
+    /// ITER 47 (Bagel 2): 8-way fused scalarFMA chain. Computes
+    /// `out[i] = sum_{k=0..8} scalars[k][0] * values[k][i]` in ONE
+    /// kernel dispatch. Replaces topK=8 expert accumulator chain
+    /// (8 sequential scalar_fma dispatches + 1 acc.zero) with a single
+    /// fused dispatch. Saves 7 acc reads + 1 zero dispatch per layer.
+    public static func scalarFMAChain8(
+        scalars: [Tensor], values: [Tensor], out: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(scalars.count == 8 && values.count == 8,
+                     "scalarFMAChain8: requires exactly 8 of each")
+        let dt = out.dtype
+        for i in 0..<8 {
+            precondition(scalars[i].elementCount == 1,
+                         "scalarFMAChain8: scalar[\(i)] must be [1]")
+            precondition(scalars[i].dtype == dt && values[i].dtype == dt,
+                         "scalarFMAChain8: dtype mismatch at \(i)")
+            precondition(values[i].elementCount == out.elementCount,
+                         "scalarFMAChain8: value[\(i)] / out size mismatch")
+        }
+        let n = out.elementCount
+        let tgWidth = min(n, 256)
+        let grid = MTLSize(width: n, height: 1, depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+        switch dt {
+        case .f32:
+            MetalTileKernels.mt_scalar_fma_chain8_f32(
+                scalar0: scalars[0].buffer, scalar0Offset: scalars[0].offset,
+                value0:  values[0].buffer,  value0Offset:  values[0].offset,
+                scalar1: scalars[1].buffer, scalar1Offset: scalars[1].offset,
+                value1:  values[1].buffer,  value1Offset:  values[1].offset,
+                scalar2: scalars[2].buffer, scalar2Offset: scalars[2].offset,
+                value2:  values[2].buffer,  value2Offset:  values[2].offset,
+                scalar3: scalars[3].buffer, scalar3Offset: scalars[3].offset,
+                value3:  values[3].buffer,  value3Offset:  values[3].offset,
+                scalar4: scalars[4].buffer, scalar4Offset: scalars[4].offset,
+                value4:  values[4].buffer,  value4Offset:  values[4].offset,
+                scalar5: scalars[5].buffer, scalar5Offset: scalars[5].offset,
+                value5:  values[5].buffer,  value5Offset:  values[5].offset,
+                scalar6: scalars[6].buffer, scalar6Offset: scalars[6].offset,
+                value6:  values[6].buffer,  value6Offset:  values[6].offset,
+                scalar7: scalars[7].buffer, scalar7Offset: scalars[7].offset,
+                value7:  values[7].buffer,  value7Offset:  values[7].offset,
+                out: out.buffer, outOffset: out.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_scalar_fma_chain8_f16(
+                scalar0: scalars[0].buffer, scalar0Offset: scalars[0].offset,
+                value0:  values[0].buffer,  value0Offset:  values[0].offset,
+                scalar1: scalars[1].buffer, scalar1Offset: scalars[1].offset,
+                value1:  values[1].buffer,  value1Offset:  values[1].offset,
+                scalar2: scalars[2].buffer, scalar2Offset: scalars[2].offset,
+                value2:  values[2].buffer,  value2Offset:  values[2].offset,
+                scalar3: scalars[3].buffer, scalar3Offset: scalars[3].offset,
+                value3:  values[3].buffer,  value3Offset:  values[3].offset,
+                scalar4: scalars[4].buffer, scalar4Offset: scalars[4].offset,
+                value4:  values[4].buffer,  value4Offset:  values[4].offset,
+                scalar5: scalars[5].buffer, scalar5Offset: scalars[5].offset,
+                value5:  values[5].buffer,  value5Offset:  values[5].offset,
+                scalar6: scalars[6].buffer, scalar6Offset: scalars[6].offset,
+                value6:  values[6].buffer,  value6Offset:  values[6].offset,
+                scalar7: scalars[7].buffer, scalar7Offset: scalars[7].offset,
+                value7:  values[7].buffer,  value7Offset:  values[7].offset,
+                out: out.buffer, outOffset: out.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_scalar_fma_chain8_bf16(
+                scalar0: scalars[0].buffer, scalar0Offset: scalars[0].offset,
+                value0:  values[0].buffer,  value0Offset:  values[0].offset,
+                scalar1: scalars[1].buffer, scalar1Offset: scalars[1].offset,
+                value1:  values[1].buffer,  value1Offset:  values[1].offset,
+                scalar2: scalars[2].buffer, scalar2Offset: scalars[2].offset,
+                value2:  values[2].buffer,  value2Offset:  values[2].offset,
+                scalar3: scalars[3].buffer, scalar3Offset: scalars[3].offset,
+                value3:  values[3].buffer,  value3Offset:  values[3].offset,
+                scalar4: scalars[4].buffer, scalar4Offset: scalars[4].offset,
+                value4:  values[4].buffer,  value4Offset:  values[4].offset,
+                scalar5: scalars[5].buffer, scalar5Offset: scalars[5].offset,
+                value5:  values[5].buffer,  value5Offset:  values[5].offset,
+                scalar6: scalars[6].buffer, scalar6Offset: scalars[6].offset,
+                value6:  values[6].buffer,  value6Offset:  values[6].offset,
+                scalar7: scalars[7].buffer, scalar7Offset: scalars[7].offset,
+                value7:  values[7].buffer,  value7Offset:  values[7].offset,
+                out: out.buffer, outOffset: out.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("scalarFMAChain8: unsupported dtype \(dt)")
+        }
+    }
+
     /// ITER 45 (Bagel 2): N scalarFMA dispatches accumulating into the
     /// same `acc` tensor on ONE shared encoder. Saves N-1 encoder
     /// begin/end pairs per call. Used by MoELayer.decode's top-K expert

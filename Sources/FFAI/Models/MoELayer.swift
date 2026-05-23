@@ -597,14 +597,13 @@ public final class MoELayer: Module, DecoderLayer {
                                    into: topKScalarsBuf!)
             let scalarBuf = topKScalarsBuf!
 
-            // Lazy-init + zero the accumulator scratch.
+            // Lazy-init accumulator scratch.
             if accumulatorScratch == nil
                 || accumulatorScratch!.dtype != h.dtype
                 || accumulatorScratch!.elementCount != hidden {
                 accumulatorScratch = Tensor.empty(shape: [hidden], dtype: h.dtype,
                                                    device: device)
             }
-            accumulatorScratch!.zero()
             let acc = accumulatorScratch!
 
             // ITER 38: phase-2 batched down qmm. When all 8 expert
@@ -627,6 +626,16 @@ public final class MoELayer: Module, DecoderLayer {
                     canBatchDown = false
                     break
                 }
+            }
+
+            // ITER 47 (Bagel 2): zeroing is conditional on path. Chain8
+            // (fused kernel) WRITES the full sum directly and ignores
+            // acc's prior contents; zeroing it would be wasted work.
+            // Other paths (Many or legacy loop) accumulate via FMAs
+            // that read acc as base.
+            let useChain8 = canBatchDown && routing.indices.count == 8
+            if !useChain8 {
+                acc.zero()
             }
 
             if canBatchDown {
@@ -712,9 +721,14 @@ public final class MoELayer: Module, DecoderLayer {
                     weights: downWeights, scales: downScales, biases: downBiases,
                     inputs: inners, outputs: outs,
                     groupSize: downGroupSize, on: work)
-                // Phase 3: scalarFMA chain on ONE shared encoder
-                // (ITER 45/Bagel2). 8 dispatches per layer × 40 layers
-                // = 280 encoder begin/end pairs saved per decode token.
+                // Phase 3: top-K accumulator.
+                // ITER 47 (Bagel 2): when topK == 8 (Qwen3.6 default),
+                // use the fused mt_scalar_fma_chain8 kernel — one
+                // dispatch computes acc = Σ s_k * v_k directly,
+                // skipping the acc.zero() step and reading acc only
+                // once instead of 8 times.
+                // Fallback to scalarFMAMany shared encoder (ITER 45)
+                // for non-8 slot counts.
                 var scalars: [Tensor] = []
                 scalars.reserveCapacity(outs.count)
                 for slot in 0..<outs.count {
@@ -722,8 +736,13 @@ public final class MoELayer: Module, DecoderLayer {
                                           offset: slot * h.dtype.byteSize,
                                           shape: [1], dtype: h.dtype))
                 }
-                Ops.scalarFMAMany(scalars: scalars, values: outs, acc: acc,
-                                  on: work)
+                if outs.count == 8 {
+                    Ops.scalarFMAChain8(scalars: scalars, values: outs, out: acc,
+                                        on: work)
+                } else {
+                    Ops.scalarFMAMany(scalars: scalars, values: outs, acc: acc,
+                                      on: work)
+                }
             } else {
                 // Legacy: per-expert swiGLU chain.
                 for (slot, expertId) in routing.indices.enumerated() {
