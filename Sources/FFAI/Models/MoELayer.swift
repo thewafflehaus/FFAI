@@ -731,16 +731,26 @@ public final class MoELayer: Module, DecoderLayer {
         //     2.69× T=32 win.
         //   - mTotal ≤ 8 + `FFAI_MOE_BGEMM_BM8=1` → bm8 (decode T=1
         //     fallback).
-        // bm64_mpp default-on for mTotal ≥ 64 (Qwen3.6-A3B T=32+ prefill).
-        // bf16 correctness verified post-metaltile #147 merge —
-        // forwardManyEquivalence T=8 + T=128 pass argmax-equality.
-        // Bench Qwen3.6-A3B M5 Max:
-        //   T=512:  +3.5% median (262.93 vs 253.99 tps)
-        //   T=2048: +6.9% median (405.15 vs 379.10 tps), +11.6% best (425 vs 381)
-        // NAX matmul throughput wins more at larger mTotal where matmul
-        // cost dominates the int4 dequant + memory-load overhead.
+        // bm64_mpp default-on for mTotal ≥ 256. The crossover where the
+        // NAX cooperative-tensor matmul throughput beats the bm16 simdgroup-
+        // matrix MMA path falls between mTotal=128 and mTotal=256 — the
+        // BM=64 kernel has per-tile setup overhead (sub-run boundary
+        // detection on heterogeneous expert assignments) that wastes time
+        // when only 1-2 BM=64 tiles fill the BGEMM.
+        //
+        // Bench Qwen3.6-A3B M5 Max (forwardManyBench medians):
+        //   T=8  / mTotal=64:   bm16 59.12 vs bm64 25.63 tps   — bm16 wins 131%
+        //   T=16 / mTotal=128:  bm16 115.90 vs bm64 58.80 tps  — bm16 wins 97%
+        //   T=32 / mTotal=256:  bm16 173.81 vs bm64 189.26 tps — bm64 wins  9%
+        //   T=128 / mTotal=1024: bm16 249.53 vs bm64 295.16 tps — bm64 wins 18%
+        //   T=512 / mTotal=4096: bm16 253.99 vs bm64 262.93 tps — bm64 wins  4%
+        //   T=2K / mTotal=16384: bm16 379.10 vs bm64 405.15 tps — bm64 wins  7%
+        //
+        // The earlier `mTotal >= 64` threshold was catastrophically wrong
+        // at T=8 / T=16 (sub-3× regression). Bumping to `>= 256` keeps
+        // the wins at T ≥ 32 and restores the bm16 wins at small T.
         // Opt out via `FFAI_MOE_BGEMM_NO_BM64=1`.
-        let useBm64 = mTotal >= 64
+        let useBm64 = mTotal >= 256
             && ProcessInfo.processInfo.environment["FFAI_MOE_BGEMM_NO_BM64"] == nil
         let useBm8 = !useBm64 && topK <= 8 && useBm8Env && mTotal <= 8
         let bgemm: (Tensor, Tensor, Tensor, Tensor, Tensor, Int, Int, Int, Int, MTLCommandBuffer, Tensor) -> Void
