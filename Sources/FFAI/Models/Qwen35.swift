@@ -2075,6 +2075,9 @@ public final class Qwen35GDNLayer: Module, DecoderLayer {
     /// ITER 41: cached residual-add outputs (postMix + final result).
     private var postMixScratch: Tensor?
     private var resultScratch: Tensor?
+    /// ITER 44: cached rmsNorm outputs (pre-mixer + post-mixer pre-FFN).
+    private var xNormScratch: Tensor?
+    private var ffnNormScratch: Tensor?
 
     public let commitsCommandBuffer: Bool = true
 
@@ -2106,7 +2109,13 @@ public final class Qwen35GDNLayer: Module, DecoderLayer {
                        + "got \(type(of: cache))")
         }
         // ── Mixer half — pre-norm + GDN mixer + residual add ──────────
-        let xNorm = inputNorm(h, on: cmd)
+        if xNormScratch == nil || xNormScratch!.elementCount != h.elementCount
+            || xNormScratch!.dtype != h.dtype {
+            xNormScratch = Tensor.empty(shape: h.shape, dtype: h.dtype)
+            ffnNormScratch = Tensor.empty(shape: h.shape, dtype: h.dtype)
+        }
+        let xNorm = Ops.rmsNorm(h, weight: inputNorm.weight, eps: inputNorm.eps,
+                                on: cmd, into: xNormScratch)
         // In fused mode `mixer.forward` leaves `cmd` in-flight and the
         // residual add + FFN ride the same command buffer. In legacy
         // mode `mixer.forward` commits `cmd` (host needs to read
@@ -2124,7 +2133,8 @@ public final class Qwen35GDNLayer: Module, DecoderLayer {
         return qwen35ApplyFFN(ffn, postMix: postMix, postNorm: postNorm,
                               position: position, cmd: ffnCmd,
                               commitCmd: true, device: device,
-                              resultScratch: resultScratch)
+                              resultScratch: resultScratch,
+                              ffnNormScratch: ffnNormScratch)
     }
 
     /// T-batched layer forward for batched prefill. Mirrors the attention
@@ -2192,6 +2202,9 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
     /// ITER 41: cached residual-add outputs.
     private var postMixScratch: Tensor?
     private var resultScratch: Tensor?
+    /// ITER 44: cached rmsNorm outputs (pre-attn + post-attn pre-FFN).
+    private var xNormScratch: Tensor?
+    private var ffnNormScratch: Tensor?
 
     public let commitsCommandBuffer: Bool
 
@@ -2224,7 +2237,13 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
                        + "got \(type(of: cache))")
         }
         // ── Mixer half — pre-norm + attention + residual add ──────────
-        let xNorm = inputNorm(h, on: cmd)
+        if xNormScratch == nil || xNormScratch!.elementCount != h.elementCount
+            || xNormScratch!.dtype != h.dtype {
+            xNormScratch = Tensor.empty(shape: h.shape, dtype: h.dtype)
+            ffnNormScratch = Tensor.empty(shape: h.shape, dtype: h.dtype)
+        }
+        let xNorm = Ops.rmsNorm(h, weight: inputNorm.weight, eps: inputNorm.eps,
+                                on: cmd, into: xNormScratch)
         let mixerOut = mixer.forward(xNorm, position: position, cache: kv,
                                      cmd: cmd, device: device)
         if postMixScratch == nil || postMixScratch!.elementCount != h.elementCount
@@ -2241,7 +2260,8 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
         return qwen35ApplyFFN(ffn, postMix: postMix, postNorm: postNorm,
                               position: position, cmd: cmd,
                               commitCmd: false, device: device,
-                              resultScratch: resultScratch)
+                              resultScratch: resultScratch,
+                              ffnNormScratch: ffnNormScratch)
     }
 
     /// T-batched layer forward for batched prefill. `hFlat` is
@@ -2363,8 +2383,10 @@ private func qwen35ApplyFFNMany(_ ffn: Qwen35FFN, postMix: Tensor, t: Int,
 private func qwen35ApplyFFN(_ ffn: Qwen35FFN, postMix: Tensor, postNorm: RMSNorm,
                             position: Int, cmd: MTLCommandBuffer,
                             commitCmd: Bool, device: Device,
-                            resultScratch: Tensor? = nil) -> Tensor {
-    let ffnNorm = postNorm(postMix, on: cmd)
+                            resultScratch: Tensor? = nil,
+                            ffnNormScratch: Tensor? = nil) -> Tensor {
+    let ffnNorm = Ops.rmsNorm(postMix, weight: postNorm.weight, eps: postNorm.eps,
+                              on: cmd, into: ffnNormScratch)
     switch ffn {
     case .dense(let mlp):
         let ffnOut = mlp.forward(ffnNorm, cmd: cmd)
