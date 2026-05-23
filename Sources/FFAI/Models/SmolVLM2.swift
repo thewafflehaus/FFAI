@@ -1083,4 +1083,17 @@ public final class SmolVLM2Model: LanguageModel {
         cmd.waitUntilCompleted()
         return logits
     }
+
+    /// Multi-token forward — delegates to LlamaModel's optimised
+    /// chunked path. SmolVLM2's text backbone is a LlamaModel, so the
+    /// text-only AR prefill picks up the full Phase 6.6 TTFT win
+    /// (batched Ops.gemm projections + one Ops.sdpaMulti per layer)
+    /// for free. The vision-prefill image-substitution path stays as
+    /// its own per-token routine.
+    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
+                             caches: [any LayerCacheProtocol],
+                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        llamaModel.forwardMulti(tokenIds: tokenIds, startingAt: position,
+                                caches: caches, on: cmd, device: device)
+    }
 }

@@ -882,6 +882,28 @@ public final class LFM2Model: LanguageModel {
         let normed = finalNorm(h, on: cmd)
         return lmHead(normed, on: cmd)
     }
+
+    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
+    /// `forward(tokenId:)` per row on the supplied `cmd`.
+    ///
+    /// LFM2 / LFM2.5 alternates short-conv blocks with GQA attention
+    /// blocks; the dense + MoE variants share the layer-kind
+    /// dispatch. A `decodeMulti` override on the attention-layer slot
+    /// would adopt the Llama chunked path; the conv-layer kind keeps
+    /// the per-token default (the causal conv1d is single-position).
+    /// Today this override is commit-count-batched only.
+    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
+                             caches: [any LayerCacheProtocol],
+                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(!tokenIds.isEmpty,
+                     "LFM2Model.forwardMulti: tokenIds must be non-empty")
+        var logits: Tensor!
+        for (i, tok) in tokenIds.enumerated() {
+            logits = forward(tokenId: tok, position: position + i,
+                             caches: caches, on: cmd, device: device)
+        }
+        return logits
+    }
 }
 
 // ─── Load-time host helpers ──────────────────────────────────────────

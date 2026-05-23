@@ -708,6 +708,27 @@ public final class NemotronHModel: LanguageModel {
         return lmHead(normed, on: cmd)
     }
 
+    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
+    /// `forward(tokenId:)` per row on the supplied `cmd`.
+    ///
+    /// NemotronH is a layer-type-string hybrid (`M`/`*`/`E`/`-`
+    /// alternation). Per-attention-layer chunked path needs a
+    /// `decodeMulti` override on the attention DecoderLayer slot; the
+    /// Mamba 2 / MLP / nothing layer kinds keep the per-token default.
+    /// Today this override is commit-count-batched only.
+    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
+                             caches: [any LayerCacheProtocol],
+                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(!tokenIds.isEmpty,
+                     "NemotronHModel.forwardMulti: tokenIds must be non-empty")
+        var logits: Tensor!
+        for (i, tok) in tokenIds.enumerated() {
+            logits = forward(tokenId: tok, position: position + i,
+                             caches: caches, on: cmd, device: device)
+        }
+        return logits
+    }
+
     // ─── VLM embedding-input path ────────────────────────────────────
     //
     // NemotronH is a VL-target text backbone (Nemotron-VLM wraps it).

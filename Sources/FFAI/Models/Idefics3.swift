@@ -1035,6 +1035,20 @@ public final class Idefics3Model: LanguageModel {
                            caches: caches, on: cmd, device: device)
     }
 
+    /// Multi-token forward — delegates to LlamaModel's optimised
+    /// chunked path (Ops.gemm batched projections + one
+    /// Ops.sdpaMulti(causal: true) per layer). Idefics3 gets the full
+    /// Phase 6.6 TTFT win for the text-only AR prefill path for free,
+    /// since its text backbone IS a LlamaModel. Image-prefill
+    /// (vision-substitution) still routes through `prefillWithImage`
+    /// which is its own block path.
+    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
+                             caches: [any LayerCacheProtocol],
+                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        llamaModel.forwardMulti(tokenIds: tokenIds, startingAt: position,
+                                caches: caches, on: cmd, device: device)
+    }
+
     public func forwardSample(tokenId: Int, position: Int,
                               caches: [any LayerCacheProtocol], device: Device) -> Int {
         llamaModel.forwardSample(tokenId: tokenId, position: position,

@@ -2126,6 +2126,22 @@ public final class Qwen35Model: LanguageModel {
         return lmHead(normed, on: cmd)
     }
 
+    /// LanguageModel-protocol entry point for chunked prefill. Delegates
+    /// to `forwardMany` (Tom's optimised batched-T path:
+    /// `Qwen35AttentionLayer.decodeMany` + fused `Qwen35GDNMixer`
+    /// chunked-T + per-row blit-back for legacy layer kinds).
+    ///
+    /// (Rebase 2026-05-23: my `4072b8c` added a commit-count-only
+    /// forwardMulti stub that loops `forward(tokenId:)`. Tom's
+    /// `forwardMany` already does the real chunked work, so the
+    /// protocol method just delegates.)
+    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
+                             caches: [any LayerCacheProtocol],
+                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        forwardMany(tokenIds: tokenIds, startPosition: position,
+                    caches: caches, on: cmd, device: device)
+    }
+
     /// Multi-token forward over `tokenIds[startPosition .. startPosition+T)`
     /// for prefill. Returns the logits of the *last* token only — every
     /// preceding token's logits is consumed only by its KV/GDN cache

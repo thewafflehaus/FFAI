@@ -417,6 +417,30 @@ public final class Mamba2Model: LanguageModel {
     // `forward`, `forwardSample`, `forwardSampleCategorical` come from
     // LanguageModel's default extension — they wrap `forward(...on cmd:)`
     // with a single command buffer and the appropriate output kernel.
+
+    /// Multi-token forward — Mamba 2 is **inherently sequential**. The
+    /// selective-scan recurrence at each layer updates state per-token
+    /// and the next-token state depends on the previous; there's no
+    /// SDPA dispatch to collapse and no batched-projection win because
+    /// every per-token projection's input is the recurrent output. The
+    /// override here is the protocol default — loop `forward(...)` on
+    /// the supplied `cmd`. Calling it explicitly:
+    /// - Documents the intentional choice (so a reader doesn't wonder
+    ///   why Mamba 2 lacks a chunked path).
+    /// - Keeps the commit-count saving (one commit per chunk instead
+    ///   of one per token, courtesy of `Generate.driveGeneration`).
+    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
+                             caches: [any LayerCacheProtocol],
+                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(!tokenIds.isEmpty,
+                     "Mamba2Model.forwardMulti: tokenIds must be non-empty")
+        var logits: Tensor!
+        for (i, tok) in tokenIds.enumerated() {
+            logits = forward(tokenId: tok, position: position + i,
+                             caches: caches, on: cmd, device: device)
+        }
+        return logits
+    }
 }
 
 // ─── Load-time host helpers ──────────────────────────────────────────

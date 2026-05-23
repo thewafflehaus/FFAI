@@ -993,6 +993,27 @@ public final class GraniteMoeHybridModel: LanguageModel {
         }
         return logits
     }
+
+    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
+    /// `forward(tokenId:)` per row on the supplied `cmd`.
+    ///
+    /// GraniteMoeHybrid interleaves Mamba 2 + MoE-FFN + attention
+    /// layers. The MoE-FFN router commits mid-layer for CPU readback;
+    /// a per-attention-layer `decodeMulti` override will need to
+    /// preserve that commit pattern across the chunk. Today this
+    /// override is commit-count-batched only.
+    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
+                             caches: [any LayerCacheProtocol],
+                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(!tokenIds.isEmpty,
+                     "GraniteMoeHybridModel.forwardMulti: tokenIds must be non-empty")
+        var logits: Tensor!
+        for (i, tok) in tokenIds.enumerated() {
+            logits = forward(tokenId: tok, position: position + i,
+                             caches: caches, on: cmd, device: device)
+        }
+        return logits
+    }
 }
 
 // ─── Load-time host helpers ──────────────────────────────────────────

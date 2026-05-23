@@ -669,6 +669,28 @@ public final class FalconH1Model: LanguageModel {
         let normed = finalNorm(h, on: cmd)
         return lmHead(normed, on: cmd)
     }
+
+    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
+    /// `forward(tokenId:)` per row on the supplied `cmd`.
+    ///
+    /// FalconH1 interleaves Mamba 2 + attention + MLP layers with
+    /// per-layer scalar multipliers folded into projections at load
+    /// time. The per-attention-layer `decodeMulti` follow-up adopts
+    /// the Llama/Qwen3 chunked path — the multipliers are already
+    /// baked in, so no extra arithmetic needed in the chunked code.
+    /// Today this override is commit-count-batched only.
+    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
+                             caches: [any LayerCacheProtocol],
+                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(!tokenIds.isEmpty,
+                     "FalconH1Model.forwardMulti: tokenIds must be non-empty")
+        var logits: Tensor!
+        for (i, tok) in tokenIds.enumerated() {
+            logits = forward(tokenId: tok, position: position + i,
+                             caches: caches, on: cmd, device: device)
+        }
+        return logits
+    }
 }
 
 // ─── Load-time host helpers ──────────────────────────────────────────

@@ -859,4 +859,34 @@ public final class GPTOSSModel: LanguageModel {
                                        eps: finalNorm.eps, device: device)
         return lmHead(normed, on: cmd)
     }
+
+    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
+    /// `forward(tokenId:)` per row on the supplied `cmd`.
+    ///
+    /// GPT-OSS's per-token forward already commits the command buffer
+    /// twice per layer (once for the host-side learned-sink correction
+    /// in `GPTOSSAttention.forward`, once for the MoE-router CPU
+    /// readback in `GPTOSSMoELayer.decode`). Collapsing the per-token
+    /// SDPA into a chunked `sdpaMulti` would also require:
+    /// 1. Porting the learned-sink fold to head_dim=64 metaltile-side
+    ///    so the sink correction stays on-GPU (today it's host-side
+    ///    per token; chunking would amplify the readback cost).
+    /// 2. A batched MoE router + per-expert dispatch — today the
+    ///    router commits the cmd, picks experts CPU-side, then
+    ///    dispatches each.
+    /// Until both land, this override is commit-count-batched only —
+    /// the per-token forward stays as-is, with `Generate.driveGeneration`
+    /// avoiding the per-token commit/wait on the outer prefill loop.
+    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
+                             caches: [any LayerCacheProtocol],
+                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(!tokenIds.isEmpty,
+                     "GPTOSSModel.forwardMulti: tokenIds must be non-empty")
+        var logits: Tensor!
+        for (i, tok) in tokenIds.enumerated() {
+            logits = forward(tokenId: tok, position: position + i,
+                             caches: caches, on: cmd, device: device)
+        }
+        return logits
+    }
 }

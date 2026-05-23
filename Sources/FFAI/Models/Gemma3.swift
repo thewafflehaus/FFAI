@@ -696,6 +696,33 @@ public final class Gemma3Model: LanguageModel {
         return logits
     }
 
+    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
+    /// `forward(tokenId:)` per row on the supplied `cmd`.
+    ///
+    /// Gemma 3's chunked SDPA-collapse follow-up is more involved than
+    /// Llama's because every layer mixes sliding-window vs full
+    /// attention (the `isSliding` flag picks the per-layer
+    /// `KVEviction.window` cache). Collapsing N sdpaDecode dispatches
+    /// to one `sdpaMulti(causal: true)` per layer is straightforward
+    /// for full-attention layers; sliding-window layers need their own
+    /// chunk-aware path (the rotated K/V buffer's stale slots and
+    /// `sdpaSinkWindow` bounds make a naïve sdpaMulti read past the
+    /// window). Pending that per-layer split, this override is
+    /// commit-count-batched only — same correctness as the protocol
+    /// default, no new SDPA dispatch savings yet.
+    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
+                             caches: [any LayerCacheProtocol],
+                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(!tokenIds.isEmpty,
+                     "Gemma3Model.forwardMulti: tokenIds must be non-empty")
+        var logits: Tensor!
+        for (i, tok) in tokenIds.enumerated() {
+            logits = forward(tokenId: tok, position: position + i,
+                             caches: caches, on: cmd, device: device)
+        }
+        return logits
+    }
+
     /// Embedding-input forward — the VLM splice path. Identical to
     /// `forward(tokenId:...)` except the `[hidden]` embedding row is
     /// supplied directly (a vision-encoder token, or a text-token

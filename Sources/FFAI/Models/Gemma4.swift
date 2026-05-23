@@ -1662,6 +1662,32 @@ public final class Gemma4Model: LanguageModel {
         return lmHead(normed, on: cmd)
     }
 
+    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
+    /// `forward(tokenId:)` per row on the supplied `cmd`.
+    ///
+    /// Gemma 4 mixes sliding-window vs full attention (every-other-
+    /// layer), Per-Layer Embeddings (Gemma4E variant), a soft-capped
+    /// LM head, and a 4096-token `defaultPrefillStepSize`. Collapsing
+    /// the per-token SDPA to one `sdpaMulti(causal: true)` per layer
+    /// requires the same per-layer split as Gemma 3 (sliding-window
+    /// layers need their own chunk-aware path that respects the
+    /// rotated K/V window bounds) plus PLE-aware [N, hidden]
+    /// activation flow for Gemma4E. Pending that work, this override
+    /// is commit-count-batched only — same correctness as the
+    /// protocol default, no new SDPA dispatch savings yet.
+    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
+                             caches: [any LayerCacheProtocol],
+                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(!tokenIds.isEmpty,
+                     "Gemma4Model.forwardMulti: tokenIds must be non-empty")
+        var logits: Tensor!
+        for (i, tok) in tokenIds.enumerated() {
+            logits = forward(tokenId: tok, position: position + i,
+                             caches: caches, on: cmd, device: device)
+        }
+        return logits
+    }
+
     // ─── VLM embedding-input path ────────────────────────────────────
     //
     // Gemma 4 is a VL-target text backbone (Gemma4-VL wraps it). The

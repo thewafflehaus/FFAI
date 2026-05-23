@@ -1147,6 +1147,28 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
         return logits
     }
 
+    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
+    /// `forward(tokenId:)` per row on the supplied `cmd`.
+    ///
+    /// PaliGemma substitutes image features at every position equal
+    /// to `imageTokenIndex` inside its forward. The per-token check
+    /// is intrinsic to the architecture, so the chunked path would
+    /// need a vectorised "which positions are image tokens" mask
+    /// applied across the [N, hidden] activation block. Today this
+    /// override is commit-count-batched only.
+    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
+                             caches: [any LayerCacheProtocol],
+                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(!tokenIds.isEmpty,
+                     "PaligemmaModel.forwardMulti: tokenIds must be non-empty")
+        var logits: Tensor!
+        for (i, tok) in tokenIds.enumerated() {
+            logits = forward(tokenId: tok, position: position + i,
+                             caches: caches, on: cmd, device: device)
+        }
+        return logits
+    }
+
     public func forwardSample(tokenId: Int, position: Int,
                               caches: [any LayerCacheProtocol], device: Device) -> Int {
         let cmd = device.makeCommandBuffer()

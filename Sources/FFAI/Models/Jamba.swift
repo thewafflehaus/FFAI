@@ -1041,6 +1041,28 @@ public final class JambaModel: LanguageModel {
         let normed = finalNorm(h, on: cmd)
         return lmHead(normed, on: cmd)
     }
+
+    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
+    /// `forward(tokenId:)` per row on the supplied `cmd`.
+    ///
+    /// Jamba interleaves Mamba 2 selective scan + attention + MoE FFN
+    /// layers. The cmd-buffer-committing layers (MoE router, Mamba
+    /// reduce) make a single-cmd chunked path non-trivial; the
+    /// per-attention-layer `decodeMulti` follow-up will need to
+    /// reproduce the per-layer cmd-refresh in `forward(tokenId:)`.
+    /// Today this override is commit-count-batched only.
+    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
+                             caches: [any LayerCacheProtocol],
+                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(!tokenIds.isEmpty,
+                     "JambaModel.forwardMulti: tokenIds must be non-empty")
+        var logits: Tensor!
+        for (i, tok) in tokenIds.enumerated() {
+            logits = forward(tokenId: tok, position: position + i,
+                             caches: caches, on: cmd, device: device)
+        }
+        return logits
+    }
 }
 
 // ─── Load-time + host-scan helpers ───────────────────────────────────

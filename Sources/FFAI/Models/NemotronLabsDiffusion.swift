@@ -641,6 +641,48 @@ public final class NemotronLabsDiffusionModel: LanguageModel {
         return logits
     }
 
+    /// Multi-token forward (LanguageModel protocol) — Phase 6.6 prefill
+    /// fast path. NemotronLabsDiffusion already ships a block-batched
+    /// forward (`forwardBlock`) used by the diffusion + self-spec
+    /// modes; this is the thin LanguageModel-protocol adapter that
+    /// wraps it for the AR-prefill path.
+    ///
+    /// `forwardBlock` does the full chunked work — batched embed,
+    /// batched RMSNorm + Linear projections, bidirectional / causal
+    /// SDPA over the chunk, batched lm_head. The tail-position logits
+    /// returned here are the final element of forwardBlock's
+    /// per-position output array.
+    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
+                             caches: [any LayerCacheProtocol],
+                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(!tokenIds.isEmpty,
+                     "NemotronLabsDiffusionModel.forwardMulti: tokenIds must be non-empty")
+        // forwardBlock requires raw KVCache per layer; if any cache
+        // isn't raw, fall back to the per-token loop on the caller's
+        // cmd (still gets the protocol's commit-count batching).
+        let allRaw = caches.allSatisfy { $0 is KVCache }
+        if !allRaw {
+            var logits: Tensor!
+            for (i, tok) in tokenIds.enumerated() {
+                logits = forward(tokenId: tok, position: position + i,
+                                 caches: caches, on: cmd, device: device)
+            }
+            return logits
+        }
+        let positions = Array(position ..< position + tokenIds.count)
+        // forwardBlock commits its own command buffer; the returned
+        // logits tensors are resident on the host's read path. The
+        // outer driver in Generate.swift uses sampleNext on the final
+        // prompt position separately, so we only need the tail logits
+        // here for the post-prefill sampling step.
+        let perPositionLogits = forwardBlock(
+            tokenIds: tokenIds, positions: positions,
+            caches: caches, append: true, useLora: false,
+            device: device
+        )
+        return perPositionLogits.last!
+    }
+
     /// Multi-token block forward — the primitive diffusion-denoising and
     /// self-speculation build on. Runs `tokenIds` (at absolute
     /// `positions`) through every layer and returns one `[vocab]` logits
