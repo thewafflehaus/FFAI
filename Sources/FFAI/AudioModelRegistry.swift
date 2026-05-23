@@ -33,6 +33,10 @@ public enum LoadedAudioModel: @unchecked Sendable {
     case voxtralRealtime(VoxtralRealtimeModel)
     case glmASR(GLMASRModel)
     case pocketTTS(PocketTTSModel)
+    case soprano(SopranoModel)
+    case styleTTS2(StyleTTS2Model)
+    case graniteSpeech(GraniteSpeechModel)
+    case deepFilterNet(DeepFilterNetModel)
 
     /// The capabilities this model exposes — `audioIn` for STT / omni,
     /// `audioOut` for TTS.
@@ -57,6 +61,10 @@ public enum LoadedAudioModel: @unchecked Sendable {
         case .voxtralRealtime: return Capability.speechToText
         case .glmASR: return Capability.speechToText
         case .pocketTTS: return Capability.textToSpeech
+        case .soprano: return Capability.textToSpeech
+        case .styleTTS2: return Capability.textToSpeech
+        case .graniteSpeech: return Capability.speechToText
+        case .deepFilterNet: return Capability.speechToSpeech
         }
     }
 }
@@ -87,6 +95,10 @@ public enum AudioModelRegistry {
             || VoxtralRealtimeModel.handles(config)
             || GLMASRModel.handles(config)
             || PocketTTSModel.handles(config)
+            || SopranoModel.handles(config)
+            || StyleTTS2Model.handles(config)
+            || GraniteSpeech.handles(config)
+            || DeepFilterNetModel.handles(config)
     }
 
     /// The capability set a checkpoint at `directory` would expose,
@@ -123,6 +135,10 @@ public enum AudioModelRegistry {
         if VoxtralRealtimeModel.handles(config) { return Capability.speechToText }
         if GLMASRModel.handles(config) { return Capability.speechToText }
         if PocketTTSModel.handles(config) { return Capability.textToSpeech }
+        if SopranoModel.handles(config) { return Capability.textToSpeech }
+        if StyleTTS2Model.handles(config) { return Capability.textToSpeech }
+        if GraniteSpeech.handles(config) { return Capability.speechToText }
+        if DeepFilterNetModel.handles(config) { return Capability.speechToSpeech }
         return nil
     }
 
@@ -214,6 +230,22 @@ public enum AudioModelRegistry {
         if PocketTTSModel.handles(config) {
             return .pocketTTS(try PocketTTSModel.load(
                 directory: directory, device: device))
+        }
+        if SopranoModel.handles(config) {
+            return .soprano(try await SopranoModel.load(
+                directory: directory, device: device))
+        }
+        if StyleTTS2Model.handles(config) {
+            return .styleTTS2(try StyleTTS2Model.load(
+                directory: directory, device: device))
+        }
+        if GraniteSpeech.handles(config) {
+            return .graniteSpeech(try await GraniteSpeech.load(
+                directory: directory, device: device))
+        }
+        if DeepFilterNetModel.handles(config) {
+            return .deepFilterNet(try DeepFilterNetModel.load(
+                from: directory, device: device))
         }
         throw ModelError.unsupportedArchitecture(
             config.architecture ?? config.modelType ?? "<unknown audio model>")
