@@ -1629,17 +1629,41 @@ public final class Qwen35AttentionMixer: Module {
     let ropeTheta: Float
     let attnOutputGate: Bool
     let scale: Float
+    /// ITER 22: cached row-index tensors for `sliceHeadHalves35`.
+    /// The indices are constant per `nHeads` (even rows = queries,
+    /// odd rows = gates) — previously rebuilt + memcpy'd into a
+    /// fresh MTLBuffer per attn layer per decode token.
+    let sliceFirstIdx: Tensor?   // [nHeads] u32 — 0, 2, 4, ...
+    let sliceSecondIdx: Tensor?  // [nHeads] u32 — 1, 3, 5, ...
 
     init(qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
          qNorm: RMSNorm, kNorm: RMSNorm,
          nHeads: Int, nKVHeads: Int, headDim: Int, rotaryDim: Int,
-         ropeTheta: Float, attnOutputGate: Bool) {
+         ropeTheta: Float, attnOutputGate: Bool,
+         device: Device = .shared) {
         self.qProj = qProj; self.kProj = kProj; self.vProj = vProj; self.oProj = oProj
         self.qNorm = qNorm; self.kNorm = kNorm
         self.nHeads = nHeads; self.nKVHeads = nKVHeads; self.headDim = headDim
         self.rotaryDim = rotaryDim; self.ropeTheta = ropeTheta
         self.attnOutputGate = attnOutputGate
         self.scale = 1.0 / Float(Double(headDim).squareRoot())
+        if attnOutputGate {
+            var firstRows = [UInt32](repeating: 0, count: nHeads)
+            var secondRows = [UInt32](repeating: 0, count: nHeads)
+            for h in 0..<nHeads {
+                firstRows[h] = UInt32(2 * h)
+                secondRows[h] = UInt32(2 * h + 1)
+            }
+            let firstBuf = device.makeBuffer(length: nHeads * 4)
+            let secondBuf = device.makeBuffer(length: nHeads * 4)
+            firstRows.withUnsafeBytes { _ = memcpy(firstBuf.contents(), $0.baseAddress!, nHeads * 4) }
+            secondRows.withUnsafeBytes { _ = memcpy(secondBuf.contents(), $0.baseAddress!, nHeads * 4) }
+            self.sliceFirstIdx = Tensor(buffer: firstBuf, offset: 0, shape: [nHeads], dtype: .u32)
+            self.sliceSecondIdx = Tensor(buffer: secondBuf, offset: 0, shape: [nHeads], dtype: .u32)
+        } else {
+            self.sliceFirstIdx = nil
+            self.sliceSecondIdx = nil
+        }
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -1667,13 +1691,13 @@ public final class Qwen35AttentionMixer: Module {
         if attnOutputGate {
             // Layout is [nHeads, 2 · headDim] — per head the first
             // `headDim` is the query, the next `headDim` the gate.
+            // ITER 22: use cached idx tensors.
             let q2 = qOut.reshaped(to: [nHeads, 2 * headDim])
-            queries = sliceHeadHalves35(
-                q2, nHeads: nHeads, headDim: headDim, takeFirst: true,
-                on: cmd, device: device)
-            gate = sliceHeadHalves35(
-                q2, nHeads: nHeads, headDim: headDim, takeFirst: false,
-                on: cmd, device: device)
+            let table = q2.reshaped(to: [nHeads * 2, headDim])
+            queries = Ops.gather(table: table, tokenIds: sliceFirstIdx!, on: cmd)
+                          .reshaped(to: [nHeads * headDim])
+            gate = Ops.gather(table: table, tokenIds: sliceSecondIdx!, on: cmd)
+                       .reshaped(to: [nHeads * headDim])
         } else {
             queries = qOut
             gate = nil
