@@ -1173,6 +1173,18 @@ public final class Qwen35GDNMixer: Module {
             self.zScratch = Tensor.empty(shape: [valueDim], dtype: dtype, device: device)
             self.bRawScratch = Tensor.empty(shape: [numValueHeads], dtype: dtype, device: device)
             self.aRawScratch = Tensor.empty(shape: [numValueHeads], dtype: dtype, device: device)
+            // ITER 27: pin the new batched-input scratches in the
+            // residency set so Metal skips per-encoder residency
+            // re-validation. Same pattern as KV/GDN/conv state.
+            device.markWeightsResident([
+                qkvScratch!.buffer, zScratch!.buffer,
+                bRawScratch!.buffer, aRawScratch!.buffer,
+                convOutScratch.buffer, convActF32Scratch.buffer,
+                aRawF32Scratch.buffer, bRawF32Scratch.buffer,
+                yF32Scratch.buffer, yGatedScratch.buffer,
+                qNormWeightF32.buffer, kNormWeightF32.buffer,
+                aLogTF32.buffer, dtBiasTF32.buffer, epsBufFused.buffer,
+            ])
         }
     }
 
