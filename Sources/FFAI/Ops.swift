@@ -2827,20 +2827,15 @@ public enum Ops {
     /// uses the cooperative-tensor `mpp::tensor_ops::matmul2d` per the
     /// metaltile MPP NAX primitive landing.
     ///
-    /// WARNING — KNOWN CORRECTNESS ISSUE (2026-05-21). Dispatch shape
-    /// matches the metaltile-std `moe_gather_qmm_mpp_bm64_correctness`
-    /// test
-    /// (grid = `[ceil(N/64), ceil(M/64), 1]` threadgroups,
-    /// tg = `[128, 1, 1]` for 4 SGs WM=WN=2), but `forwardManyEquivalence`
-    /// at T=8 mTotal=64 produces top-1 argmax 279 with logit 12.25 vs
-    /// reference argmax 52290 logit 17.125 — the tokens are present in
-    /// both top-5 lists but with a ~5-logit scale drift. Suspected
-    /// bf16-output-scale or buffer-binding mismatch between the
-    /// Swift-side wrapper and the kernel's expected layout. Cosine
-    /// ≥ 0.999 in the upstream test (f32 output) — bf16 output path
-    /// may need its own verification. Use **only** behind
-    /// `FFAI_MOE_BGEMM_BM64=1` after re-verifying against the kernel
-    /// source. Bm16 default ships the 2.69× T=32 win.
+    /// Correctness was previously suspect (bf16 output produced wrong
+    /// argmax at T=8 — see git history of this doc) but is now verified
+    /// fixed by metaltile #147 (post-merge HEAD `d794ffe`+). bf16
+    /// activations stage through `half` for the matmul (`bfloat` coop
+    /// tensors mishandled by `matmul2d` per the kernel source); final
+    /// store narrows back to bf16. `forwardManyEquivalence` T=8 +
+    /// T=128 pass argmax-equality with this dispatch enabled. Still
+    /// behind `FFAI_MOE_BGEMM_BM64=1` opt-in while T=2K/T=4K + M2 mini
+    /// soak confirm the bf16 path stays stable across shapes.
     public static func moeGatherDequantGemmInt4Bm64Mpp(
         input: Tensor,
         weight: Tensor, scales: Tensor, biases: Tensor,

@@ -731,8 +731,17 @@ public final class MoELayer: Module, DecoderLayer {
         //     2.69× T=32 win.
         //   - mTotal ≤ 8 + `FFAI_MOE_BGEMM_BM8=1` → bm8 (decode T=1
         //     fallback).
+        // bm64_mpp default-on for mTotal ≥ 64 (Qwen3.6-A3B T=32+ prefill).
+        // bf16 correctness verified post-metaltile #147 merge —
+        // forwardManyEquivalence T=8 + T=128 pass argmax-equality.
+        // Bench Qwen3.6-A3B M5 Max:
+        //   T=512:  +3.5% median (262.93 vs 253.99 tps)
+        //   T=2048: +6.9% median (405.15 vs 379.10 tps), +11.6% best (425 vs 381)
+        // NAX matmul throughput wins more at larger mTotal where matmul
+        // cost dominates the int4 dequant + memory-load overhead.
+        // Opt out via `FFAI_MOE_BGEMM_NO_BM64=1`.
         let useBm64 = mTotal >= 64
-            && ProcessInfo.processInfo.environment["FFAI_MOE_BGEMM_BM64"] != nil
+            && ProcessInfo.processInfo.environment["FFAI_MOE_BGEMM_NO_BM64"] == nil
         let useBm8 = !useBm64 && topK <= 8 && useBm8Env && mTotal <= 8
         let bgemm: (Tensor, Tensor, Tensor, Tensor, Tensor, Int, Int, Int, Int, MTLCommandBuffer, Tensor) -> Void
         if useBm64 {
