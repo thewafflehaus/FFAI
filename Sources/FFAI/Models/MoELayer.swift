@@ -584,117 +584,17 @@ public final class MoELayer: Module, DecoderLayer {
             accumulatorScratch!.zero()
             let acc = accumulatorScratch!
 
-            // ITER 29: two-phase refactor. Phase 1 computes the
-            // swiglu inner per expert (gate+up batched via ITER 25 +
-            // swiglu). Phase 2 batches all 8 expert down qmms into
-            // ONE encoder. Phase 3 accumulates via scalarFMA.
-            // Falls back to per-expert when any expert isn't
-            // QuantizedLinear int4.
-            var canBatchDown = true
-            var downWeights: [Tensor] = []
-            var downScales: [Tensor] = []
-            var downBiases: [Tensor] = []
-            var downGroupSize: Int = 0
-            for expertId in routing.indices {
-                if let q = downProj[expertId].inner as? QuantizedLinear, q.bits == 4 {
-                    if downGroupSize == 0 { downGroupSize = q.groupSize }
-                    if q.groupSize != downGroupSize { canBatchDown = false; break }
-                    downWeights.append(q.weight)
-                    downScales.append(q.scales)
-                    downBiases.append(q.biases)
-                } else {
-                    canBatchDown = false
-                    break
-                }
-            }
-
-            if canBatchDown {
-                // Phase 1a: ITER 31 — batch ALL 16 (gate+up) qmms
-                // across 8 experts in ONE encoder via
-                // dequantGemvInt4Many. All share input h. Saves 7
-                // encoder begin/end pairs per layer × 40 = 280/token
-                // vs ITER 25's per-expert batching.
-                var gs: [Tensor] = []
-                var us: [Tensor] = []
-                var gateUpWeights: [Tensor] = []
-                var gateUpScales: [Tensor] = []
-                var gateUpBiases: [Tensor] = []
-                var gateUpOuts: [Tensor] = []
-                var gateUpGroupSize: Int = 0
-                var allInt4 = true
-                for expertId in routing.indices {
-                    if let qg = gateProj[expertId].inner as? QuantizedLinear,
-                       let qu = upProj[expertId].inner as? QuantizedLinear,
-                       qg.bits == 4 && qu.bits == 4 && qg.groupSize == qu.groupSize {
-                        if gateUpGroupSize == 0 { gateUpGroupSize = qg.groupSize }
-                        if qg.groupSize != gateUpGroupSize { allInt4 = false; break }
-                        let outDim = qg.weight.shape[0]
-                        let g = Tensor.empty(shape: [outDim], dtype: h.dtype)
-                        let u = Tensor.empty(shape: [outDim], dtype: h.dtype)
-                        gateUpWeights.append(qg.weight); gateUpScales.append(qg.scales); gateUpBiases.append(qg.biases)
-                        gateUpOuts.append(g)
-                        gateUpWeights.append(qu.weight); gateUpScales.append(qu.scales); gateUpBiases.append(qu.biases)
-                        gateUpOuts.append(u)
-                        gs.append(g)
-                        us.append(u)
-                    } else {
-                        allInt4 = false
-                        break
-                    }
-                }
-                if allInt4 {
-                    let hRepeated = Array(repeating: h, count: gateUpWeights.count)
-                    Ops.dequantGemvInt4Many(
-                        weights: gateUpWeights, scales: gateUpScales, biases: gateUpBiases,
-                        inputs: hRepeated, outputs: gateUpOuts,
-                        groupSize: gateUpGroupSize, on: work)
-                } else {
-                    gs.removeAll(); us.removeAll()
-                    for expertId in routing.indices {
-                        let g = gateProj[expertId](h, on: work)
-                        let u = upProj[expertId](h, on: work)
-                        gs.append(g)
-                        us.append(u)
-                    }
-                }
-                // Phase 1b (ITER 30): batched 8-expert swiglu in shared
-                // encoder. Saves 7 encoders/layer × 40 = 280/token.
-                var inners: [Tensor] = []
-                for g in gs {
-                    inners.append(Tensor.empty(shape: g.shape, dtype: h.dtype))
-                }
-                Ops.swigluMany(gates: gs, ups: us, outs: inners, on: work)
-                // Phase 2: batched down across all 8 experts in one encoder.
-                var expertOuts: [Tensor] = []
-                for _ in inners {
-                    expertOuts.append(Tensor.empty(shape: [hidden], dtype: h.dtype))
-                }
-                Ops.dequantGemvInt4Many(
-                    weights: downWeights, scales: downScales, biases: downBiases,
-                    inputs: inners, outputs: expertOuts,
-                    groupSize: downGroupSize, on: work)
-                // Phase 3: scalarFMA accumulate.
-                for (slot, expertOut) in expertOuts.enumerated() {
-                    let scalarT = Tensor(buffer: scalarBuf,
-                                         offset: slot * h.dtype.byteSize,
-                                         shape: [1], dtype: h.dtype)
-                    Ops.scalarFMA(scalar: scalarT, value: expertOut, base: acc,
-                                  into: acc, on: work)
-                }
-            } else {
-                // Fallback: legacy per-expert path.
-                for (slot, expertId) in routing.indices.enumerated() {
-                    let expertOut = swiGLU(h,
-                                           gateProj: gateProj[expertId],
-                                           upProj: upProj[expertId],
-                                           downProj: downProj[expertId],
-                                           on: work)
-                    let scalarT = Tensor(buffer: scalarBuf,
-                                         offset: slot * h.dtype.byteSize,
-                                         shape: [1], dtype: h.dtype)
-                    Ops.scalarFMA(scalar: scalarT, value: expertOut, base: acc,
-                                  into: acc, on: work)
-                }
+            for (slot, expertId) in routing.indices.enumerated() {
+                let expertOut = swiGLU(h,
+                                       gateProj: gateProj[expertId],
+                                       upProj: upProj[expertId],
+                                       downProj: downProj[expertId],
+                                       on: work)
+                let scalarT = Tensor(buffer: scalarBuf,
+                                     offset: slot * h.dtype.byteSize,
+                                     shape: [1], dtype: h.dtype)
+                Ops.scalarFMA(scalar: scalarT, value: expertOut, base: acc,
+                              into: acc, on: work)
             }
             accumulator = acc
         }

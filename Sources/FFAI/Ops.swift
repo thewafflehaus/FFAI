@@ -473,51 +473,6 @@ public enum Ops {
     ///     any width at a fixed TPG of 1024 (large-hidden models such
     ///     as Gemma 4 31B, hidden 5376).
     /// One threadgroup per row in both cases.
-    /// Batched int4 dequantGemv on N projections with DIFFERENT inputs
-    /// in ONE encoder. Used by MoE per-expert down projections — each
-    /// expert has its own inner activation, but all share the same PSO
-    /// + in_dim + group_size. Saves N-1 encoder begin/end pairs.
-    public static func dequantGemvInt4Many(
-        weights: [Tensor], scales: [Tensor], biases: [Tensor],
-        inputs: [Tensor], outputs: [Tensor],
-        groupSize: Int = 64,
-        on cmd: MTLCommandBuffer
-    ) {
-        let n = weights.count
-        precondition(scales.count == n && biases.count == n && inputs.count == n && outputs.count == n,
-                     "dequantGemvInt4Many: count mismatch")
-        guard n > 0 else { return }
-        let dtype = inputs[0].dtype
-        let psoName: String
-        switch dtype {
-        case .f32:  psoName = "dequant_gemv_int4_f32"
-        case .f16:  psoName = "dequant_gemv_int4_f16"
-        case .bf16: psoName = "dequant_gemv_int4_bf16"
-        default: fatalError("dequantGemvInt4Many: unsupported dtype \(dtype)")
-        }
-        let pso = PSOCache.shared.pipelineState(for: psoName)
-        guard let enc = cmd.makeComputeCommandEncoder() else { return }
-        enc.setComputePipelineState(pso)
-        let packedPerRow = weights[0].shape[1]
-        let inDim = packedPerRow * 32 / 4
-        var inDimV = UInt32(inDim), groupSizeV = UInt32(groupSize)
-        enc.setBytes(&inDimV, length: 4, index: 5)
-        enc.setBytes(&groupSizeV, length: 4, index: 6)
-        let tgWidth = 256
-        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
-        for i in 0..<n {
-            enc.setBuffer(weights[i].buffer, offset: weights[i].offset, index: 0)
-            enc.setBuffer(scales[i].buffer, offset: scales[i].offset, index: 1)
-            enc.setBuffer(biases[i].buffer, offset: biases[i].offset, index: 2)
-            enc.setBuffer(inputs[i].buffer, offset: inputs[i].offset, index: 3)
-            enc.setBuffer(outputs[i].buffer, offset: outputs[i].offset, index: 4)
-            let outDim = weights[i].shape[0]
-            let grid = MTLSize(width: outDim * tgWidth, height: 1, depth: 1)
-            enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
-        }
-        enc.endEncoding()
-    }
-
     /// Batched int4 dequantGemv on TWO projections sharing one input.
     /// Used by Qwen3.5/3.6 MoE per-expert gate+up projection pair.
     /// Saves 1 encoder begin/end per expert × 8 experts × 40 layers
@@ -4249,41 +4204,6 @@ public enum Ops {
     // Used by FFAI's per-expert MoE SwiGLU + Qwen3 dense MLPs. fp32 path
     // is the canonical reference; f16 / bf16 narrow on store, accumulate
     // in fp32.
-    /// Batched mt_swiglu across N (gate, up, out) tuples in ONE
-    /// encoder. Same PSO across all dispatches; rebind buffers
-    /// between each. Used by MoE per-expert inner SwiGLU when the
-    /// 8 experts share dtype.
-    public static func swigluMany(
-        gates: [Tensor], ups: [Tensor], outs: [Tensor],
-        on cmd: MTLCommandBuffer
-    ) {
-        let n = gates.count
-        precondition(ups.count == n && outs.count == n,
-                     "swigluMany: count mismatch")
-        guard n > 0 else { return }
-        let dtype = gates[0].dtype
-        let psoName: String
-        switch dtype {
-        case .f32:  psoName = "mt_swiglu_f32"
-        case .f16:  psoName = "mt_swiglu_f16"
-        case .bf16: psoName = "mt_swiglu_bf16"
-        default: fatalError("swigluMany: unsupported dtype \(dtype)")
-        }
-        let pso = PSOCache.shared.pipelineState(for: psoName)
-        guard let enc = cmd.makeComputeCommandEncoder() else { return }
-        enc.setComputePipelineState(pso)
-        for i in 0..<n {
-            let count = gates[i].elementCount
-            let tgWidth = min(count, 256)
-            enc.setBuffer(gates[i].buffer, offset: gates[i].offset, index: 0)
-            enc.setBuffer(ups[i].buffer, offset: ups[i].offset, index: 1)
-            enc.setBuffer(outs[i].buffer, offset: outs[i].offset, index: 2)
-            enc.dispatchThreads(MTLSize(width: count, height: 1, depth: 1),
-                                threadsPerThreadgroup: MTLSize(width: tgWidth, height: 1, depth: 1))
-        }
-        enc.endEncoding()
-    }
-
     public static func swiglu(
         gate: Tensor, up: Tensor, on cmd: MTLCommandBuffer,
         into out: Tensor? = nil
