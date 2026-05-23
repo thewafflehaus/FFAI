@@ -488,8 +488,27 @@ public final class MoELayer: Module, DecoderLayer {
                      "MoELayer.decode: input has \(h.elementCount) elements, expected hidden \(hidden)")
 
         // ── 1. Gate gemv on the caller's command buffer ──────────────
-        // Queued onto `cmd` so it runs after whatever produced `h`.
-        let logitsTensor = gate(h, on: cmd)
+        // ITER 15: if we've already dequantized the gate weight (via a
+        // prior prefill call to gateLogitsMany), use the dense fp16
+        // gemv path — bypasses the slow 8-bit dequant-gemv at T=1.
+        // For pure decode without prefill, this opportunistically
+        // dequantizes once per MoE layer (40 layers × hidden=2048 ×
+        // nExperts=128 × 2 bytes = ~21 MB total — done once per
+        // layer's first decode call).
+        let logitsTensor: Tensor
+        if !dequantizedGateAttempted {
+            dequantizedGateAttempted = true
+            if ProcessInfo.processInfo.environment["FFAI_MOE_NO_DEQUANT_GATE"] == nil,
+               let q = gate.inner as? QuantizedLinear,
+               q.bits == 8 {
+                dequantizedGateCache = Self.dequantizeQuantizedLinear(q, device: device)
+            }
+        }
+        if let dense = dequantizedGateCache {
+            logitsTensor = Ops.gemv(weight: dense, input: h, on: cmd)
+        } else {
+            logitsTensor = gate(h, on: cmd)
+        }
 
         // ── 2. Commit + wait so the router can read the logits ───────
         // The decode path batches a token onto one command buffer; the
