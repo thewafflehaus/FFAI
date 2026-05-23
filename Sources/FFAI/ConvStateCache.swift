@@ -39,6 +39,56 @@ public final class ConvStateCache: @unchecked Sendable {
     /// Reset to zero. Used between sessions; cheap (small fp16/bf16 buffer).
     public func reset() { state.zero() }
 
+    /// Snapshot the current rolling window to a fresh `Tensor`. Used by
+    /// speculative decode — the conv1d_causal_step kernel mutates this
+    /// window in-place each token (drops state[0], appends current
+    /// input as state[K-2]), and the mutation isn't trivially
+    /// reversible without remembering the exact dropped slot and old
+    /// state contents. Snapshot/restore is the cleanest rollback.
+    ///
+    /// Cost: `(kernelSize - 1) * nChannels` × dtype-size bytes per
+    /// layer. At Qwen3.6-A3B convDim=5120, kernelSize=4, bf16:
+    /// 3 * 5120 * 2 = 30 720 bytes per layer × 30 GDN layers ≈ 900 KB
+    /// — small enough to snapshot every spec step without measurable
+    /// host overhead.
+    public func snapshot(device: Device = .shared) -> Tensor {
+        let snap = Tensor.empty(shape: [kernelSize - 1, nChannels],
+                                 dtype: dtype, device: device)
+        let cmd = device.makeCommandBuffer()
+        guard let blit = cmd.makeBlitCommandEncoder() else {
+            preconditionFailure("ConvStateCache.snapshot: makeBlitCommandEncoder failed")
+        }
+        let bytes = (kernelSize - 1) * nChannels * dtype.byteSize
+        blit.copy(from: state.buffer, sourceOffset: state.offset,
+                  to: snap.buffer, destinationOffset: snap.offset,
+                  size: bytes)
+        blit.endEncoding()
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return snap
+    }
+
+    /// Restore the rolling window from a snapshot. Overwrites the
+    /// state buffer with the snapshot contents.
+    public func restore(from snapshot: Tensor, device: Device = .shared) {
+        let expected = (kernelSize - 1) * nChannels
+        precondition(snapshot.elementCount == expected,
+                     "ConvStateCache.restore: snapshot has \(snapshot.elementCount) elements, expected \(expected)")
+        precondition(snapshot.dtype == dtype,
+                     "ConvStateCache.restore: snapshot dtype \(snapshot.dtype) ≠ state dtype \(dtype)")
+        let cmd = device.makeCommandBuffer()
+        guard let blit = cmd.makeBlitCommandEncoder() else {
+            preconditionFailure("ConvStateCache.restore: makeBlitCommandEncoder failed")
+        }
+        let bytes = expected * dtype.byteSize
+        blit.copy(from: snapshot.buffer, sourceOffset: snapshot.offset,
+                  to: state.buffer, destinationOffset: state.offset,
+                  size: bytes)
+        blit.endEncoding()
+        cmd.commit()
+        cmd.waitUntilCompleted()
+    }
+
     /// Bytes occupied by the rolling window. Constant w.r.t. sequence
     /// length — that's the streaming-decode design.
     public var bytesAllocated: Int {
