@@ -153,6 +153,15 @@ public final class AudioEncoderLayer: Module {
     /// CPU bidirectional multi-head attention over `nFrames` audio
     /// frames. `q` / `k` / `v` are frame-major `[nFrames, nHeads*headDim]`.
     /// Returns the context, frame-major, ready for the output projection.
+    ///
+    /// Fans the `(head, query-row)` index space across CPU cores with
+    /// `DispatchQueue.concurrentPerform`. Mirrors the parallelization of
+    /// `VisionEncoderLayer.cpuAttention` — at Whisper's nAudioCtx = 1500
+    /// and 6 heads the prior single-threaded loop took 15-18 minutes per
+    /// encoder pass, which surfaced as Whisper `transcribe` timing out.
+    /// Race-free because each iteration writes to a disjoint
+    /// `[oBase, oBase + headDim)` output slice — no two iterations touch
+    /// the same element, so the writes need no synchronization.
     private func cpuAttention(q: Tensor, k: Tensor, v: Tensor,
                               nFrames: Int, device: Device) -> Tensor {
         let qa = q.toFloatArray()
@@ -161,33 +170,48 @@ public final class AudioEncoderLayer: Module {
         let stride = nHeads * headDim
         var out = [Float](repeating: 0, count: nFrames * stride)
 
-        for head in 0..<nHeads {
-            let hOff = head * headDim
-            for i in 0..<nFrames {
-                var scores = [Float](repeating: 0, count: nFrames)
-                var maxScore = -Float.greatestFiniteMagnitude
-                for j in 0..<nFrames {
-                    var dot: Float = 0
+        let nHeadsLocal = nHeads
+        let headDimLocal = headDim
+        let scaleLocal = scale
+        out.withUnsafeMutableBufferPointer { outBuf in
+            let outPtr = outBuf.baseAddress!
+            qa.withUnsafeBufferPointer { qPtr in
+            ka.withUnsafeBufferPointer { kPtr in
+            va.withUnsafeBufferPointer { vPtr in
+                let qb = qPtr.baseAddress!
+                let kb = kPtr.baseAddress!
+                let vb = vPtr.baseAddress!
+                DispatchQueue.concurrentPerform(iterations: nHeadsLocal * nFrames) { work in
+                    let head = work / nFrames
+                    let i = work % nFrames
+                    let hOff = head * headDimLocal
+                    var scores = [Float](repeating: 0, count: nFrames)
+                    var maxScore = -Float.greatestFiniteMagnitude
                     let qBase = i * stride + hOff
-                    let kBase = j * stride + hOff
-                    for d in 0..<headDim { dot += qa[qBase + d] * ka[kBase + d] }
-                    let s = dot * scale
-                    scores[j] = s
-                    if s > maxScore { maxScore = s }
+                    for j in 0..<nFrames {
+                        var dot: Float = 0
+                        let kBase = j * stride + hOff
+                        for d in 0..<headDimLocal { dot += qb[qBase + d] * kb[kBase + d] }
+                        let s = dot * scaleLocal
+                        scores[j] = s
+                        if s > maxScore { maxScore = s }
+                    }
+                    var sumExp: Float = 0
+                    for j in 0..<nFrames {
+                        let e = exp(scores[j] - maxScore)
+                        scores[j] = e
+                        sumExp += e
+                    }
+                    let inv = sumExp > 0 ? 1 / sumExp : 0
+                    let oBase = i * stride + hOff
+                    for j in 0..<nFrames {
+                        let w = scores[j] * inv
+                        let vBase = j * stride + hOff
+                        for d in 0..<headDimLocal { outPtr[oBase + d] += w * vb[vBase + d] }
+                    }
                 }
-                var sumExp: Float = 0
-                for j in 0..<nFrames {
-                    let e = exp(scores[j] - maxScore)
-                    scores[j] = e
-                    sumExp += e
-                }
-                let inv = sumExp > 0 ? 1 / sumExp : 0
-                let oBase0 = i * stride + hOff
-                for j in 0..<nFrames {
-                    let w = scores[j] * inv
-                    let vBase = j * stride + hOff
-                    for d in 0..<headDim { out[oBase0 + d] += w * va[vBase + d] }
-                }
+            }
+            }
             }
         }
         let result = Tensor.empty(shape: [nFrames, stride], dtype: q.dtype,
