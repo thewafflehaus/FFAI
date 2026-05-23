@@ -4015,9 +4015,7 @@ public enum Ops {
         precondition(x.dtype == weight.dtype && weight.dtype == bias.dtype,
                      "Ops.layerNorm: x/weight/bias dtype mismatch")
         let result = out ?? Tensor.empty(shape: x.shape, dtype: x.dtype)
-        var epsValue = eps
-        let epsBuf = device.makeBuffer(length: 4)
-        memcpy(epsBuf.contents(), &epsValue, 4)
+        let epsBuf = epsBuffer(eps)  // cached; see ITER 5
         // TPG=1024 per the kernel's reduce-tree contract. One TG per row.
         let tgWidth = 1024
         let grid = MTLSize(width: nRows * tgWidth, height: 1, depth: 1)
