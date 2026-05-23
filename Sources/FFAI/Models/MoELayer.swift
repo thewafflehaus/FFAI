@@ -508,17 +508,21 @@ public final class MoELayer: Module, DecoderLayer {
         let work = device.makeCommandBuffer()
         var accumulator: Tensor?
         // Batched gather-BGEMM fast path is opt-in via FFAI_MOE_BGEMM=1.
-        // At T=1 decode with topK=8 / m_total=8 it currently regresses
+        // At T=1 decode with topK=8 / m_total=8 it MEASURABLY REGRESSES
         // vs the sequential per-expert matvec path on M5 Max — the
         // bm16 tile pads to 16 rows but only 8 commit, so the kernel
-        // pays full weight-reload bandwidth for 50% useful work. Real
-        // win shape is prefill (m_total scales with T, more rows share
-        // each expert's weight tile) or NAX (FFAI_MOE_BGEMM_MPP=1).
-        // Path is wired + correctness-verified — flip the default once
-        // the m_total<16 regression is closed (likely via either a
-        // dedicated bm8 kernel emit or by promoting prefill to use
-        // this path first).
-        if let stacked = stackedInt4Experts, stacked.dtype == h.dtype, enableBGEMM {
+        // pays full weight-reload bandwidth for 50% useful work. Bench
+        // shows ~2.1× slowdown at decode T=1 on Qwen3.6-A3B
+        // (Iter 9: 20.34 tps with BGEMM → 43.20 tps without).
+        //
+        // The env flag stays opt-in for the prefill path (decodeMany)
+        // where mTotal scales with T and BGEMM wins, but at T=1 we
+        // hard-disable to avoid the regression even if the env is set.
+        // Override: `FFAI_MOE_BGEMM_FORCE_T1=1` re-enables for the rare
+        // case someone wants to bench the regression directly.
+        let forceBGEMMAtT1 = ProcessInfo.processInfo.environment["FFAI_MOE_BGEMM_FORCE_T1"] != nil
+        let useBGEMMAtT1 = enableBGEMM && forceBGEMMAtT1
+        if let stacked = stackedInt4Experts, stacked.dtype == h.dtype, useBGEMMAtT1 {
             // Fast path: one batched gather BGEMM per projection. The
             // kernel expects rows of activations sorted by expert id; we
             // sort the topK indices ascending and replicate `h` into the
