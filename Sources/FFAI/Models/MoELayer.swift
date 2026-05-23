@@ -412,6 +412,9 @@ public final class MoELayer: Module, DecoderLayer {
     private var expertUScratches: [Tensor] = []
     /// ITER 36: cache swiglu inner output per expert slot.
     private var expertInnerScratches: [Tensor] = []
+    /// ITER 38: cached per-expert down output for the batched 8-expert
+    /// down qmm path. Indexed by slot.
+    private var expertOutScratches: [Tensor] = []
 
     /// - gate: hidden → nExperts router projection.
     /// - gateProj/upProj/downProj: `nExperts`-long arrays of per-expert
@@ -596,17 +599,85 @@ public final class MoELayer: Module, DecoderLayer {
             accumulatorScratch!.zero()
             let acc = accumulatorScratch!
 
-            for (slot, expertId) in routing.indices.enumerated() {
-                let expertOut = swiGLU(h, slot: slot,
-                                       gateProj: gateProj[expertId],
-                                       upProj: upProj[expertId],
-                                       downProj: downProj[expertId],
-                                       on: work)
-                let scalarT = Tensor(buffer: scalarBuf,
-                                     offset: slot * h.dtype.byteSize,
-                                     shape: [1], dtype: h.dtype)
-                Ops.scalarFMA(scalar: scalarT, value: expertOut, base: acc,
-                              into: acc, on: work)
+            // ITER 38: phase-2 batched down qmm. When all 8 expert
+            // downProjs are int4 QuantizedLinear with same groupSize,
+            // dispatch all 8 down qmms in ONE encoder. Uses cached
+            // inner + out scratches (no allocation per call).
+            var canBatchDown = true
+            var downWeights: [Tensor] = []
+            var downScales: [Tensor] = []
+            var downBiases: [Tensor] = []
+            var downGroupSize: Int = 0
+            for expertId in routing.indices {
+                if let q = downProj[expertId].inner as? QuantizedLinear, q.bits == 4 {
+                    if downGroupSize == 0 { downGroupSize = q.groupSize }
+                    if q.groupSize != downGroupSize { canBatchDown = false; break }
+                    downWeights.append(q.weight)
+                    downScales.append(q.scales)
+                    downBiases.append(q.biases)
+                } else {
+                    canBatchDown = false
+                    break
+                }
+            }
+
+            if canBatchDown {
+                // Phase 1: per-expert gate+up batched (ITER 25) +
+                // swiglu (ITER 36). Run per-expert using cached
+                // scratches. Need to NOT call full swiGLU since it
+                // chains down — instead invoke phase 1 inline.
+                for (slot, expertId) in routing.indices.enumerated() {
+                    let qg = gateProj[expertId].inner as! QuantizedLinear
+                    let qu = upProj[expertId].inner as! QuantizedLinear
+                    while expertGScratches.count <= slot {
+                        let outDim = qg.weight.shape[0]
+                        expertGScratches.append(Tensor.empty(shape: [outDim], dtype: h.dtype))
+                        expertUScratches.append(Tensor.empty(shape: [outDim], dtype: h.dtype))
+                        expertInnerScratches.append(Tensor.empty(shape: [outDim], dtype: h.dtype))
+                    }
+                    while expertOutScratches.count <= slot {
+                        expertOutScratches.append(Tensor.empty(shape: [hidden], dtype: h.dtype))
+                    }
+                    Ops.dequantGemvInt4Two(
+                        input: h,
+                        w0: qg.weight, s0: qg.scales, b0: qg.biases,
+                        out0: expertGScratches[slot],
+                        w1: qu.weight, s1: qu.scales, b1: qu.biases,
+                        out1: expertUScratches[slot],
+                        groupSize: qg.groupSize, on: work)
+                    _ = Ops.swiglu(gate: expertGScratches[slot],
+                                   up: expertUScratches[slot],
+                                   on: work, into: expertInnerScratches[slot])
+                }
+                // Phase 2: batched 8-expert down qmm in ONE encoder.
+                let inners = Array(expertInnerScratches.prefix(routing.indices.count))
+                let outs = Array(expertOutScratches.prefix(routing.indices.count))
+                Ops.dequantGemvInt4Many(
+                    weights: downWeights, scales: downScales, biases: downBiases,
+                    inputs: inners, outputs: outs,
+                    groupSize: downGroupSize, on: work)
+                // Phase 3: scalarFMA accumulate.
+                for (slot, expertOut) in outs.enumerated() {
+                    let scalarT = Tensor(buffer: scalarBuf,
+                                         offset: slot * h.dtype.byteSize,
+                                         shape: [1], dtype: h.dtype)
+                    Ops.scalarFMA(scalar: scalarT, value: expertOut, base: acc,
+                                  into: acc, on: work)
+                }
+            } else {
+                // Legacy: per-expert swiGLU chain.
+                for (slot, expertId) in routing.indices.enumerated() {
+                    let expertOut = swiGLU(h, slot: slot,
+                                           gateProj: gateProj[expertId],
+                                           upProj: upProj[expertId],
+                                           downProj: downProj[expertId],
+                                           on: work)
+                    let scalarT = Tensor(buffer: scalarBuf,
+                                         offset: slot * h.dtype.byteSize,
+                                         shape: [1], dtype: h.dtype)
+                    Ops.scalarFMA(scalar: scalarT, value: expertOut, base: acc,
+                                  into: acc, on: work)
+                }
             }
             accumulator = acc
         }
