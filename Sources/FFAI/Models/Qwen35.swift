@@ -2246,19 +2246,27 @@ public final class Qwen35Model: LanguageModel {
 
         // The embedding + layers run on internal buffers — never `cmd`.
         var workCmd = device.makeCommandBuffer()
-        var h = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
+        var h = Profile.time("forward.embed") {
+            embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
+        }
 
         for (i, layer) in layers.enumerated() {
-            h = layer.decode(h, position: position, cache: caches[i],
-                             cmd: workCmd, device: device)
-            // Refresh `workCmd` if the layer committed it.
-            let committed: Bool
-            switch layer {
-            case let l as Qwen35GDNLayer: committed = l.commitsCommandBuffer
-            case let l as Qwen35AttentionLayer: committed = l.commitsCommandBuffer
-            default: committed = false
+            if let attn = layer as? Qwen35AttentionLayer {
+                h = Profile.time("forward.attn_layer") {
+                    attn.decode(h, position: position, cache: caches[i],
+                                cmd: workCmd, device: device)
+                }
+                if attn.commitsCommandBuffer { workCmd = device.makeCommandBuffer() }
+            } else if let gdn = layer as? Qwen35GDNLayer {
+                h = Profile.time("forward.gdn_layer") {
+                    gdn.decode(h, position: position, cache: caches[i],
+                               cmd: workCmd, device: device)
+                }
+                if gdn.commitsCommandBuffer { workCmd = device.makeCommandBuffer() }
+            } else {
+                h = layer.decode(h, position: position, cache: caches[i],
+                                 cmd: workCmd, device: device)
             }
-            if committed { workCmd = device.makeCommandBuffer() }
         }
 
         // If the last layer was a non-committing attention layer with a

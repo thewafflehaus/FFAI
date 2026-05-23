@@ -158,6 +158,69 @@ struct Qwen36SmokeTests {
         try await runForwardManyProfile(targetT: 2048)
     }
 
+    @Test("Qwen3.6-35B-A3B decode profile — T=1 per-layer breakdown")
+    func decodeProfileT1() async throws {
+        let path = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
+        guard FileManager.default.fileExists(atPath: path) else {
+            print("Qwen3.6 decodeProfile skipped: \(path) not found")
+            return
+        }
+        var optsBuilder = LoadOptions()
+        optsBuilder.prewarm = false
+        let opts = optsBuilder
+        let m: Model = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(path, options: opts)
+        }
+        guard let qwen = m.qwen35 else {
+            Issue.record("expected Qwen35Model engine")
+            return
+        }
+        // Build a short 32-token prefill so decode runs at non-trivial KV length.
+        let seed = "The history of the printing press began when European craftsmen of the 15th century combined movable metal type with oil based ink screw presses paper to mass produce printed books"
+        var encoded = m.tokenizer.encode(text: seed)
+        while encoded.count < 32 { encoded.append(contentsOf: encoded) }
+        encoded = Array(encoded.prefix(32))
+
+        let caches = qwen.makeLayerCaches()
+        // Prefill 32 tokens (untimed; warms KV + PSO).
+        for (i, tok) in encoded.enumerated() {
+            _ = qwen.forward(tokenId: tok, position: i, caches: caches)
+        }
+        // Warm the decode path itself with 4 steps.
+        var nextTok = 1234
+        for step in 0..<4 {
+            _ = qwen.forward(tokenId: nextTok, position: encoded.count + step, caches: caches)
+        }
+
+        // Enable wallclock, reset, run 32 decode steps timed.
+        Profile.shared.level = .wallclock
+        Profile.shared.resetPhases()
+        let nSteps = 32
+        let t0 = Date()
+        for step in 0..<nSteps {
+            _ = qwen.forward(tokenId: nextTok, position: encoded.count + 4 + step, caches: caches)
+            nextTok = (nextTok &+ 17) % 248_320  // deterministic walk
+        }
+        let totalS = Date().timeIntervalSince(t0)
+        Profile.shared.level = .off
+
+        var totals: [String: (count: Int, sumS: Double)] = [:]
+        for (name, dur) in Profile.shared.phases.entries {
+            let prev = totals[name] ?? (0, 0)
+            totals[name] = (prev.count + 1, prev.sumS + dur)
+        }
+        let tps = Double(nSteps) / totalS
+        let perStepMs = totalS / Double(nSteps) * 1000
+        print("decodeProfile T=1: \(nSteps) steps in \(String(format: "%.3f", totalS))s = \(String(format: "%.2f", tps)) tps (per-step \(String(format: "%.2f", perStepMs))ms)")
+        let sorted = totals.sorted { $0.value.sumS > $1.value.sumS }
+        for (name, agg) in sorted {
+            let pct = agg.sumS / totalS * 100
+            let avgMs = agg.sumS / Double(agg.count) * 1000
+            let perStep = Double(agg.count) / Double(nSteps)
+            print("  \(name): count=\(agg.count) (\(String(format: "%.1f", perStep))/step) total=\(String(format: "%.3f", agg.sumS))s (\(String(format: "%.1f", pct))%) avg=\(String(format: "%.2f", avgMs))ms")
+        }
+    }
+
     @Test("Qwen3.6-35B-A3B forwardMany profile — T=512 phase breakdown")
     func forwardManyProfile512() async throws {
         try await runForwardManyProfile(targetT: 512)
