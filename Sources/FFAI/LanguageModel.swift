@@ -57,6 +57,27 @@ public protocol LanguageModel: Module {
                  caches: [any LayerCacheProtocol],
                  on cmd: MTLCommandBuffer, device: Device) -> Tensor
 
+    /// Queue a **multi-token** forward pass — process `tokenIds.count`
+    /// positions in one logical call. Updates each cache for positions
+    /// `[position, position + tokenIds.count)`. Returns the logits at
+    /// the **last** position only (the chunk's tail — the only thing
+    /// prefill needs).
+    ///
+    /// The default implementation loops `forward(tokenId:)` one token
+    /// at a time, so every family gets this surface for free. Family
+    /// files override it with a chunked path that batches the QKV
+    /// projection + a single `Ops.sdpaMulti(causal: true)` dispatch +
+    /// batched MLP, eliminating the per-token kernel-launch and
+    /// command-buffer overhead. That override is the Phase 6.6 TTFT
+    /// win on long prompts; the default loop is correct-but-slow.
+    ///
+    /// `tokenIds.isEmpty == false` is a precondition (an empty chunk
+    /// is a caller bug — `Generate.driveGeneration` never produces
+    /// one).
+    func forwardMulti(tokenIds: [Int], startingAt position: Int,
+                      caches: [any LayerCacheProtocol],
+                      on cmd: MTLCommandBuffer, device: Device) -> Tensor
+
     /// Forward + GPU argmax in one command buffer. Returns just the
     /// chosen token id (4-byte readback) — no full logits transfer.
     func forwardSample(tokenId: Int, position: Int,
@@ -132,6 +153,24 @@ public extension LanguageModel {
                              caches: caches, on: cmd, device: device)
         cmd.commit()
         cmd.waitUntilCompleted()
+        return logits
+    }
+
+    /// Default `forwardMulti(...)`: loops `forward(tokenId:)` one
+    /// position at a time on the supplied command buffer, returning
+    /// the tail logits. Correct-but-slow — every family inherits this
+    /// for free, optimised families override to batch the chunk in
+    /// one `Ops.sdpaMulti(causal: true)` dispatch.
+    func forwardMulti(tokenIds: [Int], startingAt position: Int,
+                      caches: [any LayerCacheProtocol],
+                      on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(!tokenIds.isEmpty,
+                     "forwardMulti: tokenIds must be non-empty")
+        var logits: Tensor!
+        for (i, token) in tokenIds.enumerated() {
+            logits = forward(tokenId: token, position: position + i,
+                             caches: caches, on: cmd, device: device)
+        }
         return logits
     }
 
