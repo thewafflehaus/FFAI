@@ -731,26 +731,27 @@ public final class MoELayer: Module, DecoderLayer {
         //     2.69× T=32 win.
         //   - mTotal ≤ 8 + `FFAI_MOE_BGEMM_BM8=1` → bm8 (decode T=1
         //     fallback).
-        // bm64_mpp default-on for mTotal ≥ 256. The crossover where the
-        // NAX cooperative-tensor matmul throughput beats the bm16 simdgroup-
-        // matrix MMA path falls between mTotal=128 and mTotal=256 — the
-        // BM=64 kernel has per-tile setup overhead (sub-run boundary
-        // detection on heterogeneous expert assignments) that wastes time
-        // when only 1-2 BM=64 tiles fill the BGEMM.
+        // bm64_mpp default-on for mTotal ≥ 1024. Re-bench at fresher
+        // calibration (after the `>= 256` initial bump) showed bm16 still
+        // wins at T=32 and T=64 — the prior single-bench T=32 data point
+        // that showed a 9% bm64 win was high-variance noise.
         //
-        // Bench Qwen3.6-A3B M5 Max (forwardManyBench medians):
-        //   T=8  / mTotal=64:   bm16 59.12 vs bm64 25.63 tps   — bm16 wins 131%
-        //   T=16 / mTotal=128:  bm16 115.90 vs bm64 58.80 tps  — bm16 wins 97%
-        //   T=32 / mTotal=256:  bm16 173.81 vs bm64 189.26 tps — bm64 wins  9%
-        //   T=128 / mTotal=1024: bm16 249.53 vs bm64 295.16 tps — bm64 wins 18%
-        //   T=512 / mTotal=4096: bm16 253.99 vs bm64 262.93 tps — bm64 wins  4%
-        //   T=2K / mTotal=16384: bm16 379.10 vs bm64 405.15 tps — bm64 wins  7%
+        // Bench Qwen3.6-A3B M5 Max (forwardManyBench medians, refreshed):
+        //   T=8  / mTotal=64:    bm16 59.12 vs bm64 25.63 tps  — bm16 +131%
+        //   T=16 / mTotal=128:   bm16 115.90 vs bm64 58.80 tps — bm16  +97%
+        //   T=32 / mTotal=256:   bm16 195.67 vs bm64 116.56 tps — bm16 +68%
+        //   T=64 / mTotal=512:   bm16 274.38 vs bm64 230.24 tps — bm16 +19%
+        //   T=128 / mTotal=1024: bm16 249.53 vs bm64 295.16 tps — bm64 +18%
+        //   T=512 / mTotal=4096: bm16 253.99 vs bm64 262.93 tps — bm64  +4%
+        //   T=2K / mTotal=16384: bm16 379.10 vs bm64 405.15 tps — bm64  +7%
         //
-        // The earlier `mTotal >= 64` threshold was catastrophically wrong
-        // at T=8 / T=16 (sub-3× regression). Bumping to `>= 256` keeps
-        // the wins at T ≥ 32 and restores the bm16 wins at small T.
+        // bm64's NAX cooperative-tensor matmul has per-tile setup cost
+        // (sub-run boundary detection on heterogeneous expert tiles) that
+        // wastes time when only ~10 BM=64 tiles fill the BGEMM. The
+        // crossover sits between mTotal=512 (19% bm16 win) and
+        // mTotal=1024 (18% bm64 win) — `>= 1024` is the safe pick.
         // Opt out via `FFAI_MOE_BGEMM_NO_BM64=1`.
-        let useBm64 = mTotal >= 256
+        let useBm64 = mTotal >= 1024
             && ProcessInfo.processInfo.environment["FFAI_MOE_BGEMM_NO_BM64"] == nil
         let useBm8 = !useBm64 && topK <= 8 && useBm8Env && mTotal <= 8
         let bgemm: (Tensor, Tensor, Tensor, Tensor, Tensor, Int, Int, Int, Int, MTLCommandBuffer, Tensor) -> Void

@@ -217,6 +217,11 @@ struct Qwen36SmokeTests {
         try await runForwardManyBench(targetT: 32)
     }
 
+    @Test("Qwen3.6-35B-A3B forwardMany bench — T=64 crossover refinement")
+    func forwardManyBench64() async throws {
+        try await runForwardManyBench(targetT: 64)
+    }
+
     @Test("Qwen3.6-35B-A3B forwardMany bench — T=128 prefill scaling")
     func forwardManyBench128() async throws {
         try await runForwardManyBench(targetT: 128)
