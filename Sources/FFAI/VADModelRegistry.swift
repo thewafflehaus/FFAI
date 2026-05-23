@@ -27,6 +27,8 @@ public enum AudioModelKind: String, Sendable, CaseIterable {
     case smartTurn
     /// Sortformer — multi-speaker diarization.
     case sortformer
+    /// TenVAD — TEN-framework lightweight VAD (native macOS framework).
+    case tenVAD
 
     /// The `model_type` strings (from `config.json`) that map to this
     /// architecture.
@@ -35,6 +37,7 @@ public enum AudioModelKind: String, Sendable, CaseIterable {
         case .sileroVAD:  return ["silero_vad"]
         case .smartTurn:  return ["smart_turn", "smart_turn_v3", "smart-turn"]
         case .sortformer: return ["sortformer", "diar_sortformer"]
+        case .tenVAD:     return ["ten_vad", "ten-vad", "tenvad"]
         }
     }
 }
@@ -64,12 +67,14 @@ public enum LoadedVADModel: @unchecked Sendable {
     case sileroVAD(SileroVADModel)
     case smartTurn(SmartTurnModel)
     case sortformer(SortformerModel)
+    case tenVAD(TenVADModel)
 
     public var kind: AudioModelKind {
         switch self {
         case .sileroVAD:  return .sileroVAD
         case .smartTurn:  return .smartTurn
         case .sortformer: return .sortformer
+        case .tenVAD:     return .tenVAD
         }
     }
 }
@@ -98,6 +103,9 @@ public enum VADModelRegistry {
         if name.contains("silero") { return .sileroVAD }
         if name.contains("smart-turn") || name.contains("smart_turn") { return .smartTurn }
         if name.contains("sortformer") || name.contains("diar") { return .sortformer }
+        if name.contains("ten-vad") || name.contains("ten_vad") || name.contains("tenvad") {
+            return .tenVAD
+        }
         throw AudioModelError.unknownArchitecture(directory.lastPathComponent)
     }
 
@@ -113,6 +121,8 @@ public enum VADModelRegistry {
             return .smartTurn(try SmartTurnModel.loadFromDirectory(directory, device: device))
         case .sortformer:
             return .sortformer(try SortformerModel.loadFromDirectory(directory, device: device))
+        case .tenVAD:
+            return .tenVAD(try TenVADModel.loadFromDirectory(directory, device: device))
         }
     }
 
