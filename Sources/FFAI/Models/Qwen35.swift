@@ -1754,6 +1754,9 @@ public final class Qwen35AttentionMixer: Module {
     /// ITER 35: cached q_norm + k_norm outputs (was fresh per call).
     private var qNormedScratch: Tensor?
     private var kNormedScratch: Tensor?
+    /// ITER 40: cached sliceHeadHalves35 gather outputs.
+    private var queriesScratch: Tensor?
+    private var gateSliceScratch: Tensor?
 
     init(qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
          qNorm: RMSNorm, kNorm: RMSNorm,
@@ -1858,10 +1861,16 @@ public final class Qwen35AttentionMixer: Module {
             // ITER 22: use cached idx tensors.
             let q2 = qOut.reshaped(to: [nHeads, 2 * headDim])
             let table = q2.reshaped(to: [nHeads * 2, headDim])
-            queries = Ops.gather(table: table, tokenIds: sliceFirstIdx!, on: cmd)
-                          .reshaped(to: [nHeads * headDim])
-            gate = Ops.gather(table: table, tokenIds: sliceSecondIdx!, on: cmd)
-                       .reshaped(to: [nHeads * headDim])
+            if queriesScratch == nil
+                || queriesScratch!.elementCount != nHeads * headDim
+                || queriesScratch!.dtype != qOut.dtype {
+                queriesScratch = Tensor.empty(shape: [nHeads, headDim], dtype: qOut.dtype)
+                gateSliceScratch = Tensor.empty(shape: [nHeads, headDim], dtype: qOut.dtype)
+            }
+            queries = Ops.gather(table: table, tokenIds: sliceFirstIdx!, on: cmd,
+                                  into: queriesScratch).reshaped(to: [nHeads * headDim])
+            gate = Ops.gather(table: table, tokenIds: sliceSecondIdx!, on: cmd,
+                               into: gateSliceScratch).reshaped(to: [nHeads * headDim])
         } else {
             queries = qOut
             gate = nil
