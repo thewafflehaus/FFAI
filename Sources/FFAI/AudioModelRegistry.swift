@@ -27,6 +27,8 @@ public enum LoadedAudioModel: @unchecked Sendable {
     case chatterbox(ChatterboxModel)
     case qwen3ASR(Qwen3ASRModel)
     case fireRedASR2(FireRedASR2Model)
+    case mossTTS(MossTTSModel)
+    case mossTTSNano(MossTTSNanoModel)
 
     /// The capabilities this model exposes — `audioIn` for STT / omni,
     /// `audioOut` for TTS.
@@ -45,6 +47,8 @@ public enum LoadedAudioModel: @unchecked Sendable {
         case .chatterbox: return Capability.textToSpeech
         case .qwen3ASR: return Capability.speechToText
         case .fireRedASR2: return Capability.speechToText
+        case .mossTTS: return Capability.textToSpeech
+        case .mossTTSNano: return Capability.textToSpeech
         }
     }
 }
@@ -69,6 +73,8 @@ public enum AudioModelRegistry {
             || ChatterboxModel.handles(config)
             || Qwen3ASRModel.handles(config)
             || FireRedASR2Model.handles(config)
+            || MossTTSNanoModel.handles(config)
+            || MossTTSModel.handles(config)
     }
 
     /// The capability set a checkpoint at `directory` would expose,
@@ -99,6 +105,8 @@ public enum AudioModelRegistry {
         if ChatterboxModel.handles(config) { return Capability.textToSpeech }
         if Qwen3ASRModel.handles(config) { return Capability.speechToText }
         if FireRedASR2Model.handles(config) { return Capability.speechToText }
+        if MossTTSNanoModel.handles(config) { return Capability.textToSpeech }
+        if MossTTSModel.handles(config) { return Capability.textToSpeech }
         return nil
     }
 
@@ -163,6 +171,16 @@ public enum AudioModelRegistry {
         }
         if FireRedASR2Model.handles(config) {
             return .fireRedASR2(try FireRedASR2Model.load(
+                directory: directory, device: device))
+        }
+        // Nano checked before MossTTS-8B — both share the Moss family but
+        // Nano has a distinctive `gpt2_config` block.
+        if MossTTSNanoModel.handles(config) {
+            return .mossTTSNano(try MossTTSNanoModel.load(
+                directory: directory, device: device))
+        }
+        if MossTTSModel.handles(config) {
+            return .mossTTS(try MossTTSModel.load(
                 directory: directory, device: device))
         }
         throw ModelError.unsupportedArchitecture(
