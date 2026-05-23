@@ -1694,13 +1694,10 @@ public final class Qwen35AttentionMixer: Module {
             on: cmd)
 
         // Partial RoPE — rotate only the first `rotaryDim` dims of each
-        // head, in place.
-        Ops.ropePartial(qNormed, position: position,
-                        headDim: headDim, rotaryDim: rotaryDim,
-                        thetaBase: ropeTheta, on: cmd)
-        Ops.ropePartial(kNormed, position: position,
-                        headDim: headDim, rotaryDim: rotaryDim,
-                        thetaBase: ropeTheta, on: cmd)
+        // head, in place. ITER 21: q + k in shared encoder.
+        Ops.ropePartialTwo(qNormed, kNormed, position: position,
+                           headDim: headDim, rotaryDim: rotaryDim,
+                           thetaBase: ropeTheta, on: cmd)
 
         // GPU KV cache update.
         kv.appendOnGPU(kFlat: kNormed.reshaped(to: [nKVHeads, headDim]),
