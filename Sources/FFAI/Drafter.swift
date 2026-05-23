@@ -63,7 +63,17 @@ public final class NGramDrafter: Drafter {
         precondition(gamma >= 0, "NGramDrafter.propose: gamma must be ≥ 0")
         guard gamma > 0, !history.isEmpty else { return [] }
 
-        // Try longest match first, fall back to shorter.
+        // Try longest match first, fall back to shorter. Returns the
+        // FIRST (most-recent) occurrence's continuation. High accept
+        // probability when the trigram repeats.
+        //
+        // Empirically (Qwen3.6-A3B + bench in SpecDecodeBenchTests):
+        // trigram acceptance ~83%, bigram ~50%, unigram-frequency ~35%.
+        // Spec-decode break-even acceptance at γ=2 with the current
+        // verify-cost ratio is ~70% — so unigram is a NET LOSS even
+        // though it increases proposal rate. Better to return [] and
+        // let the driver run a single decode step (52 ms) than waste
+        // a 77 ms batched verify on a low-confidence proposal.
         for nMatch in stride(from: maxNMatch, through: minNMatch, by: -1) {
             guard history.count >= nMatch else { continue }
             let keyStart = history.count - nMatch
@@ -73,9 +83,6 @@ public final class NGramDrafter: Drafter {
             var probe = keyStart - 1
             while probe >= nMatch - 1 {
                 if matches(history, at: probe - (nMatch - 1), key: key) {
-                    // Found an earlier occurrence ending at `probe`.
-                    // The next `gamma` tokens AFTER that occurrence
-                    // are at history[probe + 1 .. probe + gamma].
                     let candidateStart = probe + 1
                     let candidateEnd = Swift.min(candidateStart + gamma,
                                                   history.count)
