@@ -89,7 +89,12 @@ let package = Package(
         .testTarget(
             name: "ModelTests",
             dependencies: ["FFAI"],
-            path: "Tests/ModelTests"
+            path: "Tests/ModelTests",
+            // `Resources/` holds test fixtures (the VLM dog image, audio
+            // clips) that the suites resolve by a `#filePath`-relative
+            // path — not through a SwiftPM resource bundle. Exclude the
+            // directory so the build does not warn about unhandled files.
+            exclude: ["Resources"]
         ),
     ]
 )

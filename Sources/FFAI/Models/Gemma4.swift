@@ -696,7 +696,13 @@ public final class Gemma4PLE: Module {
         self.hidden = hidden
         self.nLayers = nLayers
         let plTotal = nLayers * hiddenSizePerLayerInput
-        let dtype = embed.weight.dtype
+        // The PLE scale vectors are float constants multiplied into the
+        // (dequantized) per-layer embeddings. `embed.weight` is the
+        // packed u32 table for a quantized checkpoint, so its dtype is
+        // wrong here — use the projection norm's weight dtype, which is
+        // always the model's float compute dtype (norm weights are
+        // never quantized).
+        let dtype = projectionNorm.weight.dtype
         self.embedScaleVec = Tensor.filled(
             Float(Double(max(hiddenSizePerLayerInput, 1)).squareRoot()),
             shape: [plTotal], dtype: dtype, device: device)

@@ -10,7 +10,7 @@
 // supports embedding-input forward for the splice).
 //
 // Uses the mlx-community 3B-Instruct conversion (smallest published
-// Qwen 2.5-VL). Skipped if not available locally.
+// Qwen 2.5-VL). The checkpoint MUST load — a load failure fails the test.
 
 import Foundation
 import Testing
@@ -23,14 +23,8 @@ struct Qwen25VLIntegrationTests {
 
     @Test("load — Qwen 2.5-VL checkpoint loads with vision capability")
     func loadVLCheckpoint() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load(Self.modelId)
-            }
-        } catch {
-            print("Qwen 2.5-VL integration test skipped: \(error)")
-            return
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(Self.modelId)
         }
 
         // The checkpoint is a VLM — vlModel is present, .visionIn is
@@ -39,21 +33,15 @@ struct Qwen25VLIntegrationTests {
         #expect(m.availableCapabilities.contains(.visionIn))
         #expect(m.engine.supportsEmbeddingInput)  // VLM splice prerequisite
 
-        guard let vlm = m.vlModel else { return }
+        let vlm = try #require(m.vlModel)
         // The vision tower contributes a positive run of merged tokens.
         #expect(vlm.imageTokenCount > 0)
     }
 
     @Test("enable / disable .visionIn — runtime capability flip")
     func capabilityFlip() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load(Self.modelId)
-            }
-        } catch {
-            print("Qwen 2.5-VL capability test skipped: \(error)")
-            return
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(Self.modelId)
         }
         #expect(m.availableCapabilities.contains(.visionIn))
         m.disable(.visionIn)
@@ -62,21 +50,12 @@ struct Qwen25VLIntegrationTests {
         #expect(m.isEnabled(.visionIn))
     }
 
-    @Test("image + text prompt — coherent multi-modal generation")
+    @Test("image + text prompt — describes the dog photo")
     func imageTextGeneration() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load(Self.modelId)
-            }
-        } catch {
-            print("Qwen 2.5-VL generation test skipped: \(error)")
-            return
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(Self.modelId)
         }
-        guard let vlm = m.vlModel else {
-            print("Qwen 2.5-VL generation test skipped: not a VLM")
-            return
-        }
+        let vlm = try #require(m.vlModel, "Qwen 2.5-VL checkpoint is not a VLM")
 
         // Build an image+text prompt: a run of `imageTokenCount`
         // <|image_pad|> placeholders wrapped in vision-start / vision-end
@@ -89,20 +68,19 @@ struct Qwen25VLIntegrationTests {
         let promptTokens = Array(repeating: imageTokenId,
                                  count: vlm.imageTokenCount) + questionTokens
 
-        // A solid test image at the encoder's expected square resolution.
-        let cfg = vlm.visionEncoder.config
-        let image = RGBImage.solid(width: cfg.imageSize, height: cfg.imageSize,
-                                   r: 0.40, g: 0.55, b: 0.65)
+        // A real photograph — the golden-retriever fixture.
+        let image = try VLMTestSupport.dogImage()
 
         let generated = try vlm.generate(
             promptTokens: promptTokens, image: image,
             maxTokens: 64, eosTokenId: m.config.eosTokenId)
 
-        // The contract is coherence: a real image+text prompt should
-        // decode a non-degenerate run of tokens.
-        expectCoherentOutput(generated, minTokens: 12,
+        // Coherence first, then the content check: the caption should
+        // mention a dog.
+        expectCoherentOutput(generated, minTokens: 8,
                              label: "Qwen 2.5-VL image+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("Qwen 2.5-VL generated: \(text)")
+        VLMTestSupport.expectMentionsDog(text, label: "Qwen 2.5-VL")
     }
 }

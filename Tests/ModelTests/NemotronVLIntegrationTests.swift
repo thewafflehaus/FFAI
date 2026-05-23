@@ -10,28 +10,45 @@
 // through the NemotronH backbone (which now supports embedding-input
 // forward for the splice).
 //
-// Uses the smallest published mlx-community Nemotron Nano VL conversion.
-// Skipped if not available locally.
+// DISABLED — no loadable checkpoint exists. The FFAI `NemotronVL` loader
+// expects an mlx-style conversion: a top-level `vision_config` plus a
+// `text_config` whose `model_type` is `nemotron_h`, with text weights
+// under the `language_model.*` prefix (the layout `dispatchAndLoad`'s
+// `isNemotronVisionLanguage` detects). As of the May 2026 HF index:
+//   * `nvidia/Llama-3.1-Nemotron-Nano-VL-8B-V1` ships only a raw
+//     PyTorch checkpoint driven by a custom remote-code `configuration.py`
+//     / `modeling` pair (RADIO vision tower) — its `config.json` does not
+//     expose the standard `text_config.model_type == nemotron_h` fields,
+//     so FFAI cannot route or load it.
+//   * No `mlx-community` (or other) MLX conversion of any Nemotron Nano
+//     VL / Nemotron-12B-v2-VL checkpoint has been published.
+// Re-enable once an mlx-style Nemotron-VL conversion exists in the HF
+// cache (and update `modelId` to it).
 
 import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Nemotron-VLM integration", .serialized)
+// Reason the suite is disabled — kept as a named `Comment` constant so
+// the long explanation does not blow up the `@Suite` macro's
+// type-checker.
+private let nemotronVLDisabledReason = Comment(rawValue:
+    "No mlx-style Nemotron-VL checkpoint exists: the only published "
+    + "Nemotron Nano VL is nvidia's raw PyTorch remote-code checkpoint, "
+    + "which lacks the text_config.model_type == nemotron_h layout the "
+    + "FFAI NemotronVL loader requires; no mlx-community conversion has "
+    + "been released.")
+
+@Suite("Nemotron-VLM integration", .serialized,
+       .disabled(nemotronVLDisabledReason))
 struct NemotronVLIntegrationTests {
 
     static let modelId = "mlx-community/Llama-3.1-Nemotron-Nano-VL-8B-V1-4bit"
 
     @Test("load — Nemotron-VLM checkpoint loads with vision capability")
     func loadVLCheckpoint() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load(Self.modelId)
-            }
-        } catch {
-            print("Nemotron-VLM integration test skipped: \(error)")
-            return
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(Self.modelId)
         }
 
         // The checkpoint is a VLM — vlModel is present, .visionIn is
@@ -40,21 +57,15 @@ struct NemotronVLIntegrationTests {
         #expect(m.availableCapabilities.contains(.visionIn))
         #expect(m.engine.supportsEmbeddingInput)  // VLM splice prerequisite
 
-        guard let vlm = m.vlModel else { return }
+        let vlm = try #require(m.vlModel)
         // The vision tower contributes a positive run of projected tokens.
         #expect(vlm.imageTokenCount > 0)
     }
 
     @Test("enable / disable .visionIn — runtime capability flip")
     func capabilityFlip() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load(Self.modelId)
-            }
-        } catch {
-            print("Nemotron-VLM capability test skipped: \(error)")
-            return
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(Self.modelId)
         }
         #expect(m.availableCapabilities.contains(.visionIn))
         m.disable(.visionIn)
@@ -63,21 +74,12 @@ struct NemotronVLIntegrationTests {
         #expect(m.isEnabled(.visionIn))
     }
 
-    @Test("image + text prompt — coherent multi-modal generation")
+    @Test("image + text prompt — describes the dog photo")
     func imageTextGeneration() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load(Self.modelId)
-            }
-        } catch {
-            print("Nemotron-VLM generation test skipped: \(error)")
-            return
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(Self.modelId)
         }
-        guard let vlm = m.vlModel else {
-            print("Nemotron-VLM generation test skipped: not a VLM")
-            return
-        }
+        let vlm = try #require(m.vlModel, "Nemotron-VLM checkpoint is not a VLM")
 
         // Build an image+text prompt: a run of `imageTokenCount`
         // image-placeholder tokens followed by a text question.
@@ -86,20 +88,19 @@ struct NemotronVLIntegrationTests {
         let promptTokens = Array(repeating: imageTokenId,
                                  count: vlm.imageTokenCount) + questionTokens
 
-        // A solid test image at the encoder's expected square resolution.
-        let cfg = vlm.visionEncoder.config
-        let image = RGBImage.solid(width: cfg.imageSize, height: cfg.imageSize,
-                                   r: 0.40, g: 0.55, b: 0.65)
+        // A real photograph — the golden-retriever fixture.
+        let image = try VLMTestSupport.dogImage()
 
         let generated = try vlm.generate(
             promptTokens: promptTokens, image: image,
             maxTokens: 64, eosTokenId: m.config.eosTokenId)
 
-        // The contract is coherence: a real image+text prompt should
-        // decode a non-degenerate run of tokens.
-        expectCoherentOutput(generated, minTokens: 12,
+        // Coherence first, then the content check: the caption should
+        // mention a dog.
+        expectCoherentOutput(generated, minTokens: 8,
                              label: "Nemotron-VLM image+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("Nemotron-VLM generated: \(text)")
+        VLMTestSupport.expectMentionsDog(text, label: "Nemotron-VLM")
     }
 }

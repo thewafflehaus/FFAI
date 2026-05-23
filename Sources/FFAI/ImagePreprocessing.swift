@@ -13,6 +13,23 @@
 // hand straight to `Ops.conv2d` / `Ops.patchEmbed`.
 
 import Foundation
+import CoreGraphics
+import ImageIO
+
+/// Error decoding an image file into an `RGBImage`.
+public enum RGBImageError: Error, CustomStringConvertible {
+    case fileNotFound(String)
+    case decodeFailed(String)
+
+    public var description: String {
+        switch self {
+        case .fileNotFound(let path):
+            return "RGBImage: no image file at \(path)"
+        case .decodeFailed(let path):
+            return "RGBImage: could not decode image at \(path)"
+        }
+    }
+}
 
 /// A decoded RGB image in planar CPU memory: `pixels` is row-major
 /// `[height, width, 3]` with values already in `[0, 1]`.
@@ -39,6 +56,60 @@ public struct RGBImage: Sendable {
             px[i * 3] = r; px[i * 3 + 1] = g; px[i * 3 + 2] = b
         }
         return RGBImage(width: width, height: height, pixels: px)
+    }
+
+    /// Decode an image file (JPEG / PNG / any ImageIO-supported format)
+    /// from disk into an interleaved-RGB `[0,1]` `RGBImage`.
+    ///
+    /// ImageIO is the idiomatic Apple-platform decoder — it handles the
+    /// container parsing, colour-space conversion, and orientation. The
+    /// decoded pixels are drawn into a tightly-packed RGBA8 bitmap in
+    /// sRGB, then the alpha channel is dropped and the 8-bit samples are
+    /// scaled to `[0,1]`.
+    public static func load(contentsOf url: URL) throws -> RGBImage {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw RGBImageError.fileNotFound(url.path)
+        }
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else {
+            throw RGBImageError.decodeFailed(url.path)
+        }
+
+        let width = cgImage.width
+        let height = cgImage.height
+        let bytesPerPixel = 4                       // RGBA8
+        let bytesPerRow = width * bytesPerPixel
+        var rgba = [UInt8](repeating: 0, count: height * bytesPerRow)
+
+        // Draw the decoded image into a known-layout RGBA8 sRGB bitmap.
+        // CGBitmapContext handles whatever the source colour space /
+        // bit-depth was; we read back a uniform 8-bit RGBA buffer.
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else {
+            throw RGBImageError.decodeFailed(url.path)
+        }
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+        let ok: Bool = rgba.withUnsafeMutableBytes { raw -> Bool in
+            guard let ctx = CGContext(
+                data: raw.baseAddress, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+                space: colorSpace, bitmapInfo: bitmapInfo)
+            else { return false }
+            ctx.draw(cgImage, in: CGRect(x: 0, y: 0,
+                                         width: width, height: height))
+            return true
+        }
+        guard ok else { throw RGBImageError.decodeFailed(url.path) }
+
+        // RGBA8 → interleaved-RGB float [0,1], dropping alpha.
+        var pixels = [Float](repeating: 0, count: width * height * 3)
+        let inv255: Float = 1.0 / 255.0
+        for i in 0..<(width * height) {
+            pixels[i * 3]     = Float(rgba[i * 4]) * inv255
+            pixels[i * 3 + 1] = Float(rgba[i * 4 + 1]) * inv255
+            pixels[i * 3 + 2] = Float(rgba[i * 4 + 2]) * inv255
+        }
+        return RGBImage(width: width, height: height, pixels: pixels)
     }
 }
 

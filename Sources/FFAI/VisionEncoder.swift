@@ -166,6 +166,15 @@ public final class VisionEncoderLayer: Module {
     /// tokens. `q` / `k` / `v` are token-major `[nTokens, nHeads*headDim]`.
     /// Returns the context, token-major `[nTokens, nHeads*headDim]`,
     /// ready for the output projection.
+    ///
+    /// The work is O(`nHeads · nTokens² · headDim`). SigLIP-896 vision
+    /// towers produce `nTokens` = 4096 (64×64 patch grid), so a naive
+    /// single-threaded scalar pass is ~10¹² float ops per encoder forward
+    /// — minutes of wall time. Each `(head, query-row)` pair writes a
+    /// disjoint `headDim`-wide slice of `out`, so the outer
+    /// `nHeads · nTokens` index space is embarrassingly parallel: it is
+    /// fanned out across cores with `concurrentPerform`, which is
+    /// race-free precisely because the write targets never overlap.
     private func cpuAttention(q: Tensor, k: Tensor, v: Tensor,
                               nTokens: Int, device: Device) -> Tensor {
         let qa = q.toFloatArray()
@@ -174,37 +183,58 @@ public final class VisionEncoderLayer: Module {
         let stride = nHeads * headDim
         var out = [Float](repeating: 0, count: nTokens * stride)
 
-        for head in 0..<nHeads {
-            let hOff = head * headDim
-            for i in 0..<nTokens {
-                // Scaled dot-product scores against every token.
-                var scores = [Float](repeating: 0, count: nTokens)
-                var maxScore = -Float.greatestFiniteMagnitude
-                for j in 0..<nTokens {
-                    var dot: Float = 0
+        // Fan the (head, query-row) index space across cores. `out` is
+        // mutated through an unsafe pointer because each iteration owns a
+        // disjoint `[oBase, oBase+headDim)` slice — no two iterations
+        // touch the same element, so the writes need no synchronization.
+        let nHeadsLocal = nHeads
+        let headDimLocal = headDim
+        let scaleLocal = scale
+        out.withUnsafeMutableBufferPointer { outBuf in
+            let outPtr = outBuf.baseAddress!
+            qa.withUnsafeBufferPointer { qPtr in
+            ka.withUnsafeBufferPointer { kPtr in
+            va.withUnsafeBufferPointer { vPtr in
+                let qb = qPtr.baseAddress!
+                let kb = kPtr.baseAddress!
+                let vb = vPtr.baseAddress!
+                DispatchQueue.concurrentPerform(iterations: nHeadsLocal * nTokens) { work in
+                    let head = work / nTokens
+                    let i = work % nTokens
+                    let hOff = head * headDimLocal
+                    // Scaled dot-product scores against every token.
+                    var scores = [Float](repeating: 0, count: nTokens)
+                    var maxScore = -Float.greatestFiniteMagnitude
                     let qBase = i * stride + hOff
-                    let kBase = j * stride + hOff
-                    for d in 0..<headDim { dot += qa[qBase + d] * ka[kBase + d] }
-                    let s = dot * scale
-                    scores[j] = s
-                    if s > maxScore { maxScore = s }
+                    for j in 0..<nTokens {
+                        var dot: Float = 0
+                        let kBase = j * stride + hOff
+                        for d in 0..<headDimLocal {
+                            dot += qb[qBase + d] * kb[kBase + d]
+                        }
+                        let s = dot * scaleLocal
+                        scores[j] = s
+                        if s > maxScore { maxScore = s }
+                    }
+                    // Softmax (numerically stable).
+                    var sumExp: Float = 0
+                    for j in 0..<nTokens {
+                        let e = exp(scores[j] - maxScore)
+                        scores[j] = e
+                        sumExp += e
+                    }
+                    let inv = sumExp > 0 ? 1 / sumExp : 0
+                    // Weighted sum of V into this row's disjoint slice.
+                    let oBase = i * stride + hOff
+                    for j in 0..<nTokens {
+                        let w = scores[j] * inv
+                        let vBase = j * stride + hOff
+                        for d in 0..<headDimLocal {
+                            outPtr[oBase + d] += w * vb[vBase + d]
+                        }
+                    }
                 }
-                // Softmax (numerically stable).
-                var sumExp: Float = 0
-                for j in 0..<nTokens {
-                    let e = exp(scores[j] - maxScore)
-                    scores[j] = e
-                    sumExp += e
-                }
-                let inv = sumExp > 0 ? 1 / sumExp : 0
-                // Weighted sum of V.
-                let oBase = i * stride + hOff
-                for j in 0..<nTokens {
-                    let w = scores[j] * inv
-                    let vBase = j * stride + hOff
-                    for d in 0..<headDim { out[oBase + d] += w * va[vBase + d] }
-                }
-            }
+            }}}
         }
         let result = Tensor.empty(shape: [nTokens, stride], dtype: q.dtype,
                                   device: device)

@@ -9,8 +9,10 @@
 // them, and the fused stream decodes coherent text through the Gemma 4
 // backbone (which now supports embedding-input forward for the splice).
 //
-// Uses the smallest published mlx-community Gemma 4 VL conversion.
-// Skipped if not available locally.
+// Uses the mlx-community gemma-4-e2b-it 4-bit conversion — the smallest
+// published Gemma 4 VL (its `config.json` carries a `vision_config`, so
+// it routes through the Gemma4VL loader). The checkpoint MUST load — a
+// load failure fails the test.
 
 import Foundation
 import Testing
@@ -19,18 +21,12 @@ import Testing
 @Suite("Gemma 4 VL integration", .serialized)
 struct Gemma4VLIntegrationTests {
 
-    static let modelId = "mlx-community/gemma-4-4b-it-4bit"
+    static let modelId = "mlx-community/gemma-4-e2b-it-4bit"
 
     @Test("load — Gemma 4 VL checkpoint loads with vision capability")
     func loadVLCheckpoint() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load(Self.modelId)
-            }
-        } catch {
-            print("Gemma 4 VL integration test skipped: \(error)")
-            return
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(Self.modelId)
         }
 
         // The checkpoint is a VLM — vlModel is present, .visionIn is
@@ -39,21 +35,15 @@ struct Gemma4VLIntegrationTests {
         #expect(m.availableCapabilities.contains(.visionIn))
         #expect(m.engine.supportsEmbeddingInput)  // VLM splice prerequisite
 
-        guard let vlm = m.vlModel else { return }
+        let vlm = try #require(m.vlModel)
         // The vision tower contributes a positive run of soft tokens.
         #expect(vlm.imageTokenCount > 0)
     }
 
     @Test("enable / disable .visionIn — runtime capability flip")
     func capabilityFlip() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load(Self.modelId)
-            }
-        } catch {
-            print("Gemma 4 VL capability test skipped: \(error)")
-            return
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(Self.modelId)
         }
         #expect(m.availableCapabilities.contains(.visionIn))
         m.disable(.visionIn)
@@ -62,21 +52,12 @@ struct Gemma4VLIntegrationTests {
         #expect(m.isEnabled(.visionIn))
     }
 
-    @Test("image + text prompt — coherent multi-modal generation")
+    @Test("image + text prompt — describes the dog photo")
     func imageTextGeneration() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load(Self.modelId)
-            }
-        } catch {
-            print("Gemma 4 VL generation test skipped: \(error)")
-            return
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(Self.modelId)
         }
-        guard let vlm = m.vlModel else {
-            print("Gemma 4 VL generation test skipped: not a VLM")
-            return
-        }
+        let vlm = try #require(m.vlModel, "Gemma 4 VL checkpoint is not a VLM")
 
         // Build an image+text prompt: a run of `imageTokenCount`
         // <image_soft_token> placeholders followed by a text question.
@@ -87,20 +68,19 @@ struct Gemma4VLIntegrationTests {
         let promptTokens = Array(repeating: imageTokenId,
                                  count: vlm.imageTokenCount) + questionTokens
 
-        // A solid test image at the encoder's expected square resolution.
-        let cfg = vlm.visionEncoder.config
-        let image = RGBImage.solid(width: cfg.imageSize, height: cfg.imageSize,
-                                   r: 0.40, g: 0.55, b: 0.65)
+        // A real photograph — the golden-retriever fixture.
+        let image = try VLMTestSupport.dogImage()
 
         let generated = try vlm.generate(
             promptTokens: promptTokens, image: image,
             maxTokens: 64, eosTokenId: m.config.eosTokenId)
 
-        // The contract is coherence: a real image+text prompt should
-        // decode a non-degenerate run of tokens.
-        expectCoherentOutput(generated, minTokens: 12,
+        // Coherence first, then the content check: the caption should
+        // mention a dog.
+        expectCoherentOutput(generated, minTokens: 8,
                              label: "Gemma 4 VL image+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("Gemma 4 VL generated: \(text)")
+        VLMTestSupport.expectMentionsDog(text, label: "Gemma 4 VL")
     }
 }
