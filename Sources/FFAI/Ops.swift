@@ -9,6 +9,7 @@
 import Foundation
 import Metal
 import MetalTileSwift
+import os
 
 public enum Ops {
     public static let device: Device = .shared
@@ -472,14 +473,37 @@ public enum Ops {
     ///     any width at a fixed TPG of 1024 (large-hidden models such
     ///     as Gemma 4 31B, hidden 5376).
     /// One threadgroup per row in both cases.
+    /// Cache of 4-byte eps-buffer instances keyed by eps value. Every
+    /// RMSNorm dispatch needs a 1-element fp32 buffer holding `eps`;
+    /// previously each call did a fresh `device.makeBuffer(length: 4)`
+    /// + memcpy, costing ~5-10 µs of host overhead × 120+ rmsnorm
+    /// dispatches per Qwen3.6-A3B decode token = ~1 ms wasted.
+    private final class EpsCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var map: [UInt32: MTLBuffer] = [:]
+        func get(_ eps: Float) -> MTLBuffer {
+            let key = eps.bitPattern
+            lock.lock(); defer { lock.unlock() }
+            if let b = map[key] { return b }
+            let buf = Ops.device.makeBuffer(length: 4)
+            var v = eps
+            memcpy(buf.contents(), &v, 4)
+            map[key] = buf
+            return buf
+        }
+    }
+    private static let epsCache = EpsCache()
+
+    @inline(__always)
+    private static func epsBuffer(_ eps: Float) -> MTLBuffer {
+        return epsCache.get(eps)
+    }
+
     private static func dispatchRmsNorm(
         x: Tensor, weight: Tensor, result: Tensor,
         eps: Float, n: Int, nRows: Int, on cmd: MTLCommandBuffer
     ) {
-        // eps as a 1-element f32 buffer.
-        var epsValue = eps
-        let epsBuf = device.makeBuffer(length: 4)
-        memcpy(epsBuf.contents(), &epsValue, 4)
+        let epsBuf = epsBuffer(eps)
 
         let useWide = n > 4096
         let tgWidth = useWide ? 1024 : n / 4
