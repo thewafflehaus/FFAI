@@ -798,6 +798,13 @@ public final class Qwen35MoEFFN: Module {
     let sharedGateProj, sharedUpProj, sharedDownProj: AnyLinear
     let sharedExpertGate: AnyLinear
     let hidden: Int
+    /// ITER 34: cached scratches for shared-expert path (was fresh
+    /// Tensor.empty per layer per token, contributing to OOM). Safe
+    /// to alias across decode steps — caller commits + waits before
+    /// next forward.
+    private var sharedSgScratch: Tensor?
+    private var sharedSuScratch: Tensor?
+    private var sharedResultScratch: Tensor?
 
     init(moe: MoELayer,
          sharedGateProj: AnyLinear, sharedUpProj: AnyLinear,
@@ -852,8 +859,13 @@ public final class Qwen35MoEFFN: Module {
            let qu = sharedUpProj.inner as? QuantizedLinear,
            qg.bits == 4 && qu.bits == 4 && qg.groupSize == qu.groupSize {
             let outDim = qg.weight.shape[0]
-            sg = Tensor.empty(shape: [outDim], dtype: xNorm.dtype)
-            su = Tensor.empty(shape: [outDim], dtype: xNorm.dtype)
+            if sharedSgScratch == nil || sharedSgScratch!.dtype != xNorm.dtype
+                || sharedSgScratch!.elementCount != outDim {
+                sharedSgScratch = Tensor.empty(shape: [outDim], dtype: xNorm.dtype)
+                sharedSuScratch = Tensor.empty(shape: [outDim], dtype: xNorm.dtype)
+            }
+            sg = sharedSgScratch!
+            su = sharedSuScratch!
             Ops.dequantGemvInt4Two(
                 input: xNorm,
                 w0: qg.weight, s0: qg.scales, b0: qg.biases, out0: sg,
@@ -874,7 +886,13 @@ public final class Qwen35MoEFFN: Module {
         // broadcast + mul + add + commit + wait) — saves one host stall
         // per MoE layer per token. Fires on all 40 Qwen3.6-A3B layers.
         let fmaCmd = device.makeCommandBuffer()
-        let result = Tensor.empty(shape: [hidden], dtype: routed.dtype, device: device)
+        if sharedResultScratch == nil
+            || sharedResultScratch!.dtype != routed.dtype
+            || sharedResultScratch!.elementCount != hidden {
+            sharedResultScratch = Tensor.empty(shape: [hidden], dtype: routed.dtype,
+                                                device: device)
+        }
+        let result = sharedResultScratch!
         Ops.sigmoidScalarFMA(
             gate: gateLogit, value: sharedOut, base: routed,
             into: result, on: fmaCmd)
