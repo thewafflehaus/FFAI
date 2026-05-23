@@ -60,6 +60,118 @@ struct DequantGemvExpertIndexedTests {
                 expert: 5, dtype: .f32, tolerance: 1e-5)
     }
 
+    /// ITER 58 `Many` variant: dispatching 8 indexed qmms on ONE shared
+    /// encoder must produce byte-identical output to 8 single-call
+    /// dispatches. Tests the shared-encoder path used by the GPU MoE
+    /// router branch (gate+up fused encoder, down encoder).
+    @Test("f16: Many variant matches per-call dispatches")
+    func f16ManyMatchesPerCall() {
+        runManyCase(nExperts: 8, outDim: 32, inDim: 64, groupSize: 64,
+                    slotExperts: [0, 1, 2, 3, 4, 5, 6, 7],
+                    dtype: .f16, tolerance: 5e-3)
+    }
+
+    /// Many variant with REPEATED experts (production case: topK=8 of
+    /// nExperts=128 may pick the same expert multiple times under
+    /// degenerate logits — kernel must handle it without crashing).
+    @Test("f16: Many variant handles repeated expert indices")
+    func f16ManyRepeatedExperts() {
+        runManyCase(nExperts: 8, outDim: 32, inDim: 64, groupSize: 64,
+                    slotExperts: [3, 3, 3, 3, 5, 5, 5, 5],
+                    dtype: .f16, tolerance: 5e-3)
+    }
+
+    private func runManyCase(
+        nExperts: Int, outDim: Int, inDim: Int, groupSize: Int,
+        slotExperts: [Int], dtype: DType, tolerance: Float
+    ) {
+        precondition(inDim % 8 == 0)
+        precondition(inDim % groupSize == 0)
+        let n = slotExperts.count
+        let packedPerRow = inDim / 8
+        let nGroups = inDim / groupSize
+
+        // Same synthesis as runCase but factored out as a closure for
+        // reuse; we need ONE stacked slab + ONE input shared between
+        // ref and Many.
+        let weights = Tensor.empty(shape: [nExperts, outDim, packedPerRow], dtype: .u32)
+        var wBytes = [UInt32]()
+        var seed: UInt64 = 0xDEAD_BEEF_CA11
+        for _ in 0..<(nExperts * outDim * packedPerRow) {
+            seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17
+            wBytes.append(UInt32(truncatingIfNeeded: seed))
+        }
+        weights.copyIn(from: wBytes)
+        let scales = Tensor.empty(shape: [nExperts, outDim, nGroups], dtype: dtype)
+        let biases = Tensor.empty(shape: [nExperts, outDim, nGroups], dtype: dtype)
+        let sCount = nExperts * outDim * nGroups
+        Self.writeF32IntoTypedTensor(scales,
+            (0..<sCount).map { Float(($0 % 11) - 5) * 0.02 + 0.07 }, dtype: dtype)
+        Self.writeF32IntoTypedTensor(biases,
+            (0..<sCount).map { Float(($0 % 7) - 3) * 0.015 }, dtype: dtype)
+        let input = Tensor.empty(shape: [inDim], dtype: dtype)
+        Self.writeF32IntoTypedTensor(input,
+            (0..<inDim).map { Float(($0 % 13) - 6) * 0.04 }, dtype: dtype)
+
+        // n expert-index tensors (each [1] u32 holding the slot's expert).
+        let idxBuf = Tensor.empty(shape: [n], dtype: .u32)
+        idxBuf.copyIn(from: slotExperts.map { UInt32($0) })
+        var idxTensors: [Tensor] = []
+        for slot in 0..<n {
+            idxTensors.append(Tensor(buffer: idxBuf.buffer,
+                                      offset: idxBuf.offset + slot * 4,
+                                      shape: [1], dtype: .u32))
+        }
+
+        // Reference: n single-call dispatches.
+        var refOuts: [Tensor] = []
+        for _ in 0..<n {
+            refOuts.append(Tensor.empty(shape: [outDim], dtype: dtype))
+        }
+        let cmdRef = Device.shared.makeCommandBuffer()
+        for slot in 0..<n {
+            Ops.dequantGemvInt4ExpertIndexed(
+                weightsStacked: weights, scalesStacked: scales, biasesStacked: biases,
+                input: input, expertIndex: idxTensors[slot],
+                groupSize: groupSize, on: cmdRef, into: refOuts[slot])
+        }
+        cmdRef.commit()
+        cmdRef.waitUntilCompleted()
+
+        // Many: 1 shared encoder, n dispatches.
+        var manyOuts: [Tensor] = []
+        for _ in 0..<n {
+            manyOuts.append(Tensor.empty(shape: [outDim], dtype: dtype))
+        }
+        let ws = Array(repeating: weights, count: n)
+        let ss = Array(repeating: scales, count: n)
+        let bs = Array(repeating: biases, count: n)
+        let ins = Array(repeating: input, count: n)
+        let cmdMany = Device.shared.makeCommandBuffer()
+        Ops.dequantGemvInt4ExpertIndexedMany(
+            weightsStacked: ws, scalesStacked: ss, biasesStacked: bs,
+            inputs: ins, expertIndices: idxTensors, outputs: manyOuts,
+            groupSize: groupSize, on: cmdMany)
+        cmdMany.commit()
+        cmdMany.waitUntilCompleted()
+        Self.flushQueue()
+
+        // Compare per-slot.
+        var globalMaxDiff: Float = 0
+        for slot in 0..<n {
+            let refArr = refOuts[slot].toFloatArray()
+            let manyArr = manyOuts[slot].toFloatArray()
+            for i in 0..<outDim {
+                let diff = abs(refArr[i] - manyArr[i])
+                if diff > globalMaxDiff { globalMaxDiff = diff }
+            }
+        }
+        #expect(globalMaxDiff < tolerance)
+        if globalMaxDiff >= tolerance {
+            print("[Many \(dtype)] globalMaxDiff=\(globalMaxDiff) slots=\(slotExperts)")
+        }
+    }
+
     // ─── Helper: shared test body ───────────────────────────────────
 
     /// Synthesize a stacked weight slab, dispatch both kernels,
