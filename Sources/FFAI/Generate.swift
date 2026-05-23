@@ -252,12 +252,46 @@ public extension Model {
         Debug.log(.generate, "begin prefill: \(promptTokens.count) tokens, maxTokens=\(params.maxTokens), path=\(path.rawValue)")
 
         // ─── Prefill ─────────────────────────────────────────────────
+        //
+        // Phase 6.6: chunked prefill. Pre-warm the KV cache for all but
+        // the last prompt position by calling `engine.forwardMulti(...)`
+        // in `prefillStepSize`-sized chunks (default 1024). Then sample
+        // the final position via the existing fused-kernel `sampleNext`
+        // path — that's the only position whose logits we actually need.
+        //
+        // The default `forwardMulti` implementation in `LanguageModel`
+        // falls back to a per-token loop, so families that haven't
+        // overridden it retain today's behaviour exactly. Optimised
+        // families (Llama, …) override `forwardMulti` with a single
+        // `Ops.sdpaMulti(causal: true)` dispatch over the whole chunk —
+        // that's the real long-prompt TTFT win.
+        //
+        // Empty prompts hit the early-return below. Single-token prompts
+        // skip the warm loop entirely (pos starts at 0, the while
+        // condition is false) and go straight to `sampleNext`.
         let prefillStart = Date()
         var nextToken = 0
         try profile.signpost("prefill") {
-            for (i, t) in promptTokens.enumerated() {
+            let n = promptTokens.count
+            let chunkSize = max(1, params.prefillStepSize)
+            var pos = 0
+            while pos < n - 1 {
                 try Task.checkCancellation()
-                nextToken = sampleNext(tokenId: t, position: i)
+                let end = min(pos + chunkSize, n - 1)
+                let chunk = Array(promptTokens[pos..<end])
+                let cmd = Device.shared.makeCommandBuffer()
+                _ = engine.forwardMulti(tokenIds: chunk, startingAt: pos,
+                                        caches: caches, on: cmd,
+                                        device: Device.shared)
+                cmd.commit()
+                cmd.waitUntilCompleted()
+                memTracker.sample()
+                pos = end
+            }
+            if n > 0 {
+                try Task.checkCancellation()
+                let lastTok = promptTokens[n - 1]
+                nextToken = sampleNext(tokenId: lastTok, position: n - 1)
                 memTracker.sample()
             }
         }
