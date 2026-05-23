@@ -1181,9 +1181,11 @@ public final class Qwen35GDNMixer: Module {
             // fused step runs the recurrence in fp32 against the
             // existing fp32 state slots, matching the canonical
             // precision of the legacy path.
-            Ops.castToF32(convAct, into: convActF32Scratch, on: cmd)
-            Ops.castToF32(aRaw, into: aRawF32Scratch, on: cmd)
-            Ops.castToF32(bRaw, into: bRawF32Scratch, on: cmd)
+            Ops.castToF32Three(
+                convAct, into: convActF32Scratch,
+                aRaw,    into: aRawF32Scratch,
+                bRaw,    into: bRawF32Scratch,
+                on: cmd)
 
             Ops.gatedDeltaPrepStep(
                 convOut: convActF32Scratch,

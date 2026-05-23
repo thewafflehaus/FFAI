@@ -3361,6 +3361,56 @@ public enum Ops {
         }
     }
 
+    /// Cast three same-dtype tensors to f32 in ONE encoder. Saves two
+    /// encoder begin/end pairs per call vs three separate `castToF32`
+    /// calls. Used in GDN mixer's fused-prep path where convAct, aRaw,
+    /// and bRaw all need f32 casts before the recurrence kernel.
+    ///
+    /// Saving: ~30-60 µs CPU per call (3 → 1 encoder) × 30 GDN layers
+    /// = ~1-2 ms per decode token on Qwen3.6-A3B.
+    public static func castToF32Three(
+        _ a: Tensor, into outA: Tensor,
+        _ b: Tensor, into outB: Tensor,
+        _ c: Tensor, into outC: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(a.dtype == b.dtype && b.dtype == c.dtype,
+                     "Ops.castToF32Three: all inputs must share dtype")
+        precondition(outA.dtype == .f32 && outB.dtype == .f32 && outC.dtype == .f32,
+                     "Ops.castToF32Three: outputs must all be f32")
+        precondition(a.elementCount == outA.elementCount,
+                     "Ops.castToF32Three: a/outA count mismatch")
+        precondition(b.elementCount == outB.elementCount,
+                     "Ops.castToF32Three: b/outB count mismatch")
+        precondition(c.elementCount == outC.elementCount,
+                     "Ops.castToF32Three: c/outC count mismatch")
+        let psoName: String
+        switch a.dtype {
+        case .bf16: psoName = "mt_cast_to_f32_bf16"
+        case .f16:  psoName = "mt_cast_to_f32_f16"
+        case .f32:  psoName = "mt_cast_to_f32_f32"
+        default: fatalError("Ops.castToF32Three: unsupported dtype \(a.dtype)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+
+        @inline(__always)
+        func dispatch(_ input: Tensor, _ out: Tensor) {
+            enc.setBuffer(input.buffer, offset: input.offset, index: 0)
+            enc.setBuffer(out.buffer, offset: out.offset, index: 1)
+            let n = input.elementCount
+            let tgWidth = min(n, 256)
+            enc.dispatchThreads(
+                MTLSize(width: n, height: 1, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: tgWidth, height: 1, depth: 1))
+        }
+        dispatch(a, outA)
+        dispatch(b, outB)
+        dispatch(c, outC)
+        enc.endEncoding()
+    }
+
     public static func castToF32(_ input: Tensor, into output: Tensor,
                                  on cmd: MTLCommandBuffer) {
         precondition(output.dtype == .f32,
