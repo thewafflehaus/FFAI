@@ -4518,6 +4518,60 @@ public enum Ops {
         enc.endEncoding()
     }
 
+    /// ITER 54 (Bagel 2): GPU MoE router top-K kernel. Computes top-K
+    /// expert indices + weights from the gate logits, GPU-resident.
+    /// Replaces the CPU readback + host topK loop in `MoELayer.decode`
+    /// once the per-expert qmm dispatches are wired through indirect
+    /// dispatch (follow-up iter — kernel + wrapper land first as
+    /// standalone infrastructure).
+    ///
+    /// Wraps `mt_moe_router_topk` (f32/f16/bf16 variants emitted in
+    /// metaltile). The kernel reads `[nExperts]` logits and writes
+    /// `[k]` u32 indices + `[k]` T weights. `normTopkProb=true` matches
+    /// Qwen3-MoE convention (softmax over chosen-k, sum-to-1);
+    /// `false` matches Qwen3-Next style.
+    public static func moeRouterTopK(
+        logits: Tensor, indicesOut: Tensor, weightsOut: Tensor,
+        nExperts: Int, k: Int, normTopkProb: Bool,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(logits.elementCount == nExperts,
+                     "moeRouterTopK: logits must be [nExperts]")
+        precondition(indicesOut.elementCount == k && indicesOut.dtype == .u32,
+                     "moeRouterTopK: indicesOut must be [k] u32")
+        precondition(weightsOut.elementCount == k && weightsOut.dtype == logits.dtype,
+                     "moeRouterTopK: weightsOut must be [k] matching logits dtype")
+        // INVARIANT: kernel pins tpg=32 (one simdgroup per token row).
+        let tg = MTLSize(width: 32, height: 1, depth: 1)
+        let grid = MTLSize(width: 32, height: 1, depth: 1)
+        let normFlag: UInt32 = normTopkProb ? 1 : 0
+        switch logits.dtype {
+        case .f32:
+            MetalTileKernels.mt_moe_router_topk_f32(
+                router_logits: logits.buffer, router_logitsOffset: logits.offset,
+                indices_out: indicesOut.buffer, indices_outOffset: indicesOut.offset,
+                weights_out: weightsOut.buffer, weights_outOffset: weightsOut.offset,
+                n_experts: UInt32(nExperts), k: UInt32(k), norm_topk_prob: normFlag,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_moe_router_topk_f16(
+                router_logits: logits.buffer, router_logitsOffset: logits.offset,
+                indices_out: indicesOut.buffer, indices_outOffset: indicesOut.offset,
+                weights_out: weightsOut.buffer, weights_outOffset: weightsOut.offset,
+                n_experts: UInt32(nExperts), k: UInt32(k), norm_topk_prob: normFlag,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_moe_router_topk_bf16(
+                router_logits: logits.buffer, router_logitsOffset: logits.offset,
+                indices_out: indicesOut.buffer, indices_outOffset: indicesOut.offset,
+                weights_out: weightsOut.buffer, weights_outOffset: weightsOut.offset,
+                n_experts: UInt32(nExperts), k: UInt32(k), norm_topk_prob: normFlag,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("moeRouterTopK: unsupported logits dtype \(logits.dtype)")
+        }
+    }
+
     // ─── Indirect dequant GEMV ────────────────────────────────────────
     //
     // Variant of `dequantGemv` that takes its dispatch shape from a GPU
