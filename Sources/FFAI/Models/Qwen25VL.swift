@@ -214,6 +214,15 @@ final class Qwen25VLVisionBlock {
     /// CPU windowed multi-head attention with M-RoPE. `qkv` is the fused
     /// `[nTokens, 3·hidden]` projection. Returns the context token-major
     /// `[nTokens, hidden]`.
+    ///
+    /// Two-stage parallelization with `DispatchQueue.concurrentPerform`:
+    ///   1. Setup — M-RoPE: each `(head, token)` pair writes its own
+    ///      `qH[head*nTokens+t]` / `kH[head*nTokens+t]` / `vH[head*nTokens+t]`
+    ///      row — disjoint, race-free.
+    ///   2. Attention — parallelized over heads: within each head, window
+    ///      groups are processed serially (each (head, i) writes to a
+    ///      disjoint `[oBase, oBase + headDim)` output slice — race-free
+    ///      across heads because different heads use different `hOff`).
     private func cpuAttention(qkv: Tensor, nTokens: Int,
                               cosTable: [Float], sinTable: [Float],
                               windowGroups: [[Int]], device: Device) -> Tensor {
@@ -225,54 +234,71 @@ final class Qwen25VLVisionBlock {
         let scale = 1.0 / Float(Double(headDim).squareRoot())
         let half = headDim / 2
 
-        // Apply M-RoPE to one head's `[headDim]` slice at token `tok`.
-        // Qwen's rotate-half scheme: out[d] = x[d]·cos − x[d±half]·sin.
-        func rope(_ x: inout [Float], tok: Int) {
-            let cb = tok * headDim
-            for d in 0..<headDim {
-                let rotated = d < half ? -x[d + half] : x[d - half]
-                let c = cosTable[cb + d], s = sinTable[cb + d]
-                x[d] = x[d] * c + rotated * s
+        // Stage 1: Extract and RoPE every (head, token) slice.
+        // Index layout: qH[head * nTokens + t] — each (head, t) pair owns
+        // its slot, so concurrent writes are race-free.
+        var qH = [[Float]](repeating: [], count: nHeads * nTokens)
+        var kH = [[Float]](repeating: [], count: nHeads * nTokens)
+        var vH = [[Float]](repeating: [], count: nHeads * nTokens)
+        DispatchQueue.concurrentPerform(iterations: nHeads * nTokens) { work in
+            let head = work / nTokens
+            let t = work % nTokens
+            let hOff = head * headDim
+            let base = t * 3 * hidden
+            var q = Array(qkvA[(base + hOff)..<(base + hOff + headDim)])
+            var k = Array(qkvA[(base + hidden + hOff)..<(base + hidden + hOff + headDim)])
+            let v = Array(qkvA[(base + 2 * hidden + hOff)..<(base + 2 * hidden + hOff + headDim)])
+            // Apply M-RoPE inline. Qwen's rotate-half scheme:
+            // out[d] = x[d]·cos − x[d±half]·sin. Defined inside the
+            // closure to avoid @Sendable capture warnings.
+            func applyRope(_ x: inout [Float], tok: Int) {
+                let cb = tok * headDim
+                for d in 0..<headDim {
+                    let rotated = d < half ? -x[d + half] : x[d - half]
+                    let c = cosTable[cb + d], s = sinTable[cb + d]
+                    x[d] = x[d] * c + rotated * s
+                }
             }
+            applyRope(&q, tok: t)
+            applyRope(&k, tok: t)
+            qH[head * nTokens + t] = q
+            kH[head * nTokens + t] = k
+            vH[head * nTokens + t] = v
         }
 
-        for head in 0..<nHeads {
-            let hOff = head * headDim
-            // Q/K/V for this head, RoPE'd (Q,K only).
-            var qH = [[Float]](repeating: [], count: nTokens)
-            var kH = [[Float]](repeating: [], count: nTokens)
-            var vH = [[Float]](repeating: [], count: nTokens)
-            for t in 0..<nTokens {
-                let base = t * 3 * hidden
-                var q = Array(qkvA[(base + hOff)..<(base + hOff + headDim)])
-                var k = Array(qkvA[(base + hidden + hOff)..<(base + hidden + hOff + headDim)])
-                let v = Array(qkvA[(base + 2 * hidden + hOff)..<(base + 2 * hidden + hOff + headDim)])
-                rope(&q, tok: t)
-                rope(&k, tok: t)
-                qH[t] = q; kH[t] = k; vH[t] = v
-            }
-            // Attention within each window group.
-            for group in windowGroups {
-                for i in group {
-                    var scores = [Float](repeating: 0, count: group.count)
-                    var maxS = -Float.greatestFiniteMagnitude
-                    for (gi, j) in group.enumerated() {
-                        var dot: Float = 0
-                        for d in 0..<headDim { dot += qH[i][d] * kH[j][d] }
-                        let s = dot * scale
-                        scores[gi] = s
-                        if s > maxS { maxS = s }
-                    }
-                    var sum: Float = 0
-                    for gi in 0..<group.count {
-                        let e = exp(scores[gi] - maxS)
-                        scores[gi] = e; sum += e
-                    }
-                    let inv = sum > 0 ? 1 / sum : 0
-                    let oBase = i * hidden + hOff
-                    for (gi, j) in group.enumerated() {
-                        let w = scores[gi] * inv
-                        for d in 0..<headDim { out[oBase + d] += w * vH[j][d] }
+        // Stage 2: Attention within each window group, parallelized over
+        // heads. Within a head, token `i` writes to `out[i*hidden+hOff ..
+        // +headDim)` — disjoint across heads (different `hOff`) and disjoint
+        // across tokens within a head (different `i`).
+        out.withUnsafeMutableBufferPointer { outBuf in
+            let outPtr = outBuf.baseAddress!
+            DispatchQueue.concurrentPerform(iterations: nHeads) { head in
+                let hOff = head * headDim
+                for group in windowGroups {
+                    for i in group {
+                        var scores = [Float](repeating: 0, count: group.count)
+                        var maxS = -Float.greatestFiniteMagnitude
+                        let qVec = qH[head * nTokens + i]
+                        for (gi, j) in group.enumerated() {
+                            var dot: Float = 0
+                            let kVec = kH[head * nTokens + j]
+                            for d in 0..<headDim { dot += qVec[d] * kVec[d] }
+                            let s = dot * scale
+                            scores[gi] = s
+                            if s > maxS { maxS = s }
+                        }
+                        var sum: Float = 0
+                        for gi in 0..<group.count {
+                            let e = exp(scores[gi] - maxS)
+                            scores[gi] = e; sum += e
+                        }
+                        let inv = sum > 0 ? 1 / sum : 0
+                        let oBase = i * hidden + hOff
+                        for (gi, j) in group.enumerated() {
+                            let w = scores[gi] * inv
+                            let vVec = vH[head * nTokens + j]
+                            for d in 0..<headDim { outPtr[oBase + d] += w * vVec[d] }
+                        }
                     }
                 }
             }

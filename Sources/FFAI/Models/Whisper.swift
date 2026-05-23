@@ -415,41 +415,58 @@ public final class WhisperModel: @unchecked Sendable {
     /// CPU multi-head attention. `qa` is query-major `[nQuery, H]`,
     /// `ka`/`va` are key-major `[nKV, H]` (`H = nHeads*headDim`).
     /// `causal == true` masks `j > i`. Returns the context query-major.
+    ///
+    /// Fans the `(head, query-row)` index space across CPU cores with
+    /// `DispatchQueue.concurrentPerform`. Each iteration writes to a
+    /// disjoint `[oBase, oBase + headDim)` output slice — race-free by
+    /// construction. Mirrors the parallelization of
+    /// `AudioEncoderLayer.cpuAttention`.
     private func cpuAttention(qa: [Float], ka: [Float], va: [Float],
                               nQuery: Int, nKV: Int, nHeads: Int,
                               headDim: Int, scale: Float, causal: Bool,
                               device: Device) -> Tensor {
         let stride = nHeads * headDim
         var out = [Float](repeating: 0, count: nQuery * stride)
-        for head in 0..<nHeads {
-            let hOff = head * headDim
-            for i in 0..<nQuery {
-                let jMax = causal ? min(i, nKV - 1) : nKV - 1
-                var scores = [Float](repeating: 0, count: jMax + 1)
-                var maxScore = -Float.greatestFiniteMagnitude
-                for j in 0...jMax {
-                    var dot: Float = 0
+
+        out.withUnsafeMutableBufferPointer { outBuf in
+            let outPtr = outBuf.baseAddress!
+            qa.withUnsafeBufferPointer { qPtr in
+            ka.withUnsafeBufferPointer { kPtr in
+            va.withUnsafeBufferPointer { vPtr in
+                let qb = qPtr.baseAddress!
+                let kb = kPtr.baseAddress!
+                let vb = vPtr.baseAddress!
+                DispatchQueue.concurrentPerform(iterations: nHeads * nQuery) { work in
+                    let head = work / nQuery
+                    let i = work % nQuery
+                    let hOff = head * headDim
+                    let jMax = causal ? min(i, nKV - 1) : nKV - 1
+                    var scores = [Float](repeating: 0, count: jMax + 1)
+                    var maxScore = -Float.greatestFiniteMagnitude
                     let qBase = i * stride + hOff
-                    let kBase = j * stride + hOff
-                    for d in 0..<headDim { dot += qa[qBase + d] * ka[kBase + d] }
-                    let s = dot * scale
-                    scores[j] = s
-                    if s > maxScore { maxScore = s }
+                    for j in 0...jMax {
+                        var dot: Float = 0
+                        let kBase = j * stride + hOff
+                        for d in 0..<headDim { dot += qb[qBase + d] * kb[kBase + d] }
+                        let s = dot * scale
+                        scores[j] = s
+                        if s > maxScore { maxScore = s }
+                    }
+                    var sumExp: Float = 0
+                    for j in 0...jMax {
+                        let e = exp(scores[j] - maxScore)
+                        scores[j] = e
+                        sumExp += e
+                    }
+                    let inv = sumExp > 0 ? 1 / sumExp : 0
+                    let oBase = i * stride + hOff
+                    for j in 0...jMax {
+                        let w = scores[j] * inv
+                        let vBase = j * stride + hOff
+                        for d in 0..<headDim { outPtr[oBase + d] += w * vb[vBase + d] }
+                    }
                 }
-                var sumExp: Float = 0
-                for j in 0...jMax {
-                    let e = exp(scores[j] - maxScore)
-                    scores[j] = e
-                    sumExp += e
-                }
-                let inv = sumExp > 0 ? 1 / sumExp : 0
-                let oBase = i * stride + hOff
-                for j in 0...jMax {
-                    let w = scores[j] * inv
-                    let vBase = j * stride + hOff
-                    for d in 0..<headDim { out[oBase + d] += w * va[vBase + d] }
-                }
-            }
+            }}}
         }
         let result = Tensor.empty(shape: [nQuery, stride], dtype: dtype,
                                   device: device)

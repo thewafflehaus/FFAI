@@ -233,6 +233,13 @@ final class Gemma4VLVisionBlock {
     /// RMSNorm + multi-dimensional RoPE. `q` / `k` / `v` are token-major
     /// `[nTokens, nHeads·headDim]` (q) / `[nTokens, nKVHeads·headDim]`
     /// (k, v). Returns the context token-major `[nTokens, nHeads·headDim]`.
+    ///
+    /// Two-stage parallelization with `DispatchQueue.concurrentPerform`:
+    ///   1. Setup — per-token RMSNorm + M-RoPE: each token `t` writes to
+    ///      its own `qH[t*nHeads+h]` / `kH[t*nKVHeads+h]` / `vH[t*nKVHeads+h]`
+    ///      rows — disjoint across tokens, so race-free.
+    ///   2. Attention — per-(head, query-row): each `(head, i)` pair writes
+    ///      to a disjoint `[oBase, oBase + headDim)` output slice.
     private func cpuAttention(q: Tensor, k: Tensor, v: Tensor, nTokens: Int,
                               xPos: [Int], yPos: [Int],
                               device: Device) -> Tensor {
@@ -250,68 +257,83 @@ final class Gemma4VLVisionBlock {
         let scale: Float = 1.0
         let groupSize = nHeads / max(nKVHeads, 1)
 
-        // Per-head unweighted RMSNorm helper (eps from the q/k norm).
-        func rmsNorm(_ x: inout [Float], weight: [Float]?, eps: Float) {
-            var ss: Float = 0
-            for d in 0..<headDim { ss += x[d] * x[d] }
-            let inv = 1.0 / (ss / Float(headDim) + eps).squareRoot()
-            for d in 0..<headDim {
-                x[d] = x[d] * inv * (weight != nil ? weight![d] : 1.0)
-            }
-        }
-
-        // Multi-dimensional RoPE: the head dim splits into a per-axis
-        // block (x then y); each block rotates by `position[axis]`.
+        // Precompute RMSNorm / RoPE parameters so closures capture only
+        // value types (no local funcs — avoids @Sendable capture warnings).
+        let qWeight = qNorm.weight.toFloatArray()
+        let kWeight = kNorm.weight.toFloatArray()
+        let qNormEps = qNorm.eps
+        let kNormEps = kNorm.eps
+        let rmsNormEps = cfg.rmsNormEps
+        let ropeTheta = cfg.ropeTheta
+        // Multi-dimensional RoPE constants.
         let numDims = 2
         let chPerDim = 2 * (headDim / (2 * numDims))
         let halfPerDim = chPerDim / 2
-        func applyRoPE(_ x: inout [Float], xp: Int, yp: Int) {
-            for axis in 0..<numDims {
-                let start = axis * chPerDim
-                let pos = Float(axis == 0 ? xp : yp)
-                for i in 0..<halfPerDim {
-                    let exponent = (2.0 / Float(chPerDim)) * Float(i)
-                    let timescale = pow(cfg.ropeTheta, exponent)
-                    let theta = pos / timescale
-                    let c = cos(theta), s = sin(theta)
-                    let a = x[start + i]
-                    let b = x[start + halfPerDim + i]
-                    // rotate-half: out_lo = a·c − b·s, out_hi = b·c + a·s.
-                    x[start + i] = a * c - b * s
-                    x[start + halfPerDim + i] = b * c + a * s
-                }
-            }
-        }
 
-        let qWeight = qNorm.weight.toFloatArray()
-        let kWeight = kNorm.weight.toFloatArray()
-
-        // Pre-norm + RoPE every q / k head; v-norm is unweighted.
+        // Stage 1: Pre-norm + RoPE every q / k / v head.
+        // Each token `t` writes only to rows `t*nHeads+h` / `t*nKVHeads+h`
+        // of qH / kH / vH — disjoint across tokens, so no synchronization
+        // is needed. Both the q-head loop and the kv-head loop are nested
+        // inside a single per-token iteration to keep the index space flat.
         var qH = [[Float]](repeating: [], count: nTokens * nHeads)
         var kH = [[Float]](repeating: [], count: nTokens * nKVHeads)
         var vH = [[Float]](repeating: [], count: nTokens * nKVHeads)
-        for t in 0..<nTokens {
+        DispatchQueue.concurrentPerform(iterations: nTokens) { t in
+            // Inline RMSNorm: normalise an `[headDim]` slice in place,
+            // optionally scaling by a per-dim weight vector.
+            func applyRMSNorm(_ x: inout [Float], weight: [Float]?, eps: Float) {
+                var ss: Float = 0
+                for d in 0..<headDim { ss += x[d] * x[d] }
+                let inv = 1.0 / (ss / Float(headDim) + eps).squareRoot()
+                for d in 0..<headDim {
+                    x[d] = x[d] * inv * (weight != nil ? weight![d] : 1.0)
+                }
+            }
+            // Inline multi-dimensional RoPE: head dim splits into a per-axis
+            // block (x then y); each block rotates by `position[axis]`.
+            func applyRoPE(_ x: inout [Float], xp: Int, yp: Int) {
+                for axis in 0..<numDims {
+                    let start = axis * chPerDim
+                    let pos = Float(axis == 0 ? xp : yp)
+                    for i in 0..<halfPerDim {
+                        let exponent = (2.0 / Float(chPerDim)) * Float(i)
+                        let timescale = pow(ropeTheta, exponent)
+                        let theta = pos / timescale
+                        let c = cos(theta), s = sin(theta)
+                        let a = x[start + i]
+                        let b = x[start + halfPerDim + i]
+                        // rotate-half: out_lo = a·c − b·s, out_hi = b·c + a·s.
+                        x[start + i] = a * c - b * s
+                        x[start + halfPerDim + i] = b * c + a * s
+                    }
+                }
+            }
             for h in 0..<nHeads {
                 var x = Array(qa[(t * qStride + h * headDim)..<(t * qStride + (h + 1) * headDim)])
-                rmsNorm(&x, weight: qWeight, eps: qNorm.eps)
+                applyRMSNorm(&x, weight: qWeight, eps: qNormEps)
                 applyRoPE(&x, xp: xPos[t], yp: yPos[t])
                 qH[t * nHeads + h] = x
             }
             for h in 0..<nKVHeads {
                 var xk = Array(ka[(t * kvStride + h * headDim)..<(t * kvStride + (h + 1) * headDim)])
-                rmsNorm(&xk, weight: kWeight, eps: kNorm.eps)
+                applyRMSNorm(&xk, weight: kWeight, eps: kNormEps)
                 applyRoPE(&xk, xp: xPos[t], yp: yPos[t])
                 kH[t * nKVHeads + h] = xk
                 var xv = Array(va[(t * kvStride + h * headDim)..<(t * kvStride + (h + 1) * headDim)])
-                rmsNorm(&xv, weight: nil, eps: cfg.rmsNormEps)
+                applyRMSNorm(&xv, weight: nil, eps: rmsNormEps)
                 vH[t * nKVHeads + h] = xv
             }
         }
 
-        // Full bidirectional attention, GQA head mapping.
-        for head in 0..<nHeads {
-            let kvHead = head / max(groupSize, 1)
-            for i in 0..<nTokens {
+        // Stage 2: Full bidirectional attention, GQA head mapping.
+        // Each `(head, i)` pair writes to a disjoint `[oBase, oBase+headDim)`
+        // slice of `out` — race-free.
+        out.withUnsafeMutableBufferPointer { outBuf in
+            let outPtr = outBuf.baseAddress!
+            DispatchQueue.concurrentPerform(iterations: nHeads * nTokens) { work in
+                let head = work / nTokens
+                let i = work % nTokens
+                let kvHead = head / max(groupSize, 1)
                 var scores = [Float](repeating: 0, count: nTokens)
                 var maxS = -Float.greatestFiniteMagnitude
                 let qVec = qH[i * nHeads + head]
@@ -333,7 +355,7 @@ final class Gemma4VLVisionBlock {
                 for j in 0..<nTokens {
                     let w = scores[j] * inv
                     let vVec = vH[j * nKVHeads + kvHead]
-                    for d in 0..<headDim { out[oBase + d] += w * vVec[d] }
+                    for d in 0..<headDim { outPtr[oBase + d] += w * vVec[d] }
                 }
             }
         }

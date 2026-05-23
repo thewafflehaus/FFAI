@@ -211,6 +211,13 @@ final class Qwen2VLVisionBlock {
     /// CPU full bidirectional multi-head attention with M-RoPE. `qkv` is
     /// the fused `[nTokens, 3·hidden]` projection. Returns the context
     /// token-major `[nTokens, hidden]`.
+    ///
+    /// Two-stage parallelization with `DispatchQueue.concurrentPerform`:
+    ///   1. Setup — M-RoPE: each `(head, token)` pair writes its own
+    ///      `qH[head*nTokens+t]` / `kH[head*nTokens+t]` / `vH[head*nTokens+t]`
+    ///      row — disjoint, race-free.
+    ///   2. Attention — per `(head, query-row)`: writes to a disjoint
+    ///      `[oBase, oBase + headDim)` output slice.
     private func cpuAttention(qkv: Tensor, nTokens: Int,
                               cosTable: [Float], sinTable: [Float],
                               device: Device) -> Tensor {
@@ -222,38 +229,53 @@ final class Qwen2VLVisionBlock {
         let scale = 1.0 / Float(Double(headDim).squareRoot())
         let half = headDim / 2
 
-        // Apply M-RoPE to one head's `[headDim]` slice at token `tok`.
-        // Qwen's rotate-half scheme: out[d] = x[d]·cos − x[d±half]·sin.
-        func rope(_ x: inout [Float], tok: Int) {
-            let cb = tok * headDim
-            for d in 0..<headDim {
-                let rotated = d < half ? -x[d + half] : x[d - half]
-                let c = cosTable[cb + d], s = sinTable[cb + d]
-                x[d] = x[d] * c + rotated * s
+        // Stage 1: Extract and RoPE every (head, token) slice.
+        // Index layout: qH[head * nTokens + t] — each (head, t) pair owns
+        // its slot, so concurrent writes are race-free.
+        var qH = [[Float]](repeating: [], count: nHeads * nTokens)
+        var kH = [[Float]](repeating: [], count: nHeads * nTokens)
+        var vH = [[Float]](repeating: [], count: nHeads * nTokens)
+        DispatchQueue.concurrentPerform(iterations: nHeads * nTokens) { work in
+            let head = work / nTokens
+            let t = work % nTokens
+            let hOff = head * headDim
+            let base = t * 3 * hidden
+            var q = Array(qkvA[(base + hOff)..<(base + hOff + headDim)])
+            var k = Array(qkvA[(base + hidden + hOff)..<(base + hidden + hOff + headDim)])
+            let v = Array(qkvA[(base + 2 * hidden + hOff)..<(base + 2 * hidden + hOff + headDim)])
+            // Apply M-RoPE inline. Qwen's rotate-half scheme:
+            // out[d] = x[d]·cos − x[d±half]·sin. Defined inside the
+            // closure to avoid @Sendable capture warnings.
+            func applyRope(_ x: inout [Float], tok: Int) {
+                let cb = tok * headDim
+                for d in 0..<headDim {
+                    let rotated = d < half ? -x[d + half] : x[d - half]
+                    let c = cosTable[cb + d], s = sinTable[cb + d]
+                    x[d] = x[d] * c + rotated * s
+                }
             }
+            applyRope(&q, tok: t)
+            applyRope(&k, tok: t)
+            qH[head * nTokens + t] = q
+            kH[head * nTokens + t] = k
+            vH[head * nTokens + t] = v
         }
 
-        for head in 0..<nHeads {
-            let hOff = head * headDim
-            var qH = [[Float]](repeating: [], count: nTokens)
-            var kH = [[Float]](repeating: [], count: nTokens)
-            var vH = [[Float]](repeating: [], count: nTokens)
-            for t in 0..<nTokens {
-                let base = t * 3 * hidden
-                var q = Array(qkvA[(base + hOff)..<(base + hOff + headDim)])
-                var k = Array(qkvA[(base + hidden + hOff)..<(base + hidden + hOff + headDim)])
-                let v = Array(qkvA[(base + 2 * hidden + hOff)..<(base + 2 * hidden + hOff + headDim)])
-                rope(&q, tok: t)
-                rope(&k, tok: t)
-                qH[t] = q; kH[t] = k; vH[t] = v
-            }
-            // Full attention — every token attends to every token.
-            for i in 0..<nTokens {
+        // Stage 2: Full attention — every token attends to every token.
+        // Each (head, i) writes to a disjoint [oBase, oBase+headDim) slice.
+        out.withUnsafeMutableBufferPointer { outBuf in
+            let outPtr = outBuf.baseAddress!
+            DispatchQueue.concurrentPerform(iterations: nHeads * nTokens) { work in
+                let head = work / nTokens
+                let i = work % nTokens
+                let hOff = head * headDim
                 var scores = [Float](repeating: 0, count: nTokens)
                 var maxS = -Float.greatestFiniteMagnitude
                 for j in 0..<nTokens {
                     var dot: Float = 0
-                    for d in 0..<headDim { dot += qH[i][d] * kH[j][d] }
+                    let qVec = qH[head * nTokens + i]
+                    let kVec = kH[head * nTokens + j]
+                    for d in 0..<headDim { dot += qVec[d] * kVec[d] }
                     let s = dot * scale
                     scores[j] = s
                     if s > maxS { maxS = s }
@@ -267,7 +289,8 @@ final class Qwen2VLVisionBlock {
                 let oBase = i * hidden + hOff
                 for j in 0..<nTokens {
                     let w = scores[j] * inv
-                    for d in 0..<headDim { out[oBase + d] += w * vH[j][d] }
+                    let vVec = vH[head * nTokens + j]
+                    for d in 0..<headDim { outPtr[oBase + d] += w * vVec[d] }
                 }
             }
         }

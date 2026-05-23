@@ -481,43 +481,60 @@ public final class SenseVoiceModel: @unchecked Sendable {
     /// CPU bidirectional multi-head attention. `qa` / `ka` / `va` are
     /// row-major `[nRows, heads*headDim]`. SenseVoice's encoder is
     /// non-causal — every frame attends to every other.
+    ///
+    /// Fans the `(head, query-row)` index space across CPU cores with
+    /// `DispatchQueue.concurrentPerform`. Each iteration writes to a
+    /// disjoint `[oBase, oBase + headDim)` output slice — race-free by
+    /// construction. Mirrors the parallelization of
+    /// `AudioEncoderLayer.cpuAttention`.
     private func cpuAttention(qa: [Float], ka: [Float], va: [Float],
                               nRows: Int, heads: Int, headDim: Int,
                               scale: Float, device: Device) -> Tensor {
         let stride = heads * headDim
         var out = [Float](repeating: 0, count: nRows * stride)
-        for head in 0..<heads {
-            let hOff = head * headDim
-            for i in 0..<nRows {
-                var scores = [Float](repeating: 0, count: nRows)
-                var maxScore = -Float.greatestFiniteMagnitude
-                for j in 0..<nRows {
-                    var dot: Float = 0
+
+        out.withUnsafeMutableBufferPointer { outBuf in
+            let outPtr = outBuf.baseAddress!
+            qa.withUnsafeBufferPointer { qPtr in
+            ka.withUnsafeBufferPointer { kPtr in
+            va.withUnsafeBufferPointer { vPtr in
+                let qb = qPtr.baseAddress!
+                let kb = kPtr.baseAddress!
+                let vb = vPtr.baseAddress!
+                DispatchQueue.concurrentPerform(iterations: heads * nRows) { work in
+                    let head = work / nRows
+                    let i = work % nRows
+                    let hOff = head * headDim
+                    var scores = [Float](repeating: 0, count: nRows)
+                    var maxScore = -Float.greatestFiniteMagnitude
                     let qBase = i * stride + hOff
-                    let kBase = j * stride + hOff
-                    for d in 0..<headDim {
-                        dot += qa[qBase + d] * ka[kBase + d]
+                    for j in 0..<nRows {
+                        var dot: Float = 0
+                        let kBase = j * stride + hOff
+                        for d in 0..<headDim {
+                            dot += qb[qBase + d] * kb[kBase + d]
+                        }
+                        let s = dot * scale
+                        scores[j] = s
+                        if s > maxScore { maxScore = s }
                     }
-                    let s = dot * scale
-                    scores[j] = s
-                    if s > maxScore { maxScore = s }
-                }
-                var sumExp: Float = 0
-                for j in 0..<nRows {
-                    let e = exp(scores[j] - maxScore)
-                    scores[j] = e
-                    sumExp += e
-                }
-                let inv = sumExp > 0 ? 1 / sumExp : 0
-                let oBase = i * stride + hOff
-                for j in 0..<nRows {
-                    let w = scores[j] * inv
-                    let vBase = j * stride + hOff
-                    for d in 0..<headDim {
-                        out[oBase + d] += w * va[vBase + d]
+                    var sumExp: Float = 0
+                    for j in 0..<nRows {
+                        let e = exp(scores[j] - maxScore)
+                        scores[j] = e
+                        sumExp += e
+                    }
+                    let inv = sumExp > 0 ? 1 / sumExp : 0
+                    let oBase = i * stride + hOff
+                    for j in 0..<nRows {
+                        let w = scores[j] * inv
+                        let vBase = j * stride + hOff
+                        for d in 0..<headDim {
+                            outPtr[oBase + d] += w * vb[vBase + d]
+                        }
                     }
                 }
-            }
+            }}}
         }
         let result = Tensor.empty(shape: [nRows, stride], dtype: dtype,
                                   device: device)

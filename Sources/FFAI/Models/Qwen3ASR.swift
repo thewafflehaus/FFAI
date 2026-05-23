@@ -632,6 +632,12 @@ public final class Qwen3ASRModel: @unchecked Sendable {
 
     /// CPU multi-head self-attention (bidirectional — no causal mask).
     /// Returns a `[seqLen, hidden]` Tensor.
+    ///
+    /// Fans the `(head, query-row)` index space across CPU cores with
+    /// `DispatchQueue.concurrentPerform`. Each iteration writes to a
+    /// disjoint `[oBase, oBase + headDim)` output slice — race-free by
+    /// construction. Mirrors the parallelization of
+    /// `AudioEncoderLayer.cpuAttention`.
     private func cpuBidirectionalAttention(
         qa: [Float], ka: [Float], va: [Float],
         seqLen: Int, nHeads: Int, headDim: Int, scale: Float,
@@ -639,34 +645,45 @@ public final class Qwen3ASRModel: @unchecked Sendable {
     ) -> Tensor {
         let H = nHeads * headDim
         var out = [Float](repeating: 0, count: seqLen * H)
-        for head in 0..<nHeads {
-            let hOff = head * headDim
-            for i in 0..<seqLen {
-                // Attention scores for query position i.
-                var scores = [Float](repeating: 0, count: seqLen)
-                var maxScore = -Float.greatestFiniteMagnitude
-                for j in 0..<seqLen {
-                    var dot: Float = 0
+
+        out.withUnsafeMutableBufferPointer { outBuf in
+            let outPtr = outBuf.baseAddress!
+            qa.withUnsafeBufferPointer { qPtr in
+            ka.withUnsafeBufferPointer { kPtr in
+            va.withUnsafeBufferPointer { vPtr in
+                let qb = qPtr.baseAddress!
+                let kb = kPtr.baseAddress!
+                let vb = vPtr.baseAddress!
+                DispatchQueue.concurrentPerform(iterations: nHeads * seqLen) { work in
+                    let head = work / seqLen
+                    let i = work % seqLen
+                    let hOff = head * headDim
+                    // Attention scores for query position i.
+                    var scores = [Float](repeating: 0, count: seqLen)
+                    var maxScore = -Float.greatestFiniteMagnitude
                     let qBase = i * H + hOff
-                    let kBase = j * H + hOff
-                    for d in 0..<headDim { dot += qa[qBase + d] * ka[kBase + d] }
-                    let s = dot * scale
-                    scores[j] = s
-                    if s > maxScore { maxScore = s }
+                    for j in 0..<seqLen {
+                        var dot: Float = 0
+                        let kBase = j * H + hOff
+                        for d in 0..<headDim { dot += qb[qBase + d] * kb[kBase + d] }
+                        let s = dot * scale
+                        scores[j] = s
+                        if s > maxScore { maxScore = s }
+                    }
+                    var sumExp: Float = 0
+                    for j in 0..<seqLen {
+                        let e = exp(scores[j] - maxScore)
+                        scores[j] = e; sumExp += e
+                    }
+                    let inv = sumExp > 0 ? 1 / sumExp : 0
+                    let oBase = i * H + hOff
+                    for j in 0..<seqLen {
+                        let w = scores[j] * inv
+                        let vBase = j * H + hOff
+                        for d in 0..<headDim { outPtr[oBase + d] += w * vb[vBase + d] }
+                    }
                 }
-                var sumExp: Float = 0
-                for j in 0..<seqLen {
-                    let e = exp(scores[j] - maxScore)
-                    scores[j] = e; sumExp += e
-                }
-                let inv = sumExp > 0 ? 1 / sumExp : 0
-                let oBase = i * H + hOff
-                for j in 0..<seqLen {
-                    let w = scores[j] * inv
-                    let vBase = j * H + hOff
-                    for d in 0..<headDim { out[oBase + d] += w * va[vBase + d] }
-                }
-            }
+            }}}
         }
         let result = Tensor.empty(shape: [seqLen, H], dtype: dtype, device: device)
         AudioPreprocessing.copyFloats(out, into: result)
