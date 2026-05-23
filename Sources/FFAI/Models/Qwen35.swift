@@ -844,8 +844,25 @@ public final class Qwen35MoEFFN: Module {
         // buffer no longer needs a `waitUntilCompleted` — it just needs
         // to be in flight so the FMA can hazard-track its dependencies.
         let work = device.makeCommandBuffer()
-        let sg = sharedGateProj(xNorm, on: work)
-        let su = sharedUpProj(xNorm, on: work)
+        // ITER 26: batch shared gate+up if both int4. Saves 1 encoder
+        // begin/end per layer × 40 = ~680 µs/decode token.
+        let sg: Tensor
+        let su: Tensor
+        if let qg = sharedGateProj.inner as? QuantizedLinear,
+           let qu = sharedUpProj.inner as? QuantizedLinear,
+           qg.bits == 4 && qu.bits == 4 && qg.groupSize == qu.groupSize {
+            let outDim = qg.weight.shape[0]
+            sg = Tensor.empty(shape: [outDim], dtype: xNorm.dtype)
+            su = Tensor.empty(shape: [outDim], dtype: xNorm.dtype)
+            Ops.dequantGemvInt4Two(
+                input: xNorm,
+                w0: qg.weight, s0: qg.scales, b0: qg.biases, out0: sg,
+                w1: qu.weight, s1: qu.scales, b1: qu.biases, out1: su,
+                groupSize: qg.groupSize, on: work)
+        } else {
+            sg = sharedGateProj(xNorm, on: work)
+            su = sharedUpProj(xNorm, on: work)
+        }
         let sharedInner = Ops.swiglu(gate: sg, up: su, on: work)
         let sharedOut = sharedDownProj(sharedInner, on: work)
         let gateLogit = sharedExpertGate(xNorm, on: work)
