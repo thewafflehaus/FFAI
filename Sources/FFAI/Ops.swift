@@ -4648,6 +4648,87 @@ public enum Ops {
         }
     }
 
+    /// ITER 55 (Bagel 2): per-expert indexed int4 dequant-GEMV. The
+    /// caller stacks all `n_experts` experts' weights into a single
+    /// `[n_experts, out_dim, in_dim/8]` u32-packed tensor (and matching
+    /// scales/biases stacks). At call time the kernel reads
+    /// `expertIndex[0]` to decide which expert slab to dequantize for
+    /// this slot. Pair with `Ops.moeRouterTopK` (ITER 54) to get a
+    /// GPU-resident top-K indices buffer — dispatch `k` calls of this
+    /// op (one per top-K slot) reading `expertIndex` at offsets
+    /// `[0..<k]·sizeof(u32)` and the gate→experts CPU sync disappears.
+    ///
+    /// `expertIndex` must be a u32 tensor of length 1 (the slot's
+    /// expert id), typically aliased into a [k]-element top-K buffer at
+    /// `offset = slot·4`.
+    public static func dequantGemvInt4ExpertIndexed(
+        weightsStacked: Tensor, scalesStacked: Tensor, biasesStacked: Tensor,
+        input: Tensor, expertIndex: Tensor,
+        groupSize: Int = 64,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor
+    ) {
+        precondition(weightsStacked.shape.count == 3,
+                     "dequantGemvInt4ExpertIndexed: weightsStacked must be [n_experts, out_dim, in_dim/8]")
+        precondition(weightsStacked.dtype == .u32,
+                     "dequantGemvInt4ExpertIndexed: weightsStacked must be u32 (packed)")
+        precondition(expertIndex.dtype == .u32 && expertIndex.elementCount == 1,
+                     "dequantGemvInt4ExpertIndexed: expertIndex must be [1] u32")
+        precondition(scalesStacked.dtype == input.dtype && biasesStacked.dtype == input.dtype,
+                     "dequantGemvInt4ExpertIndexed: scales/biases dtype must match input")
+        precondition(out.dtype == input.dtype,
+                     "dequantGemvInt4ExpertIndexed: out dtype must match input")
+        let outDim = weightsStacked.shape[1]
+        let packedPerRow = weightsStacked.shape[2]
+        let inDim = packedPerRow * 8 // int4 → 8 vals/u32
+        precondition(input.elementCount == inDim,
+                     "dequantGemvInt4ExpertIndexed: input \(input.elementCount) ≠ in_dim \(inDim)")
+        precondition(out.elementCount == outDim,
+                     "dequantGemvInt4ExpertIndexed: out \(out.elementCount) ≠ outDim \(outDim)")
+        // INVARIANT: kernel pins tpg=32 (one simdgroup per row) in
+        // Reduction mode, grid is one threadgroup per output row.
+        let tg = MTLSize(width: 32, height: 1, depth: 1)
+        let grid = MTLSize(width: outDim, height: 1, depth: 1)
+        let inDimU = UInt32(inDim)
+        let outDimU = UInt32(outDim)
+        let groupSizeU = UInt32(groupSize)
+
+        switch input.dtype {
+        case .f32:
+            MetalTileKernels.dequant_gemv_int4_expert_indexed_f32(
+                weights_stacked: weightsStacked.buffer, weights_stackedOffset: weightsStacked.offset,
+                scales_stacked: scalesStacked.buffer, scales_stackedOffset: scalesStacked.offset,
+                biases_stacked: biasesStacked.buffer, biases_stackedOffset: biasesStacked.offset,
+                input: input.buffer, inputOffset: input.offset,
+                expert_index: expertIndex.buffer, expert_indexOffset: expertIndex.offset,
+                output: out.buffer, outputOffset: out.offset,
+                in_dim: inDimU, out_dim: outDimU, group_size: groupSizeU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.dequant_gemv_int4_expert_indexed_f16(
+                weights_stacked: weightsStacked.buffer, weights_stackedOffset: weightsStacked.offset,
+                scales_stacked: scalesStacked.buffer, scales_stackedOffset: scalesStacked.offset,
+                biases_stacked: biasesStacked.buffer, biases_stackedOffset: biasesStacked.offset,
+                input: input.buffer, inputOffset: input.offset,
+                expert_index: expertIndex.buffer, expert_indexOffset: expertIndex.offset,
+                output: out.buffer, outputOffset: out.offset,
+                in_dim: inDimU, out_dim: outDimU, group_size: groupSizeU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.dequant_gemv_int4_expert_indexed_bf16(
+                weights_stacked: weightsStacked.buffer, weights_stackedOffset: weightsStacked.offset,
+                scales_stacked: scalesStacked.buffer, scales_stackedOffset: scalesStacked.offset,
+                biases_stacked: biasesStacked.buffer, biases_stackedOffset: biasesStacked.offset,
+                input: input.buffer, inputOffset: input.offset,
+                expert_index: expertIndex.buffer, expert_indexOffset: expertIndex.offset,
+                output: out.buffer, outputOffset: out.offset,
+                in_dim: inDimU, out_dim: outDimU, group_size: groupSizeU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.dequantGemvInt4ExpertIndexed: unsupported input dtype \(input.dtype)")
+        }
+    }
+
     // ─── Fused SwiGLU ─────────────────────────────────────────────────
     //
     // Wraps `mt_swiglu_{f32,f16,bf16}`. Computes `out[i] = silu(gate[i]) * up[i]`
