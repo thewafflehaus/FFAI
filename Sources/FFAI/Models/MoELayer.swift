@@ -415,6 +415,15 @@ public final class MoELayer: Module, DecoderLayer {
     /// ITER 38: cached per-expert down output for the batched 8-expert
     /// down qmm path. Indexed by slot.
     private var expertOutScratches: [Tensor] = []
+    /// ITER 56 (Bagel 2): GPU MoE router scratch buffers. `routerIndicesScratch`
+    /// is `[topK]` u32; `routerWeightsScratch` is `[topK]` in `h.dtype`. Both
+    /// written by `mt_moe_router_topk` once per MoE layer per token, then
+    /// consumed by `dequantGemvInt4ExpertIndexed` (per-slot expert id) and
+    /// `scalarFMAChain8` (per-slot routing weight) — eliminates the gate→
+    /// experts CPU sync that the legacy `cmd.commit + waitUntilCompleted`
+    /// path needed.
+    private var routerIndicesScratch: Tensor?
+    private var routerWeightsScratch: Tensor?
     /// ITER 42: cached output of dense gate gemv (ITER 15).
     private var gateLogitsScratch: Tensor?
 
@@ -531,6 +540,120 @@ public final class MoELayer: Module, DecoderLayer {
                                      into: gateLogitsScratch)
         } else {
             logitsTensor = gate(h, on: cmd)
+        }
+
+        // ── 2a. ITER 56 (Bagel 2): GPU MoE router fast path ──────────
+        // When `FFAI_MOE_GPU_ROUTER=1` is set AND the layer has a stacked
+        // int4 expert layout AND routing matches `mt_moe_router_topk`'s
+        // assumptions (softmax-then-topK + Qwen-MoE-style renorm, topK=8),
+        // skip the CPU sync entirely. The router writes topK indices +
+        // weights to a GPU buffer; per-expert qmms read their slot's
+        // expert id from that buffer via `dequantGemvInt4ExpertIndexed`;
+        // the per-slot routing weight feeds `scalarFMAChain8`.
+        // Net: ~40 × `waitUntilCompleted` per token → 0.
+        // OPT-IN by default (env flag) until A/B-bench confirmed.
+        let gpuRouterEnabled = ProcessInfo.processInfo.environment["FFAI_MOE_GPU_ROUTER"] == "1"
+        if gpuRouterEnabled,
+           let stacked = stackedInt4Experts,
+           stacked.dtype == h.dtype,
+           router.gatingMode == .softmaxThenTopK,
+           router.normTopKProb,
+           router.expertBias == nil,
+           router.topK == 8
+        {
+            // Lazy-init per-instance scratches.
+            if routerIndicesScratch == nil
+                || routerIndicesScratch!.elementCount != router.topK {
+                routerIndicesScratch = Tensor.empty(shape: [router.topK], dtype: .u32)
+                routerWeightsScratch = Tensor.empty(shape: [router.topK], dtype: h.dtype)
+            }
+            if accumulatorScratch == nil
+                || accumulatorScratch!.dtype != h.dtype
+                || accumulatorScratch!.elementCount != hidden {
+                accumulatorScratch = Tensor.empty(shape: [hidden], dtype: h.dtype,
+                                                   device: device)
+            }
+            let outDim = stacked.moeIntermediate
+            for slot in 0..<router.topK {
+                while expertGScratches.count <= slot {
+                    expertGScratches.append(Tensor.empty(shape: [outDim], dtype: h.dtype))
+                    expertUScratches.append(Tensor.empty(shape: [outDim], dtype: h.dtype))
+                    expertInnerScratches.append(Tensor.empty(shape: [outDim], dtype: h.dtype))
+                    expertOutScratches.append(Tensor.empty(shape: [hidden], dtype: h.dtype))
+                }
+            }
+
+            // GPU router: logits → topK indices + weights (still on cmd).
+            Ops.moeRouterTopK(
+                logits: logitsTensor,
+                indicesOut: routerIndicesScratch!,
+                weightsOut: routerWeightsScratch!,
+                nExperts: router.nExperts, k: router.topK,
+                normTopkProb: router.normTopKProb,
+                on: cmd)
+
+            // 8 × gate qmm + 8 × up qmm, each reading expert id from the
+            // router's GPU-resident indices buffer at `slot·4` offset.
+            for slot in 0..<router.topK {
+                let expertIdx = Tensor(buffer: routerIndicesScratch!.buffer,
+                                       offset: routerIndicesScratch!.offset + slot * 4,
+                                       shape: [1], dtype: .u32)
+                Ops.dequantGemvInt4ExpertIndexed(
+                    weightsStacked: stacked.gateWeight,
+                    scalesStacked: stacked.gateScales,
+                    biasesStacked: stacked.gateBiases,
+                    input: h, expertIndex: expertIdx,
+                    groupSize: stacked.groupSize,
+                    on: cmd, into: expertGScratches[slot])
+                Ops.dequantGemvInt4ExpertIndexed(
+                    weightsStacked: stacked.upWeight,
+                    scalesStacked: stacked.upScales,
+                    biasesStacked: stacked.upBiases,
+                    input: h, expertIndex: expertIdx,
+                    groupSize: stacked.groupSize,
+                    on: cmd, into: expertUScratches[slot])
+            }
+
+            // Batched 8-slot SwiGLU on shared encoder (ITER 39 pattern).
+            let gs = Array(expertGScratches.prefix(router.topK))
+            let us = Array(expertUScratches.prefix(router.topK))
+            let inners = Array(expertInnerScratches.prefix(router.topK))
+            Ops.swigluMany(gates: gs, ups: us, outs: inners, on: cmd)
+
+            // 8 × down qmm, same indexed-expert pattern as gate/up.
+            for slot in 0..<router.topK {
+                let expertIdx = Tensor(buffer: routerIndicesScratch!.buffer,
+                                       offset: routerIndicesScratch!.offset + slot * 4,
+                                       shape: [1], dtype: .u32)
+                Ops.dequantGemvInt4ExpertIndexed(
+                    weightsStacked: stacked.downWeight,
+                    scalesStacked: stacked.downScales,
+                    biasesStacked: stacked.downBiases,
+                    input: expertInnerScratches[slot], expertIndex: expertIdx,
+                    groupSize: stacked.groupSize,
+                    on: cmd, into: expertOutScratches[slot])
+            }
+
+            // Phase 3 chain8 — fused 8-way weighted accumulator reading
+            // per-slot scalar from router's GPU weights buffer. Writes
+            // acc directly (no read), so no zero-pass needed.
+            var scalars: [Tensor] = []
+            scalars.reserveCapacity(router.topK)
+            for slot in 0..<router.topK {
+                scalars.append(Tensor(buffer: routerWeightsScratch!.buffer,
+                                       offset: routerWeightsScratch!.offset + slot * h.dtype.byteSize,
+                                       shape: [1], dtype: h.dtype))
+            }
+            let outs = Array(expertOutScratches.prefix(router.topK))
+            let acc = accumulatorScratch!
+            Ops.scalarFMAChain8(scalars: scalars, values: outs, out: acc, on: cmd)
+
+            // Commit cmd without wait — preserves the caller contract
+            // (caller starts a fresh cmd for residual-add / shared
+            // expert). The win is the ABSENT `waitUntilCompleted` that
+            // the CPU-sync path needed before this branch.
+            cmd.commit()
+            return acc
         }
 
         // ── 2. Commit + wait so the router can read the logits ───────
