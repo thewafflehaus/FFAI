@@ -111,7 +111,25 @@ public final class PSOCache: @unchecked Sendable {
         }
         let pso: MTLComputePipelineState
         do {
-            pso = try library.device.makeComputePipelineState(function: function)
+            // `supportIndirectCommandBuffers = true` is the prerequisite
+            // for using any of these kernels inside an
+            // `MTLIndirectCommandBuffer` — Apple's compute-graph replay
+            // mechanism (the rough equivalent of CUDA Graphs that
+            // llama.cpp / vLLM / sglang use to eliminate per-token CPU
+            // dispatch overhead). At Qwen3.6-A3B decode T=1, ~600
+            // dispatches/token at ~80 µs CPU overhead each = ~48 ms of
+            // pure kernel-launch latency vs ~12 ms of real GPU work;
+            // recording the forward pass once + replaying via ICB
+            // collapses that to single-digit ms. Enabling the flag at
+            // PSO compile time has negligible runtime cost (extra
+            // metadata only) and applies even when ICB is unused, so
+            // it's safe to flip universally now even though the ICB
+            // recording infrastructure lands later.
+            let descriptor = MTLComputePipelineDescriptor()
+            descriptor.computeFunction = function
+            descriptor.supportIndirectCommandBuffers = true
+            pso = try library.device.makeComputePipelineState(
+                descriptor: descriptor, options: [], reflection: nil)
         } catch {
             throw PSOCacheError.psoCompileFailed(name, error)
         }
