@@ -477,6 +477,40 @@ public enum Ops {
     /// Used by Qwen3.5/3.6 MoE per-expert gate+up projection pair.
     /// Saves 1 encoder begin/end per expert × 8 experts × 40 layers
     /// = ~5.4 ms / decode token.
+    /// Batched mt_swiglu across N (gate, up, out) triples in ONE
+    /// encoder. Used by MoE per-expert inner SwiGLU loop. Same PSO,
+    /// different buffer bindings per iteration.
+    public static func swigluMany(
+        gates: [Tensor], ups: [Tensor], outs: [Tensor],
+        on cmd: MTLCommandBuffer
+    ) {
+        let n = gates.count
+        precondition(ups.count == n && outs.count == n,
+                     "swigluMany: count mismatch")
+        guard n > 0 else { return }
+        let dtype = gates[0].dtype
+        let psoName: String
+        switch dtype {
+        case .f32:  psoName = "mt_swiglu_f32"
+        case .f16:  psoName = "mt_swiglu_f16"
+        case .bf16: psoName = "mt_swiglu_bf16"
+        default: fatalError("swigluMany: unsupported dtype \(dtype)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        for i in 0..<n {
+            let count = gates[i].elementCount
+            let tgWidth = min(count, 256)
+            enc.setBuffer(gates[i].buffer, offset: gates[i].offset, index: 0)
+            enc.setBuffer(ups[i].buffer, offset: ups[i].offset, index: 1)
+            enc.setBuffer(outs[i].buffer, offset: outs[i].offset, index: 2)
+            enc.dispatchThreads(MTLSize(width: count, height: 1, depth: 1),
+                                threadsPerThreadgroup: MTLSize(width: tgWidth, height: 1, depth: 1))
+        }
+        enc.endEncoding()
+    }
+
     /// Batched int4 dequantGemv on N projections with DIFFERENT inputs
     /// in ONE encoder. Used by MoE per-expert down projections — each
     /// expert has its own inner activation, but all share PSO + in_dim

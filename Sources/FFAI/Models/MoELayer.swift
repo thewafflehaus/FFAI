@@ -622,10 +622,8 @@ public final class MoELayer: Module, DecoderLayer {
             }
 
             if canBatchDown {
-                // Phase 1: per-expert gate+up batched (ITER 25) +
-                // swiglu (ITER 36). Run per-expert using cached
-                // scratches. Need to NOT call full swiGLU since it
-                // chains down — instead invoke phase 1 inline.
+                // Phase 1a: per-expert gate+up batched (ITER 25), each
+                // expert is one shared-encoder dispatch of 2 qmms.
                 for (slot, expertId) in routing.indices.enumerated() {
                     let qg = gateProj[expertId].inner as! QuantizedLinear
                     let qu = upProj[expertId].inner as! QuantizedLinear
@@ -645,10 +643,14 @@ public final class MoELayer: Module, DecoderLayer {
                         w1: qu.weight, s1: qu.scales, b1: qu.biases,
                         out1: expertUScratches[slot],
                         groupSize: qg.groupSize, on: work)
-                    _ = Ops.swiglu(gate: expertGScratches[slot],
-                                   up: expertUScratches[slot],
-                                   on: work, into: expertInnerScratches[slot])
                 }
+                // Phase 1b (ITER 39): batched 8-expert swiglu in ONE
+                // encoder using cached scratches. Saves 7 begin/end
+                // pairs per layer × 40 = 280/token.
+                let gs = Array(expertGScratches.prefix(routing.indices.count))
+                let us = Array(expertUScratches.prefix(routing.indices.count))
+                let innersOut = Array(expertInnerScratches.prefix(routing.indices.count))
+                Ops.swigluMany(gates: gs, ups: us, outs: innersOut, on: work)
                 // Phase 2: batched 8-expert down qmm in ONE encoder.
                 let inners = Array(expertInnerScratches.prefix(routing.indices.count))
                 let outs = Array(expertOutScratches.prefix(routing.indices.count))
