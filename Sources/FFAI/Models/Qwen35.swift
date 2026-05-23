@@ -1751,6 +1751,9 @@ public final class Qwen35AttentionMixer: Module {
     private var qOutScratch: Tensor?
     private var kOutScratch: Tensor?
     private var vOutScratch: Tensor?
+    /// ITER 35: cached q_norm + k_norm outputs (was fresh per call).
+    private var qNormedScratch: Tensor?
+    private var kNormedScratch: Tensor?
 
     init(qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
          qNorm: RMSNorm, kNorm: RMSNorm,
@@ -1870,10 +1873,14 @@ public final class Qwen35AttentionMixer: Module {
         let v = vPre
 
         // Per-head q_norm / k_norm (weighted RMSNorm over headDim).
-        // ITER 12: shared encoder saves 1 begin/end pair per attn
-        // layer × 10 = ~170 µs/decode token.
-        let qNormed = Tensor.empty(shape: queries.shape, dtype: queries.dtype)
-        let kNormed = Tensor.empty(shape: k.shape, dtype: k.dtype)
+        // ITER 12 + ITER 35: shared encoder + cached scratches.
+        if qNormedScratch == nil || qNormedScratch!.elementCount != queries.elementCount
+            || qNormedScratch!.dtype != queries.dtype {
+            qNormedScratch = Tensor.empty(shape: queries.shape, dtype: queries.dtype)
+            kNormedScratch = Tensor.empty(shape: k.shape, dtype: k.dtype)
+        }
+        let qNormed = qNormedScratch!
+        let kNormed = kNormedScratch!
         Ops.rmsNormRowsTwo(
             queries, weight: qNorm.weight, eps1: qNorm.eps,
             nRows1: nHeads, rowSize1: headDim, into: qNormed,
