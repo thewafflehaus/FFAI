@@ -123,9 +123,14 @@ public enum AudioModelRegistry {
     /// The capability set a decoded config would expose. `nil` when the
     /// config is not an audio model. QwenOmni is checked before Whisper
     /// because an omni checkpoint nests a Whisper-style `audio_config`.
+    /// Qwen3ASR is checked BEFORE QwenOmni because QwenOmni's structural
+    /// fallback (`audio_config` nested anywhere) also matches a Qwen3-ASR
+    /// config — Qwen3-ASR's distinctive `qwen3_asr` model_type lets us
+    /// route it precisely if we check first.
     public static func capabilities(for config: ModelConfig)
         -> Set<Capability>? {
         if Qwen3TTSModel.handles(config) { return Capability.textToSpeech }
+        if Qwen3ASRModel.handles(config) { return Capability.speechToText }
         if QwenOmniModel.handles(config) { return Capability.omniAudio }
         if WhisperModel.handles(config) { return Capability.speechToText }
         if SenseVoiceModel.handles(config) { return Capability.speechToText }
@@ -136,7 +141,6 @@ public enum AudioModelRegistry {
         if Qwen3TTSBaseModel.handles(config) { return Capability.textToSpeech }
         if ParakeetModel.handles(config) { return Capability.speechToText }
         if ChatterboxModel.handles(config) { return Capability.textToSpeech }
-        if Qwen3ASRModel.handles(config) { return Capability.speechToText }
         if FireRedASR2Model.handles(config) { return Capability.speechToText }
         if MossTTSNanoModel.handles(config) { return Capability.textToSpeech }
         if MossTTSModel.handles(config) { return Capability.textToSpeech }
@@ -167,6 +171,13 @@ public enum AudioModelRegistry {
         // audio models, but Qwen3TTS's `talker_config` is its own marker.
         if Qwen3TTSModel.handles(config) {
             return .qwen3TTS(try Qwen3TTSModel.load(directory: directory,
+                                                    device: device))
+        }
+        // Qwen3ASR before QwenOmni — see `capabilities(for:)` for the
+        // routing-precedence reasoning (Qwen3-ASR's `audio_config` is
+        // also matched by QwenOmni's structural fallback).
+        if Qwen3ASRModel.handles(config) {
+            return .qwen3ASR(try Qwen3ASRModel.load(directory: directory,
                                                     device: device))
         }
         if QwenOmniModel.handles(config) {
@@ -208,10 +219,6 @@ public enum AudioModelRegistry {
         if ChatterboxModel.handles(config) {
             return .chatterbox(try ChatterboxModel.load(directory: directory,
                                                         device: device))
-        }
-        if Qwen3ASRModel.handles(config) {
-            return .qwen3ASR(try Qwen3ASRModel.load(directory: directory,
-                                                    device: device))
         }
         if FireRedASR2Model.handles(config) {
             return .fireRedASR2(try FireRedASR2Model.load(

@@ -14,7 +14,10 @@ struct GenerationParametersTests {
         #expect(p.maxTokens == 256)
         #expect(p.stopOnEOS == true)
         #expect(p.extraStopTokens.isEmpty)
-        #expect(p.prefillStepSize == 1024)
+        // prefillStepSize is now Int? — nil means "use the engine's
+        // tuned default" (Phase 6.6 chunked-prefill wiring). Generic
+        // engines still resolve to 1024 inside Generate.driveGeneration.
+        #expect(p.prefillStepSize == nil)
         #expect(p.temperature == 0.6)
         #expect(p.topP == 1.0)
         #expect(p.topK == 0)

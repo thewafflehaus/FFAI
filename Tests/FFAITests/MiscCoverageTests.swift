@@ -196,7 +196,10 @@ struct MiscCoverageTests {
         let p = GenerationParameters()
         #expect(p.maxTokens == 256)
         #expect(p.stopOnEOS == true)
-        #expect(p.prefillStepSize == 1024)
+        // prefillStepSize defaults to nil ("use engine's tuned default")
+        // since the Phase 6.6 chunked-prefill wiring. Generic engines
+        // still resolve to 1024 inside Generate.driveGeneration.
+        #expect(p.prefillStepSize == nil)
         #expect(p.temperature == 0.6)
         #expect(p.topP == 1.0)
 

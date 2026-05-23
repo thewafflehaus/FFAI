@@ -57,12 +57,23 @@ public enum VisionLanguageArchitectures {
     ]
 
     /// True if `config` describes a VL checkpoint — by architecture
-    /// string or by the presence of a `vision_config` block.
+    /// string, by the presence of a `vision_config` block, or by a
+    /// VL-only `model_type` (e.g. `paligemma` checkpoints carry the
+    /// model_type with or without a vision_config nested block on
+    /// partial test fixtures).
     public static func isVisionLanguage(_ config: ModelConfig) -> Bool {
         if let arch = config.architecture, architectures.contains(arch) {
             return true
         }
-        return config.nested("vision_config") != nil
+        if config.nested("vision_config") != nil {
+            return true
+        }
+        // VL-only model_types — none of these have a text-only
+        // counterpart, so a bare model_type is enough signal.
+        if let mt = config.modelType, Paligemma.modelTypes.contains(mt) {
+            return true
+        }
+        return false
     }
 }
 
