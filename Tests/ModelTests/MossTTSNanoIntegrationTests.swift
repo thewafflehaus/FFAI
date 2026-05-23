@@ -105,7 +105,7 @@ struct MossTTSNanoIntegrationTests {
     @Test("registry — AudioModelRegistry routes checkpoint to .mossTTSNano")
     func registry_routesMossTTSNano() async throws {
         let dir = try await resolveMossTTSNanoCheckpoint()
-        let loaded = try AudioModelRegistry.load(directory: dir)
+        let loaded = try await AudioModelRegistry.load(directory: dir)
         guard case .mossTTSNano = loaded else {
             Issue.record("AudioModelRegistry did not route to .mossTTSNano; got \(loaded)")
             return

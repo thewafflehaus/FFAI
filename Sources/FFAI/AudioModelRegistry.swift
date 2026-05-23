@@ -29,6 +29,7 @@ public enum LoadedAudioModel: @unchecked Sendable {
     case fireRedASR2(FireRedASR2Model)
     case mossTTS(MossTTSModel)
     case mossTTSNano(MossTTSNanoModel)
+    case lfmAudio(LFMAudioModel)
 
     /// The capabilities this model exposes — `audioIn` for STT / omni,
     /// `audioOut` for TTS.
@@ -49,6 +50,7 @@ public enum LoadedAudioModel: @unchecked Sendable {
         case .fireRedASR2: return Capability.speechToText
         case .mossTTS: return Capability.textToSpeech
         case .mossTTSNano: return Capability.textToSpeech
+        case .lfmAudio: return Capability.omniAudio
         }
     }
 }
@@ -75,6 +77,7 @@ public enum AudioModelRegistry {
             || FireRedASR2Model.handles(config)
             || MossTTSNanoModel.handles(config)
             || MossTTSModel.handles(config)
+            || LFMAudioModel.handles(config)
     }
 
     /// The capability set a checkpoint at `directory` would expose,
@@ -107,6 +110,7 @@ public enum AudioModelRegistry {
         if FireRedASR2Model.handles(config) { return Capability.speechToText }
         if MossTTSNanoModel.handles(config) { return Capability.textToSpeech }
         if MossTTSModel.handles(config) { return Capability.textToSpeech }
+        if LFMAudioModel.handles(config) { return Capability.omniAudio }
         return nil
     }
 
@@ -181,6 +185,10 @@ public enum AudioModelRegistry {
         }
         if MossTTSModel.handles(config) {
             return .mossTTS(try MossTTSModel.load(
+                directory: directory, device: device))
+        }
+        if LFMAudioModel.handles(config) {
+            return .lfmAudio(try LFMAudioModel.load(
                 directory: directory, device: device))
         }
         throw ModelError.unsupportedArchitecture(
