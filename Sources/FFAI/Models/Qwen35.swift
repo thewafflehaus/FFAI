@@ -1064,6 +1064,24 @@ public final class Qwen35GDNMixer: Module {
     let bRawF32Scratch: Tensor
     let yF32Scratch: Tensor
     let yGatedScratch: Tensor
+    /// ITER 23: pre-allocated scratches for the 4 input projection
+    /// outputs (qkv, z, bRaw, aRaw). When all 4 inProj are
+    /// QuantizedLinear int4 with same groupSize, the GDN mixer routes
+    /// through `Ops.dequantGemvInt4Four` — 4 qmms in one encoder, 1
+    /// dispatch vs 4. Saves 3 begin/end pairs per GDN layer × 30 GDN
+    /// = ~1.5 ms/decode token. Each scratch's dtype matches the model
+    /// (bf16 / f16 / f32) and is allocated lazily on first use.
+    private var qkvScratch: Tensor?
+    private var zScratch: Tensor?
+    private var bRawScratch: Tensor?
+    private var aRawScratch: Tensor?
+    /// Cached batched-input-proj decision: true iff all 4 inProj are
+    /// QuantizedLinear int4 with same groupSize. Computed once.
+    private var batchedInputProj: (qW: Tensor, qS: Tensor, qB: Tensor,
+                                    zW: Tensor, zS: Tensor, zB: Tensor,
+                                    bW: Tensor, bS: Tensor, bB: Tensor,
+                                    aW: Tensor, aS: Tensor, aB: Tensor,
+                                    groupSize: Int)?
 
     init(inProjQKV: AnyLinear, inProjZ: AnyLinear,
          inProjB: AnyLinear, inProjA: AnyLinear, outProj: AnyLinear,
@@ -1118,6 +1136,27 @@ public final class Qwen35GDNMixer: Module {
         self.yF32Scratch = Tensor.empty(shape: [numValueHeads, valueHeadDim],
                                         dtype: .f32, device: device)
         self.yGatedScratch = Tensor.empty(shape: [valueDim], dtype: dtype, device: device)
+
+        // ITER 23: try to set up the batched-input-projection fast path.
+        // All 4 inProj must be QuantizedLinear int4 with same groupSize.
+        if let qQL = inProjQKV.inner as? QuantizedLinear,
+           let zQL = inProjZ.inner as? QuantizedLinear,
+           let bQL = inProjB.inner as? QuantizedLinear,
+           let aQL = inProjA.inner as? QuantizedLinear,
+           qQL.bits == 4 && zQL.bits == 4 && bQL.bits == 4 && aQL.bits == 4,
+           qQL.groupSize == zQL.groupSize,
+           qQL.groupSize == bQL.groupSize,
+           qQL.groupSize == aQL.groupSize {
+            self.batchedInputProj = (qW: qQL.weight, qS: qQL.scales, qB: qQL.biases,
+                                      zW: zQL.weight, zS: zQL.scales, zB: zQL.biases,
+                                      bW: bQL.weight, bS: bQL.scales, bB: bQL.biases,
+                                      aW: aQL.weight, aS: aQL.scales, aB: aQL.biases,
+                                      groupSize: qQL.groupSize)
+            self.qkvScratch = Tensor.empty(shape: [convDim], dtype: dtype, device: device)
+            self.zScratch = Tensor.empty(shape: [valueDim], dtype: dtype, device: device)
+            self.bRawScratch = Tensor.empty(shape: [numValueHeads], dtype: dtype, device: device)
+            self.aRawScratch = Tensor.empty(shape: [numValueHeads], dtype: dtype, device: device)
+        }
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -1150,10 +1189,28 @@ public final class Qwen35GDNMixer: Module {
     func forward(_ xNorm: Tensor, cache: Qwen35GDNLayerCache,
                  cmd: MTLCommandBuffer, device: Device) -> Tensor {
         // ── GPU phase 1: projections + conv + SiLU ────────────────────
-        let qkv = inProjQKV(xNorm, on: cmd)        // [conv_dim]
-        let z = inProjZ(xNorm, on: cmd)            // [value_dim]
-        let bRaw = inProjB(xNorm, on: cmd)         // [num_value_heads]
-        let aRaw = inProjA(xNorm, on: cmd)         // [num_value_heads]
+        // ITER 23: 4-projection shared-encoder fast path when all
+        // inProj are int4 QuantizedLinear with same groupSize. Saves
+        // 3 encoder begin/end pairs per GDN layer × 30 = ~1.5 ms/token.
+        let qkv: Tensor, z: Tensor, bRaw: Tensor, aRaw: Tensor
+        if let bp = batchedInputProj {
+            qkv = qkvScratch!
+            z = zScratch!
+            bRaw = bRawScratch!
+            aRaw = aRawScratch!
+            Ops.dequantGemvInt4Four(
+                input: xNorm,
+                w0: bp.qW, s0: bp.qS, b0: bp.qB, out0: qkv,
+                w1: bp.zW, s1: bp.zS, b1: bp.zB, out1: z,
+                w2: bp.bW, s2: bp.bS, b2: bp.bB, out2: bRaw,
+                w3: bp.aW, s3: bp.aS, b3: bp.aB, out3: aRaw,
+                groupSize: bp.groupSize, on: cmd)
+        } else {
+            qkv = inProjQKV(xNorm, on: cmd)        // [conv_dim]
+            z = inProjZ(xNorm, on: cmd)            // [value_dim]
+            bRaw = inProjB(xNorm, on: cmd)         // [num_value_heads]
+            aRaw = inProjA(xNorm, on: cmd)         // [num_value_heads]
+        }
 
         Ops.conv1dCausalStep(
             x: qkv, w: convW, b: convB,
