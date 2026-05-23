@@ -37,9 +37,13 @@ public enum ModelError: Error, CustomStringConvertible {
 public enum VisionLanguageArchitectures {
     public static let architectures: Set<String> = [
         "Gemma3ForConditionalGeneration",
+        "Idefics3ForConditionalGeneration",
         "Lfm2VlForConditionalGeneration",
         "LlavaForConditionalGeneration",     // Pixtral-12B
+        "LlavaQwen2ForCausalLM",             // FastVLM (Apple FastViTHD + Qwen2)
         "MiniCPMV4_6ForConditionalGeneration",
+        "Mistral3ForConditionalGeneration",  // Mistral Small 3.1
+        "PaliGemmaForConditionalGeneration",
         "Qwen2_5_VLForConditionalGeneration",
         "Qwen2VLForConditionalGeneration",
         "Qwen3VLForConditionalGeneration",
@@ -210,6 +214,31 @@ public enum ModelRegistry {
                     availableCapabilities: Capability.textOnly.union([.visionIn]),
                     vlModel: vlm)
             }
+            // FastVLM — Apple's FastViTHD vision tower + mlp2x_gelu projector
+            // + Qwen2 text backbone. Architecture string is
+            // `LlavaQwen2ForCausalLM`; model_type is `llava_qwen2`.
+            // Dispatch via architecture first (more specific), then
+            // model_type for forward compatibility.
+            if let arch = config.architecture, FastVLM.architectures.contains(arch) {
+                let vlm = try FastVLM.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: LlamaDense.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    vlModel: vlm)
+            }
+            if let mt = config.modelType, FastVLM.modelTypes.contains(mt) {
+                let vlm = try FastVLM.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: LlamaDense.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    vlModel: vlm)
+            }
             // Pixtral — Mistral AI's Pixtral-12B vision-language model.
             // The mlx-community conversion ships `model_type = "pixtral"`
             // and (from HF auto-model mapping) architecture
@@ -218,6 +247,20 @@ public enum ModelRegistry {
             // of architecture string.
             if let mt = config.modelType, Pixtral.modelTypes.contains(mt) {
                 let vlm = try Pixtral.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: LlamaDense.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    vlModel: vlm)
+            }
+            // Mistral3 — Mistral Small 3.1 vision-language model. Shares
+            // the Pixtral ViT tower but uses a different projector
+            // (RMSNorm + patch merger 2×2 spatial unfold + linear + GELU
+            // + linear). Dispatched via model_type "mistral3".
+            if let mt = config.modelType, Mistral3.modelTypes.contains(mt) {
+                let vlm = try Mistral3.load(
                     config: config, weights: weights,
                     options: options, device: device)
                 return Loaded(
