@@ -37,6 +37,7 @@ public enum ModelError: Error, CustomStringConvertible {
 public enum VisionLanguageArchitectures {
     public static let architectures: Set<String> = [
         "Gemma3ForConditionalGeneration",
+        "GlmOcrForConditionalGeneration",
         "Idefics3ForConditionalGeneration",
         "Lfm2VlForConditionalGeneration",
         "LlavaForConditionalGeneration",     // Pixtral-12B
@@ -274,6 +275,20 @@ public enum ModelRegistry {
             // The engine is itself an Idefics3Model exposing
             // `encodeImage(...)` + `prefillWithImage(...)` directly;
             // VLModel adapter integration is a follow-up.
+            // GLM-OCR — Zhipu's OCR-specialised VLM (GLM-Lite text backbone +
+            // dynamic-resolution ViT). Engine is itself a GlmOcrModel
+            // exposing generate(image:promptTokens:...) directly.
+            if GlmOcr.modelTypes.contains(config.modelType ?? "")
+                || GlmOcr.architectures.contains(config.architecture ?? "")
+            {
+                let m = try GlmOcr.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: m,
+                    defaultGenerationParameters: LlamaDense.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]))
+            }
             if Idefics3.modelTypes.contains(config.modelType ?? "")
                 || Idefics3.architectures.contains(config.architecture ?? "")
             {
@@ -284,6 +299,22 @@ public enum ModelRegistry {
                     engine: m,
                     defaultGenerationParameters: Idefics3Dense.defaultGenerationParameters,
                     availableCapabilities: Idefics3Dense.availableCapabilities)
+            }
+            // PaliGemma — SigLIP + Gemma backbone. Engine is itself a
+            // PaligemmaModel exposing setImagePixels(_:) + standard
+            // LanguageModel forward; vision substitution happens inside
+            // the forward at image-token positions.
+            if Paligemma.modelTypes.contains(config.modelType ?? "")
+                || Paligemma.architectures.contains(config.architecture ?? "")
+            {
+                let variant = try Paligemma.variant(for: config)
+                let m = try variant.loadModel(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: m,
+                    defaultGenerationParameters: variant.defaultGenerationParameters,
+                    availableCapabilities: variant.availableCapabilities)
             }
             // MiniCPM-V 4.6 — SigLIP2-400M encoder + `vit_merger` (window
             // cross-attn merger injected after encoder layer 6 in the
