@@ -713,8 +713,13 @@ public final class LFM2Layer: Module, DecoderLayer {
         let xNorm = operatorNorm(h, on: cmd)
 
         // ── Mixer half ────────────────────────────────────────────────
+        // The attention-mixer branch fuses (h + mixerOut) → ffnNorm via
+        // mt_add_rms_norm (hidden ≤ 4096). The conv-mixer branch is the
+        // SSM recurrence path and per the task carve-out keeps the
+        // separate add + norm sequence.
         var workCmd = cmd
         let postMix: Tensor
+        var preFusedFfnInput: Tensor? = nil
         switch mixer {
         case .conv(let m):
             guard let cc = cache as? LFM2ConvCache else {
@@ -734,11 +739,19 @@ public final class LFM2Layer: Module, DecoderLayer {
             let mixerOut = a.forward(xNorm, position: position,
                                      cache: kv, cmd: workCmd, device: device)
             workCmd = device.makeCommandBuffer()
-            postMix = Ops.add(h, mixerOut, on: workCmd)
+            if OpsValidation.validateAddRmsNorm(n: hidden) == nil {
+                let fused = Ops.addAndRmsNorm(
+                    h, mixerOut, weight: ffnNorm.weight, eps: ffnNorm.eps,
+                    nRows: 1, rowSize: hidden, on: workCmd)
+                postMix = fused.residual
+                preFusedFfnInput = fused.normed
+            } else {
+                postMix = Ops.add(h, mixerOut, on: workCmd)
+            }
         }
 
         // ── Feed-forward half ─────────────────────────────────────────
-        let ffnInput = ffnNorm(postMix, on: workCmd)
+        let ffnInput = preFusedFfnInput ?? ffnNorm(postMix, on: workCmd)
         switch ffn {
         case .dense(let mlp):
             let ffnOut = mlp.forward(ffnInput, on: workCmd)

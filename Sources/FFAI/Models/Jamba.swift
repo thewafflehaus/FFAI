@@ -825,14 +825,30 @@ public final class JambaAttentionLayer: Module, DecoderLayer {
         // ── Mixer half — pre-norm + attention + residual add ──────────
         let xNorm = inputNorm(h, on: cmd)
         let mixerOut = mixer.forward(xNorm, cache: kv, cmd: cmd, device: device)
-        let postMix = Ops.add(h, mixerOut, on: cmd)
+
+        // Fused residual add + pre-FF RMSNorm via mt_add_rms_norm
+        // (hidden ≤ 4096). Jamba 1.5 Mini is hidden=4096 (fits);
+        // wider variants fall through the validator gate.
+        let postMix: Tensor
+        let ffnNorm: Tensor?
+        if OpsValidation.validateAddRmsNorm(n: hidden) == nil {
+            let fused = Ops.addAndRmsNorm(
+                h, mixerOut, weight: preFFNorm.weight, eps: preFFNorm.eps,
+                nRows: 1, rowSize: hidden, on: cmd)
+            postMix = fused.residual
+            ffnNorm = fused.normed
+        } else {
+            postMix = Ops.add(h, mixerOut, on: cmd)
+            ffnNorm = nil
+        }
 
         // ── Feed-forward half ─────────────────────────────────────────
         // `cmd` is the host model's `workCmd`; the model owns its commit
         // (or swaps it after an MoE FFN). This layer does not commit it.
         return jambaApplyFFN(ffn, postMix: postMix, preFFNorm: preFFNorm,
                              position: position, cmd: cmd,
-                             commitCmd: false, device: device)
+                             commitCmd: false, device: device,
+                             preNormed: ffnNorm)
     }
 }
 
@@ -869,8 +885,12 @@ private func jambaFFNParameters(_ ffn: JambaFFN) -> [(String, Tensor)] {
 ///   the returned tensor is resident either way.
 private func jambaApplyFFN(_ ffn: JambaFFN, postMix: Tensor, preFFNorm: RMSNorm,
                            position: Int, cmd: MTLCommandBuffer,
-                           commitCmd: Bool, device: Device) -> Tensor {
-    let ffnNorm = preFFNorm(postMix, on: cmd)
+                           commitCmd: Bool, device: Device,
+                           preNormed: Tensor? = nil) -> Tensor {
+    // `preNormed` lets the attention-layer caller supply the
+    // fused-kernel output of `mt_add_rms_norm` (postMix already +
+    // pre-FF norm in one dispatch). When nil, we run the separate norm.
+    let ffnNorm = preNormed ?? preFFNorm(postMix, on: cmd)
     switch ffn {
     case .dense(let mlp):
         let ffnOut = mlp.forward(ffnNorm, cmd: cmd)

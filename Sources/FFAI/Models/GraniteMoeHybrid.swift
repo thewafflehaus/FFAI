@@ -791,10 +791,25 @@ public final class GraniteMoeHybridLayer: Module, DecoderLayer {
             mixerOut = a.forward(xNorm, cache: kv, cmd: cmd, device: device)
         }
         // residual_multiplier already folded into the mixer output proj.
-        let postMix = Ops.add(h, mixerOut, on: cmd)
-
-        // ── Feed-forward half — pre-norm + FFN + residual add ─────────
-        let ffnNorm = postNorm(postMix, on: cmd)
+        // Fused residual add + post-mixer RMSNorm via mt_add_rms_norm
+        // (hidden ≤ 4096), but ONLY on the attention-mixer branch —
+        // the task carve-out is "attention/FFN residuals, NOT the
+        // SSM recurrence paths." Validator gate handles wider variants.
+        let postMix: Tensor
+        let ffnNorm: Tensor
+        if case .attention = mixer,
+           OpsValidation.validateAddRmsNorm(n: hidden) == nil
+        {
+            let fused = Ops.addAndRmsNorm(
+                h, mixerOut, weight: postNorm.weight, eps: postNorm.eps,
+                nRows: 1, rowSize: hidden, on: cmd)
+            postMix = fused.residual
+            ffnNorm = fused.normed
+        } else {
+            postMix = Ops.add(h, mixerOut, on: cmd)
+            // ── Feed-forward half — pre-norm + FFN + residual add ─────────
+            ffnNorm = postNorm(postMix, on: cmd)
+        }
         switch ffn {
         case .dense(let mlp):
             let ffnOut = mlp.forward(ffnNorm, cmd: cmd)

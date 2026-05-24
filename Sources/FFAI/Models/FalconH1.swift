@@ -507,10 +507,24 @@ public final class FalconH1DecoderLayer: Module, DecoderLayer {
                                cache: layerCache.kv, cmd: cmd, device: device)
 
         // Parallel-hybrid join: residual + mixer + attention.
-        let postMix = Ops.add(Ops.add(h, mambaH, on: cmd), attnH, on: cmd)
+        // Fuse the final (temp + attnH) → preFfNorm pair into
+        // mt_add_rms_norm (hidden ≤ 4096). The first inner add stays
+        // separate — fused kernel only collapses one add+norm pair.
+        let temp = Ops.add(h, mambaH, on: cmd)
+        let postMix: Tensor
+        let mlpNorm: Tensor
+        if OpsValidation.validateAddRmsNorm(n: hidden) == nil {
+            let fused = Ops.addAndRmsNorm(
+                temp, attnH, weight: preFfNorm.weight, eps: preFfNorm.eps,
+                nRows: 1, rowSize: hidden, on: cmd)
+            postMix = fused.residual
+            mlpNorm = fused.normed
+        } else {
+            postMix = Ops.add(temp, attnH, on: cmd)
+            mlpNorm = preFfNorm(postMix, on: cmd)
+        }
 
         // SwiGLU MLP with its own pre-norm + residual.
-        let mlpNorm = preFfNorm(postMix, on: cmd)
         let gate = gateProj(mlpNorm, on: cmd)
         let up = upProj(mlpNorm, on: cmd)
         let siluGate = Ops.silu(gate, on: cmd)

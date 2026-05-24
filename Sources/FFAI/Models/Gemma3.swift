@@ -530,13 +530,32 @@ public final class Gemma3Layer: Module {
             sinkEnd: sinkEnd, windowStart: windowStart)
 
         // o_proj → post_attention_layernorm → +residual.
+        // Gemma 3 normalises oOut FIRST, then adds to the residual
+        // (Gemma's "post-norm" placement — not the standard pre-norm
+        // add+norm), so the residual add itself cannot be fused with
+        // postAttnNorm. The downstream `h + normedAttn → preFFNorm`
+        // pair IS the standard add+rmsNorm pattern, and we fuse that.
         let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
         let normedAttn = postAttnNorm(oOut, on: cmd)
-        let postAttn = Ops.add(h, normedAttn, on: cmd)
+
+        // Fused residual add + pre-FFN RMSNorm via mt_add_rms_norm
+        // (hidden ≤ 4096). Gemma 3 27B (hidden 5376) falls through the
+        // validator gate to the unfused path.
+        let postAttn: Tensor
+        let mlpNorm: Tensor
+        if OpsValidation.validateAddRmsNorm(n: hidden) == nil {
+            let fused = Ops.addAndRmsNorm(
+                h, normedAttn, weight: preFFNorm.weight, eps: preFFNorm.eps,
+                nRows: 1, rowSize: hidden, on: cmd)
+            postAttn = fused.residual
+            mlpNorm = fused.normed
+        } else {
+            postAttn = Ops.add(h, normedAttn, on: cmd)
+            mlpNorm = preFFNorm(postAttn, on: cmd)
+        }
 
         // MLP path: pre_feedforward_layernorm → MLP → post_feedforward_layernorm → +residual.
         // Gemma 3 uses gelu(gate) * up → down (vs Llama's silu).
-        let mlpNorm = preFFNorm(postAttn, on: cmd)
         let gate = gateProj(mlpNorm, on: cmd)
         let up = upProj(mlpNorm, on: cmd)
         let geluGate = Ops.gelu(gate, on: cmd)
