@@ -108,7 +108,7 @@ on this branch's `kernels.metallib` is enough to trigger it. That
 makes the kernel-side hypothesis (one of the freshly-regenerated
 kernels) substantially more likely than an FFAI-side busy-loop.
 
-## CPU attention single-threaded sweep — in flight
+## CPU attention single-threaded sweep — complete (2026-05-23)
 
 `VisionEncoder.cpuAttention` and `AudioEncoder.cpuAttention` were
 single-threaded scalar attentions over `O(nHeads · nTokens² · headDim)`.
@@ -119,16 +119,29 @@ empty-output "bug" (the decoder timed out before any token came back).
 Both fixed by parallelising over `(head, query-row)` with
 `DispatchQueue.concurrentPerform` (commits `9bb4e5f`, `3fdb81b`).
 
-The remaining single-threaded sites being swept now:
-- `Whisper.cpuAttention` (decoder self + cross attention)
-- `SenseVoice.cpuAttention`
-- `Qwen3ASR` — the nested for-head MHA in the decoder
-- `Gemma4VL.cpuAttention` — vision tower; per-head RMSNorm + multi-dim
-  RoPE + GQA, two-stage parallelization needed
-- `Qwen25VL`, `Qwen2VL`, `Qwen3VL` — vision tower `cpuAttention(qkv:nTokens:)`
+Sites swept (audit + fix where serial):
 
-The same fix likely applies to the Granite-H / Jamba decode-hang
-the owner flagged — sweep their decode path next pass.
+- `Whisper.cpuAttention` — already parallel `(head, query-row)`.
+- `SenseVoice.cpuAttention` — already parallel `(head, query-row)`.
+- `Qwen3ASR` encoder MHA — already parallel `(head, seq)`; text
+  decoder is GPU-resident via `Ops.sdpaDecode` (no CPU attn).
+- `Gemma4VL.cpuAttention` — already two-stage parallel (`(token)`
+  Stage 1, `(head, token)` Stage 2).
+- `Qwen25VL`, `Qwen2VL`, `Qwen3VL` vision towers — already
+  parallel `(head, token)` two-stage.
+- `Pixtral`, `Idefics3`, `Paligemma`, `GlmOcr`, `MiniCPMV`,
+  `Mistral3`, `FastVLM` — all already parallel `(head, token)`.
+- `SmolVLM2.visionSDPA` — **was serial across heads**; converted
+  to parallel `(head, query-row)` (this sweep).
+- `Parakeet.runRelMHA` — **was serial across heads**; converted
+  to parallel `(head)` (this sweep). Each head allocates its own
+  scratch (qU/qV/kH/vH/pH/scores/attnWeights/ctx) and writes a
+  disjoint `[hOff, hOff + headDim)` output slice — race-free.
+- `GPT-OSS.sinkCorrection` — **was serial across heads + ran
+  two redundant passes over the same dot products**. Converted
+  to parallel `(head)` AND folded into a single online-softmax
+  pass (running-max renormalisation). Halves per-head FLOPs at
+  long contexts; was a per-layer per-decode CPU bubble.
 
 ## Gap 3 (GPU vision attention) — blocked on metaltile
 

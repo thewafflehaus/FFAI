@@ -548,35 +548,40 @@ public final class GPTOSSAttention: Module {
             }
         }
 
+        // Online softmax over the nKV positions (initial running max =
+        // sinks[h]; sink term folded in after the loop). Single pass
+        // over the dot products — the previous implementation iterated
+        // twice (once for the max, once for the sum of exp), doubling
+        // the per-head FLOPs at long contexts. Each head's work is
+        // independent (writes factors[h] only) so the head loop is
+        // parallelised across (head) work items.
         var factors = [Float](repeating: 1, count: nHeads)
-        for h in 0..<nHeads {
-            let kvHead = h / headsPerGroup
-            let qBase = h * headDim
-            let kHead = kLive[kvHead]
-            // Pass 1: running max of the scaled scores.
-            var m = sinks[h]
-            for t in 0..<nKV {
-                let kBase = t * headDim
-                var dot: Float = 0
-                for d in 0..<headDim {
-                    dot += qHost[qBase + d] * kHead[kBase + d]
+        factors.withUnsafeMutableBufferPointer { fBuf in
+            let fPtr = fBuf.baseAddress!
+            DispatchQueue.concurrentPerform(iterations: nHeads) { h in
+                let kvHead = h / headsPerGroup
+                let qBase = h * headDim
+                let kHead = kLive[kvHead]
+                var m = sinks[h]
+                var z: Float = 0
+                for t in 0..<nKV {
+                    let kBase = t * headDim
+                    var dot: Float = 0
+                    for d in 0..<headDim {
+                        dot += qHost[qBase + d] * kHead[kBase + d]
+                    }
+                    let s = dot * scale
+                    if s > m {
+                        // Renormalise the running sum to the new max.
+                        z = z * Foundation.exp(m - s)
+                        m = s
+                    }
+                    z += Foundation.exp(s - m)
                 }
-                let s = dot * scale
-                if s > m { m = s }
+                let sinkTerm = Foundation.exp(sinks[h] - m)
+                // O' = O · Z / (Z + exp(sink - M)). Z > 0 whenever nKV > 0.
+                fPtr[h] = z / (z + sinkTerm)
             }
-            // Pass 2: Σ exp(s_t - M) and the sink term exp(sink - M).
-            var z: Float = 0
-            for t in 0..<nKV {
-                let kBase = t * headDim
-                var dot: Float = 0
-                for d in 0..<headDim {
-                    dot += qHost[qBase + d] * kHead[kBase + d]
-                }
-                z += Foundation.exp(dot * scale - m)
-            }
-            let sinkTerm = Foundation.exp(sinks[h] - m)
-            // O' = O · Z / (Z + exp(sink - M)). Z > 0 whenever nKV > 0.
-            factors[h] = z / (z + sinkTerm)
         }
 
         // ── GPU phase 2: rescale O per-head, then o_proj ──────────────

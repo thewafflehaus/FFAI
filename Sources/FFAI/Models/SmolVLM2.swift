@@ -345,45 +345,53 @@ private func addBias(_ x: inout [Float], bias: [Float]) {
 
 /// Scaled dot-product attention for the vision encoder.
 /// q, k, v: [nHeads, seqLen, headDim] — output: [seqLen, nHeads * headDim]
+///
+/// Parallelized over `(head, query-row)` pairs: each work item writes to a
+/// disjoint `[oBase, oBase + headDim)` slice of `out`, so no synchronization
+/// is needed. Matches the Pixtral / Qwen3VL / Gemma4VL pattern.
 private func visionSDPA(q: [Float], k: [Float], v: [Float],
                          nHeads: Int, seqLen: Int, headDim: Int) -> [Float] {
     let scale = 1.0 / Float(headDim).squareRoot()
     var out = [Float](repeating: 0, count: seqLen * nHeads * headDim)
 
-    for h in 0..<nHeads {
-        let qOff = h * seqLen * headDim
-        let kOff = h * seqLen * headDim
-        let vOff = h * seqLen * headDim
+    out.withUnsafeMutableBufferPointer { outBuf in
+        let outPtr = outBuf.baseAddress!
+        DispatchQueue.concurrentPerform(iterations: nHeads * seqLen) { work in
+            let h = work / seqLen
+            let i = work % seqLen
+            let qOff = h * seqLen * headDim
+            let kOff = h * seqLen * headDim
+            let vOff = h * seqLen * headDim
 
-        // Attention scores: [seqLen, seqLen]
-        var scores = [Float](repeating: 0, count: seqLen * seqLen)
-        for i in 0..<seqLen {
+            // Per-row attention scores: [seqLen].
+            var scores = [Float](repeating: 0, count: seqLen)
+            var maxS = -Float.greatestFiniteMagnitude
             for j in 0..<seqLen {
                 var dot: Float = 0
                 for d in 0..<headDim {
                     dot += q[qOff + i * headDim + d] * k[kOff + j * headDim + d]
                 }
-                scores[i * seqLen + j] = dot * scale
+                let s = dot * scale
+                scores[j] = s
+                if s > maxS { maxS = s }
             }
-        }
-
-        // Softmax over last dim
-        var softmaxScores = [Float](repeating: 0, count: seqLen * seqLen)
-        for i in 0..<seqLen {
-            let row = scores[i * seqLen ..< (i + 1) * seqLen]
-            let maxVal = row.max() ?? 0
-            let exps = row.map { exp($0 - maxVal) }
-            let expSum = exps.reduce(0, +)
-            for j in 0..<seqLen { softmaxScores[i * seqLen + j] = exps[j] / expSum }
-        }
-
-        // Weighted sum of values → output
-        for i in 0..<seqLen {
+            // Softmax over j.
+            var sum: Float = 0
+            for j in 0..<seqLen {
+                let e = exp(scores[j] - maxS)
+                scores[j] = e
+                sum += e
+            }
+            let inv = sum > 0 ? 1 / sum : 0
+            // Weighted sum of values → output[i, h, :].
+            // Output layout: [seqLen, nHeads, headDim] (row-major).
+            let oBase = i * nHeads * headDim + h * headDim
             for d in 0..<headDim {
                 var val: Float = 0
-                for j in 0..<seqLen { val += softmaxScores[i * seqLen + j] * v[vOff + j * headDim + d] }
-                // Output layout: [seqLen, nHeads, headDim] → [seqLen, nHeads * headDim]
-                out[i * nHeads * headDim + h * headDim + d] = val
+                for j in 0..<seqLen {
+                    val += scores[j] * inv * v[vOff + j * headDim + d]
+                }
+                outPtr[oBase + d] = val
             }
         }
     }

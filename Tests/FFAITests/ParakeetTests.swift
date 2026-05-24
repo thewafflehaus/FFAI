@@ -302,12 +302,25 @@ struct ParakeetTests {
         let nFreq = nFFT / 2 + 1
         #expect(bank.count == nMels * nFreq)
         #expect(bank.allSatisfy { $0 >= 0 })
-        // Each row should sum to roughly 1 (Slaney-normalised)
+        // Each row's energy across FFT bins. With (sr=16k, nFFT=512,
+        // nMels=128) the FFT bin spacing is 31.25 Hz, while the lowest
+        // few Mel-spaced triangles span only ~14-30 Hz — so the
+        // lowest band(s) contain no FFT bin and produce an all-zero
+        // row. This matches librosa's documented "Empty filters
+        // detected in mel frequency basis" behavior and is expected
+        // for any narrow-band Slaney filterbank.
         let rowSums = (0..<nMels).map { m in
             (0..<nFreq).map { k in bank[m * nFreq + k] }.reduce(0, +)
         }
-        // Slaney normalisation doesn't force row-sum to 1, but all rows
-        // should be positive and bounded.
-        #expect(rowSums.allSatisfy { $0 > 0 })
+        // Allow up to a handful of empty rows at the low end (matches
+        // librosa). The vast majority must be strictly positive.
+        let emptyRows = rowSums.filter { $0 <= 0 }.count
+        #expect(emptyRows <= 4,
+                Comment(rawValue: "Expected at most 4 empty mel bands "
+                + "at the low end (librosa-equivalent Slaney); got "
+                + "\(emptyRows)."))
+        // All non-empty rows must be bounded (Slaney height = 2/(hi-lo)
+        // in Hz, so the peak is well under the Nyquist bandwidth).
+        #expect(rowSums.allSatisfy { $0 < 10.0 })
     }
 }
