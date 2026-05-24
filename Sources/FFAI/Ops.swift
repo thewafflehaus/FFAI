@@ -4605,6 +4605,11 @@ public enum Ops {
         }
         // INVARIANT: kernel pins tpg=32 (one simdgroup per row, Reduction
         // mode). All N calls share constexprs (in_dim, out_dim, group_size).
+        // dispatchThreads grid is in THREADS, not threadgroups — so total
+        // threads = outDim·32 yields outDim threadgroups of 32 threads each
+        // (one threadgroup per output row, program_id<0>() = row index).
+        // See memory note on the `mOut*32 not mOut` canary in
+        // Ops.moeGatherDequantGemmInt4M1 — same bug class.
         let outDim = weightsStacked[0].shape[1]
         let packedPerRow = weightsStacked[0].shape[2]
         let inDim = packedPerRow * 8 // int4 → 8 vals/u32
@@ -4618,7 +4623,7 @@ public enum Ops {
         enc.setBytes(&outDimV, length: 4, index: 7)
         enc.setBytes(&groupSizeV, length: 4, index: 8)
         let tg = MTLSize(width: 32, height: 1, depth: 1)
-        let grid = MTLSize(width: outDim, height: 1, depth: 1)
+        let grid = MTLSize(width: outDim * 32, height: 1, depth: 1)
         for i in 0..<n {
             precondition(weightsStacked[i].shape[1] == outDim
                           && weightsStacked[i].shape[2] == packedPerRow,
@@ -4752,9 +4757,11 @@ public enum Ops {
         precondition(out.elementCount == outDim,
                      "dequantGemvInt4ExpertIndexed: out \(out.elementCount) ≠ outDim \(outDim)")
         // INVARIANT: kernel pins tpg=32 (one simdgroup per row) in
-        // Reduction mode, grid is one threadgroup per output row.
+        // Reduction mode. dispatchThreads grid is in THREADS not
+        // threadgroups — total = outDim·32 yields outDim threadgroups
+        // of 32 threads (one TG per output row).
         let tg = MTLSize(width: 32, height: 1, depth: 1)
-        let grid = MTLSize(width: outDim, height: 1, depth: 1)
+        let grid = MTLSize(width: outDim * 32, height: 1, depth: 1)
         let inDimU = UInt32(inDim)
         let outDimU = UInt32(outDim)
         let groupSizeU = UInt32(groupSize)
