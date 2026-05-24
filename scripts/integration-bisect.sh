@@ -150,8 +150,16 @@ for suite in "${SUITES[@]}"; do
   # makes `${TIMER[@]}` trip the unbound-variable check. With the `+`
   # form, the whole expansion is skipped (no `timeout` prefix) when
   # the array is empty.
+  #
+  # `arch -arm64` forces the Apple-Silicon native slice of swift's
+  # universal binary. Without this, a Rosetta'd parent bash subshell
+  # (Claude Code's Bash tool runs through one in some configurations)
+  # picks the x86_64 slice, which sets Float16 availability to
+  # "macOS unavailable" and fails the whole build with bogus errors
+  # like "argument passed to call that takes no arguments". See the
+  # 2026-05-24 bisect-resume autopsy.
   FFAI_MAX_COMMAND_BUFFERS=16 ${TIMER[@]+"${TIMER[@]}"} \
-    swift test --filter "${suite}$" > "$log" 2>&1
+    arch -arm64 swift test --filter "${suite}$" > "$log" 2>&1
   rc=$?
   dur=$(( SECONDS - start ))
 
