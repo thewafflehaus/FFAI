@@ -251,11 +251,9 @@ final class Gemma4VLVisionBlock {
         let va = v.toFloatArray()
         let qStride = nHeads * headDim
         let kvStride = nKVHeads * headDim
-        var out = [Float](repeating: 0, count: nTokens * qStride)
         // The vision attention uses scale 1.0 (no 1/√d) — see the
         // reference `gemma4EnsureFusedSDPA(..., scale: 1.0)`.
         let scale: Float = 1.0
-        let groupSize = nHeads / max(nKVHeads, 1)
 
         // Precompute RMSNorm / RoPE parameters so closures capture only
         // value types (no local funcs — avoids @Sendable capture warnings).
@@ -325,43 +323,61 @@ final class Gemma4VLVisionBlock {
             }
         }
 
-        // Stage 2: Full bidirectional attention, GQA head mapping.
-        // Each `(head, i)` pair writes to a disjoint `[oBase, oBase+headDim)`
-        // slice of `out` — race-free.
-        out.withUnsafeMutableBufferPointer { outBuf in
-            let outPtr = outBuf.baseAddress!
-            DispatchQueue.concurrentPerform(iterations: nHeads * nTokens) { work in
-                let head = work / nTokens
-                let i = work % nTokens
-                let kvHead = head / max(groupSize, 1)
-                var scores = [Float](repeating: 0, count: nTokens)
-                var maxS = -Float.greatestFiniteMagnitude
-                let qVec = qH[i * nHeads + head]
-                for j in 0..<nTokens {
-                    let kVec = kH[j * nKVHeads + kvHead]
-                    var dot: Float = 0
-                    for d in 0..<headDim { dot += qVec[d] * kVec[d] }
-                    let s = dot * scale
-                    scores[j] = s
-                    if s > maxS { maxS = s }
-                }
-                var sum: Float = 0
-                for j in 0..<nTokens {
-                    let e = exp(scores[j] - maxS)
-                    scores[j] = e; sum += e
-                }
-                let inv = sum > 0 ? 1 / sum : 0
-                let oBase = i * qStride + head * headDim
-                for j in 0..<nTokens {
-                    let w = scores[j] * inv
-                    let vVec = vH[j * nKVHeads + kvHead]
-                    for d in 0..<headDim { outPtr[oBase + d] += w * vVec[d] }
+        // Stage 2: Full bidirectional attention, GQA head mapping, on the
+        // GPU via `Ops.sdpaBidirectional`. The CPU per-(head, query)
+        // softmax loop dominated this path (4096+ tokens × 27 layers in
+        // the 2026-05-24 bisect → 900s+); the GPU kernel collapses it
+        // into a single dispatch per block.
+        //
+        // Layout repack:
+        //   qH[t * nHeads   + h]  is already row-major [nTokens, nHeads,   headDim] → kernel Q layout.
+        //   kH[t * nKVHeads + h]  is row-major [nTokens, nKVHeads, headDim] →
+        //                         needs transpose to [nKVHeads, nTokens, headDim] (kernel K/V layout).
+        //   vH same as kH.
+        var qFlat = [Float](repeating: 0, count: nTokens * nHeads * headDim)
+        var kFlat = [Float](repeating: 0, count: nKVHeads * nTokens * headDim)
+        var vFlat = [Float](repeating: 0, count: nKVHeads * nTokens * headDim)
+        for t in 0..<nTokens {
+            for h in 0..<nHeads {
+                let qRow = qH[t * nHeads + h]
+                let dst = (t * nHeads + h) * headDim
+                for d in 0..<headDim { qFlat[dst + d] = qRow[d] }
+            }
+            for h in 0..<nKVHeads {
+                let kRow = kH[t * nKVHeads + h]
+                let vRow = vH[t * nKVHeads + h]
+                let dst = (h * nTokens + t) * headDim
+                for d in 0..<headDim {
+                    kFlat[dst + d] = kRow[d]
+                    vFlat[dst + d] = vRow[d]
                 }
             }
         }
+        let qT = Tensor.empty(shape: [nTokens, nHeads, headDim], dtype: .f32,
+                              device: device)
+        ImagePreprocessing.copyFloats(qFlat, into: qT)
+        let kT = Tensor.empty(shape: [nKVHeads, nTokens, headDim], dtype: .f32,
+                              device: device)
+        ImagePreprocessing.copyFloats(kFlat, into: kT)
+        let vT = Tensor.empty(shape: [nKVHeads, nTokens, headDim], dtype: .f32,
+                              device: device)
+        ImagePreprocessing.copyFloats(vFlat, into: vT)
+        let cmd = device.makeCommandBuffer()
+        let outT = Ops.sdpaBidirectional(
+            q: qT, k: kT, v: vT,
+            nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
+            baseKV: 0, nQuery: nTokens, kvStride: nTokens,
+            scale: scale, on: cmd)
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        // outT is [nTokens, nHeads, headDim] f32 — byte-identical to the
+        // [nTokens, nHeads·headDim] = [nTokens, qStride] layout o_proj
+        // expects. Re-emit in the input dtype so o_proj's GEMM sees the
+        // expected element format.
+        let outFlat = outT.toFloatArray()
         let result = Tensor.empty(shape: [nTokens, qStride], dtype: q.dtype,
                                   device: device)
-        ImagePreprocessing.copyFloats(out, into: result)
+        ImagePreprocessing.copyFloats(outFlat, into: result)
         return result
     }
 

@@ -266,10 +266,67 @@ final class Qwen25VLVisionBlock {
             vH[head * nTokens + t] = v
         }
 
-        // Stage 2: Attention within each window group, parallelized over
-        // heads. Within a head, token `i` writes to `out[i*hidden+hOff ..
-        // +headDim)` — disjoint across heads (different `hOff`) and disjoint
-        // across tokens within a head (different `i`).
+        // Stage 2: Attention. The full-attention blocks (caller passes a
+        // single group spanning every token — `fullattBlockIndexes`) run
+        // through the GPU `Ops.sdpaBidirectional` kernel. The windowed
+        // blocks keep the parallel CPU loop because `sdpaBidirectional`
+        // is fully bidirectional and the kernel surface has no per-group
+        // mask today.
+        let isFullAttention = windowGroups.count == 1
+            && windowGroups[0].count == nTokens
+        if isFullAttention
+            && OpsValidation.sdpaBidirectionalSupportedHeadDims.contains(headDim) {
+            // GPU path. qH/kH/vH are already laid out as
+            // [nHeads, nTokens, headDim] — kernel K/V layout natively.
+            // Q needs a transpose into [nTokens, nHeads, headDim].
+            var qFlat = [Float](repeating: 0, count: nTokens * nHeads * headDim)
+            var kFlat = [Float](repeating: 0, count: nHeads * nTokens * headDim)
+            var vFlat = [Float](repeating: 0, count: nHeads * nTokens * headDim)
+            for head in 0..<nHeads {
+                for t in 0..<nTokens {
+                    let qRow = qH[head * nTokens + t]
+                    let kRow = kH[head * nTokens + t]
+                    let vRow = vH[head * nTokens + t]
+                    let qDst = (t * nHeads + head) * headDim
+                    let kvDst = (head * nTokens + t) * headDim
+                    for d in 0..<headDim {
+                        qFlat[qDst + d] = qRow[d]
+                        kFlat[kvDst + d] = kRow[d]
+                        vFlat[kvDst + d] = vRow[d]
+                    }
+                }
+            }
+            let qT = Tensor.empty(shape: [nTokens, nHeads, headDim], dtype: .f32,
+                                  device: device)
+            ImagePreprocessing.copyFloats(qFlat, into: qT)
+            let kT = Tensor.empty(shape: [nHeads, nTokens, headDim], dtype: .f32,
+                                  device: device)
+            ImagePreprocessing.copyFloats(kFlat, into: kT)
+            let vT = Tensor.empty(shape: [nHeads, nTokens, headDim], dtype: .f32,
+                                  device: device)
+            ImagePreprocessing.copyFloats(vFlat, into: vT)
+            let cmd = device.makeCommandBuffer()
+            let outT = Ops.sdpaBidirectional(
+                q: qT, k: kT, v: vT,
+                nQHeads: nHeads, nKVHeads: nHeads, headDim: headDim,
+                baseKV: 0, nQuery: nTokens, kvStride: nTokens,
+                scale: scale, on: cmd)
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            // outT is [nTokens, nHeads, headDim] — byte-identical to the
+            // [nTokens, hidden] layout the patch-merger/proj expects.
+            let outFlat = outT.toFloatArray()
+            let result = Tensor.empty(shape: [nTokens, hidden], dtype: qkv.dtype,
+                                      device: device)
+            ImagePreprocessing.copyFloats(outFlat, into: result)
+            return result
+        }
+
+        // CPU fallback path — windowed attention. Same loop as before,
+        // parallelized over heads. Within a head, token `i` writes to
+        // `out[i*hidden+hOff .. +headDim)` — disjoint across heads
+        // (different `hOff`) and disjoint across tokens within a head
+        // (different `i`).
         out.withUnsafeMutableBufferPointer { outBuf in
             let outPtr = outBuf.baseAddress!
             DispatchQueue.concurrentPerform(iterations: nHeads) { head in

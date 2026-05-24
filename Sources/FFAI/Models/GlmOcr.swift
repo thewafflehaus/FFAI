@@ -1047,22 +1047,26 @@ public final class GlmOcrVisionTower: @unchecked Sendable {
 
 /// One GLM-OCR vision transformer block: RMSNorm → QKV + RoPE + attention
 /// → proj → residual, then RMSNorm → SwiGLU MLP → residual.
-/// All computation is CPU-side Float32.
+///
+/// Per-layer projection weights (QKV, proj, gate/up/down) live as f32 GPU
+/// `Tensor`s so each matmul dispatches one `Ops.gemm + Ops.add`. The
+/// RMSNorm + per-head Q/K-norm + RoPE remain on the CPU — the matmul
+/// bandwidth was the bottleneck, not the per-token reductions.
 final class GlmOcrVisionBlock {
     let norm1: GlmOcrVisionRMSNorm
     let norm2: GlmOcrVisionRMSNorm
-    let qkvWeight: [Float]   // [3·hidden, hidden]
-    let qkvBias:   [Float]   // [3·hidden]
-    let projWeight: [Float]  // [hidden, hidden]
-    let projBias:   [Float]  // [hidden]
-    let qNormWeight: [Float] // [headDim]
-    let kNormWeight: [Float] // [headDim]
-    let gateWeight: [Float]  // [intermediate, hidden]
-    let gateBias:   [Float]
-    let upWeight:   [Float]  // [intermediate, hidden]
-    let upBias:     [Float]
-    let downWeight: [Float]  // [hidden, intermediate]
-    let downBias:   [Float]
+    let qkvWeight: Tensor   // [3·hidden, hidden] f32 GPU
+    let qkvBias:   Tensor   // [3·hidden] f32 GPU
+    let projWeight: Tensor  // [hidden, hidden] f32 GPU
+    let projBias:   Tensor  // [hidden] f32 GPU
+    let qNormWeight: [Float] // [headDim] (CPU — applied per token slice)
+    let kNormWeight: [Float] // [headDim] (CPU)
+    let gateWeight: Tensor  // [intermediate, hidden] f32 GPU
+    let gateBias:   Tensor  // [intermediate] f32 GPU
+    let upWeight:   Tensor  // [intermediate, hidden] f32 GPU
+    let upBias:     Tensor  // [intermediate] f32 GPU
+    let downWeight: Tensor  // [hidden, intermediate] f32 GPU
+    let downBias:   Tensor  // [hidden] f32 GPU
     let cfg: GlmOcrVisionConfig
 
     init(norm1: GlmOcrVisionRMSNorm, norm2: GlmOcrVisionRMSNorm,
@@ -1074,12 +1078,22 @@ final class GlmOcrVisionBlock {
          downWeight: [Float], downBias: [Float],
          cfg: GlmOcrVisionConfig) {
         self.norm1 = norm1; self.norm2 = norm2
-        self.qkvWeight = qkvWeight; self.qkvBias = qkvBias
-        self.projWeight = projWeight; self.projBias = projBias
-        self.qNormWeight = qNormWeight; self.kNormWeight = kNormWeight
-        self.gateWeight = gateWeight; self.gateBias = gateBias
-        self.upWeight = upWeight; self.upBias = upBias
-        self.downWeight = downWeight; self.downBias = downBias
+        let hidden = cfg.hidden
+        let inter  = cfg.intermediate
+        // Re-host every weight/bias as an f32 GPU Tensor so `Ops.gemm`
+        // / `Ops.add` can consume them on the hot path.
+        self.qkvWeight = glmOcrFloatsToTensor(qkvWeight,  shape: [3 * hidden, hidden])
+        self.qkvBias   = glmOcrFloatsToTensor(qkvBias,    shape: [3 * hidden])
+        self.projWeight = glmOcrFloatsToTensor(projWeight, shape: [hidden, hidden])
+        self.projBias   = glmOcrFloatsToTensor(projBias,   shape: [hidden])
+        self.qNormWeight = qNormWeight
+        self.kNormWeight = kNormWeight
+        self.gateWeight = glmOcrFloatsToTensor(gateWeight, shape: [inter, hidden])
+        self.gateBias   = glmOcrFloatsToTensor(gateBias,   shape: [inter])
+        self.upWeight   = glmOcrFloatsToTensor(upWeight,   shape: [inter, hidden])
+        self.upBias     = glmOcrFloatsToTensor(upBias,     shape: [inter])
+        self.downWeight = glmOcrFloatsToTensor(downWeight, shape: [hidden, inter])
+        self.downBias   = glmOcrFloatsToTensor(downBias,   shape: [hidden])
         self.cfg = cfg
     }
 
@@ -1091,14 +1105,22 @@ final class GlmOcrVisionBlock {
         let intermed = cfg.intermediate
         let qkvDim   = 3 * hidden
         let scale    = 1.0 / Float(Double(headDim).squareRoot())
+        let device = Device.shared
 
         // ── Attention ──
         var normed = h
         norm1.normalize(&normed, nRows: nPatches, rowSize: hidden)
 
-        // QKV projection + bias: [nPatches, 3·hidden]
-        let qkv = cpuGemmWithBias(a: normed, w: qkvWeight, b: qkvBias,
-                                   m: nPatches, n: qkvDim, k: hidden)
+        // QKV projection + bias on the GPU: [nPatches, 3·hidden]
+        let normedT = glmOcrFloatsToTensor(normed, shape: [nPatches, hidden],
+                                            device: device)
+        let cmdQKV = device.makeCommandBuffer()
+        let qkvT = glmOcrGemmBiased(input: normedT, weight: qkvWeight, bias: qkvBias,
+                                     nRows: nPatches, outDim: qkvDim,
+                                     device: device, on: cmdQKV)
+        cmdQKV.commit()
+        cmdQKV.waitUntilCompleted()
+        let qkv = qkvT.toFloatArray()
 
         // Split Q, K, V and apply q_norm / k_norm per head.
         var Q = [Float](repeating: 0, count: nPatches * hidden)
@@ -1138,7 +1160,6 @@ final class GlmOcrVisionBlock {
         //     matches the kernel's Q contract directly (one copy).
         //   K/V in [nPatches, hidden] row-major → transpose to
         //     [numHeads, nPatches, headDim] for the kernel's KV cache.
-        let device = Device.shared
         var kFlat = [Float](repeating: 0, count: numHeads * nPatches * headDim)
         var vFlat = [Float](repeating: 0, count: numHeads * nPatches * headDim)
         for j in 0..<nPatches {
@@ -1161,18 +1182,25 @@ final class GlmOcrVisionBlock {
         kT.copyIn(from: kFlat)
         vT.copyIn(from: vFlat)
         let attnCmd = device.makeCommandBuffer()
-        let attnT = Ops.sdpaMulti(
+        let attnSdpaT = Ops.sdpaMulti(
             q: qT, k: kT, v: vT,
             nQHeads: numHeads, nKVHeads: numHeads, headDim: headDim,
             baseKV: 0, nQuery: nPatches, kvStride: nPatches,
             causal: false, scale: scale, on: attnCmd)
         attnCmd.commit()
         attnCmd.waitUntilCompleted()
-        let attn = attnT.toFloatArray()  // [nPatches, numHeads, headDim] = [nPatches, hidden]
+        let attn = attnSdpaT.toFloatArray()  // [nPatches, numHeads, headDim] = [nPatches, hidden]
 
-        // Projection + bias: [nPatches, hidden]
-        let attnOut = cpuGemmWithBias(a: attn, w: projWeight, b: projBias,
-                                      m: nPatches, n: hidden, k: hidden)
+        // Projection + bias on the GPU: [nPatches, hidden]
+        let attnInT = glmOcrFloatsToTensor(attn, shape: [nPatches, hidden],
+                                            device: device)
+        let cmdProj = device.makeCommandBuffer()
+        let attnOutT = glmOcrGemmBiased(input: attnInT, weight: projWeight, bias: projBias,
+                                         nRows: nPatches, outDim: hidden,
+                                         device: device, on: cmdProj)
+        cmdProj.commit()
+        cmdProj.waitUntilCompleted()
+        let attnOut = attnOutT.toFloatArray()
 
         // Residual.
         var postAttn = [Float](repeating: 0, count: nPatches * hidden)
@@ -1182,23 +1210,72 @@ final class GlmOcrVisionBlock {
         var normed2 = postAttn
         norm2.normalize(&normed2, nRows: nPatches, rowSize: hidden)
 
-        let gate = cpuGemmWithBias(a: normed2, w: gateWeight, b: gateBias,
-                                   m: nPatches, n: intermed, k: hidden)
-        let up   = cpuGemmWithBias(a: normed2, w: upWeight, b: upBias,
-                                   m: nPatches, n: intermed, k: hidden)
+        // Gate + Up dispatched on a shared command buffer (both consume
+        // the same `normed2` input).
+        let normed2T = glmOcrFloatsToTensor(normed2, shape: [nPatches, hidden],
+                                             device: device)
+        let cmdGU = device.makeCommandBuffer()
+        let gateT = glmOcrGemmBiased(input: normed2T, weight: gateWeight, bias: gateBias,
+                                      nRows: nPatches, outDim: intermed,
+                                      device: device, on: cmdGU)
+        let upT   = glmOcrGemmBiased(input: normed2T, weight: upWeight, bias: upBias,
+                                      nRows: nPatches, outDim: intermed,
+                                      device: device, on: cmdGU)
+        cmdGU.commit()
+        cmdGU.waitUntilCompleted()
+        let gate = gateT.toFloatArray()
+        let up   = upT.toFloatArray()
+
         var gateUp = [Float](repeating: 0, count: nPatches * intermed)
         for i in 0..<gateUp.count {
             let g = gate[i]
             gateUp[i] = (g / (1 + exp(-g))) * up[i]
         }
-        let mlpOut = cpuGemmWithBias(a: gateUp, w: downWeight, b: downBias,
-                                     m: nPatches, n: hidden, k: intermed)
+
+        let gateUpT = glmOcrFloatsToTensor(gateUp, shape: [nPatches, intermed],
+                                            device: device)
+        let cmdDown = device.makeCommandBuffer()
+        let mlpOutT = glmOcrGemmBiased(input: gateUpT, weight: downWeight, bias: downBias,
+                                        nRows: nPatches, outDim: hidden,
+                                        device: device, on: cmdDown)
+        cmdDown.commit()
+        cmdDown.waitUntilCompleted()
+        let mlpOut = mlpOutT.toFloatArray()
 
         // Residual.
         var out = postAttn
         for i in 0..<out.count { out[i] += mlpOut[i] }
         return out
     }
+}
+
+/// Upload an f32 `[Float]` array as a fresh f32 GPU `Tensor` of the given shape.
+private func glmOcrFloatsToTensor(_ values: [Float], shape: [Int],
+                                   device: Device = .shared) -> Tensor {
+    let n = shape.reduce(1, *)
+    precondition(values.count == n,
+                 "glmOcrFloatsToTensor: count \(values.count) ≠ product(shape)=\(n)")
+    let t = Tensor.empty(shape: shape, dtype: .f32, device: device)
+    t.copyIn(from: values)
+    return t
+}
+
+/// `out = input · weightᵀ + bias` (bias broadcast across `nRows`) as one
+/// `Ops.gemm` + `Ops.add` on the supplied command buffer. Bias tile is
+/// staged CPU-side and uploaded once per call. Caller commits and reads
+/// back.
+private func glmOcrGemmBiased(input: Tensor, weight: Tensor, bias: Tensor,
+                               nRows: Int, outDim: Int, device: Device,
+                               on cmd: MTLCommandBuffer) -> Tensor {
+    let out = Ops.gemm(weight: weight, input: input, nRows: nRows, on: cmd)
+    let biasVals = bias.toFloatArray()
+    var tiled = [Float](repeating: 0, count: nRows * outDim)
+    for r in 0..<nRows {
+        let base = r * outDim
+        for c in 0..<outDim { tiled[base + c] = biasVals[c] }
+    }
+    let tiledT = glmOcrFloatsToTensor(tiled, shape: [nRows, outDim], device: device)
+    return Ops.add(out, tiledT, on: cmd)
 }
 
 // ─── CPU RMSNorm ──────────────────────────────────────────────────────
