@@ -570,7 +570,8 @@ struct RepMixerBlockParams {
 
 /// Multi-head self-attention block for vision (AttentionBlock).
 /// QKV are fused: weight [3*C, C], no bias. proj weight [C, C] + bias [C].
-/// headDim = 32 (hardcoded in the FastViTHD architecture).
+/// headDim = 32 (hardcoded in the FastViTHD architecture) — attention is
+/// now GPU-resident via `Ops.sdpaBidirectional(headDim: 32)`.
 ///
 /// Operates on NHWC [B, H, W, C]; flattens to [B, N, C] for attention.
 struct VisionMHSAParams {
@@ -597,51 +598,55 @@ struct VisionMHSAParams {
         cmd.waitUntilCompleted()
         let qkvArr = qkvOut.toFloatArray()  // [B*N, 3*C]
 
-        // Split into Q/K/V and run CPU bidirectional attention.
-        // Fan out over (batch, head) pairs for parallelism.
+        // Split into Q/K/V and run GPU bidirectional attention via
+        // `Ops.sdpaBidirectional(headDim: 32)` — FastViT-HD uses the d32
+        // variant. Each batch element is an independent attention problem
+        // (no cross-batch attention), so we issue one kernel per batch.
+        //
+        // qkvArr layout per token row: [Q[0..C], K[0..C], V[0..C]] where
+        // each C-wide block is [numHeads, headDim] row-major.
+        //   → Q[bi]: extract to [N, numHeads, headDim] (same layout)
+        //   → K/V[bi]: extract + transpose to [numHeads, N, headDim]
         var attnOut = [Float](repeating: 0, count: B * N * inC)
         let cLocal = inC
-        let qkvArrLocal = qkvArr
-        attnOut.withUnsafeMutableBufferPointer { outBuf in
-            let outPtr = outBuf.baseAddress!
-            qkvArrLocal.withUnsafeBufferPointer { qkvBuf in
-                let qkvPtr = qkvBuf.baseAddress!
-                DispatchQueue.concurrentPerform(iterations: B * numHeads) { work in
-                    let bi = work / numHeads
-                    let hi = work % numHeads
-                    let hOff = hi * headDim
-                    let stride3C = 3 * cLocal
-                    let attnStride = cLocal
-                    // For each query token i:
-                    for i in 0..<N {
-                        var scores = [Float](repeating: 0, count: N)
-                        var maxS = -Float.greatestFiniteMagnitude
-                        let qBase = (bi * N + i) * stride3C + hOff
-                        for j in 0..<N {
-                            var dot: Float = 0
-                            let kBase = (bi * N + j) * stride3C + cLocal + hOff
-                            for d in 0..<headDim { dot += qkvPtr[qBase + d] * qkvPtr[kBase + d] }
-                            let s = dot * scale
-                            scores[j] = s
-                            if s > maxS { maxS = s }
-                        }
-                        // Softmax.
-                        var sumE: Float = 0
-                        for j in 0..<N {
-                            let e = expf(scores[j] - maxS)
-                            scores[j] = e; sumE += e
-                        }
-                        let inv = sumE > 0 ? 1.0 / sumE : 0
-                        // Weighted V sum into output slice.
-                        let oBase = (bi * N + i) * attnStride + hOff
-                        for j in 0..<N {
-                            let w = scores[j] * inv
-                            let vBase = (bi * N + j) * stride3C + 2 * cLocal + hOff
-                            for d in 0..<headDim { outPtr[oBase + d] += w * qkvPtr[vBase + d] }
-                        }
+        let stride3C = 3 * cLocal
+        for bi in 0..<B {
+            var qFlat = [Float](repeating: 0, count: N * cLocal)
+            var kFlat = [Float](repeating: 0, count: N * cLocal)
+            var vFlat = [Float](repeating: 0, count: N * cLocal)
+            for i in 0..<N {
+                let srcRow = (bi * N + i) * stride3C
+                // Q: same [numHeads, headDim] layout per token → flat copy.
+                for d in 0..<cLocal { qFlat[i * cLocal + d] = qkvArr[srcRow + d] }
+                // K/V: transpose to [numHeads, N, headDim] for the kernel.
+                for h in 0..<numHeads {
+                    let hOff = h * headDim
+                    let kSrc = srcRow + cLocal + hOff
+                    let vSrc = srcRow + 2 * cLocal + hOff
+                    let dst = (h * N + i) * headDim
+                    for d in 0..<headDim {
+                        kFlat[dst + d] = qkvArr[kSrc + d]
+                        vFlat[dst + d] = qkvArr[vSrc + d]
                     }
                 }
             }
+            let qT = floatToTensor(qFlat, shape: [N, numHeads, headDim],
+                                   dtype: .f32, device: device)
+            let kT = floatToTensor(kFlat, shape: [numHeads, N, headDim],
+                                   dtype: .f32, device: device)
+            let vT = floatToTensor(vFlat, shape: [numHeads, N, headDim],
+                                   dtype: .f32, device: device)
+            let attnCmd = device.makeCommandBuffer()
+            let outT = Ops.sdpaBidirectional(
+                q: qT, k: kT, v: vT,
+                nQHeads: numHeads, nKVHeads: numHeads, headDim: headDim,
+                baseKV: 0, nQuery: N, kvStride: N,
+                scale: scale, on: attnCmd)
+            attnCmd.commit()
+            attnCmd.waitUntilCompleted()
+            let outFlat = outT.toFloatArray()  // [N, numHeads, headDim] = [N, C]
+            let dstBase = bi * N * cLocal
+            for i in 0..<(N * cLocal) { attnOut[dstBase + i] = outFlat[i] }
         }
 
         // Output projection: [B*N, C] → [B*N, C] + bias.

@@ -511,68 +511,76 @@ private func geluFast(_ x: Float) -> Float {
     return 0.5 * x * (1.0 + tanh(inner))
 }
 
-// ─── CPU SDPA (for SigLIP encoder — full-sequence, not streaming) ─────────────
+// ─── GPU SDPA (for SigLIP encoder — full-sequence, bidirectional) ────────────
 
 /// Scaled dot-product attention over the full image patch sequence.
-/// Each head is computed independently via `DispatchQueue.concurrentPerform`.
-/// Returns per-head outputs as a flat Float array [numHeads, nPatches, headDim]
-/// which is then reshaped by the caller into [nPatches, numHeads * headDim].
+/// Now GPU-resident: one `Ops.sdpaBidirectional(headDim: 72)` dispatch
+/// for the PaliGemma SigLIP-So400m encoder (headDim=72 for 1152/16).
 ///
-/// Using a flat buffer with `withUnsafeMutableBufferPointer` lets each concurrent
-/// head write to a distinct stride — safe under Swift 6 strict concurrency.
+/// Input rows are flattened from `[[Float]]` (row-per-token, each row
+/// `[numHeads*headDim]`) into a contiguous `[nPatches, numHeads, headDim]`
+/// f32 buffer — Q's layout matches the kernel directly; K/V are
+/// transposed once into `[numHeads, nPatches, headDim]` to match the
+/// kernel's `[nKVHeads, kvStride, headDim]` contract. Output
+/// `[nPatches, numHeads, headDim]` is reassembled into `[[Float]]` rows.
 private func cpuSDPA(
     q: [[Float]], k: [[Float]], v: [[Float]],
     nPatches: Int, numHeads: Int, headDim: Int
 ) -> [[Float]] {
     let scale = 1.0 / Float(headDim).squareRoot()
-    // Flat output: [numHeads, nPatches, headDim] — head h owns
-    // flat[h * nPatches * headDim ..< (h+1) * nPatches * headDim].
-    // Raw pointer is passed by value (Sendable), so concurrent writes to
-    // distinct strides satisfy Swift 6 strict concurrency.
-    let totalElems = numHeads * nPatches * headDim
-    let flat = UnsafeMutablePointer<Float>.allocate(capacity: totalElems)
-    defer { flat.deallocate() }
-    // Each head writes to a distinct non-overlapping stride; nonisolated(unsafe)
-    // permits sharing across the @Sendable closure boundary.
-    nonisolated(unsafe) let flatPtr = flat
+    let hidden = numHeads * headDim
+    let device = Device.shared
 
-    DispatchQueue.concurrentPerform(iterations: numHeads) { h in
-        let hOff = h * headDim
-        let outBase = h * nPatches * headDim
-        var scores = [[Float]](repeating: [Float](repeating: 0, count: nPatches), count: nPatches)
-        for i in 0..<nPatches {
-            for j in 0..<nPatches {
-                var dot: Float = 0
-                for d in 0..<headDim {
-                    dot += q[i][hOff + d] * k[j][hOff + d]
-                }
-                scores[i][j] = dot * scale
-            }
-            let maxVal = scores[i].max()!
-            var rowSum: Float = 0
-            for j in 0..<nPatches { scores[i][j] = exp(scores[i][j] - maxVal); rowSum += scores[i][j] }
-            for j in 0..<nPatches { scores[i][j] /= rowSum }
-        }
-        for i in 0..<nPatches {
+    // Flatten Q into [nPatches, numHeads, headDim] — same memory order as
+    // `q[i][h*headDim + d]`, so this is just a row-major copy.
+    var qFlat = [Float](repeating: 0, count: nPatches * hidden)
+    for i in 0..<nPatches {
+        let base = i * hidden
+        for d in 0..<hidden { qFlat[base + d] = q[i][d] }
+    }
+    // K/V need transpose to [numHeads, nPatches, headDim] for the kernel.
+    var kFlat = [Float](repeating: 0, count: nPatches * hidden)
+    var vFlat = [Float](repeating: 0, count: nPatches * hidden)
+    for j in 0..<nPatches {
+        for h in 0..<numHeads {
+            let srcOff = h * headDim
+            let dst = (h * nPatches + j) * headDim
             for d in 0..<headDim {
-                var acc: Float = 0
-                for j in 0..<nPatches { acc += scores[i][j] * v[j][hOff + d] }
-                flatPtr[outBase + i * headDim + d] = acc
+                kFlat[dst + d] = k[j][srcOff + d]
+                vFlat[dst + d] = v[j][srcOff + d]
             }
         }
     }
+
+    let qT = paligemmaFloatsToTensor(qFlat, shape: [nPatches, numHeads, headDim],
+                                     device: device)
+    let kT = paligemmaFloatsToTensor(kFlat, shape: [numHeads, nPatches, headDim],
+                                     device: device)
+    let vT = paligemmaFloatsToTensor(vFlat, shape: [numHeads, nPatches, headDim],
+                                     device: device)
+    let cmd = device.makeCommandBuffer()
+    let outT = Ops.sdpaBidirectional(
+        q: qT, k: kT, v: vT,
+        nQHeads: numHeads, nKVHeads: numHeads, headDim: headDim,
+        baseKV: 0, nQuery: nPatches, kvStride: nPatches,
+        scale: scale, on: cmd)
+    cmd.commit()
+    cmd.waitUntilCompleted()
+    let outFlat = outT.toFloatArray()  // [nPatches, numHeads, headDim] flat
 
     // Reassemble into [nPatches, numHeads * headDim].
     return (0..<nPatches).map { i in
-        var row = [Float](repeating: 0, count: numHeads * headDim)
-        for h in 0..<numHeads {
-            let src = h * nPatches * headDim + i * headDim
-            for d in 0..<headDim {
-                row[h * headDim + d] = flatPtr[src + d]
-            }
-        }
-        return row
+        let src = i * hidden
+        return Array(outFlat[src..<src + hidden])
     }
+}
+
+/// Write a Float32 array into a fresh GPU tensor for one-shot kernel input.
+private func paligemmaFloatsToTensor(_ values: [Float], shape: [Int],
+                                     device: Device = .shared) -> Tensor {
+    let t = Tensor.empty(shape: shape, dtype: .f32, device: device)
+    t.copyIn(from: values)
+    return t
 }
 
 // ─── SigLIP Layer (CPU) ───────────────────────────────────────────────────────

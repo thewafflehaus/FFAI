@@ -1128,50 +1128,47 @@ final class GlmOcrVisionBlock {
             for d in 0..<hidden { V[tok * hidden + d] = qkv[vBase + d] }
         }
 
-        // Bidirectional multi-head attention — CPU, parallelised per head.
-        var attn = [Float](repeating: 0, count: nPatches * hidden)
-        DispatchQueue.concurrentPerform(iterations: numHeads) { hIdx in
-            let hd = headDim
-            // Compute attention scores for head `hIdx`.
-            var scores = [Float](repeating: 0, count: nPatches * nPatches)
-            for i in 0..<nPatches {
-                let qi = hIdx * hd
-                for j in 0..<nPatches {
-                    var dot: Float = 0
-                    let kj = hIdx * hd
-                    for d in 0..<hd {
-                        dot += Q[i * hidden + qi + d] * K[j * hidden + kj + d]
-                    }
-                    scores[i * nPatches + j] = dot * scale
-                }
-            }
-            // Softmax per query row.
-            for i in 0..<nPatches {
-                let start = i * nPatches
-                var maxVal = scores[start]
-                for j in 1..<nPatches { maxVal = max(maxVal, scores[start + j]) }
-                var sumExp: Float = 0
-                for j in 0..<nPatches {
-                    let e = exp(scores[start + j] - maxVal)
-                    scores[start + j] = e
-                    sumExp += e
-                }
-                let inv = 1.0 / sumExp
-                for j in 0..<nPatches { scores[start + j] *= inv }
-            }
-            // Weighted sum of values.
-            for i in 0..<nPatches {
-                for d in 0..<hd {
-                    var acc: Float = 0
-                    let vOffset = hIdx * hd + d
-                    for j in 0..<nPatches {
-                        acc += scores[i * nPatches + j] * V[j * hidden + vOffset]
-                    }
-                    // Write back: no data race because each head owns disjoint columns.
-                    attn[i * hidden + hIdx * hd + d] = acc
+        // Bidirectional multi-head attention — now GPU-resident via
+        // `Ops.sdpaMulti(causal: false)`. GLM-OCR vision uses headDim=128
+        // (hidden 1536 / 12 heads), which the d128 sdpa_multi kernel
+        // covers; `sdpaBidirectional` only ships d∈{32,64,72} variants.
+        //
+        // Buffer layout reminder:
+        //   Q in [nPatches, hidden] row-major → [nPatches, numHeads, headDim]
+        //     matches the kernel's Q contract directly (one copy).
+        //   K/V in [nPatches, hidden] row-major → transpose to
+        //     [numHeads, nPatches, headDim] for the kernel's KV cache.
+        let device = Device.shared
+        var kFlat = [Float](repeating: 0, count: numHeads * nPatches * headDim)
+        var vFlat = [Float](repeating: 0, count: numHeads * nPatches * headDim)
+        for j in 0..<nPatches {
+            for h in 0..<numHeads {
+                let src = j * hidden + h * headDim
+                let dst = (h * nPatches + j) * headDim
+                for d in 0..<headDim {
+                    kFlat[dst + d] = K[src + d]
+                    vFlat[dst + d] = V[src + d]
                 }
             }
         }
+        let qT = Tensor.empty(shape: [nPatches, numHeads, headDim],
+                              dtype: .f32, device: device)
+        let kT = Tensor.empty(shape: [numHeads, nPatches, headDim],
+                              dtype: .f32, device: device)
+        let vT = Tensor.empty(shape: [numHeads, nPatches, headDim],
+                              dtype: .f32, device: device)
+        qT.copyIn(from: Q)
+        kT.copyIn(from: kFlat)
+        vT.copyIn(from: vFlat)
+        let attnCmd = device.makeCommandBuffer()
+        let attnT = Ops.sdpaMulti(
+            q: qT, k: kT, v: vT,
+            nQHeads: numHeads, nKVHeads: numHeads, headDim: headDim,
+            baseKV: 0, nQuery: nPatches, kvStride: nPatches,
+            causal: false, scale: scale, on: attnCmd)
+        attnCmd.commit()
+        attnCmd.waitUntilCompleted()
+        let attn = attnT.toFloatArray()  // [nPatches, numHeads, headDim] = [nPatches, hidden]
 
         // Projection + bias: [nPatches, hidden]
         let attnOut = cpuGemmWithBias(a: attn, w: projWeight, b: projBias,

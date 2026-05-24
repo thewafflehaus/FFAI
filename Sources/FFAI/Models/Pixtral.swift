@@ -412,13 +412,15 @@ final class PixtralVisionBlock {
         return result
     }
 
-    /// CPU bidirectional multi-head attention with 2D RoPE applied to Q
+    /// Bidirectional multi-head attention with 2D RoPE applied to Q
     /// and K. `q`, `k`, `v` are token-major `[nPatches, hidden]`. Returns
     /// the context, token-major `[nPatches, hidden]`.
     ///
-    /// Each `(head, patch)` pair writes a disjoint `headDim`-wide slice
-    /// of the output — all such slices are disjoint, so the outer loop
-    /// is embarrassingly parallel and safe for `concurrentPerform`.
+    /// Stage 1 (CPU) extracts per-(head, patch) slices and applies 2D
+    /// RoPE — the (head, patch) outer product is embarrassingly parallel
+    /// and the writes are disjoint, so `concurrentPerform` is safe.
+    /// Stage 2 (GPU) is one `Ops.sdpaBidirectional(headDim: 64)`
+    /// dispatch — Pixtral SigLIP uses 1024/16 = 64.
     private func cpuAttention(q: Tensor, k: Tensor, v: Tensor,
                               nPatches: Int, gridSide: Int,
                               rope: PixtralRoPE, device: Device) -> Tensor {
@@ -431,11 +433,15 @@ final class PixtralVisionBlock {
         let qa = q.toFloatArray()
         let ka = k.toFloatArray()
         let va = v.toFloatArray()
-        var out = [Float](repeating: 0, count: nPatches * hidden)
 
         // Stage 1: extract per-head Q/K/V slices and apply 2D RoPE in
-        // place. Each (head, patch) writes to its own disjoint slot —
-        // race-free across concurrent iterations.
+        // place. Layout target:
+        //   Q  → [nPatches, nHeads, headDim] (kernel Q contract)
+        //   KV → [nHeads, nPatches, headDim] (kernel K/V contract)
+        // Each (head, patch) writes to its own disjoint slot — race-free
+        // across concurrent iterations.
+        // Per-head slice arrays — each (head, patch) writes to its own
+        // disjoint element, so concurrent writes are race-free.
         var qH = [[Float]](repeating: [], count: nHeads * nPatches)
         var kH = [[Float]](repeating: [], count: nHeads * nPatches)
         var vH = [[Float]](repeating: [], count: nHeads * nPatches)
@@ -465,44 +471,51 @@ final class PixtralVisionBlock {
             vH[head * nPatches + patch] = vSlice
         }
 
-        // Stage 2: scaled dot-product attention over all patches (full
-        // bidirectional — no causal mask within one image). Parallelized
-        // over heads; within each head, token `i` writes to `out[i*hidden
-        // + hOff .. + headDim)` — disjoint across heads.
-        out.withUnsafeMutableBufferPointer { outBuf in
-            let outPtr = outBuf.baseAddress!
-            DispatchQueue.concurrentPerform(iterations: nHeads) { head in
-                let hOff = head * headDim
-                for i in 0..<nPatches {
-                    var scores = [Float](repeating: 0, count: nPatches)
-                    var maxS = -Float.greatestFiniteMagnitude
-                    let qi = qH[head * nPatches + i]
-                    for j in 0..<nPatches {
-                        var dot: Float = 0
-                        let kj = kH[head * nPatches + j]
-                        for d in 0..<headDim { dot += qi[d] * kj[d] }
-                        let s = dot * scale
-                        scores[j] = s
-                        if s > maxS { maxS = s }
-                    }
-                    var sum: Float = 0
-                    for j in 0..<nPatches {
-                        let e = exp(scores[j] - maxS)
-                        scores[j] = e; sum += e
-                    }
-                    let inv = sum > 0 ? 1 / sum : 0
-                    let oBase = i * hidden + hOff
-                    for j in 0..<nPatches {
-                        let w = scores[j] * inv
-                        let vj = vH[head * nPatches + j]
-                        for d in 0..<headDim { outPtr[oBase + d] += w * vj[d] }
-                    }
+        // Assemble kernel-layout flat buffers:
+        //   Q  → [nPatches, nHeads, headDim]
+        //   KV → [nHeads, nPatches, headDim]
+        var qFlat = [Float](repeating: 0, count: nPatches * hidden)
+        var kFlat = [Float](repeating: 0, count: nHeads * nPatches * headDim)
+        var vFlat = [Float](repeating: 0, count: nHeads * nPatches * headDim)
+        for head in 0..<nHeads {
+            let hOff = head * headDim
+            for patch in 0..<nPatches {
+                let src = qH[head * nPatches + patch]
+                let qDst = patch * hidden + hOff
+                for d in 0..<headDim { qFlat[qDst + d] = src[d] }
+                let kvDst = (head * nPatches + patch) * headDim
+                let kSrc = kH[head * nPatches + patch]
+                let vSrc = vH[head * nPatches + patch]
+                for d in 0..<headDim {
+                    kFlat[kvDst + d] = kSrc[d]
+                    vFlat[kvDst + d] = vSrc[d]
                 }
             }
         }
+
+        // Stage 2: one GPU SDPA dispatch over all patches (full
+        // bidirectional — no causal mask within one image).
+        let qT = Tensor.empty(shape: [nPatches, nHeads, headDim], dtype: .f32, device: device)
+        let kT = Tensor.empty(shape: [nHeads, nPatches, headDim], dtype: .f32, device: device)
+        let vT = Tensor.empty(shape: [nHeads, nPatches, headDim], dtype: .f32, device: device)
+        qT.copyIn(from: qFlat)
+        kT.copyIn(from: kFlat)
+        vT.copyIn(from: vFlat)
+        let cmd = device.makeCommandBuffer()
+        let outT = Ops.sdpaBidirectional(
+            q: qT, k: kT, v: vT,
+            nQHeads: nHeads, nKVHeads: nHeads, headDim: headDim,
+            baseKV: 0, nQuery: nPatches, kvStride: nPatches,
+            scale: scale, on: cmd)
+        cmd.commit()
+        cmd.waitUntilCompleted()
+
+        // Output is [nPatches, nHeads, headDim] = [nPatches, hidden] flat.
+        // Copy into a tensor of the caller-expected dtype (e.g. bf16/f16
+        // for downstream `Ops.gemm`).
         let result = Tensor.empty(shape: [nPatches, hidden], dtype: q.dtype,
                                   device: device)
-        ImagePreprocessing.copyFloats(out, into: result)
+        ImagePreprocessing.copyFloats(outT.toFloatArray(), into: result)
         return result
     }
 }

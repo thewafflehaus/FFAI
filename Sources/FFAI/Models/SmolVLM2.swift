@@ -346,56 +346,43 @@ private func addBias(_ x: inout [Float], bias: [Float]) {
 /// Scaled dot-product attention for the vision encoder.
 /// q, k, v: [nHeads, seqLen, headDim] — output: [seqLen, nHeads * headDim]
 ///
-/// Parallelized over `(head, query-row)` pairs: each work item writes to a
-/// disjoint `[oBase, oBase + headDim)` slice of `out`, so no synchronization
-/// is needed. Matches the Pixtral / Qwen3VL / Gemma4VL pattern.
+/// Now GPU-resident: one `Ops.sdpaBidirectional(headDim: 64)` dispatch.
+/// K/V layout `[nHeads, seqLen, headDim]` matches the kernel's
+/// `[nKVHeads, kvStride, headDim]` contract (vision MHA: nQHeads ==
+/// nKVHeads, kvStride == seqLen, baseKV == 0). Q is transposed once
+/// from `[nHeads, seqLen, headDim]` → `[seqLen, nHeads, headDim]` to
+/// match the kernel's Q layout. Output `[seqLen, nHeads, headDim]` is
+/// reinterpreted flat as `[seqLen, nHeads*headDim]` for the caller.
 private func visionSDPA(q: [Float], k: [Float], v: [Float],
                          nHeads: Int, seqLen: Int, headDim: Int) -> [Float] {
     let scale = 1.0 / Float(headDim).squareRoot()
-    var out = [Float](repeating: 0, count: seqLen * nHeads * headDim)
+    let device = Device.shared
 
-    out.withUnsafeMutableBufferPointer { outBuf in
-        let outPtr = outBuf.baseAddress!
-        DispatchQueue.concurrentPerform(iterations: nHeads * seqLen) { work in
-            let h = work / seqLen
-            let i = work % seqLen
-            let qOff = h * seqLen * headDim
-            let kOff = h * seqLen * headDim
-            let vOff = h * seqLen * headDim
-
-            // Per-row attention scores: [seqLen].
-            var scores = [Float](repeating: 0, count: seqLen)
-            var maxS = -Float.greatestFiniteMagnitude
-            for j in 0..<seqLen {
-                var dot: Float = 0
-                for d in 0..<headDim {
-                    dot += q[qOff + i * headDim + d] * k[kOff + j * headDim + d]
-                }
-                let s = dot * scale
-                scores[j] = s
-                if s > maxS { maxS = s }
-            }
-            // Softmax over j.
-            var sum: Float = 0
-            for j in 0..<seqLen {
-                let e = exp(scores[j] - maxS)
-                scores[j] = e
-                sum += e
-            }
-            let inv = sum > 0 ? 1 / sum : 0
-            // Weighted sum of values → output[i, h, :].
-            // Output layout: [seqLen, nHeads, headDim] (row-major).
-            let oBase = i * nHeads * headDim + h * headDim
-            for d in 0..<headDim {
-                var val: Float = 0
-                for j in 0..<seqLen {
-                    val += scores[j] * inv * v[vOff + j * headDim + d]
-                }
-                outPtr[oBase + d] = val
-            }
+    // Transpose Q from [nHeads, seqLen, headDim] → [seqLen, nHeads, headDim].
+    var qSeqMajor = [Float](repeating: 0, count: seqLen * nHeads * headDim)
+    for h in 0..<nHeads {
+        for s in 0..<seqLen {
+            let src = (h * seqLen + s) * headDim
+            let dst = (s * nHeads + h) * headDim
+            for d in 0..<headDim { qSeqMajor[dst + d] = q[src + d] }
         }
     }
-    return out
+
+    let qT = floatsToTensor(qSeqMajor, shape: [seqLen, nHeads, headDim],
+                            dtype: .f32, device: device)
+    let kT = floatsToTensor(k, shape: [nHeads, seqLen, headDim],
+                            dtype: .f32, device: device)
+    let vT = floatsToTensor(v, shape: [nHeads, seqLen, headDim],
+                            dtype: .f32, device: device)
+    let cmd = device.makeCommandBuffer()
+    let outT = Ops.sdpaBidirectional(
+        q: qT, k: kT, v: vT,
+        nQHeads: nHeads, nKVHeads: nHeads, headDim: headDim,
+        baseKV: 0, nQuery: seqLen, kvStride: seqLen,
+        scale: scale, on: cmd)
+    cmd.commit()
+    cmd.waitUntilCompleted()
+    return outT.toFloatArray()
 }
 
 // ─── Vision encoder layers (CPU-side) ────────────────────────────────────────

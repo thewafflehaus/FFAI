@@ -330,55 +330,44 @@ private func idefics3AddBias(_ x: inout [Float], bias: [Float]) {
 /// Scaled dot-product attention for the vision encoder.
 /// q, k, v: [nHeads, seqLen, headDim] — output: [seqLen, nHeads * headDim]
 ///
-/// The outer (head, query-row) index space is embarrassingly parallel:
-/// each (h, i) pair writes a disjoint [headDim]-wide slice of `out`.
+/// Now GPU-resident: dispatches one `Ops.sdpaBidirectional(headDim: 72)`
+/// kernel. The input layout `[nHeads, seqLen, headDim]` matches the
+/// kernel's `[nKVHeads, kvStride, headDim]` K/V contract exactly
+/// (vision-tower MHA: nQHeads == nKVHeads, kvStride == seqLen,
+/// baseKV == 0). Output `[seqLen, nHeads, headDim]` is flattened to
+/// `[seqLen, nHeads * headDim]` for the caller.
 private func idefics3VisionSDPA(q: [Float], k: [Float], v: [Float],
                                  nHeads: Int, seqLen: Int, headDim: Int) -> [Float] {
-    let scale  = 1.0 / Float(headDim).squareRoot()
-    let stride = nHeads * headDim
-    var out    = [Float](repeating: 0, count: seqLen * stride)
+    let scale = 1.0 / Float(headDim).squareRoot()
+    let device = Device.shared
 
-    // Each (h, i) pair writes a disjoint [headDim]-wide output slice — no
-    // two iterations touch the same element, so the writes are race-free.
-    // The unsafe pointer send is safe because the slice invariant holds.
-    q.withUnsafeBufferPointer { qBuf in
-    k.withUnsafeBufferPointer { kBuf in
-    v.withUnsafeBufferPointer { vBuf in
-    out.withUnsafeMutableBufferPointer { outBuf in
-        let qPtr = qBuf.baseAddress!
-        let kPtr = kBuf.baseAddress!
-        let vPtr = vBuf.baseAddress!
-        let outPtr = outBuf.baseAddress!
-        let nH = nHeads; let sL = seqLen; let hD = headDim
-        let st = stride; let sc = scale
-        DispatchQueue.concurrentPerform(iterations: nH * sL) { work in
-            let h = work / sL
-            let i = work % sL
-            let hOff = h * hD
-            var scores = [Float](repeating: 0, count: sL)
-            var maxS: Float = -.greatestFiniteMagnitude
-            for j in 0..<sL {
-                var dot: Float = 0
-                let qBase = h * sL * hD + i * hD
-                let kBase = h * sL * hD + j * hD
-                for d in 0..<hD { dot += qPtr[qBase + d] * kPtr[kBase + d] }
-                let s = dot * sc; scores[j] = s
-                if s > maxS { maxS = s }
-            }
-            var sumExp: Float = 0
-            for j in 0..<sL {
-                let e = exp(scores[j] - maxS); scores[j] = e; sumExp += e
-            }
-            let inv = sumExp > 0 ? 1.0 / sumExp : 0
-            let oBase = i * st + hOff
-            for j in 0..<sL {
-                let w = scores[j] * inv
-                let vBase = h * sL * hD + j * hD
-                for d in 0..<hD { outPtr[oBase + d] += w * vPtr[vBase + d] }
-            }
+    // Wrap Q in [seqLen, nHeads, headDim] layout (kernel's Q contract).
+    // The CPU buffer was [nHeads, seqLen, headDim], so transpose here.
+    var qSeqMajor = [Float](repeating: 0, count: seqLen * nHeads * headDim)
+    for h in 0..<nHeads {
+        for s in 0..<seqLen {
+            let src = (h * seqLen + s) * headDim
+            let dst = (s * nHeads + h) * headDim
+            for d in 0..<headDim { qSeqMajor[dst + d] = q[src + d] }
         }
-    }}}}
-    return out
+    }
+
+    let qT = idefics3FloatsToTensor(qSeqMajor, shape: [seqLen, nHeads, headDim],
+                                    dtype: .f32, device: device)
+    let kT = idefics3FloatsToTensor(k, shape: [nHeads, seqLen, headDim],
+                                    dtype: .f32, device: device)
+    let vT = idefics3FloatsToTensor(v, shape: [nHeads, seqLen, headDim],
+                                    dtype: .f32, device: device)
+    let cmd = device.makeCommandBuffer()
+    let outT = Ops.sdpaBidirectional(
+        q: qT, k: kT, v: vT,
+        nQHeads: nHeads, nKVHeads: nHeads, headDim: headDim,
+        baseKV: 0, nQuery: seqLen, kvStride: seqLen,
+        scale: scale, on: cmd)
+    cmd.commit()
+    cmd.waitUntilCompleted()
+    // Output is [seqLen, nHeads, headDim] = [seqLen, nHeads*headDim] flat.
+    return outT.toFloatArray()
 }
 
 // ─── Vision encoder layers (CPU-side) ────────────────────────────────────────

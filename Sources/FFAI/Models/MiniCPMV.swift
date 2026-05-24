@@ -295,6 +295,16 @@ final class MiniCPMVViTMerger {
     /// Q/K/V buffers. Each window is 4 tokens; the (window, head)
     /// outer-product is `concurrentPerform`-fanned across cores. The
     /// returned tensor has the same `[nWindows·4, hidden]` layout.
+    ///
+    // TODO: GPU SDPA blocked on per-window batching — each (2,2) window
+    //  is an independent 4-query / 4-KV attention problem, so a single
+    //  `Ops.sdpaBidirectional` call can't fuse across windows (the
+    //  kernel attends one shared K/V cache). Calling the d72 kernel
+    //  `nWindows` times with `nQuery=kvStride=4` would launch tiny
+    //  threadgroups and lose to the embarrassingly-parallel CPU path.
+    //  Wait on either (a) a batched-KV SDPA kernel variant, or (b) a
+    //  cross-window mask-based fusion that lifts the per-window blocks
+    //  into one bidirectional call with a window-banded mask.
     private func cpuWindowAttention(q: Tensor, k: Tensor, v: Tensor,
                                     nWindows: Int, device: Device) -> Tensor {
         let qa = q.toFloatArray()
