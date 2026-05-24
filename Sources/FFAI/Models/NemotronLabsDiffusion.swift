@@ -313,9 +313,24 @@ public final class NemotronLabsDiffusionLayer: Module {
             attnReady = attnOut.reshaped(to: [nHeads * headDim])
         }
         let oOut = oProj(attnReady, on: cmd)
-        let postAttn = Ops.add(h, oOut, on: cmd)
 
-        let mlpNorm = postAttnNorm(postAttn, on: cmd)
+        // Fused residual add + post-attn RMSNorm via mt_add_rms_norm
+        // (NemotronLabsDiffusion hidden=3072 fits the ≤ 4096 cap).
+        // Validator gate keeps the unfused path for any future wider
+        // variant.
+        let postAttn: Tensor
+        let mlpNorm: Tensor
+        if OpsValidation.validateAddRmsNorm(n: hidden) == nil {
+            let fused = Ops.addAndRmsNorm(
+                h, oOut, weight: postAttnNorm.weight, eps: postAttnNorm.eps,
+                nRows: 1, rowSize: hidden, on: cmd)
+            postAttn = fused.residual
+            mlpNorm = fused.normed
+        } else {
+            postAttn = Ops.add(h, oOut, on: cmd)
+            mlpNorm = postAttnNorm(postAttn, on: cmd)
+        }
+
         let gate = gateProj(mlpNorm, on: cmd)
         let up = upProj(mlpNorm, on: cmd)
         let mlpInner = Ops.mul(Ops.silu(gate, on: cmd), up, on: cmd)
@@ -401,11 +416,23 @@ public final class NemotronLabsDiffusionLayer: Module {
             let loraDelta = Ops.gemm(weight: lb, input: aOut, nRows: n, on: cmd)
             oBlock = Ops.add(oBlock, loraDelta, on: cmd)
         }
-        let postAttn = Ops.add(h, oBlock, on: cmd)   // [n, hidden]
-
-        // SwiGLU MLP — RMSNorm rows, gate/up/down as block GEMMs.
-        let mlpNorm = Ops.rmsNormRows(postAttn, weight: postAttnNorm.weight, eps: postAttnNorm.eps,
+        // Fused residual add + post-attn RMSNorm via mt_add_rms_norm
+        // over [n, hidden] rows (hidden=3072 fits the ≤ 4096 cap).
+        let postAttn: Tensor
+        let mlpNorm: Tensor
+        if OpsValidation.validateAddRmsNorm(n: hidden) == nil {
+            let fused = Ops.addAndRmsNorm(
+                h, oBlock, weight: postAttnNorm.weight, eps: postAttnNorm.eps,
+                nRows: n, rowSize: hidden, on: cmd)
+            postAttn = fused.residual
+            mlpNorm = fused.normed
+        } else {
+            postAttn = Ops.add(h, oBlock, on: cmd)   // [n, hidden]
+            mlpNorm = Ops.rmsNormRows(postAttn, weight: postAttnNorm.weight, eps: postAttnNorm.eps,
                                       nRows: n, rowSize: hidden, on: cmd)
+        }
+
+        // SwiGLU MLP — gate/up/down as block GEMMs.
         let gate = nemotronBlockProject(gateProj, mlpNorm, nRows: n, on: cmd)
         let up = nemotronBlockProject(upProj, mlpNorm, nRows: n, on: cmd)
         let mlpInner = Ops.mul(Ops.silu(gate, on: cmd), up, on: cmd)

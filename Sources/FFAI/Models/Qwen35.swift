@@ -1804,7 +1804,22 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
         let xNorm = inputNorm(h, on: cmd)
         let mixerOut = mixer.forward(xNorm, position: position, cache: kv,
                                      cmd: cmd, device: device)
-        let postMix = Ops.add(h, mixerOut, on: cmd)
+
+        // Fused residual add + post-mix RMSNorm via mt_add_rms_norm
+        // (hidden ≤ 4096). Validator gate falls through for wider
+        // hybrids that may exceed the kernel's row-width cap.
+        let postMix: Tensor
+        let ffnNorm: Tensor?
+        if OpsValidation.validateAddRmsNorm(n: hidden) == nil {
+            let fused = Ops.addAndRmsNorm(
+                h, mixerOut, weight: postNorm.weight, eps: postNorm.eps,
+                nRows: 1, rowSize: hidden, on: cmd)
+            postMix = fused.residual
+            ffnNorm = fused.normed
+        } else {
+            postMix = Ops.add(h, mixerOut, on: cmd)
+            ffnNorm = nil
+        }
 
         // ── Feed-forward half ─────────────────────────────────────────
         // `cmd` is the host model's `workCmd`; the model owns its commit
@@ -1812,7 +1827,8 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
         // for the dense path.
         return qwen35ApplyFFN(ffn, postMix: postMix, postNorm: postNorm,
                               position: position, cmd: cmd,
-                              commitCmd: false, device: device)
+                              commitCmd: false, device: device,
+                              preNormed: ffnNorm)
     }
 
     /// T-batched layer forward for batched prefill. `hFlat` is
@@ -1865,8 +1881,22 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
             cache: kv, cmd: cmd, device: device
         ).reshaped(to: [t * hidden])
 
-        // ── Residual add — one Ops.add over T·hidden elements ───────────
-        let postMix = Ops.add(hFlat, mixerOutFlat, on: cmd)
+        // ── Residual add — fused with post-norm via mt_add_rms_norm
+        // (hidden ≤ 4096). Falls back to separate Ops.add + rmsNormRows
+        // for wider hidden sizes via the validator gate.
+        let postMix: Tensor
+        let ffnNorm: Tensor?
+        if OpsValidation.validateAddRmsNorm(n: hidden) == nil {
+            let fused = Ops.addAndRmsNorm(
+                hFlat, mixerOutFlat,
+                weight: postNorm.weight, eps: postNorm.eps,
+                nRows: t, rowSize: hidden, on: cmd)
+            postMix = fused.residual
+            ffnNorm = fused.normed
+        } else {
+            postMix = Ops.add(hFlat, mixerOutFlat, on: cmd)
+            ffnNorm = nil
+        }
 
         // ── FFN half — T-batched via qwen35ApplyFFNMany. ─────────────────
         // For MoE FFN this dispatches `moe.decodeMany` (one BGEMM per
@@ -1874,7 +1904,8 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
         // it dispatches `mlp.forwardMany` (3 gemms).
         return qwen35ApplyFFNMany(ffn, postMix: postMix, t: t,
                                   postNorm: postNorm, hidden: hidden,
-                                  cmd: cmd, device: device)
+                                  cmd: cmd, device: device,
+                                  preNormed: ffnNorm)
     }
 }
 
@@ -1902,10 +1933,13 @@ private func qwen35FFNParameters(_ ffn: Qwen35FFN) -> [(String, Tensor)] {
 /// of `qwen35ApplyFFN`).
 private func qwen35ApplyFFNMany(_ ffn: Qwen35FFN, postMix: Tensor, t: Int,
                                 postNorm: RMSNorm, hidden: Int,
-                                cmd: MTLCommandBuffer, device: Device) -> Tensor {
+                                cmd: MTLCommandBuffer, device: Device,
+                                preNormed: Tensor? = nil) -> Tensor {
     let dt = postMix.dtype
-    // Post-norm over T rows of [hidden]. One rmsNormRows kernel.
-    let ffnNorm = Ops.rmsNormRows(
+    // Post-norm over T rows of [hidden]. One rmsNormRows kernel —
+    // unless the caller already produced the normed tensor via the
+    // fused `mt_add_rms_norm` kernel.
+    let ffnNorm = preNormed ?? Ops.rmsNormRows(
         postMix, weight: postNorm.weight, eps: postNorm.eps,
         nRows: t, rowSize: hidden, on: cmd)
     switch ffn {
@@ -1937,8 +1971,12 @@ private func qwen35ApplyFFNMany(_ ffn: Qwen35FFN, postMix: Tensor, t: Int,
 ///   locally-committed buffer so the returned tensor is resident.
 private func qwen35ApplyFFN(_ ffn: Qwen35FFN, postMix: Tensor, postNorm: RMSNorm,
                             position: Int, cmd: MTLCommandBuffer,
-                            commitCmd: Bool, device: Device) -> Tensor {
-    let ffnNorm = postNorm(postMix, on: cmd)
+                            commitCmd: Bool, device: Device,
+                            preNormed: Tensor? = nil) -> Tensor {
+    // `preNormed` lets the attention-layer caller supply the
+    // fused-kernel output of `mt_add_rms_norm` (postMix already +
+    // post-norm in one dispatch). When nil, we run the separate norm.
+    let ffnNorm = preNormed ?? postNorm(postMix, on: cmd)
     switch ffn {
     case .dense(let mlp):
         let ffnOut = mlp.forward(ffnNorm, cmd: cmd)

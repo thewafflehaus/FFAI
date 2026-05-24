@@ -1108,9 +1108,23 @@ public final class Gemma4Layer: Module {
                                       donorCache: donorCache)
         let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
         let normedAttn = postAttnNorm(oOut, on: cmd)
-        var hOut = Ops.add(h, normedAttn, on: cmd)
 
-        let ffnNorm = preFFNorm(hOut, on: cmd)
+        // Fused (h + normedAttn) → preFFNorm via mt_add_rms_norm
+        // (hidden ≤ 4096). Gemma 4 27B (hidden 5376) falls through the
+        // validator gate to the unfused path.
+        var hOut: Tensor
+        let ffnNorm: Tensor
+        if OpsValidation.validateAddRmsNorm(n: hidden) == nil {
+            let fused = Ops.addAndRmsNorm(
+                h, normedAttn, weight: preFFNorm.weight, eps: preFFNorm.eps,
+                nRows: 1, rowSize: hidden, on: cmd)
+            hOut = fused.residual
+            ffnNorm = fused.normed
+        } else {
+            hOut = Ops.add(h, normedAttn, on: cmd)
+            ffnNorm = preFFNorm(hOut, on: cmd)
+        }
+
         guard case .dense(let mlp) = ffn else {
             fatalError("Gemma4Layer.forwardBatched: non-dense FFN")
         }
@@ -1146,8 +1160,22 @@ public final class Gemma4Layer: Module {
         let postCmd = device.makeCommandBuffer()
         let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: postCmd)
         let normedAttn = postAttnNorm(oOut, on: postCmd)
-        var hOut = Ops.add(h, normedAttn, on: postCmd)
-        let ffnNorm = preFFNorm(hOut, on: postCmd)
+
+        // Fused (h + normedAttn) → preFFNorm via mt_add_rms_norm
+        // (hidden ≤ 4096). Gemma 4 27B (hidden 5376) falls through
+        // the validator gate to the unfused path.
+        var hOut: Tensor
+        let ffnNorm: Tensor
+        if OpsValidation.validateAddRmsNorm(n: hidden) == nil {
+            let fused = Ops.addAndRmsNorm(
+                h, normedAttn, weight: preFFNorm.weight, eps: preFFNorm.eps,
+                nRows: 1, rowSize: hidden, on: postCmd)
+            hOut = fused.residual
+            ffnNorm = fused.normed
+        } else {
+            hOut = Ops.add(h, normedAttn, on: postCmd)
+            ffnNorm = preFFNorm(hOut, on: postCmd)
+        }
 
         switch ffn {
         case .dense(let mlp):

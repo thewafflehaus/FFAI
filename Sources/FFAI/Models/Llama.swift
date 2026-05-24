@@ -298,10 +298,24 @@ public final class LlamaLayer: Module {
             attnReadyForOProj = attnOut.reshaped(to: [nHeads * headDim])
         }
         let oOut = oProj(attnReadyForOProj, on: cmd)
-        let postAttn = Ops.add(h, oOut, on: cmd)
+
+        // Fused residual add + post-attn RMSNorm via mt_add_rms_norm
+        // (hidden ≤ 4096). Validator gate handles Llama 3 70B (8192).
+        // Returns (postAttn residual stream, normed input for MLP).
+        let postAttn: Tensor
+        let mlpNorm: Tensor
+        if OpsValidation.validateAddRmsNorm(n: hidden) == nil {
+            let fused = Ops.addAndRmsNorm(
+                h, oOut, weight: postAttnNorm.weight, eps: postAttnNorm.eps,
+                nRows: 1, rowSize: hidden, on: cmd)
+            postAttn = fused.residual
+            mlpNorm = fused.normed
+        } else {
+            postAttn = Ops.add(h, oOut, on: cmd)
+            mlpNorm = postAttnNorm(postAttn, on: cmd)
+        }
 
         // MLP — SwiGLU
-        let mlpNorm = postAttnNorm(postAttn, on: cmd)
         let gate = gateProj(mlpNorm, on: cmd)
         let up = upProj(mlpNorm, on: cmd)
         let siluGate = Ops.silu(gate, on: cmd)
@@ -390,18 +404,33 @@ public final class LlamaLayer: Module {
 
         let attnFlat = attnOut.reshaped(to: [nRows, nHeads * headDim])
         let oOut = oProj.callMany(attnFlat, t: nRows, on: cmd, device: device)
-        let postAttn = Ops.add(
-            h.reshaped(to: [nRows * hidden]),
-            oOut.reshaped(to: [nRows * hidden]),
-            on: cmd
-        ).reshaped(to: [nRows, hidden])
+
+        // Fused residual add + post-attn RMSNorm via mt_add_rms_norm
+        // (hidden ≤ 4096). Validator gate handles Llama 3 70B (8192).
+        let postAttn: Tensor
+        let mlpNorm: Tensor
+        if OpsValidation.validateAddRmsNorm(n: hidden) == nil {
+            let fused = Ops.addAndRmsNorm(
+                h.reshaped(to: [nRows * hidden]),
+                oOut.reshaped(to: [nRows * hidden]),
+                weight: postAttnNorm.weight, eps: postAttnNorm.eps,
+                nRows: nRows, rowSize: hidden, on: cmd)
+            postAttn = fused.residual.reshaped(to: [nRows, hidden])
+            mlpNorm = fused.normed.reshaped(to: [nRows, hidden])
+        } else {
+            postAttn = Ops.add(
+                h.reshaped(to: [nRows * hidden]),
+                oOut.reshaped(to: [nRows * hidden]),
+                on: cmd
+            ).reshaped(to: [nRows, hidden])
+            mlpNorm = Ops.rmsNormRows(
+                postAttn.reshaped(to: [nRows * hidden]),
+                weight: postAttnNorm.weight, eps: postAttnNorm.eps,
+                nRows: nRows, rowSize: hidden, on: cmd
+            ).reshaped(to: [nRows, hidden])
+        }
 
         // ── MLP — SwiGLU, batched ───────────────────────────────────────
-        let mlpNorm = Ops.rmsNormRows(
-            postAttn.reshaped(to: [nRows * hidden]),
-            weight: postAttnNorm.weight, eps: postAttnNorm.eps,
-            nRows: nRows, rowSize: hidden, on: cmd
-        ).reshaped(to: [nRows, hidden])
         let gate = gateProj.callMany(mlpNorm, t: nRows, on: cmd, device: device)
         let up = upProj.callMany(mlpNorm, t: nRows, on: cmd, device: device)
         let siluGate = Ops.silu(gate, on: cmd)
