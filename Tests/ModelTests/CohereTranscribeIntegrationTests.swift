@@ -28,12 +28,17 @@ struct CohereTranscribeIntegrationTests {
     /// Resolve the CohereTranscribe checkpoint directory from the mlx-audio
     /// flat cache or HF hub.
     private func resolveDir() async throws -> URL {
+        // The original mlx-community/c4ai-aya-expanse-transcribe-mlx repo
+        // was renamed when Cohere republished as the 2026-03 release.
+        // Try the current mlx-community 8-bit conversion first, then fall
+        // back to legacy slugs in case someone has a stale local mirror.
         try await AudioFixtures.resolveCheckpoint(
             mlxAudioSlugs: [
+                "mlx-community_cohere-transcribe-03-2026-mlx-8bit",
                 "mlx-community_c4ai-aya-expanse-transcribe-mlx",
             ],
             repoIds: [
-                "mlx-community/c4ai-aya-expanse-transcribe-mlx",
+                "mlx-community/cohere-transcribe-03-2026-mlx-8bit",
             ]
         )
     }
