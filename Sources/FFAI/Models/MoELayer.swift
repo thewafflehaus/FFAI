@@ -368,6 +368,13 @@ public final class MoELayer: Module, DecoderLayer {
     public let enableBGEMM: Bool
     public let useBm8Env: Bool
     public let useM1Env: Bool
+    /// ITER 64 (Bagel 2): env-flag cache so hot-path decode doesn't pay
+    /// `ProcessInfo.processInfo.environment[..]` cost per layer per token.
+    /// At 40 MoE layers × 60 tps ≈ 2400 dict lookups/sec previously.
+    let noDequantGate: Bool
+    let gpuRouterEnabled: Bool
+    let forceBGEMMAtT1: Bool
+    let noBGEMMBm64: Bool
 
     /// Lazy cache of the dequantized gate weight in `[outDim=nExperts,
     /// inDim=hidden]` layout — what `Ops.gemm` expects for its `weight`
@@ -475,6 +482,10 @@ public final class MoELayer: Module, DecoderLayer {
         self.enableBGEMM = env["FFAI_MOE_BGEMM"] != nil
         self.useBm8Env = env["FFAI_MOE_BGEMM_BM8"] != nil
         self.useM1Env = env["FFAI_MOE_M1"] != nil
+        self.noDequantGate = env["FFAI_MOE_NO_DEQUANT_GATE"] != nil
+        self.gpuRouterEnabled = env["FFAI_MOE_GPU_ROUTER"] == "1"
+        self.forceBGEMMAtT1 = env["FFAI_MOE_BGEMM_FORCE_T1"] != nil
+        self.noBGEMMBm64 = env["FFAI_MOE_BGEMM_NO_BM64"] != nil
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -524,7 +535,7 @@ public final class MoELayer: Module, DecoderLayer {
         let logitsTensor: Tensor
         if !dequantizedGateAttempted {
             dequantizedGateAttempted = true
-            if ProcessInfo.processInfo.environment["FFAI_MOE_NO_DEQUANT_GATE"] == nil,
+            if !self.noDequantGate,
                let q = gate.inner as? QuantizedLinear,
                q.bits == 8 {
                 dequantizedGateCache = Self.dequantizeQuantizedLinear(q, device: device)
@@ -552,8 +563,8 @@ public final class MoELayer: Module, DecoderLayer {
         // the per-slot routing weight feeds `scalarFMAChain8`.
         // Net: ~40 × `waitUntilCompleted` per token → 0.
         // OPT-IN by default (env flag) until A/B-bench confirmed.
-        let gpuRouterEnabled = ProcessInfo.processInfo.environment["FFAI_MOE_GPU_ROUTER"] == "1"
-        if gpuRouterEnabled,
+        // ITER 64: env-flag is cached at init (`self.gpuRouterEnabled`).
+        if self.gpuRouterEnabled,
            let stacked = stackedInt4Experts,
            stacked.dtype == h.dtype,
            router.gatingMode == .softmaxThenTopK,
@@ -704,8 +715,8 @@ public final class MoELayer: Module, DecoderLayer {
         // hard-disable to avoid the regression even if the env is set.
         // Override: `FFAI_MOE_BGEMM_FORCE_T1=1` re-enables for the rare
         // case someone wants to bench the regression directly.
-        let forceBGEMMAtT1 = ProcessInfo.processInfo.environment["FFAI_MOE_BGEMM_FORCE_T1"] != nil
-        let useBGEMMAtT1 = enableBGEMM && forceBGEMMAtT1
+        // ITER 64: env-flag cached at init (`self.forceBGEMMAtT1`).
+        let useBGEMMAtT1 = enableBGEMM && self.forceBGEMMAtT1
         if let stacked = stackedInt4Experts, stacked.dtype == h.dtype, useBGEMMAtT1 {
             // Fast path: one batched gather BGEMM per projection. The
             // kernel expects rows of activations sorted by expert id; we
@@ -1124,8 +1135,8 @@ public final class MoELayer: Module, DecoderLayer {
         // crossover sits between mTotal=512 (19% bm16 win) and
         // mTotal=1024 (18% bm64 win) — `>= 1024` is the safe pick.
         // Opt out via `FFAI_MOE_BGEMM_NO_BM64=1`.
-        let useBm64 = mTotal >= 1024
-            && ProcessInfo.processInfo.environment["FFAI_MOE_BGEMM_NO_BM64"] == nil
+        // ITER 64: env-flag cached at init (`self.noBGEMMBm64`).
+        let useBm64 = mTotal >= 1024 && !self.noBGEMMBm64
         let useBm8 = !useBm64 && topK <= 8 && useBm8Env && mTotal <= 8
         let bgemm: (Tensor, Tensor, Tensor, Tensor, Tensor, Int, Int, Int, Int, MTLCommandBuffer, Tensor) -> Void
         if useBm64 {
@@ -1443,7 +1454,7 @@ public final class MoELayer: Module, DecoderLayer {
                                 device: Device) -> Tensor {
         if !dequantizedGateAttempted {
             dequantizedGateAttempted = true
-            if ProcessInfo.processInfo.environment["FFAI_MOE_NO_DEQUANT_GATE"] == nil,
+            if !self.noDequantGate,
                let q = gate.inner as? QuantizedLinear,
                q.bits == 8 {
                 dequantizedGateCache = Self.dequantizeQuantizedLinear(
