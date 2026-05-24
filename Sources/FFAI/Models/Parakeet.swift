@@ -836,57 +836,69 @@ public final class ParakeetModel: @unchecked Sendable {
 
         var out = [Float](repeating: 0, count: nFrames * dModel)
 
-        for h in 0..<nHeads {
-            let hOff = h * headDim
-            // q+u, q+v for this head
-            var qU = [Float](repeating: 0, count: nFrames * headDim)
-            var qV = [Float](repeating: 0, count: nFrames * headDim)
-            for t in 0..<nFrames {
-                for d in 0..<headDim {
-                    qU[t * headDim + d] = qFlat[t * dModel + hOff + d] + biasU[hOff + d]
-                    qV[t * headDim + d] = qFlat[t * dModel + hOff + d] + biasV[hOff + d]
+        // Each head's work is fully independent: per-head Q/K/V/P slices,
+        // per-head score matrices, and writes to a disjoint
+        // `[hOff, hOff + headDim)` slice of `out`. Parallelise over the
+        // head loop — Parakeet typically has 4-8 heads, which gives ample
+        // parallelism on Apple Silicon CPU cores. (We can't directly
+        // mutate the outer `out` from inside `concurrentPerform`'s
+        // @Sendable closure without going through an unsafe pointer,
+        // so write through `withUnsafeMutableBufferPointer`.)
+        out.withUnsafeMutableBufferPointer { outBuf in
+            let outPtr = outBuf.baseAddress!
+            DispatchQueue.concurrentPerform(iterations: nHeads) { h in
+                let hOff = h * headDim
+                // q+u, q+v for this head
+                var qU = [Float](repeating: 0, count: nFrames * headDim)
+                var qV = [Float](repeating: 0, count: nFrames * headDim)
+                for t in 0..<nFrames {
+                    for d in 0..<headDim {
+                        qU[t * headDim + d] = qFlat[t * dModel + hOff + d] + biasU[hOff + d]
+                        qV[t * headDim + d] = qFlat[t * dModel + hOff + d] + biasV[hOff + d]
+                    }
                 }
-            }
-            // Key and pos slices for this head
-            var kH = [Float](repeating: 0, count: nFrames * headDim)
-            var vH = [Float](repeating: 0, count: nFrames * headDim)
-            var pH = [Float](repeating: 0, count: posLen * headDim)
-            for t in 0..<nFrames {
-                for d in 0..<headDim {
-                    kH[t * headDim + d] = kFlat[t * dModel + hOff + d]
-                    vH[t * headDim + d] = vFlat[t * dModel + hOff + d]
+                // Key and pos slices for this head
+                var kH = [Float](repeating: 0, count: nFrames * headDim)
+                var vH = [Float](repeating: 0, count: nFrames * headDim)
+                var pH = [Float](repeating: 0, count: posLen * headDim)
+                for t in 0..<nFrames {
+                    for d in 0..<headDim {
+                        kH[t * headDim + d] = kFlat[t * dModel + hOff + d]
+                        vH[t * headDim + d] = vFlat[t * dModel + hOff + d]
+                    }
                 }
-            }
-            for p in 0..<posLen {
-                for d in 0..<headDim { pH[p * headDim + d] = pFlat[p * dModel + hOff + d] }
-            }
+                for p in 0..<posLen {
+                    for d in 0..<headDim { pH[p * headDim + d] = pFlat[p * dModel + hOff + d] }
+                }
 
-            // matrixAC = qU × K^T  [nFrames × nFrames]
-            var matAC = [Float](repeating: 0, count: nFrames * nFrames)
-            matmul(A: qU, B: kH, C: &matAC, M: nFrames, K: headDim, N: nFrames, transB: true)
+                // matrixAC = qU × K^T  [nFrames × nFrames]
+                var matAC = [Float](repeating: 0, count: nFrames * nFrames)
+                matmul(A: qU, B: kH, C: &matAC, M: nFrames, K: headDim, N: nFrames, transB: true)
 
-            // matrixBD = qV × P^T  [nFrames × posLen], then rel-shift → [nFrames × nFrames]
-            var matBD = [Float](repeating: 0, count: nFrames * posLen)
-            matmul(A: qV, B: pH, C: &matBD, M: nFrames, K: headDim, N: posLen, transB: true)
-            let shifted = relShift(matBD, tq: nFrames, posLen: posLen)
-            // shifted is [nFrames, nFrames] after slicing first nFrames cols
+                // matrixBD = qV × P^T  [nFrames × posLen], then rel-shift → [nFrames × nFrames]
+                var matBD = [Float](repeating: 0, count: nFrames * posLen)
+                matmul(A: qV, B: pH, C: &matBD, M: nFrames, K: headDim, N: posLen, transB: true)
+                let shifted = relShift(matBD, tq: nFrames, posLen: posLen)
+                // shifted is [nFrames, nFrames] after slicing first nFrames cols
 
-            // Sum and scale
-            var scores = [Float](repeating: 0, count: nFrames * nFrames)
-            for i in 0..<(nFrames * nFrames) {
-                scores[i] = (matAC[i] + shifted[i]) * scale
-            }
+                // Sum and scale
+                var scores = [Float](repeating: 0, count: nFrames * nFrames)
+                for i in 0..<(nFrames * nFrames) {
+                    scores[i] = (matAC[i] + shifted[i]) * scale
+                }
 
-            // Softmax per query row
-            var attnWeights = softmaxRows(scores, rows: nFrames, cols: nFrames)
+                // Softmax per query row
+                let attnWeights = softmaxRows(scores, rows: nFrames, cols: nFrames)
 
-            // Weighted sum of values
-            var ctx = [Float](repeating: 0, count: nFrames * headDim)
-            matmul(A: attnWeights, B: vH, C: &ctx, M: nFrames, K: nFrames, N: headDim, transB: false)
+                // Weighted sum of values
+                var ctx = [Float](repeating: 0, count: nFrames * headDim)
+                matmul(A: attnWeights, B: vH, C: &ctx, M: nFrames, K: nFrames, N: headDim, transB: false)
 
-            // Write to output
-            for t in 0..<nFrames {
-                for d in 0..<headDim { out[t * dModel + hOff + d] = ctx[t * headDim + d] }
+                // Write to output — disjoint `[hOff, hOff + headDim)` slice
+                // per head, so the parallel writes can't collide.
+                for t in 0..<nFrames {
+                    for d in 0..<headDim { outPtr[t * dModel + hOff + d] = ctx[t * headDim + d] }
+                }
             }
         }
 
