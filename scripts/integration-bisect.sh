@@ -52,10 +52,22 @@ GPU_PIN_THRESHOLD="${GPU_PIN_THRESHOLD:-50}"
 OUTPUT="${OUTPUT:-planning/integration-bisect-$(date -u +%Y%m%d-%H%M%S).md}"
 
 # Selector — either explicit args or every IntegrationTests file.
+#
+# NOTE on word splitting: zsh does NOT split unquoted parameter
+# expansions like bash does, so `script.sh $SOMEVAR` from a zsh shell
+# passes a single concatenated argument when SOMEVAR contains spaces.
+# Callers that want to pass many suite names from a zsh shell should
+# either (a) quote / expand explicitly (`script.sh "${ARR[@]}"`), or
+# (b) pipe via `xargs script.sh < list.txt`. Inside this script we
+# split each incoming arg on whitespace into the SUITES array so the
+# "one big string" case still works.
 if [[ $# -gt 0 ]]; then
   SUITES=()
   for arg in "$@"; do
-    SUITES+=("${arg%IntegrationTests}IntegrationTests")
+    # Split any space-delimited blob into individual suite names.
+    for tok in $arg; do
+      SUITES+=("${tok%IntegrationTests}IntegrationTests")
+    done
   done
 else
   SUITES=()
