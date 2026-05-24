@@ -151,7 +151,18 @@ public final class SafeTensorsFile: @unchecked Sendable {
                 throw SafeTensorsError.headerEntryMalformed(name)
             }
             guard let dtype = DType.fromSafeTensors(dtypeStr) else {
-                throw SafeTensorsError.unsupportedDType(dtypeStr, key: name)
+                // Upstream HF checkpoints sometimes ship training-only
+                // buffers in dtypes FFAI doesn't model (e.g. `F8_E4M3`,
+                // exotic int widths). These are NEVER consumed by an
+                // inference path — they exist for fine-tuning. Skip
+                // with a debug log; model code that asks for one of
+                // these by name later will get `missingTensor`, which
+                // is the right error. Surface every skip via FFAI_DEBUG_LOAD=1.
+                Debug.log(.load,
+                    "SafeTensorsBundle: skipping tensor \"\(name)\" "
+                    + "with unsupported dtype \(dtypeStr) "
+                    + "(typically a training-only buffer)")
+                continue
             }
             let shape: [Int] = shapeAny.compactMap { ($0 as? NSNumber)?.intValue }
             guard shape.count == shapeAny.count else {

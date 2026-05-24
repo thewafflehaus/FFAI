@@ -122,18 +122,23 @@ for suite in "${SUITES[@]}"; do
   # neither by default; install via `brew install coreutils`. Fall
   # back to no timeout (acceptable for the per-suite run; the user
   # can ^C if a suite truly hangs).
+  TIMER=()
   if command -v gtimeout &>/dev/null; then
     TIMER=(gtimeout --kill-after=10s "$PER_TEST_TIMEOUT")
   elif command -v timeout &>/dev/null; then
     TIMER=(timeout --kill-after=10s "$PER_TEST_TIMEOUT")
-  else
-    TIMER=()
   fi
 
   # Run the single suite. `make test-unit`-style flags. The Makefile
   # uses --parallel --num-workers 1 for ModelTests but for a single
   # suite the parallelism flag is moot.
-  FFAI_MAX_COMMAND_BUFFERS=16 "${TIMER[@]}" \
+  #
+  # `${TIMER[@]+...}` is the canonical bash idiom for expanding a
+  # possibly-empty array under `set -u` — without it, an empty TIMER
+  # makes `${TIMER[@]}` trip the unbound-variable check. With the `+`
+  # form, the whole expansion is skipped (no `timeout` prefix) when
+  # the array is empty.
+  FFAI_MAX_COMMAND_BUFFERS=16 ${TIMER[@]+"${TIMER[@]}"} \
     swift test --filter "${suite}$" > "$log" 2>&1
   rc=$?
   dur=$(( SECONDS - start ))

@@ -103,6 +103,10 @@ public struct Tensor: @unchecked Sendable {
             return toArray(as: Int8.self).map { Float($0) }
         case .u8:
             return toArray(as: UInt8.self).map { Float($0) }
+        case .i64:
+            return toArray(as: Int64.self).map { Float($0) }
+        case .u64:
+            return toArray(as: UInt64.self).map { Float($0) }
         }
     }
 

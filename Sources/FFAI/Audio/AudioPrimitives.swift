@@ -59,6 +59,10 @@ public enum AudioMath {
             return t.toArray(as: Int8.self).map { Float($0) }
         case .u8:
             return t.toArray(as: UInt8.self).map { Float($0) }
+        case .i64:
+            return t.toArray(as: Int64.self).map { Float($0) }
+        case .u64:
+            return t.toArray(as: UInt64.self).map { Float($0) }
         }
     }
 
