@@ -271,6 +271,50 @@ public enum Ops {
 
     /// Embedding lookup. `table` is [vocab, dim], `tokenIds` is [n_tokens]
     /// (u32), output is [n_tokens, dim].
+    /// ITER 65 (Bagel 2): batched two-gather on ONE encoder, sharing the
+    /// same source table. Used by the attention q/gate split when
+    /// `attnOutputGate` is set — saves 1 encoder begin/end per attn layer
+    /// × 10 attn layers = ~170 µs/decode token. Pattern matches
+    /// `Ops.rmsNormRowsTwo` / `Ops.dequantGemvInt4Two`.
+    public static func gatherTwo(
+        table: Tensor,
+        ids1: Tensor, into out1: Tensor,
+        ids2: Tensor, into out2: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(table.shape.count == 2, "gatherTwo: table must be 2D")
+        precondition(ids1.dtype == .u32 && ids2.dtype == .u32,
+                     "gatherTwo: ids must be u32")
+        precondition(out1.dtype == table.dtype && out2.dtype == table.dtype,
+                     "gatherTwo: out dtype must match table")
+        let dim = table.shape[1]
+        let psoName: String
+        switch table.dtype {
+        case .f32:  psoName = "ffai_gather_f32"
+        case .f16:  psoName = "ffai_gather_f16"
+        case .bf16: psoName = "ffai_gather_bf16"
+        default: fatalError("gatherTwo: unsupported dtype \(table.dtype)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        var dimV = UInt32(dim)
+        enc.setBytes(&dimV, length: 4, index: 3)
+        enc.setBuffer(table.buffer, offset: table.offset, index: 0)
+        @inline(__always)
+        func dispatch(_ ids: Tensor, _ out: Tensor) {
+            let n = ids.elementCount
+            let totalThreads = n * dim
+            let (grid, tg) = elementwiseGrid(totalThreads)
+            enc.setBuffer(ids.buffer, offset: ids.offset, index: 1)
+            enc.setBuffer(out.buffer, offset: out.offset, index: 2)
+            enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        }
+        dispatch(ids1, out1)
+        dispatch(ids2, out2)
+        enc.endEncoding()
+    }
+
     public static func gather(table: Tensor, tokenIds: Tensor,
                               on cmd: MTLCommandBuffer,
                               into out: Tensor? = nil) -> Tensor {

@@ -1883,10 +1883,15 @@ public final class Qwen35AttentionMixer: Module {
                 queriesScratch = Tensor.empty(shape: [nHeads, headDim], dtype: qOut.dtype)
                 gateSliceScratch = Tensor.empty(shape: [nHeads, headDim], dtype: qOut.dtype)
             }
-            queries = Ops.gather(table: table, tokenIds: sliceFirstIdx!, on: cmd,
-                                  into: queriesScratch).reshaped(to: [nHeads * headDim])
-            gate = Ops.gather(table: table, tokenIds: sliceSecondIdx!, on: cmd,
-                               into: gateSliceScratch).reshaped(to: [nHeads * headDim])
+            // ITER 65: batched two-gather on shared encoder, saves 1
+            // encoder begin/end pair per attn layer × 10 = ~170 µs/token.
+            Ops.gatherTwo(
+                table: table,
+                ids1: sliceFirstIdx!, into: queriesScratch!,
+                ids2: sliceSecondIdx!, into: gateSliceScratch!,
+                on: cmd)
+            queries = queriesScratch!.reshaped(to: [nHeads * headDim])
+            gate = gateSliceScratch!.reshaped(to: [nHeads * headDim])
         } else {
             queries = qOut
             gate = nil
