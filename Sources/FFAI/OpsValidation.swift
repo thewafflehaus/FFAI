@@ -179,6 +179,39 @@ public enum OpsValidation {
         return nil
     }
 
+    // ─── add_rms_norm (fused residual + RMSNorm) ───────────────────
+    //
+    // `mt_add_rms_norm` fuses the transformer block's residual stream
+    // and post-residual RMSNorm into one kernel. Each row uses TPG =
+    // n / 4 (4 elements per thread, same pattern as `mt_rms_norm`),
+    // so n must be a multiple of 4 AND n / 4 must stay within Apple
+    // Silicon's 1024-thread-per-group cap → **n ≤ 4096**. Wider
+    // hidden sizes (Gemma 4 27B+ at hidden 5376) MUST fall back to
+    // separate `add` + `rmsNorm` calls.
+
+    /// Largest row width the fused `mt_add_rms_norm` kernel can take.
+    /// Above this, callers should use separate `Ops.add` + `Ops.rmsNorm`.
+    public static let addRmsNormMaxRowSize = 4096
+
+    public static func validateAddRmsNorm(n: Int) -> String? {
+        if n <= 0 {
+            return "n must be positive (got \(n))"
+        }
+        if !n.isMultiple(of: 4) {
+            return "n must be a multiple of 4 (got \(n)); kernel vectorises "
+                + "the row in 4-element chunks"
+        }
+        if n > addRmsNormMaxRowSize {
+            return "n must be ≤ \(addRmsNormMaxRowSize) (got \(n)); larger "
+                + "hidden sizes exceed the 1024-thread group cap (TPG = n / 4)"
+        }
+        if n / 4 < 32 {
+            return "n / 4 = \(n / 4) must be ≥ 32 (TPG below a simdgroup width "
+                + "would make the reduction degenerate)"
+        }
+        return nil
+    }
+
     // ─── sdpa_bidirectional_d{32,64,72} ────────────────────────────
     //
     // `ffai_sdpa_bidirectional_dN` is the always-bidirectional sibling

@@ -464,6 +464,89 @@ public enum Ops {
         return result
     }
 
+    /// Fused (residual `a + b`) + RMSNorm. Returns **both** outputs:
+    /// `residual` = `a + b` (the next layer's residual stream) and
+    /// `normed` = `RMSNorm(a + b, weight)` (the input to the next
+    /// sublayer). One dispatch instead of two — eliminates one round
+    /// trip to GPU for the post-attention / post-FFN residual+norm
+    /// pattern that every transformer block runs twice per token.
+    ///
+    /// Shape: `a`, `b` are `[rows, n]` (or any contiguous layout that
+    /// flattens to `rows * n`); `weight` is `[n]`. Both outputs match
+    /// `a`'s shape + dtype. `eps` is passed via a 1-element f32 buffer
+    /// the wrapper allocates.
+    ///
+    /// **Row-width limit.** Kernel uses TPG = n / 4, so n must be ≤
+    /// `OpsValidation.addRmsNormMaxRowSize` (4096) and a multiple of 4.
+    /// Larger hidden sizes (Gemma 4 27B+ at 5376) MUST use separate
+    /// `Ops.add` + `Ops.rmsNorm` calls. Pre-check with
+    /// `OpsValidation.validateAddRmsNorm(n:)` if you don't know the
+    /// model's hidden size statically.
+    public static func addAndRmsNorm(
+        _ a: Tensor, _ b: Tensor, weight: Tensor, eps: Float,
+        nRows: Int, rowSize: Int, on cmd: MTLCommandBuffer,
+        residualOut: Tensor? = nil, normedOut: Tensor? = nil
+    ) -> (residual: Tensor, normed: Tensor) {
+        precondition(a.elementCount == nRows * rowSize,
+                     "Ops.addAndRmsNorm: a size \(a.elementCount) ≠ nRows*rowSize")
+        precondition(b.elementCount == nRows * rowSize,
+                     "Ops.addAndRmsNorm: b size \(b.elementCount) ≠ nRows*rowSize")
+        precondition(weight.elementCount == rowSize,
+                     "Ops.addAndRmsNorm: weight must be [rowSize]")
+        precondition(a.dtype == b.dtype && a.dtype == weight.dtype,
+                     "Ops.addAndRmsNorm: dtype mismatch")
+
+        // Kernel-invariant validation. See OpsValidation.swift.
+        if let reason = OpsValidation.validateAddRmsNorm(n: rowSize) {
+            preconditionFailure("Ops.addAndRmsNorm: \(reason)")
+        }
+
+        let resid = residualOut ?? Tensor.empty(shape: a.shape, dtype: a.dtype)
+        let normed = normedOut ?? Tensor.empty(shape: a.shape, dtype: a.dtype)
+
+        // eps as a 1-element f32 buffer.
+        var epsValue = eps
+        let epsBuf = device.makeBuffer(length: 4)
+        memcpy(epsBuf.contents(), &epsValue, 4)
+
+        // TPG = n / 4 (kernel vectorises in 4-elem chunks). One
+        // threadgroup per row → grid = nRows * (n/4) threads × 1 × 1.
+        // Validator above ensures n/4 ∈ [32, 1024].
+        let tgWidth = rowSize / 4
+        let grid = MTLSize(width: nRows * tgWidth, height: 1, depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+        let nU = UInt32(rowSize)
+        switch a.dtype {
+        case .f32:
+            MetalTileKernels.mt_add_rms_norm_f32(
+                a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                residual_out: resid.buffer, residual_outOffset: resid.offset,
+                normed_out: normed.buffer, normed_outOffset: normed.offset,
+                n: nU, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_add_rms_norm_f16(
+                a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                residual_out: resid.buffer, residual_outOffset: resid.offset,
+                normed_out: normed.buffer, normed_outOffset: normed.offset,
+                n: nU, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_add_rms_norm_bf16(
+                a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                residual_out: resid.buffer, residual_outOffset: resid.offset,
+                normed_out: normed.buffer, normed_outOffset: normed.offset,
+                n: nU, gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.addAndRmsNorm: unsupported dtype \(a.dtype)")
+        }
+        return (resid, normed)
+    }
+
     /// Shared RMSNorm dispatch for `rmsNorm` (nRows = 1) and
     /// `rmsNormRows`. Routes by row width:
     ///   • `n ≤ 4096` → `mt_rms_norm`, 4 elements per thread,

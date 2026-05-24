@@ -795,6 +795,58 @@ struct OpsTests {
         }
     }
 
+    @Test("addAndRmsNorm — residual = a+b, normed = rmsNorm(a+b, weight)")
+    func addAndRmsNormCorrectness() {
+        autoreleasepool {
+            // Two-row case so we exercise both the nRows=1 and
+            // nRows>1 dispatch paths in one test. n=128 is the
+            // smallest legal width (TPG = n/4 = 32 = simdgroup).
+            let nRows = 2, n = 128
+            let eps: Float = 1e-6
+            let aData: [Float] = (0..<nRows * n).map { Float(($0 % 19) - 9) * 0.31 }
+            let bData: [Float] = (0..<nRows * n).map { Float(($0 % 13) - 6) * 0.17 }
+            let wData: [Float] = (0..<n).map { 1.0 + Float($0 % 7) * 0.05 }
+
+            let a = Tensor.empty(shape: [nRows, n], dtype: .f32)
+            a.copyIn(from: aData)
+            let b = Tensor.empty(shape: [nRows, n], dtype: .f32)
+            b.copyIn(from: bData)
+            let weight = Tensor.empty(shape: [n], dtype: .f32)
+            weight.copyIn(from: wData)
+
+            let cmd = Device.shared.makeCommandBuffer()
+            let (residual, normed) = Ops.addAndRmsNorm(
+                a, b, weight: weight, eps: eps,
+                nRows: nRows, rowSize: n, on: cmd)
+            cmd.commit(); cmd.waitUntilCompleted()
+
+            let residArr = residual.toArray(as: Float.self)
+            let normedArr = normed.toArray(as: Float.self)
+
+            // CPU reference: residual is a+b; normed is RMSNorm(a+b)·w.
+            for row in 0..<nRows {
+                var ssq: Float = 0
+                var sums = [Float](repeating: 0, count: n)
+                for d in 0..<n {
+                    let s = aData[row * n + d] + bData[row * n + d]
+                    sums[d] = s
+                    ssq += s * s
+                }
+                let rms = (ssq / Float(n) + eps).squareRoot()
+                for d in 0..<n {
+                    let expectedResid = sums[d]
+                    let expectedNormed = sums[d] / rms * wData[d]
+                    let gotResid = residArr[row * n + d]
+                    let gotNormed = normedArr[row * n + d]
+                    #expect(abs(gotResid - expectedResid) < 1e-3,
+                            "residual row=\(row) d=\(d): got \(gotResid) expected \(expectedResid)")
+                    #expect(abs(gotNormed - expectedNormed) < 1e-2,
+                            "normed row=\(row) d=\(d): got \(gotNormed) expected \(expectedNormed)")
+                }
+            }
+        }
+    }
+
     @Test("sdpaMulti — uniform K gives uniform attention (output = mean V)")
     func sdpaMultiUniformKMeansV() {
         autoreleasepool {

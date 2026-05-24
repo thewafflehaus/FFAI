@@ -252,6 +252,43 @@ struct OpsValidationTests {
             baseKV: 64, nQuery: 32, kvStride: 96) == nil)
     }
 
+    // ─── addAndRmsNorm ─────────────────────────────────────────────
+
+    @Test("addAndRmsNorm accepts production hidden sizes (n ≤ 4096)")
+    func addAndRmsNormAcceptsLegal() {
+        // Production transformer hidden sizes within the kernel's
+        // 4096 cap.
+        #expect(OpsValidation.validateAddRmsNorm(n: 2048) == nil)   // Llama 3.2 1B
+        #expect(OpsValidation.validateAddRmsNorm(n: 2560) == nil)   // Qwen 3 4B
+        #expect(OpsValidation.validateAddRmsNorm(n: 4096) == nil)   // Llama 3.1 8B (exact)
+        #expect(OpsValidation.validateAddRmsNorm(n: 128) == nil)    // Tiny edge case
+    }
+
+    @Test("addAndRmsNorm rejects n > 4096 (Gemma 4 27B+ hidden)")
+    func addAndRmsNormRejectsTooWide() {
+        // n/4 would exceed 1024 (Apple Silicon's TPG cap).
+        #expect(OpsValidation.validateAddRmsNorm(n: 5376) != nil)   // Gemma 4 31B
+        #expect(OpsValidation.validateAddRmsNorm(n: 4100) != nil)
+    }
+
+    @Test("addAndRmsNorm rejects non-multiple-of-4 n")
+    func addAndRmsNormRejectsBadAlignment() {
+        // Kernel vectorises in 4-elem chunks (tid * 4).
+        for n in [100, 257, 1023] {
+            #expect(OpsValidation.validateAddRmsNorm(n: n) != nil,
+                    "n=\(n) should be rejected (not a multiple of 4)")
+        }
+    }
+
+    @Test("addAndRmsNorm rejects n too small (TPG below simdgroup)")
+    func addAndRmsNormRejectsTooNarrow() {
+        // n / 4 < 32 makes the reduction degenerate.
+        #expect(OpsValidation.validateAddRmsNorm(n: 0) != nil)
+        #expect(OpsValidation.validateAddRmsNorm(n: -4) != nil)
+        #expect(OpsValidation.validateAddRmsNorm(n: 4) != nil)
+        #expect(OpsValidation.validateAddRmsNorm(n: 124) != nil)   // 124/4=31, below 32
+    }
+
     // ─── sdpaBidirectional ─────────────────────────────────────────
 
     @Test("sdpaBidirectional accepts every supported head_dim")
