@@ -20,11 +20,36 @@ public final class Linear: Module {
         if let b = bias {
             precondition(b.shape == [weight.shape[0]],
                          "Linear: bias shape \(b.shape) must match output features \([weight.shape[0]])")
-            precondition(b.dtype == weight.dtype,
-                         "Linear: bias dtype must match weight dtype")
+            // Some upstream checkpoints (Qwen2-VL, Voxtral, mlx-vlm-
+            // converted Qwen 2.5 / 3 audio variants) ship the QKV bias
+            // in f32 even when the weight is bf16/f16. Auto-cast to
+            // weight dtype here so the Linear contract stays "matching
+            // dtype" without forcing every loader to convert.
+            if b.dtype == weight.dtype {
+                self.bias = b
+            } else {
+                let casted = Tensor.empty(shape: b.shape, dtype: weight.dtype)
+                let floats = b.toFloatArray()
+                switch weight.dtype {
+                case .f32:  casted.copyIn(from: floats)
+                case .f16:  casted.copyIn(from: floats.map { Float16($0) })
+                case .bf16:
+                    casted.copyIn(from: floats.map { v -> UInt16 in
+                        let bits = v.bitPattern
+                        let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
+                        return UInt16(rounded >> 16)
+                    })
+                default:
+                    preconditionFailure(
+                        "Linear: cannot auto-cast bias \(b.dtype) → \(weight.dtype) "
+                        + "(unsupported activation dtype)")
+                }
+                self.bias = casted
+            }
+        } else {
+            self.bias = nil
         }
         self.weight = weight
-        self.bias = bias
     }
 
     public func parameters() -> [(String, Tensor)] {

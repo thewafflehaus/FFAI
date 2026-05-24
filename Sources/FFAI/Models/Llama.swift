@@ -646,20 +646,28 @@ public final class LlamaModel: LanguageModel {
     /// **tail-position logits only** — the contract `Generate.swift`
     /// consumes (only the final position is sampled).
     ///
-    /// **Fallback.** AURA caches use a π-rotated K/V layout that the
-    /// chunked path doesn't implement; if any layer's cache is
-    /// `AURAQuantizedKVCache`, we fall back to the protocol-default
-    /// per-token loop (still on one cmd, just one SDPA dispatch per
-    /// token). Affine-quantized + raw KV caches take the fast path.
+    /// **Fallbacks.** Two paths take the per-token loop instead of
+    /// the chunked SDPA fast path:
+    ///
+    ///   - **AURA caches** use a π-rotated K/V layout that the chunked
+    ///     path doesn't implement.
+    ///   - **`headDim != 128`** — `ffai_sdpa_multi` (the kernel
+    ///     `LlamaLayer.forwardMulti` dispatches) is head_dim-128 only.
+    ///     Llama 3.2 1B / 3B use head_dim=64; Qwen 2 uses head_dim=128
+    ///     when wide and head_dim=64 when narrow. The single-token
+    ///     `Ops.sdpaDecode` has variants at d64 / d128 / d256 / d512,
+    ///     so the per-token loop covers every shape we care about.
     public func forwardMulti(tokenIds: [Int], startingAt position: Int,
                              caches: [any LayerCacheProtocol],
                              on cmd: MTLCommandBuffer, device: Device) -> Tensor {
         precondition(!tokenIds.isEmpty,
                      "LlamaModel.forwardMulti: tokenIds must be non-empty")
 
-        // AURA fallback — see doc comment.
+        // Fallback to per-token loop when the chunked SDPA fast path
+        // can't apply — see doc comment.
         let hasAura = caches.contains { $0 is AURAQuantizedKVCache }
-        if hasAura {
+        let headDimUnsupported = headDim != 128
+        if hasAura || headDimUnsupported {
             var logits: Tensor!
             for (i, tok) in tokenIds.enumerated() {
                 logits = forward(tokenId: tok, position: position + i,

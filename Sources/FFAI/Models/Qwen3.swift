@@ -655,9 +655,13 @@ public final class Qwen3Model: LanguageModel {
         precondition(!tokenIds.isEmpty,
                      "Qwen3Model.forwardMulti: tokenIds must be non-empty")
 
-        // AURA fallback — see Qwen3Layer.forwardMulti doc comment.
+        // Fallback to per-token loop when (a) AURA caches require
+        // π-rotated K/V layout not implemented by the chunked path,
+        // or (b) head_dim != 128 — `ffai_sdpa_multi` is hardcoded to
+        // d128 (Qwen 3 0.5B / 1.7B have d=64 vs d=128 on 4B+).
         let hasAura = caches.contains { $0 is AURAQuantizedKVCache }
-        if hasAura {
+        let headDimUnsupported = headDim != 128
+        if hasAura || headDimUnsupported {
             var logits: Tensor!
             for (i, tok) in tokenIds.enumerated() {
                 logits = forward(tokenId: tok, position: position + i,
