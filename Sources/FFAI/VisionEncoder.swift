@@ -114,16 +114,22 @@ public final class VisionEncoderLayer: Module {
 
     /// Forward `[nTokens, hidden]` patch-token activations through one
     /// encoder block. The GEMM-heavy projections + norms run on the GPU
-    /// queued on `cmd`; the bidirectional attention core (scores →
-    /// softmax → context) runs on the CPU.
+    /// queued on `cmd`; the bidirectional attention core then dispatches
+    /// to a head-dim-matched GPU kernel where one exists, falling back
+    /// to a parallel CPU pass only for head_dim values that have no
+    /// kernel yet.
     ///
-    /// The CPU attention core is deliberate: `ffai_sdpa_multi` is
-    /// head_dim-128-only, and SigLIP / CLIP vision towers use other head
-    /// dims (72, 64, 80, …). Vision token counts are small (a few
-    /// hundred patches), so a CPU O(nTokens²·headDim) attention per head
-    /// is cheap next to the GPU projection GEMMs — and unambiguously
-    /// correct. A head-dim-agnostic vision SDPA kernel is a later
-    /// performance pass (Phase 6.5 ships correctness first).
+    /// Available kernels (FFAI/Ops.swift):
+    ///   - head_dim ∈ {32, 64, 72, 80, 96} → `Ops.sdpaBidirectional`
+    ///     (multi-query, non-causal)
+    ///   - head_dim == 128 → `Ops.sdpaMulti(causal: false)`
+    ///     (multi-query, hardcoded d=128)
+    ///   - anything else   → CPU `cpuAttention` (parallel by
+    ///                       (head, query-row), see below)
+    ///
+    /// At SigLIP-So400m's 4096 patches × 27 layers × 16 heads × O(n²)
+    /// the CPU path used to take 25+ minutes per encoder pass; the GPU
+    /// path collapses that into the per-layer GEMM cost.
     func forward(_ h: Tensor, nTokens: Int, device: Device,
                  on cmd: MTLCommandBuffer) -> Tensor {
         // ── Attention sub-block ──
@@ -135,14 +141,27 @@ public final class VisionEncoderLayer: Module {
         let k = projectRows(kProj, normed, nTokens: nTokens, on: cmd)
         let v = projectRows(vProj, normed, nTokens: nTokens, on: cmd)
 
-        // Flush the projection GEMMs so their results are CPU-readable
-        // for the attention core.
-        cmd.commit()
-        cmd.waitUntilCompleted()
-
-        // CPU bidirectional multi-head attention.
-        let attnFlat = cpuAttention(q: q, k: k, v: v, nTokens: nTokens,
+        // Bidirectional multi-head attention. GPU path when the kernel
+        // exists at this head_dim; CPU fallback otherwise.
+        let attnFlat: Tensor
+        if OpsValidation.sdpaBidirectionalSupportedHeadDims.contains(headDim) {
+            // {32, 64, 72, 80, 96} — covers FastViT-HD, SigLIP-base/
+            // CLIP-L/Mistral3/Gemma4-E2/Qwen3-VL-2B/4B (64),
+            // SigLIP-So400m (72), Qwen2.5-VL (80), Qwen2-VL (96).
+            attnFlat = gpuAttention(q: q, k: k, v: v, nTokens: nTokens,
+                                    device: device, on: cmd)
+        } else if headDim == 128 {
+            // Pixtral, Mistral3 Pixtral-based, GlmOcr.
+            attnFlat = gpuAttentionMulti(q: q, k: k, v: v, nTokens: nTokens,
+                                         device: device, on: cmd)
+        } else {
+            // Flush the projection GEMMs so their results are CPU-readable
+            // for the fallback attention core.
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            attnFlat = cpuAttention(q: q, k: k, v: v, nTokens: nTokens,
                                     device: device)
+        }
 
         // ── Residual + MLP sub-block ──
         let cmd2 = device.makeCommandBuffer()
@@ -160,6 +179,104 @@ public final class VisionEncoderLayer: Module {
         cmd2.commit()
         cmd2.waitUntilCompleted()
         return result
+    }
+
+    /// GPU bidirectional multi-head attention via
+    /// `Ops.sdpaBidirectional(headDim:)`. head_dim must be one of
+    /// {32, 64, 72} — the kernel surface FFAI ships today.
+    ///
+    /// Layout note: `Ops.sdpaBidirectional` takes
+    ///   Q at `[nQuery, nQHeads, headDim]` (token-major, head-second)
+    ///   K/V at `[nKVHeads, kvStride, headDim]` (head-major).
+    ///
+    /// The caller hands us Q/K/V as `[nTokens, nHeads*headDim]`. Q's
+    /// memory layout is byte-identical to the kernel's
+    /// `[nQuery, nQHeads, headDim]` (same row-major tensor with a
+    /// different shape annotation). K/V need a `[nTokens, nHeads,
+    /// headDim]` → `[nHeads, nTokens, headDim]` transpose; we do it
+    /// CPU-side (one readback + copy) for the same reason the
+    /// Paligemma / SmolVLM2 migrations do — there is no
+    /// `Ops.transpose` wrapper. The transpose cost is dwarfed by the
+    /// O(n²·d) attention kernel, and we get a fully GPU-resident
+    /// softmax / weighted-V loop in exchange.
+    private func gpuAttention(q: Tensor, k: Tensor, v: Tensor,
+                              nTokens: Int, device: Device,
+                              on cmd: MTLCommandBuffer) -> Tensor {
+        // Flush Q/K/V projections so we can read K/V back for the
+        // CPU-side head-major transpose.
+        cmd.commit()
+        cmd.waitUntilCompleted()
+
+        let kHeadMajor = transposeTokenToHeadMajor(
+            k, nTokens: nTokens, device: device)
+        let vHeadMajor = transposeTokenToHeadMajor(
+            v, nTokens: nTokens, device: device)
+        // Q in its current `[nTokens, nHeads*headDim]` layout is
+        // byte-identical to `[nQuery, nQHeads, headDim]` — no copy.
+        let qReshaped = q.reshaped(to: [nTokens, nHeads, headDim])
+
+        let cmd2 = device.makeCommandBuffer()
+        let attn = Ops.sdpaBidirectional(
+            q: qReshaped, k: kHeadMajor, v: vHeadMajor,
+            nQHeads: nHeads, nKVHeads: nHeads, headDim: headDim,
+            baseKV: 0, nQuery: nTokens, kvStride: nTokens,
+            scale: scale, on: cmd2)
+        cmd2.commit()
+        cmd2.waitUntilCompleted()
+        // Kernel output is `[nQuery, nQHeads, headDim]` — byte-identical
+        // to the `[nTokens, nHeads*headDim]` flat layout o_proj expects.
+        return attn.reshaped(to: [nTokens, nHeads * headDim])
+    }
+
+    /// GPU bidirectional MHA dispatched via `Ops.sdpaMulti(causal:false)`
+    /// — the head_dim=128 variant. Same layout contract as
+    /// `gpuAttention`. Used when this tower's head_dim is 128.
+    private func gpuAttentionMulti(q: Tensor, k: Tensor, v: Tensor,
+                                   nTokens: Int, device: Device,
+                                   on cmd: MTLCommandBuffer) -> Tensor {
+        cmd.commit()
+        cmd.waitUntilCompleted()
+
+        let kHeadMajor = transposeTokenToHeadMajor(
+            k, nTokens: nTokens, device: device)
+        let vHeadMajor = transposeTokenToHeadMajor(
+            v, nTokens: nTokens, device: device)
+        let qReshaped = q.reshaped(to: [nTokens, nHeads, headDim])
+
+        let cmd2 = device.makeCommandBuffer()
+        let attn = Ops.sdpaMulti(
+            q: qReshaped, k: kHeadMajor, v: vHeadMajor,
+            nQHeads: nHeads, nKVHeads: nHeads, headDim: headDim,
+            baseKV: 0, nQuery: nTokens, kvStride: nTokens,
+            causal: false, scale: scale, on: cmd2)
+        cmd2.commit()
+        cmd2.waitUntilCompleted()
+        return attn.reshaped(to: [nTokens, nHeads * headDim])
+    }
+
+    /// `[nTokens, nHeads*headDim]` (token-major) →
+    /// `[nHeads, nTokens, headDim]` (head-major) via a CPU pass.
+    /// Used to repack K/V into the layout the sdpa kernels expect.
+    private func transposeTokenToHeadMajor(
+        _ t: Tensor, nTokens: Int, device: Device
+    ) -> Tensor {
+        let src = t.toFloatArray()
+        var dst = [Float](repeating: 0, count: nTokens * nHeads * headDim)
+        let stride = nHeads * headDim
+        // src[tok, h, d] = src[tok*stride + h*headDim + d]
+        // dst[h, tok, d] = dst[h*nTokens*headDim + tok*headDim + d]
+        for tok in 0..<nTokens {
+            let srcRow = tok * stride
+            for h in 0..<nHeads {
+                let srcH = srcRow + h * headDim
+                let dstH = h * nTokens * headDim + tok * headDim
+                for d in 0..<headDim { dst[dstH + d] = src[srcH + d] }
+            }
+        }
+        let out = Tensor.empty(shape: [nHeads, nTokens, headDim],
+                               dtype: t.dtype, device: device)
+        ImagePreprocessing.copyFloats(dst, into: out)
+        return out
     }
 
     /// CPU bidirectional multi-head attention over `nTokens` patch

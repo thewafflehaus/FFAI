@@ -310,12 +310,21 @@ struct OpsValidationTests {
     @Test("sdpaBidirectional rejects unsupported head_dims")
     func sdpaBidirectionalRejectsBadHeadDim() {
         // 128 is sdpaMulti's territory; arbitrary other dims have no
-        // matching kernel.
-        for hd in [16, 48, 80, 96, 128, 192, 256] {
+        // matching kernel. Supported dims today are
+        // OpsValidation.sdpaBidirectionalSupportedHeadDims = {32, 64,
+        // 72, 80, 96} — Qwen2-VL (96) and Qwen2.5-VL (80) added 2026-05.
+        for hd in [16, 48, 100, 112, 128, 192, 256] {
             #expect(OpsValidation.validateSdpaBidirectional(
                 headDim: hd, nQHeads: 8, nKVHeads: 8,
                 baseKV: 0, nQuery: 8, kvStride: 8) != nil,
                 "head_dim \(hd) should be rejected")
+        }
+        // Smoke the positive side too — every supported dim accepts.
+        for hd in [32, 64, 72, 80, 96] {
+            #expect(OpsValidation.validateSdpaBidirectional(
+                headDim: hd, nQHeads: 8, nKVHeads: 8,
+                baseKV: 0, nQuery: 8, kvStride: 8) == nil,
+                "head_dim \(hd) should be accepted")
         }
     }
 

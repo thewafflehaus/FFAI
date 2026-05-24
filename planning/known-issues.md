@@ -108,40 +108,78 @@ on this branch's `kernels.metallib` is enough to trigger it. That
 makes the kernel-side hypothesis (one of the freshly-regenerated
 kernels) substantially more likely than an FFAI-side busy-loop.
 
-## Gap 3 (GPU vision attention) — blocked on metaltile
+## Vision tower SDPA — head_dim coverage
 
-Closing this gap was scoped as wiring the four CPU-bound vision
-towers (Idefics3, PaliGemma, GlmOcr, FastVLM) through
-`Ops.sdpaMulti(causal: false)` for bidirectional attention plus
-adding `Ops.conv2dDepthwise(...)` for FastVLM's FastViTHD chain.
+VLM vision towers run bidirectional multi-head attention; FFAI now
+ships GPU kernels for every head_dim in the cached zoo:
 
-**Audit finding (2026-05-23):** `Ops.sdpaMulti` is **head_dim-128
-only** by hard kernel constraint — each lane owns 4 elements
-unconditionally (`OpsValidation.validateSdpaMulti`:158). SigLIP /
-CLIP / FastViT vision towers use head_dim in {64, 72, 80, …}; none
-match. Migrating the four families to GPU SDPA therefore needs a new
-metaltile kernel with parametric head_dim (`ffai/sdpa_bidirectional_*`
-or extending `sdpa_multi` per-head-dim like the decode kernel does
-for d64 / d128 / d256 / d512). FFAI-side, none of this can be
-unblocked yet.
+| head_dim | Kernel | Models |
+|---|---|---|
+| 32  | `Ops.sdpaBidirectional` (d32) | FastVLM (FastViT-HD) |
+| 64  | `Ops.sdpaBidirectional` (d64) | SigLIP-base, CLIP-L, Mistral3, Gemma 4 E2B/E4B, Qwen3-VL 2B/4B |
+| 72  | `Ops.sdpaBidirectional` (d72, ragged) | SigLIP-So400m → Paligemma, Gemma 3 VL, Gemma 4 26B/31B, Idefics3, Qwen3-VL-30B-A3B |
+| 80  | `Ops.sdpaBidirectional` (d80, ragged) | Qwen2.5-VL |
+| 96  | `Ops.sdpaBidirectional` (d96) | Qwen2-VL |
+| 128 | `Ops.sdpaMulti(causal: false)` | Pixtral, Mistral3 Pixtral-base, GlmOcr |
 
-FastVLM additionally needs `conv2d_depthwise_*` (depthwise +
-pointwise conv chain in FastViTHD's RepMixerBlock — `Ops.gemm`
-covers pointwise, but no depthwise wrapper exists).
+`Sources/FFAI/VisionEncoder.swift::forward` dispatches based on the
+tower's `headDim`. Unknown head_dims (e.g. d80 at SigLIP-So-400m
+variants not yet seen) fall back to the parallel CPU `concurrentPerform`
+core. No tracked head_dim gaps as of 2026-05-24.
 
-What's already mitigated in FFAI today: all four families' CPU
-attention is parallelised across `(head, token)` with
-`DispatchQueue.concurrentPerform`. That collapsed Whisper /
-SigLIP-896 from minutes to seconds. The remaining cold-inference
-tail is FastVLM at 1024px specifically — its early stages run
-256×256×96 + 128×128×192 depthwise convs that need the GPU port.
+The remaining known cold-inference outlier is FastVLM at 1024px: its
+FastViT-HD stem has 256×256×96 + 128×128×192 depthwise convs that
+still run CPU because no `Ops.conv2dDepthwise(...)` wrapper exists.
+Tracked as a separate metaltile follow-up.
 
-**Re-scoped Phase 6.5b (metaltile work):**
-1. `ffai_sdpa_bidirectional_{d64,d72,d80,d128}_{f16,bf16}` — single
-   kernel parametric over head_dim via constexpr lane geometry, or
-   per-head-dim specialised variants matching the SDPA decode pattern.
-2. `conv2d_depthwise_{kh}_{kw}_{stride}_{f16,bf16}` — direct
-   sliding-window MAC, no im2col blow-up.
-3. FFAI Ops wrappers + migrate the four families.
+## Integration bisect — 2026-05-23/24 first-run findings
 
-Tracked, but blocked outside this session.
+Per-suite serialised bisect run via `make integration-bisect`
+(commit `6047340`+) surfacing failures across all 74 integration
+tests. Fixed during the run:
+
+- **ChatterboxIntegrationTests** — was failing on `unsupported
+  dtype I64 for tensor "s3gen.speaker_encoder.xvector.block1.tdnnd6.
+  nonlinear2.batchnorm.num_batches_tracked"`. Fixed in commit
+  `af74ce7` by adding `.i64` / `.u64` to `DType` + making
+  `SafeTensorsBundle` skip tensors with unsupported dtypes (Debug
+  log only). Now PASSes in 21s.
+
+- **CohereTranscribeIntegrationTests** — HF 404. Original
+  `mlx-community/c4ai-aya-expanse-transcribe-mlx` archived; Cohere
+  re-released as `cohere-transcribe-03-2026`. Fixed in commit
+  `6ad9e73` pointing test at `mlx-community/cohere-transcribe-03-2026-mlx-8bit`.
+
+Triage queue from same run (root-cause TBD — most look pre-existing):
+
+- **DeepSeekR1DistillIntegrationTests** — R1-Distill-Llama-8B
+  PASSes; R1-Distill-Qwen-1.5B produces degenerate output
+  (token 15 repeated). Manually verified `mt_add_rms_norm` at
+  hidden=1536 with `maxResidErr=0`, `maxNormedErr=1.4e-6` against
+  CPU reference — fusion is NOT the regressor. Likely a pre-
+  existing Qwen2 (R1-Distill base architecture) issue.
+
+- **FastVLMIntegrationTests** — `Swift/ContiguousArrayBuffer.swift:
+  692: Fatal error: Index out of range` during the `load` test.
+  Crash happens before the GPU-SDPA path runs, so the VLM agent's
+  migration is not the cause. Suspect the SafeTensors-skip change
+  or a pre-existing array index in the FastViT-HD loader.
+
+- **FireRedASR2IntegrationTests** — `FFAI/Layers.swift:19:
+  Precondition failed: Linear: weight must be 2D`. Some weight
+  tensor is non-2D where a `Linear` is expected — checkpoint shape
+  vs loader-side reshape mismatch.
+
+- **FishSpeechIntegrationTests** — `safetensors file not found:
+  models--mlx-community--fish-audio-s2-pro-8bit/snapshots/.../
+  model.safetensors`. Snapshot directory exists, file is missing —
+  incomplete cache. Needs re-download or upstream check.
+
+- **GLMASRIntegrationTests** — `Ops.swift:1072 Precondition failed:
+  dequantGemv: input 65280 ≠ in_dim 1280`. Caller is feeding the
+  wrong-rank tensor (looks like 51 rows of in_dim=1280 flat). Pre-
+  existing shape bug in the GLMASR encoder/decoder.
+
+Bisect continues; this list will be appended-to as more suites
+complete.
+

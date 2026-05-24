@@ -67,23 +67,33 @@ struct SafeTensorsErrorTests {
         }
     }
 
-    @Test("unsupported dtype throws")
+    @Test("unsupported dtype skips with debug log, missingTensor on lookup")
     func unsupportedDType() throws {
+        // Build a bundle with a single F64 (unsupported) tensor entry.
+        // FFAI cannot represent F64 as a kernel dtype (we model i64 / u64
+        // but not f64) — the loader should LOG + SKIP rather than throw,
+        // so checkpoints that include training-only buffers in exotic
+        // dtypes still load. Inference code that asks for the skipped
+        // tensor by name later gets the normal `missingTensor` error.
         var bytes = [UInt8]()
         let payload = #"{"x": {"dtype": "F64", "shape": [1], "data_offsets": [0, 8]}}"#
         var len = UInt64(payload.utf8.count)
         withUnsafeBytes(of: &len) { bytes.append(contentsOf: $0) }
         bytes.append(contentsOf: payload.utf8)
-        // Pad with 8 bytes of fake tensor data
+        // Pad with 8 bytes of fake tensor data (would be the F64 value).
         bytes.append(contentsOf: [UInt8](repeating: 0, count: 8))
         let url = try Self.writeRaw(bytes)
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+        // Loading the file must SUCCEED, with the unsupported tensor
+        // silently skipped.
+        let file = try SafeTensorsFile(url: url)
         do {
-            _ = try SafeTensorsFile(url: url)
-            Issue.record("expected throw")
+            _ = try file.tensor(named: "x")
+            Issue.record("expected missingTensor — F64 should have been skipped")
         } catch let e as SafeTensorsError {
-            if case .unsupportedDType = e { /* ok */ } else {
-                Issue.record("expected .unsupportedDType, got \(e)")
+            if case .missingTensor = e { /* ok */ } else {
+                Issue.record("expected .missingTensor, got \(e)")
             }
         }
     }

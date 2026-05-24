@@ -2255,6 +2255,48 @@ public enum Ops {
                 head_dim: hd, n_q_heads: nqh, base_kv: bkv, n_query: nq,
                 kv_stride: kvs, heads_per_group: hpg, scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (80, .f32):
+            MetalTileKernels.ffai_sdpa_bidirectional_d80_f32(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, out: result.buffer, outOffset: result.offset,
+                head_dim: hd, n_q_heads: nqh, base_kv: bkv, n_query: nq,
+                kv_stride: kvs, heads_per_group: hpg, scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (80, .f16):
+            MetalTileKernels.ffai_sdpa_bidirectional_d80_f16(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, out: result.buffer, outOffset: result.offset,
+                head_dim: hd, n_q_heads: nqh, base_kv: bkv, n_query: nq,
+                kv_stride: kvs, heads_per_group: hpg, scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (80, .bf16):
+            MetalTileKernels.ffai_sdpa_bidirectional_d80_bf16(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, out: result.buffer, outOffset: result.offset,
+                head_dim: hd, n_q_heads: nqh, base_kv: bkv, n_query: nq,
+                kv_stride: kvs, heads_per_group: hpg, scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (96, .f32):
+            MetalTileKernels.ffai_sdpa_bidirectional_d96_f32(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, out: result.buffer, outOffset: result.offset,
+                head_dim: hd, n_q_heads: nqh, base_kv: bkv, n_query: nq,
+                kv_stride: kvs, heads_per_group: hpg, scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (96, .f16):
+            MetalTileKernels.ffai_sdpa_bidirectional_d96_f16(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, out: result.buffer, outOffset: result.offset,
+                head_dim: hd, n_q_heads: nqh, base_kv: bkv, n_query: nq,
+                kv_stride: kvs, heads_per_group: hpg, scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (96, .bf16):
+            MetalTileKernels.ffai_sdpa_bidirectional_d96_bf16(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, out: result.buffer, outOffset: result.offset,
+                head_dim: hd, n_q_heads: nqh, base_kv: bkv, n_query: nq,
+                kv_stride: kvs, heads_per_group: hpg, scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
         default:
             fatalError("Ops.sdpaBidirectional: unsupported (headDim=\(headDim), dtype=\(q.dtype))")
         }

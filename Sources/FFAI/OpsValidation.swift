@@ -222,15 +222,19 @@ public enum OpsValidation {
     // Caller MUST supply one of the three supported head_dims.
 
     /// Whether `Ops.sdpaBidirectional` has a kernel for this head_dim.
-    public static let sdpaBidirectionalSupportedHeadDims: Set<Int> = [32, 64, 72]
+    /// d32: FastViT-HD. d64: SigLIP-base / CLIP-L / Mistral3 vision /
+    /// Gemma4-E2B/E4B / Qwen3-VL 2B/4B. d72: SigLIP-So400m
+    /// (Paligemma, Gemma3VL, Gemma4-26B/31B, Idefics3, Qwen3-VL 30B-A3B).
+    /// d80: Qwen2.5-VL. d96: Qwen2-VL. (d128 lives in sdpa_multi.)
+    public static let sdpaBidirectionalSupportedHeadDims: Set<Int> = [32, 64, 72, 80, 96]
 
     public static func validateSdpaBidirectional(
         headDim: Int, nQHeads: Int, nKVHeads: Int,
         baseKV: Int, nQuery: Int, kvStride: Int
     ) -> String? {
         if !sdpaBidirectionalSupportedHeadDims.contains(headDim) {
-            return "head_dim must be one of {32, 64, 72} (got \(headDim)); "
-                + "ffai_sdpa_bidirectional has no other variants yet"
+            return "head_dim must be one of {32, 64, 72, 80, 96} (got "
+                + "\(headDim)); for d128 use Ops.sdpaMulti(causal: false)"
         }
         if nQHeads <= 0 {
             return "nQHeads must be positive (got \(nQHeads))"
