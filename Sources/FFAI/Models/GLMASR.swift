@@ -472,9 +472,14 @@ public final class GLMASRModel: @unchecked Sendable {
                                    eps: layer.selfAttnNorm.eps,
                                    nRows: seqLen, rowSize: hidden, on: cmd)
         // Q/K/V projections via GPU gemm (handles quantized weights).
-        let qRaw = layer.qProj(normed, on: cmd)
-        let kRaw = layer.kProj(normed, on: cmd)
-        let v    = layer.vProj(normed, on: cmd)
+        // `normed` is [seqLen, hidden] — must go through callMany so the
+        // dispatch is `mt_gemm` / `dequantGemmDynamicM`, not the single-row
+        // `mt_gemv` / `dequantGemv` (which would treat the flat
+        // seqLen*hidden length as one row and trip the in_dim precondition,
+        // crashing as "input 65280 ≠ in_dim 1280" per the 2026-05-24 bisect).
+        let qRaw = layer.qProj.callMany(normed, t: seqLen, on: cmd, device: device)
+        let kRaw = layer.kProj.callMany(normed, t: seqLen, on: cmd, device: device)
+        let v    = layer.vProj.callMany(normed, t: seqLen, on: cmd, device: device)
         cmd.commit(); cmd.waitUntilCompleted()
 
         // Bias add (Linear.bias is non-nil for q/k/v/out_proj in GLM-ASR).
@@ -496,9 +501,11 @@ public final class GLMASRModel: @unchecked Sendable {
             seqLen: seqLen, nHeads: nHeads, headDim: headDim,
             scale: layer.scale, device: device)
 
-        // out_proj + residual.
+        // out_proj + residual. attnCtx is [seqLen, hidden] flat — use
+        // callMany so the dispatch is a single batched GEMM instead of a
+        // single-row gemv that would mis-interpret the flat length.
         let cmd2 = device.makeCommandBuffer()
-        let outRaw  = layer.outProj(attnCtx, on: cmd2)
+        let outRaw  = layer.outProj.callMany(attnCtx, t: seqLen, on: cmd2, device: device)
         let outBiased = addRowBiasIfPresent(outRaw,
                                             bias: outProjBias(layer),
                                             nRows: seqLen, rowSize: hidden,
@@ -512,7 +519,8 @@ public final class GLMASRModel: @unchecked Sendable {
                                     bias: layer.finalNorm.bias,
                                     eps: layer.finalNorm.eps,
                                     nRows: seqLen, rowSize: hidden, on: cmd2)
-        let ff1  = layer.fc1(normed2, on: cmd2)
+        // fc1 / fc2 take [seqLen, *] inputs → callMany for batched GEMM.
+        let ff1  = layer.fc1.callMany(normed2, t: seqLen, on: cmd2, device: device)
         cmd2.commit(); cmd2.waitUntilCompleted()
 
         var ff1Vals = addRowBiasIfPresent(ff1, bias: fc1Bias(layer),
@@ -531,7 +539,7 @@ public final class GLMASRModel: @unchecked Sendable {
         AudioPreprocessing.copyFloats(ff1Vals, into: geluT)
 
         let cmd3 = device.makeCommandBuffer()
-        let ff2Out = layer.fc2(geluT, on: cmd3)
+        let ff2Out = layer.fc2.callMany(geluT, t: seqLen, on: cmd3, device: device)
         let ff2B   = addRowBiasIfPresent(ff2Out, bias: fc2Bias(layer),
                                           nRows: seqLen, rowSize: hidden,
                                           device: device)

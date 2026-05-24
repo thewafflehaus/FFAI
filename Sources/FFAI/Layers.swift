@@ -69,19 +69,47 @@ public final class Linear: Module {
 
     /// T-batched. `x` is `[T, inDim]` flat row-major, returns
     /// `[T, outDim]` flat. Dispatches `Ops.gemm` (one kernel, no per-row
-    /// host overhead). Bias path is unimplemented — the families that
-    /// currently call this (Qwen3-series) do not use linear biases.
+    /// host overhead). When the Linear carries a bias (Qwen 2.x QKV
+    /// projections, GLM-ASR encoder, etc.) the `[outDim]` bias is tiled
+    /// to `[T, outDim]` and folded in via `Ops.add` on the same command
+    /// buffer — one extra dispatch, no host roundtrip. Without this,
+    /// every biased multi-row caller (Qwen 2.5 1.5B/7B forwardMulti,
+    /// GLM-ASR encoder, etc.) would crash on the old "bias broadcast
+    /// not implemented" precondition.
     ///
     /// (Rebase 2026-05-23: keep Tom's `callMany` API, drop my parallel
     /// `batched(_:nRows:)` from `3a87b78`. Both did the same job;
     /// Tom's QuantizedLinear.callMany variant actually wraps the
     /// `mt_qmm_mma`-backed `Ops.dequantGemmDynamicM` kernel — what my
-    /// doc comment had flagged as a TODO. Caller updates in Llama /
-    /// Qwen3 forwardMulti come in this same rebase commit.)
+    /// doc comment had flagged as a TODO.)
     public func callMany(_ x: Tensor, t: Int, on cmd: MTLCommandBuffer) -> Tensor {
-        precondition(bias == nil,
-                     "Linear.callMany: bias broadcast over T rows not implemented; no Qwen3-series caller needs it today")
-        return Ops.gemm(weight: weight, input: x, nRows: t, on: cmd)
+        let y = Ops.gemm(weight: weight, input: x, nRows: t, on: cmd)
+        guard let b = bias else { return y }
+        // Tile [outDim] → [T, outDim] on the CPU then add. Bias tensors
+        // are tiny (a few KB at most), so the host-side replication is
+        // in the noise relative to the GEMM that just ran.
+        let outDim = weight.shape[0]
+        let biasVals = b.toFloatArray()
+        var tiledFlat = [Float](repeating: 0, count: t * outDim)
+        for r in 0..<t {
+            let base = r * outDim
+            for c in 0..<outDim { tiledFlat[base + c] = biasVals[c] }
+        }
+        let tiled = Tensor.empty(shape: [t, outDim], dtype: y.dtype)
+        switch y.dtype {
+        case .f32:  tiled.copyIn(from: tiledFlat)
+        case .f16:  tiled.copyIn(from: tiledFlat.map { Float16($0) })
+        case .bf16:
+            tiled.copyIn(from: tiledFlat.map { v -> UInt16 in
+                let bits = v.bitPattern
+                let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
+                return UInt16(rounded >> 16)
+            })
+        default:
+            preconditionFailure(
+                "Linear.callMany: bias broadcast unsupported for dtype \(y.dtype)")
+        }
+        return Ops.add(y, tiled, on: cmd)
     }
 }
 
