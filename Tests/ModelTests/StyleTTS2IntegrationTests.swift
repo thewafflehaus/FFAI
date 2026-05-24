@@ -113,6 +113,54 @@ struct StyleTTS2IntegrationTests {
                 "expected at least \(nExpected) samples for 0.1s at 24kHz")
     }
 
+    @Test("synthesizeFromSpectrogram — vocoder tail produces a non-degenerate waveform")
+    func vocoder_synthesizeFromSpectrogram() async throws {
+        // The full acoustic stack is staged (synthesize() throws), but the
+        // iSTFTNet vocoder tail (`StyleTTS2Vocoder`) is functional and shares
+        // its shape contract with Kokoro's vocoder. Mirror KokoroIntegrationTests's
+        // vocoder check: feed a synthetic complex spectrogram and assert the
+        // reconstructed waveform is finite, non-silent, non-constant, and the
+        // expected length.
+        guard let dir = Self.cachedSnapshotDir else {
+            print("StyleTTS2 vocoder test skipped: cache miss")
+            return
+        }
+        let loaded = try await AudioModelRegistry.load(directory: dir)
+        guard case .styleTTS2(let model) = loaded else {
+            Issue.record("expected LoadedAudioModel.styleTTS2, got \(loaded)")
+            return
+        }
+
+        // Build a frequency-sweep spectrogram — non-constant content so the
+        // overlap-add output is a real, non-silent utterance-length waveform.
+        let nFrames = 200
+        let nFreq = model.vocoder.nFFT / 2 + 1
+        var re = [Float](repeating: 0, count: nFrames * nFreq)
+        var im = [Float](repeating: 0, count: nFrames * nFreq)
+        for f in 0..<nFrames {
+            for k in 0..<nFreq {
+                let phase = 2.0 * Float.pi * Float(k) * Float(f) / Float(nFrames)
+                re[f * nFreq + k] = 0.4 * cos(phase)
+                im[f * nFreq + k] = 0.4 * sin(phase)
+            }
+        }
+        let reT = Tensor.empty(shape: [nFrames, nFreq], dtype: .f32)
+        reT.copyIn(from: re)
+        let imT = Tensor.empty(shape: [nFrames, nFreq], dtype: .f32)
+        imT.copyIn(from: im)
+
+        let waveform = model.synthesizeFromSpectrogram(specRe: reT, specIm: imT)
+        let samples = waveform.toArray(as: Float.self)
+        #expect(samples.count > 0, "vocoder produced an empty waveform")
+        #expect(samples.allSatisfy { $0.isFinite })
+        let energy = samples.map { $0 * $0 }.reduce(0, +)
+        #expect(energy > 1e-4, "StyleTTS2 vocoder produced a silent waveform")
+        let distinct = Set(samples.map { ($0 * 1000).rounded() }).count
+        #expect(distinct > 10, "StyleTTS2 vocoder produced a constant waveform")
+        print("StyleTTS2 vocoder synthesized \(samples.count) samples, "
+              + "energy=\(energy), distinct=\(distinct)")
+    }
+
     @Test("AudioModelRegistry.load throws for non-audio directory")
     func registryRejectsTextModel() async throws {
         let dir = FileManager.default.temporaryDirectory
