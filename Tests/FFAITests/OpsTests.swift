@@ -877,6 +877,55 @@ struct OpsTests {
         }
     }
 
+    @Test("sdpaBidirectional — d32/d64/d72 uniform K give mean V (no-causal contract)")
+    func sdpaBidirectionalUniformKMeansV() {
+        autoreleasepool {
+            // Vision-tower contract: every query attends every key.
+            // With identical K rows, softmax is uniform → each output
+            // equals the plain mean of V across the attended block.
+            // Cover every supported head_dim so the routing in
+            // Ops.sdpaBidirectional is exercised end-to-end.
+            for headDim in [32, 64, 72] {
+                let nQHeads = 2, nKVHeads = 1
+                let baseKV = 0, nQuery = 4
+                let kvStride = baseKV + nQuery
+                let scale = 1.0 / Float(Double(headDim).squareRoot())
+
+                let q = Tensor.empty(shape: [nQuery, nQHeads, headDim], dtype: .f32)
+                q.copyIn(from: (0..<nQuery * nQHeads * headDim).map { Float($0 % 7) * 0.1 })
+
+                // K: every row the same constant vector → uniform scores.
+                let k = Tensor.empty(shape: [nKVHeads, kvStride, headDim], dtype: .f32)
+                k.copyIn(from: [Float](repeating: 0.5,
+                                       count: nKVHeads * kvStride * headDim))
+
+                // V: row t holds the constant value `t` so mean is easy.
+                var vData = [Float](repeating: 0, count: nKVHeads * kvStride * headDim)
+                for t in 0..<kvStride {
+                    for d in 0..<headDim { vData[t * headDim + d] = Float(t) }
+                }
+                let v = Tensor.empty(shape: [nKVHeads, kvStride, headDim], dtype: .f32)
+                v.copyIn(from: vData)
+
+                let cmd = Device.shared.makeCommandBuffer()
+                let out = Ops.sdpaBidirectional(
+                    q: q, k: k, v: v,
+                    nQHeads: nQHeads, nKVHeads: nKVHeads, headDim: headDim,
+                    baseKV: baseKV, nQuery: nQuery, kvStride: kvStride,
+                    scale: scale, on: cmd)
+                cmd.commit(); cmd.waitUntilCompleted()
+
+                // Every query attends V rows {0,1,2,3} → mean = 1.5.
+                let result = out.toArray(as: Float.self)
+                #expect(result.count == nQuery * nQHeads * headDim)
+                for value in result {
+                    #expect(abs(value - 1.5) < 1e-3,
+                            "headDim=\(headDim): expected mean V = 1.5, got \(value)")
+                }
+            }
+        }
+    }
+
     @Test("sdpaDecode f32 — head_dim 512 (Gemma 4 global layer)")
     func sdpaDecodeD512() {
         autoreleasepool {

@@ -2066,6 +2066,118 @@ public enum Ops {
         return result
     }
 
+    /// Multi-query **bidirectional** SDPA — every query attends the
+    /// full `[0, baseKV + nQuery)` range. Specialized variants for
+    /// head_dim ∈ {32, 64, 72} cover the VLM vision-tower spectrum
+    /// (FastViT-HD = 32; SigLIP / CLIP-L = 64; PaliGemma SigLIP-So400m
+    /// = 72). For head_dim = 128 use `sdpaMulti(causal: false)`.
+    ///
+    /// Same shape contract as `sdpaMulti`: Q / `out` layout
+    /// `[nQuery, nQHeads, headDim]`, K / V layout `[nKVHeads, kvStride,
+    /// headDim]`. The d=72 kernel uses a ragged 3-elements-per-lane
+    /// layout with bounds masking — lanes 24..31 are idle (25% lane
+    /// occupancy loss, kernel-internal, transparent to the wrapper).
+    ///
+    /// `ffai_sdpa_bidirectional_dN` is a reduction kernel — TPG=1024
+    /// is hard. See `OpsValidation.validateSdpaBidirectional` for the
+    /// invariant list and `metaltile/crates/metaltile-std/src/ffai/
+    /// sdpa_bidirectional.rs` for the dispatch contract.
+    public static func sdpaBidirectional(q: Tensor, k: Tensor, v: Tensor,
+                                         nQHeads: Int, nKVHeads: Int, headDim: Int,
+                                         baseKV: Int, nQuery: Int, kvStride: Int,
+                                         scale: Float,
+                                         on cmd: MTLCommandBuffer,
+                                         into out: Tensor? = nil) -> Tensor {
+        if let reason = OpsValidation.validateSdpaBidirectional(
+            headDim: headDim, nQHeads: nQHeads, nKVHeads: nKVHeads,
+            baseKV: baseKV, nQuery: nQuery, kvStride: kvStride
+        ) {
+            preconditionFailure("Ops.sdpaBidirectional: \(reason)")
+        }
+        let headsPerGroup = nQHeads / nKVHeads
+        let result = out ?? Tensor.empty(shape: [nQuery, nQHeads, headDim], dtype: q.dtype)
+        // TPG = 1024 (32 simdgroups × 32 lanes), one threadgroup per
+        // (query, q_head). Same machine-freeze hazard as sdpa_multi —
+        // never use elementwiseGrid (would make n_simd=0).
+        let threadsPerGroup = 1024
+        let grid = MTLSize(width: nQHeads * nQuery * threadsPerGroup, height: 1, depth: 1)
+        let tg = MTLSize(width: threadsPerGroup, height: 1, depth: 1)
+        let hd = UInt32(headDim)
+        let nqh = UInt32(nQHeads)
+        let bkv = UInt32(baseKV)
+        let nq = UInt32(nQuery)
+        let kvs = UInt32(kvStride)
+        let hpg = UInt32(headsPerGroup)
+        switch (headDim, q.dtype) {
+        case (32, .f32):
+            MetalTileKernels.ffai_sdpa_bidirectional_d32_f32(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, out: result.buffer, outOffset: result.offset,
+                head_dim: hd, n_q_heads: nqh, base_kv: bkv, n_query: nq,
+                kv_stride: kvs, heads_per_group: hpg, scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (32, .f16):
+            MetalTileKernels.ffai_sdpa_bidirectional_d32_f16(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, out: result.buffer, outOffset: result.offset,
+                head_dim: hd, n_q_heads: nqh, base_kv: bkv, n_query: nq,
+                kv_stride: kvs, heads_per_group: hpg, scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (32, .bf16):
+            MetalTileKernels.ffai_sdpa_bidirectional_d32_bf16(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, out: result.buffer, outOffset: result.offset,
+                head_dim: hd, n_q_heads: nqh, base_kv: bkv, n_query: nq,
+                kv_stride: kvs, heads_per_group: hpg, scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (64, .f32):
+            MetalTileKernels.ffai_sdpa_bidirectional_d64_f32(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, out: result.buffer, outOffset: result.offset,
+                head_dim: hd, n_q_heads: nqh, base_kv: bkv, n_query: nq,
+                kv_stride: kvs, heads_per_group: hpg, scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (64, .f16):
+            MetalTileKernels.ffai_sdpa_bidirectional_d64_f16(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, out: result.buffer, outOffset: result.offset,
+                head_dim: hd, n_q_heads: nqh, base_kv: bkv, n_query: nq,
+                kv_stride: kvs, heads_per_group: hpg, scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (64, .bf16):
+            MetalTileKernels.ffai_sdpa_bidirectional_d64_bf16(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, out: result.buffer, outOffset: result.offset,
+                head_dim: hd, n_q_heads: nqh, base_kv: bkv, n_query: nq,
+                kv_stride: kvs, heads_per_group: hpg, scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (72, .f32):
+            MetalTileKernels.ffai_sdpa_bidirectional_d72_f32(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, out: result.buffer, outOffset: result.offset,
+                head_dim: hd, n_q_heads: nqh, base_kv: bkv, n_query: nq,
+                kv_stride: kvs, heads_per_group: hpg, scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (72, .f16):
+            MetalTileKernels.ffai_sdpa_bidirectional_d72_f16(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, out: result.buffer, outOffset: result.offset,
+                head_dim: hd, n_q_heads: nqh, base_kv: bkv, n_query: nq,
+                kv_stride: kvs, heads_per_group: hpg, scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (72, .bf16):
+            MetalTileKernels.ffai_sdpa_bidirectional_d72_bf16(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset, out: result.buffer, outOffset: result.offset,
+                head_dim: hd, n_q_heads: nqh, base_kv: bkv, n_query: nq,
+                kv_stride: kvs, heads_per_group: hpg, scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.sdpaBidirectional: unsupported (headDim=\(headDim), dtype=\(q.dtype))")
+        }
+        return result
+    }
+
     // MARK: - AURA (Phase 5d)
 
     /// AURA fused encode for `rows` flat vectors of length `dim`.

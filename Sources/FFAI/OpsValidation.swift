@@ -179,6 +179,48 @@ public enum OpsValidation {
         return nil
     }
 
+    // ─── sdpa_bidirectional_d{32,64,72} ────────────────────────────
+    //
+    // `ffai_sdpa_bidirectional_dN` is the always-bidirectional sibling
+    // of `sdpa_multi`, exposed at N ∈ {32, 64, 72} for vision-tower
+    // head dimensions (FastViT-HD, SigLIP / CLIP, PaliGemma SigLIP-So400m
+    // respectively). Same reduction-mode hazard as `sdpa_multi`: TPG
+    // below 32 → infinite GPU loop. Wrapper hard-fixes TPG = 1024.
+    // Caller MUST supply one of the three supported head_dims.
+
+    /// Whether `Ops.sdpaBidirectional` has a kernel for this head_dim.
+    public static let sdpaBidirectionalSupportedHeadDims: Set<Int> = [32, 64, 72]
+
+    public static func validateSdpaBidirectional(
+        headDim: Int, nQHeads: Int, nKVHeads: Int,
+        baseKV: Int, nQuery: Int, kvStride: Int
+    ) -> String? {
+        if !sdpaBidirectionalSupportedHeadDims.contains(headDim) {
+            return "head_dim must be one of {32, 64, 72} (got \(headDim)); "
+                + "ffai_sdpa_bidirectional has no other variants yet"
+        }
+        if nQHeads <= 0 {
+            return "nQHeads must be positive (got \(nQHeads))"
+        }
+        if nKVHeads <= 0 {
+            return "nKVHeads must be positive (got \(nKVHeads))"
+        }
+        if !nQHeads.isMultiple(of: nKVHeads) {
+            return "nQHeads (\(nQHeads)) must be a multiple of nKVHeads (\(nKVHeads))"
+        }
+        if nQuery < 1 {
+            return "nQuery must be ≥ 1 (got \(nQuery))"
+        }
+        if baseKV < 0 {
+            return "baseKV must be non-negative (got \(baseKV))"
+        }
+        if baseKV + nQuery > kvStride {
+            return "baseKV+nQuery (\(baseKV + nQuery)) must not exceed kvStride "
+                + "(\(kvStride)) — kernel would read past cache"
+        }
+        return nil
+    }
+
     // ─── gemv ──────────────────────────────────────────────────────
     //
     // `mt_gemv` (MLX-derived). Adaptive `lsize` reduction → no GPU-pin

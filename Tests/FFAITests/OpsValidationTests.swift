@@ -252,6 +252,64 @@ struct OpsValidationTests {
             baseKV: 64, nQuery: 32, kvStride: 96) == nil)
     }
 
+    // ─── sdpaBidirectional ─────────────────────────────────────────
+
+    @Test("sdpaBidirectional accepts every supported head_dim")
+    func sdpaBidirectionalAcceptsLegal() {
+        // d32 (FastViT-HD): tiny per-head footprint, GQA fan-out.
+        #expect(OpsValidation.validateSdpaBidirectional(
+            headDim: 32, nQHeads: 4, nKVHeads: 2,
+            baseKV: 0, nQuery: 8, kvStride: 8) == nil)
+        // d64 (SigLIP-base / large, CLIP-L): the most common vision case.
+        #expect(OpsValidation.validateSdpaBidirectional(
+            headDim: 64, nQHeads: 12, nKVHeads: 12,
+            baseKV: 16, nQuery: 16, kvStride: 64) == nil)
+        // d72 (PaliGemma SigLIP-So400m): ragged 3-elems-per-lane layout.
+        #expect(OpsValidation.validateSdpaBidirectional(
+            headDim: 72, nQHeads: 16, nKVHeads: 16,
+            baseKV: 0, nQuery: 64, kvStride: 64) == nil)
+    }
+
+    @Test("sdpaBidirectional rejects unsupported head_dims")
+    func sdpaBidirectionalRejectsBadHeadDim() {
+        // 128 is sdpaMulti's territory; arbitrary other dims have no
+        // matching kernel.
+        for hd in [16, 48, 80, 96, 128, 192, 256] {
+            #expect(OpsValidation.validateSdpaBidirectional(
+                headDim: hd, nQHeads: 8, nKVHeads: 8,
+                baseKV: 0, nQuery: 8, kvStride: 8) != nil,
+                "head_dim \(hd) should be rejected")
+        }
+    }
+
+    @Test("sdpaBidirectional rejects non-integer GQA fan-out")
+    func sdpaBidirectionalRejectsBadGQA() {
+        #expect(OpsValidation.validateSdpaBidirectional(
+            headDim: 64, nQHeads: 7, nKVHeads: 4,
+            baseKV: 0, nQuery: 8, kvStride: 8) != nil)
+    }
+
+    @Test("sdpaBidirectional rejects empty block and negative baseKV")
+    func sdpaBidirectionalRejectsBadBlock() {
+        #expect(OpsValidation.validateSdpaBidirectional(
+            headDim: 64, nQHeads: 8, nKVHeads: 8,
+            baseKV: 0, nQuery: 0, kvStride: 8) != nil)
+        #expect(OpsValidation.validateSdpaBidirectional(
+            headDim: 64, nQHeads: 8, nKVHeads: 8,
+            baseKV: -1, nQuery: 8, kvStride: 8) != nil)
+    }
+
+    @Test("sdpaBidirectional rejects baseKV + nQuery > kvStride")
+    func sdpaBidirectionalRejectsOverflowingCache() {
+        #expect(OpsValidation.validateSdpaBidirectional(
+            headDim: 72, nQHeads: 8, nKVHeads: 8,
+            baseKV: 80, nQuery: 32, kvStride: 96) != nil)
+        // Exact fit is fine.
+        #expect(OpsValidation.validateSdpaBidirectional(
+            headDim: 72, nQHeads: 8, nKVHeads: 8,
+            baseKV: 64, nQuery: 32, kvStride: 96) == nil)
+    }
+
     // ─── gemm (multi-row) ──────────────────────────────────────────
 
     @Test("gemm accepts production projection shapes")
