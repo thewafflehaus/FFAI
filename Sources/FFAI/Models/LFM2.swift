@@ -896,6 +896,65 @@ public final class LFM2Model: LanguageModel {
         return lmHead(normed, on: cmd)
     }
 
+    /// Embedding-input forward — the VLM splice path. Identical to
+    /// `forward(tokenId:...)` minus the embedding gather: the `[hidden]`
+    /// row is supplied directly (a vision-encoder token, or a text-token
+    /// embedding the VL model looked up itself). LFM2-VL routes its text
+    /// backbone through this primitive.
+    ///
+    /// Mirrors the command-buffer discipline of `forward(tokenId:)`:
+    /// attention + MoE layers may commit the buffer they are handed, so
+    /// the layer stack runs on internal `workCmd` buffers (refreshed
+    /// after each committing layer) and only the final norm + lm_head
+    /// queue onto the caller's pristine `cmd`.
+    public var supportsEmbeddingInput: Bool { true }
+
+    public func forward(inputEmbedding: Tensor, position: Int,
+                        caches: [any LayerCacheProtocol],
+                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(inputEmbedding.elementCount == hidden,
+                     "LFM2Model.forward(inputEmbedding:): expected [\(hidden)], "
+                     + "got \(inputEmbedding.shape)")
+        var workCmd = device.makeCommandBuffer()
+        var h = inputEmbedding.reshaped(to: [hidden])
+
+        for (i, layer) in layers.enumerated() {
+            h = layer.decode(h, position: position, cache: caches[i],
+                             cmd: workCmd, device: device)
+            if let l = layer as? LFM2Layer, l.commitsCommandBuffer {
+                workCmd = device.makeCommandBuffer()
+            }
+        }
+
+        // After a committing layer `workCmd` is fresh + empty and `h` is
+        // resident. After a non-committing (conv + dense) layer `workCmd`
+        // still carries uncommitted work — commit it so `h` is resident
+        // before the caller's `cmd` reads it.
+        let lastCommitted = (layers.last as? LFM2Layer)?
+            .commitsCommandBuffer ?? false
+        if !lastCommitted {
+            workCmd.commit()
+            workCmd.waitUntilCompleted()
+        }
+
+        let normed = finalNorm(h, on: cmd)
+        return lmHead(normed, on: cmd)
+    }
+
+    /// Raw embedding-table lookup for one text token — the text-token
+    /// half of the VLM splice stream.
+    public func textEmbedding(tokenId: Int, device: Device) -> Tensor {
+        let cmd = device.makeCommandBuffer()
+        let tokenBuf = device.makeBuffer(length: 4)
+        var tid = UInt32(tokenId)
+        memcpy(tokenBuf.contents(), &tid, 4)
+        let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
+        let embed = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return embed
+    }
+
     /// Multi-token forward — Phase 6.6 prefill fast path. Loops
     /// `forward(tokenId:)` per row on the supplied `cmd`.
     ///

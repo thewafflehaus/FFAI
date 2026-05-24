@@ -383,13 +383,16 @@ extension Qwen3TTSBaseModel {
     /// 1. Explicit `model_type` / `architecture` match — highest priority.
     /// 2. Structural fallback: a Qwen3 architecture (`Qwen3ForCausalLM`
     ///    or `model_type == "qwen3"`) whose vocabulary exceeds the base
-    ///    Qwen3 size (151 936) and that declares a `sample_rate`.
+    ///    Qwen3 size (151 936) — the codec-token extension is the distinctive
+    ///    structural marker. (VyvoTTS-EN-Beta-4bit ships without a
+    ///    `sample_rate` field, so we no longer require it; the loader
+    ///    defaults to 24 kHz when missing.)
     ///
     /// Checkpoints that carry `talker_config` + `speaker_encoder_config`
     /// are NOT matched here — those belong to `Qwen3TTSModel` (the 12Hz
     /// Flash family).
     public static func handles(_ config: ModelConfig) -> Bool {
-        // Explicit model_type / architecture:
+        // Explicit model_type / architecture (canonical TTS-Base name):
         if let mt = config.modelType, modelTypes.contains(mt) { return true }
         if let arch = config.architecture, architectures.contains(arch) {
             return true
@@ -398,14 +401,17 @@ extension Qwen3TTSBaseModel {
         if config.has("talker_config") && config.has("speaker_encoder_config") {
             return false
         }
-        // Structural fallback: Qwen3 backbone + extended vocab + sample_rate.
+        // Structural fallback: a Qwen3 backbone (model_type "qwen3" OR
+        // architecture "Qwen3ForCausalLM") whose vocabulary exceeds the
+        // base Qwen3 size (151 936). VyvoTTS-EN-Beta-4bit ships
+        // architectures=["Qwen3ForCausalLM"] + model_type="qwen3" +
+        // vocab_size=180 352 — the codec-token extension is the
+        // distinguishing structural marker. The vocab guard keeps plain
+        // Qwen3 text checkpoints out of the audio routing path.
         let isQwen3 = (config.modelType == "qwen3")
             || (config.architecture == "Qwen3ForCausalLM")
-        // Base Qwen3 vocab is 151 936; TTS checkpoints extend it with codec
-        // tokens (151 679+ for VyvoTTS). Use 151 936 as the threshold so we
-        // never shadow a plain Qwen3 text checkpoint.
         let hasAudioVocab = (config.vocabSize ?? 0) > 151_936
-        return isQwen3 && hasAudioVocab && config.has("sample_rate")
+        return isQwen3 && hasAudioVocab
     }
 
     /// Load a Qwen3TTSBase checkpoint from a resolved snapshot directory.

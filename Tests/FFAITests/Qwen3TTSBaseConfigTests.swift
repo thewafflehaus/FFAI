@@ -190,8 +190,12 @@ struct Qwen3TTSBaseConfigTests {
         #expect(Qwen3TTSBaseModel.handles(cfg) == false)
     }
 
-    @Test("handles — Qwen3 with audio vocab but no sample_rate is rejected")
-    func handles_noSampleRateRejected() throws {
+    @Test("handles — Qwen3 with extended audio vocab is accepted even without sample_rate")
+    func handles_audioVocabAcceptedWithoutSampleRate() throws {
+        // VyvoTTS-EN-Beta-4bit ships without a top-level `sample_rate`
+        // field. The extended vocabulary (> 151 936) is the distinguishing
+        // codec-token marker; the loader defaults the rate to 24 kHz when
+        // the config omits it. Detection must accept this shape.
         let json = """
         {
           "model_type": "qwen3",
@@ -206,7 +210,7 @@ struct Qwen3TTSBaseConfigTests {
         }
         """
         let cfg = try makeConfig(json)
-        #expect(Qwen3TTSBaseModel.handles(cfg) == false)
+        #expect(Qwen3TTSBaseModel.handles(cfg) == true)
     }
 
     // ── Registry ──────────────────────────────────────────────────────

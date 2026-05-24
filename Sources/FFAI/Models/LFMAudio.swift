@@ -1367,10 +1367,14 @@ extension LFMAudioModel {
             modelType: "lfm2",
             raw: textConfigRaw)
 
-        // `lfm2LoadModelQuantized` reads weights with prefix `model.`
-        // but our bundle has them under `lfm.` prefix. Build a prefixed
-        // sub-bundle view.
-        let lfmBundle = bundle.prefixed("lfm.")
+        // `lfm2LoadModelQuantized` reads weights under the canonical
+        // `model.embed_tokens.weight` / `model.layers.N.*` prefix. The
+        // LFM2.5-Audio checkpoint flattens the backbone weights under
+        // `lfm.embed_tokens.weight` / `lfm.layers.N.*` (no inner
+        // `model.` namespace). Strip the `lfm.` prefix and then prepend
+        // `model.` to lookups so the standard LFM2 loader binds without
+        // modification.
+        let lfmBundle = bundle.prefixed("lfm.").withAddedPrefix("model.")
         let quant = modelConfig.quantization
         let lfmModel = try lfm2LoadModelQuantized(
             config: textConfig, weights: lfmBundle,

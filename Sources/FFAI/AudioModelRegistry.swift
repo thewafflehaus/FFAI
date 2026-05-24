@@ -134,6 +134,11 @@ public enum AudioModelRegistry {
         if QwenOmniModel.handles(config) { return Capability.omniAudio }
         if WhisperModel.handles(config) { return Capability.speechToText }
         if SenseVoiceModel.handles(config) { return Capability.speechToText }
+        // StyleTTS2 / KittenTTS before Kokoro: Kokoro's structural fallback
+        // (`istftnet + n_token`) also matches KittenTTS's `kitten_tts`
+        // model_type. StyleTTS2's stricter structural check
+        // (`n_token + istftnet + plbert`) routes Kitten precisely.
+        if StyleTTS2Model.handles(config) { return Capability.textToSpeech }
         if KokoroModel.handles(config) { return Capability.textToSpeech }
         if MarvisModel.handles(config) { return Capability.textToSpeech }
         if LlamaTTSModel.handles(config) { return Capability.textToSpeech }
@@ -149,7 +154,6 @@ public enum AudioModelRegistry {
         if GLMASRModel.handles(config) { return Capability.speechToText }
         if PocketTTSModel.handles(config) { return Capability.textToSpeech }
         if SopranoModel.handles(config) { return Capability.textToSpeech }
-        if StyleTTS2Model.handles(config) { return Capability.textToSpeech }
         if GraniteSpeech.handles(config) { return Capability.speechToText }
         if DeepFilterNetModel.handles(config) { return Capability.speechToSpeech }
         if CohereTranscribeModel.handles(config) { return Capability.speechToText }
@@ -199,6 +203,13 @@ public enum AudioModelRegistry {
         if SenseVoiceModel.handles(config) {
             return .senseVoice(try SenseVoiceModel.load(directory: directory,
                                                         device: device))
+        }
+        // StyleTTS2 / KittenTTS before Kokoro — see `capabilities(for:)`
+        // routing-precedence note. Kitten's `kitten_tts` model_type would
+        // otherwise be claimed by Kokoro's structural fallback.
+        if StyleTTS2Model.handles(config) {
+            return .styleTTS2(try StyleTTS2Model.load(
+                directory: directory, device: device))
         }
         if KokoroModel.handles(config) {
             return .kokoro(try KokoroModel.load(directory: directory,
@@ -252,10 +263,6 @@ public enum AudioModelRegistry {
         }
         if SopranoModel.handles(config) {
             return .soprano(try await SopranoModel.load(
-                directory: directory, device: device))
-        }
-        if StyleTTS2Model.handles(config) {
-            return .styleTTS2(try StyleTTS2Model.load(
                 directory: directory, device: device))
         }
         if GraniteSpeech.handles(config) {

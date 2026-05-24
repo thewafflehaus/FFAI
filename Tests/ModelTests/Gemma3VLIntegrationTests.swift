@@ -77,7 +77,11 @@ struct Gemma3VLIntegrationTests {
 
         let generated = try vlm.generate(
             promptTokens: promptTokens, image: image,
-            maxTokens: 64, eosTokenId: m.config.eosTokenId, eosTokenIds: m.config.eosTokenIds)
+            // Gemma 3 VL 4B opens with a hedge-y preamble ("okay, i'll do my
+            // best to describe the image…") before getting to content;
+            // 64 tokens isn't enough to clear it. 192 gives the model room
+            // to actually describe the dog.
+            maxTokens: 192, eosTokenId: m.config.eosTokenId, eosTokenIds: m.config.eosTokenIds)
 
         // Coherence first, then the content check: the caption should
         // mention a dog.

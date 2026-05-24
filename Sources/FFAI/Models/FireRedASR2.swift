@@ -1378,6 +1378,56 @@ extension FireRedASR2Model {
             return Linear(weight: w, bias: b)
         }
 
+        // Build a Linear from a Conv1d pointwise weight. mlx-community
+        // ships the conformer's `pointwise_conv1` / `pointwise_conv2`
+        // tensors with a trailing kW=1 axis (shapes `[O, I, 1]` or
+        // `[O, 1, I]`) — Linear demands strict 2D, so collapse the
+        // singleton kernel dimension. Pointwise convs are mathematically
+        // identical to a Linear over the channel axis.
+        func linearFromPointwise(_ base: String) throws -> Linear {
+            let w = try t("\(base).weight")
+            precondition(w.shape.count == 3 || w.shape.count == 2,
+                "FireRedASR2: pointwise weight \(base) has shape \(w.shape) "
+                + "(expected 2D or 3D with one singleton kernel dim)")
+            if w.shape.count == 2 {
+                return Linear(weight: w, bias: nil)
+            }
+            // Identify the singleton kernel axis (size 1) and squeeze it.
+            let outCh: Int
+            let inCh: Int
+            if w.shape[1] == 1 {
+                outCh = w.shape[0]; inCh = w.shape[2]   // [O, 1, I]
+            } else if w.shape[2] == 1 {
+                outCh = w.shape[0]; inCh = w.shape[1]   // [O, I, 1]
+            } else {
+                preconditionFailure(
+                    "FireRedASR2: pointwise weight \(base) shape \(w.shape) "
+                    + "has no singleton kernel dim — refusing to flatten")
+            }
+            // Memory is row-major; the trailing 1-dim doesn't change the
+            // physical layout, so we just retag the shape into a fresh
+            // tensor with `[outCh, inCh]` and copy the underlying floats.
+            precondition(w.elementCount == outCh * inCh,
+                "FireRedASR2: pointwise \(base) element count mismatch")
+            let flat = Tensor.empty(shape: [outCh, inCh], dtype: w.dtype,
+                                    device: device)
+            let src = w.toFloatArray()
+            switch w.dtype {
+            case .f32: flat.copyIn(from: src)
+            case .f16: flat.copyIn(from: src.map { Float16($0) })
+            case .bf16:
+                flat.copyIn(from: src.map { v -> UInt16 in
+                    let bits = v.bitPattern
+                    let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
+                    return UInt16(rounded >> 16)
+                })
+            default:
+                preconditionFailure(
+                    "FireRedASR2: pointwise weight \(base) unsupported dtype \(w.dtype)")
+            }
+            return Linear(weight: flat, bias: nil)
+        }
+
         // Transpose a Conv2d weight from OHWI → OIHW.
         // MLX checkpoints store [outCh, kH, kW, inCh]; Ops.conv2d wants [outCh, inCh, kH, kW].
         func loadConv2dWeight(_ key: String) throws -> Tensor {
@@ -1505,11 +1555,11 @@ extension FireRedASR2Model {
             let kSize = fc.encoder.kernelSize
             let convBlock = FireRedASR2ConvBlock(
                 preNorm:   try ln("\(p).conv.pre_layer_norm"),
-                pw1:       try linear("\(p).conv.pointwise_conv1", hasBias: false),
+                pw1:       try linearFromPointwise("\(p).conv.pointwise_conv1"),
                 depthwise: try loadDepthwiseWeight("\(p).conv.depthwise_conv.weight",
                                                    kernelSize: kSize),
                 batchNorm: try ln("\(p).conv.batch_norm"),
-                pw2:       try linear("\(p).conv.pointwise_conv2", hasBias: false),
+                pw2:       try linearFromPointwise("\(p).conv.pointwise_conv2"),
                 kernelSize: kSize)
 
             let block = FireRedASR2ConformerBlock(

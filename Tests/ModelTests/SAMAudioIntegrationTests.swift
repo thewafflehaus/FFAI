@@ -30,7 +30,10 @@ struct SAMAudioIntegrationTests {
         #expect(model.config.transformer.dim == 2816)
         #expect(model.config.transformer.nLayers == 22)
         #expect(model.config.transformer.nHeads == 22)
-        #expect(model.config.audioCodec.sampleRate == 44100)
+        // Published mlx-community/sam-audio-large-fp16 config ships
+        // sample_rate=48000 — the descript-audio-codec downsamples to a
+        // 25 Hz latent at 48 kHz × 1920 product-of-encoder-rates.
+        #expect(model.config.audioCodec.sampleRate == 48000)
         #expect(model.config.audioCodec.codebookDim == 128)
 
         // At least some weights were loaded from the checkpoint.

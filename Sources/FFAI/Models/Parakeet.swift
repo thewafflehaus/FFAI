@@ -1377,6 +1377,57 @@ public enum ParakeetTokeniser {
 
 // ─── Weight loading ──────────────────────────────────────────────────
 
+/// Transpose a 2D conv weight stored channel-last (`[outCh, kH, kW, inCh]`,
+/// the MLX export convention) into the channel-first OIHW layout
+/// (`[outCh, inCh, kH, kW]`) that `conv2DReLU` indexes against. Works
+/// for plain and grouped/depthwise variants — depthwise weights ship as
+/// `[outCh, kH, kW, 1]` and become `[outCh, 1, kH, kW]` (one input
+/// channel per group, the convention `conv2DReLU` expects with
+/// `groups == outCh`).
+fileprivate func parakeetTransposeOHWIToOIHW(
+    _ raw: Tensor, device: Device
+) -> Tensor {
+    precondition(raw.shape.count == 4,
+                 "Parakeet conv weight must be 4D, got \(raw.shape)")
+    let outCh = raw.shape[0]
+    let kH    = raw.shape[1]
+    let kW    = raw.shape[2]
+    let inCh  = raw.shape[3]
+    let src = raw.toFloatArray()
+    var dst = [Float](repeating: 0, count: outCh * inCh * kH * kW)
+    for o in 0..<outCh {
+        for h in 0..<kH {
+            for w in 0..<kW {
+                for i in 0..<inCh {
+                    let srcIdx = o * (kH * kW * inCh) + h * (kW * inCh)
+                                 + w * inCh + i
+                    let dstIdx = o * (inCh * kH * kW) + i * (kH * kW)
+                                 + h * kW + w
+                    dst[dstIdx] = src[srcIdx]
+                }
+            }
+        }
+    }
+    let out = Tensor.empty(shape: [outCh, inCh, kH, kW],
+                           dtype: raw.dtype, device: device)
+    switch raw.dtype {
+    case .f32:
+        out.copyIn(from: dst)
+    case .f16:
+        out.copyIn(from: dst.map { Float16($0) })
+    case .bf16:
+        out.copyIn(from: dst.map { v -> UInt16 in
+            let bits = v.bitPattern
+            let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
+            return UInt16(rounded >> 16)
+        })
+    default:
+        preconditionFailure(
+            "Parakeet conv weight: unsupported dtype \(raw.dtype)")
+    }
+    return out
+}
+
 public extension ParakeetModel {
 
     /// Load a Parakeet checkpoint from a directory that contains
@@ -1402,23 +1453,31 @@ public extension ParakeetModel {
         let convCh = enc.subsamplingConvChannels
 
         // ── Subsampling weights ─────────────────────────────────────
-        // NeMo exports the conv list as encoder.pre_encode.conv.0,
-        // encoder.pre_encode.conv.2, encoder.pre_encode.conv.3, etc.
-        // The mlx-community conversion renames these per remapKey:
-        //   conv.0 → pre_encode.conv0
-        //   conv.(2+3n) → pre_encode.depthwise_layers.n
-        //   conv.(3+3n) → pre_encode.pointwise_layers.n
+        // The mlx-community Parakeet TDT export ships the NeMo conv
+        // list under its original `nn.Sequential` indices:
+        //   conv.0  — first 3×3 stride-2 conv (1 → convCh)
+        //   conv.(2 + 3n)  — depthwise 3×3 stride-2 (n = 0..samplingNum-2)
+        //   conv.(3 + 3n)  — pointwise 1×1 (n = 0..samplingNum-2)
+        // (Indices 1, 4, 7, … are ReLU activations and carry no weight.)
+        // The conv weight tensors arrive in OHWI layout `[outCh, kH, kW, inCh]`;
+        // `conv2DReLU` reads OIHW `[outCh, inChPerGroup, kH, kW]`. Transpose
+        // once at load time so the runtime indexing stays simple.
         let pref = "encoder.pre_encode"
-        let conv0W = try bundle.tensor(named: "\(pref).conv0.weight")
-        let conv0B = try bundle.tensor(named: "\(pref).conv0.bias")
+        let conv0W = try parakeetTransposeOHWIToOIHW(
+            bundle.tensor(named: "\(pref).conv.0.weight"), device: device)
+        let conv0B = try bundle.tensor(named: "\(pref).conv.0.bias")
 
         var dwWeights: [Tensor] = []; var dwBiases: [Tensor] = []
         var pwWeights: [Tensor] = []; var pwBiases: [Tensor] = []
         for i in 0..<(samplingNum - 1) {
-            dwWeights.append(try bundle.tensor(named: "\(pref).depthwise_layers.\(i).weight"))
-            dwBiases.append(try bundle.tensor(named: "\(pref).depthwise_layers.\(i).bias"))
-            pwWeights.append(try bundle.tensor(named: "\(pref).pointwise_layers.\(i).weight"))
-            pwBiases.append(try bundle.tensor(named: "\(pref).pointwise_layers.\(i).bias"))
+            let dwIdx = 2 + 3 * i
+            let pwIdx = 3 + 3 * i
+            dwWeights.append(try parakeetTransposeOHWIToOIHW(
+                bundle.tensor(named: "\(pref).conv.\(dwIdx).weight"), device: device))
+            dwBiases.append(try bundle.tensor(named: "\(pref).conv.\(dwIdx).bias"))
+            pwWeights.append(try parakeetTransposeOHWIToOIHW(
+                bundle.tensor(named: "\(pref).conv.\(pwIdx).weight"), device: device))
+            pwBiases.append(try bundle.tensor(named: "\(pref).conv.\(pwIdx).bias"))
         }
         let subOutWeight = try bundle.tensor(named: "\(pref).out.weight")
         let subOutBias   = try bundle.tensor(named: "\(pref).out.bias")
@@ -1458,21 +1517,47 @@ public extension ParakeetModel {
         var lstmLayers: [LSTMLayerWeights] = []
         for i in 0..<config.predNet.predRnnLayers {
             let lp = "decoder.prediction.dec_rnn.lstm.\(i)"
+            // mlx-community's NeMo Parakeet conversion renames the
+            // input-hidden / hidden-hidden weights to `Wx` / `Wh` and
+            // fuses the two PyTorch biases into a single `bias` vector.
+            // `lstmStep` adds `ihB[j] + hhB[j]` per gate, so feed the
+            // fused bias as `ihBias` and zero out `hhBias`. (Try the
+            // PyTorch-style keys first so this loader still works on a
+            // direct NeMo export that ships `weight_ih` / `bias_ih`.)
+            let ihWeight: Tensor
+            let hhWeight: Tensor
+            let ihBias: Tensor
+            let hhBias: Tensor
+            if bundle.has("\(lp).weight_ih") {
+                ihWeight = try bundle.tensor(named: "\(lp).weight_ih")
+                hhWeight = try bundle.tensor(named: "\(lp).weight_hh")
+                ihBias   = try bundle.tensor(named: "\(lp).bias_ih")
+                hhBias   = try bundle.tensor(named: "\(lp).bias_hh")
+            } else {
+                ihWeight = try bundle.tensor(named: "\(lp).Wx")
+                hhWeight = try bundle.tensor(named: "\(lp).Wh")
+                ihBias   = try bundle.tensor(named: "\(lp).bias")
+                hhBias   = Tensor.filled(0, shape: ihBias.shape, dtype: ihBias.dtype,
+                                         device: device)
+            }
             lstmLayers.append(LSTMLayerWeights(
-                ihWeight: try bundle.tensor(named: "\(lp).weight_ih"),
-                hhWeight: try bundle.tensor(named: "\(lp).weight_hh"),
-                ihBias:   try bundle.tensor(named: "\(lp).bias_ih"),
-                hhBias:   try bundle.tensor(named: "\(lp).bias_hh")
+                ihWeight: ihWeight, hhWeight: hhWeight,
+                ihBias: ihBias, hhBias: hhBias
             ))
         }
 
         // ── Joint network ────────────────────────────────────────────
+        // The mlx-community export stores `joint.joint_net` as an
+        // `nn.Sequential`: indices 0, 1 are Linear + ReLU (the joint
+        // hidden projection — already loaded as `joint.enc/pred`) and
+        // index 2 is the output Linear that produces logits. Use the
+        // ".2." suffix to grab the output projection.
         let jointEncWeight  = try bundle.tensor(named: "joint.enc.weight")
         let jointEncBias    = try bundle.tensor(named: "joint.enc.bias")
         let jointPredWeight = try bundle.tensor(named: "joint.pred.weight")
         let jointPredBias   = try bundle.tensor(named: "joint.pred.bias")
-        let jointOutWeight  = try bundle.tensor(named: "joint.joint_net.weight")
-        let jointOutBias    = try bundle.tensor(named: "joint.joint_net.bias")
+        let jointOutWeight  = try bundle.tensor(named: "joint.joint_net.2.weight")
+        let jointOutBias    = try bundle.tensor(named: "joint.joint_net.2.bias")
 
         return ParakeetModel(
             config: config,

@@ -85,10 +85,17 @@ public enum Qwen3VL {
             options: options, device: device)
 
         // ── Vision tower ──
-        // Vision weights are under `model.visual.*` on the mlx-community
-        // Qwen3-VL conversion; the tower is loaded into a composed
-        // `VisionEncoder` facade.
-        let visionWeights = weights.prefixed("model.visual.")
+        // Vision weights live under `vision_tower.*` on the current
+        // mlx-community Qwen3-VL conversion (e.g. `vision_tower.patch_embed.
+        // proj.weight`, `vision_tower.merger.*`). Older preview snapshots
+        // used `model.visual.*`; fall back to that prefix when the new
+        // one isn't present so both naming conventions load.
+        let visionWeights: SafeTensorsBundle = {
+            if weights.has("vision_tower.patch_embed.proj.weight") {
+                return weights.prefixed("vision_tower.")
+            }
+            return weights.prefixed("model.visual.")
+        }()
         let vision = try Qwen3VLVisionModel.load(
             visionConfig: visionConfig, textHidden: textEngine.hidden,
             weights: visionWeights, dtype: textEngine.dtype, device: device)

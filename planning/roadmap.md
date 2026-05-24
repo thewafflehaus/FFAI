@@ -102,6 +102,7 @@ and tests live in [`plan.md`](plan.md).
 | Speculative decoding + cache + serving (specs 013–043) | 8 | ngram / MTP / EAGLE speculative decode, prefix KV cache (in-mem + disk), batched / continuous decode, tree attention, sparse prefill, DFlash, KV-cache write fusion, flash-quantized SDPA, AURAFlash uplift. Sub-phases 8.0–8.23 — see `plan.md`. |
 | Argument-buffer / ICB dispatch modes + autotuner | 9 | Dispatch Mode 2 / 3 (`architecture.md §4a`); metaltile grid-search autotuner persisting to `tuning_cache.json`. |
 | GGUF support, Homebrew formula, full bench sweep, docs-site polish | 10 | |
+| `ffai bench --mactop` thermal-aware bench harness | 10 | Spawn `mactop` alongside `ffai bench`; capture CPU / GPU / memory / power / temperature samples to a sidecar; `--mactop-pin-fans` pins fans high for the bench window (requires sudo) so steady-state numbers aren't measured under thermal throttle. Design: [`bench-mactop-integration-design.md`](bench-mactop-integration-design.md). |
 
 ## Open performance & testing debt (flagged 2026-05-23)
 

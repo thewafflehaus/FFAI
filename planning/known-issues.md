@@ -108,6 +108,52 @@ on this branch's `kernels.metallib` is enough to trigger it. That
 makes the kernel-side hypothesis (one of the freshly-regenerated
 kernels) substantially more likely than an FFAI-side busy-loop.
 
+## CPU pin — vision / audio models burn all CPU cores
+
+**Symptom.** During some integration tests (observed via `mactop`),
+all CPU cores spike to 100 % while the GPU stays well below saturation.
+GPU never sitting at 100 % during these runs is the giveaway — work
+that should be on the GPU is silently running on the CPU instead.
+
+**Status.** Cause unknown. The vision (Phase 6.5) and audio (Phase 7)
+model families landed without a CPU-fallback audit, so the suspect
+surface is anything those pipelines touch where:
+
+- A model op silently falls through to the parallel-CPU
+  `concurrentPerform` core because no GPU wrapper was wired up
+  (e.g. unknown SDPA `head_dim`, missing `Ops.conv2dDepthwise`,
+  a custom audio op).
+- A test or harness allocates / keeps tensors on CPU instead of
+  dispatching to GPU.
+- A test fixture / oracle is running its CPU reference path
+  (parallelised across cores) and we're misreading that as the
+  model itself pinning the CPU.
+
+**Live signal.** `mactop` shows full CPU saturation across all cores
+during some currently-running tests; GPU has not been seen pegged
+during the same window. Indicates CPU is doing real work the GPU
+should be doing — or that a test-side CPU oracle dwarfs the GPU
+dispatch.
+
+**Next steps when this lands as a priority.** Deferred until the
+current integration-test sweep finishes — that pass will surface
+more failures and give a fuller picture of which model families need
+attention. Then:
+
+1. Re-run vision / audio model tests under `mactop` (or
+   `powermetrics --samplers cpu_power,gpu_power`) to confirm the
+   CPU pin reproduces and pin down which families.
+2. For each pinning family, instrument the forward pass to log every
+   op dispatch — find the calls that hit `concurrentPerform` /
+   `cpuFallback` paths instead of `Ops.*` GPU dispatch.
+3. Cross-reference against the FastVLM CPU depthwise-conv outlier
+   in [§ Vision tower SDPA](#vision-tower-sdpa--head_dim-coverage) —
+   likely the same class of gap, just not yet enumerated for the
+   other vision / audio families.
+4. File missing `Ops.*` wrappers as separate metaltile / FFAI
+   follow-ups (kernel exists in metaltile but no Swift wrapper, or
+   kernel itself missing).
+
 ## Vision tower SDPA — head_dim coverage
 
 VLM vision towers run bidirectional multi-head attention; FFAI now
@@ -182,4 +228,113 @@ Triage queue from same run (root-cause TBD — most look pre-existing):
 
 Bisect continues; this list will be appended-to as more suites
 complete.
+
+## Audio model CPU bottlenecks — Whisper + QwenOmni timeout
+
+**Symptom.** `WhisperIntegrationTests` and `QwenOmniIntegrationTests`
+both hit the 900 s `gtimeout` cap during the integration bisect; the
+log captures only the build banner — the test process was SIGKILL'd
+before any test boundary was reported.
+
+**Root cause — shared audio-encoder CPU attention.** Both families
+route through `Sources/FFAI/AudioEncoder.swift::cpuAttention`
+(line ~165). The Whisper-style encoder runs N encoder blocks (24 for
+Whisper-large-v3 / Qwen2.5-Omni) of multi-head bidirectional
+attention over `nAudioCtx = 1500` frames; each block performs
+`O(nFrames² · nHeads · headDim)` work on the CPU via
+`DispatchQueue.concurrentPerform`. With 1500² · 20 · 64 ≈ 2.9 G FLOPs
+per layer × 24 layers ≈ 70 G FLOPs of pure CPU work per `encodeAudio`
+call. That dominates the wall clock and pegs all cores (matches the
+broader CPU-pin symptom in [§ CPU pin](#cpu-pin--vision--audio-models-burn-all-cpu-cores)).
+The Q/K/V projections + LayerNorm + GELU + final GEMM are already on
+GPU; only the SDPA-equivalent attention core falls back to CPU.
+
+**Whisper additional site — decoder.** `Sources/FFAI/Models/Whisper.swift::cpuAttention`
+(line ~424) runs the SAME CPU multi-head attention for the
+**decoder's self- AND cross-attention**, once per generated token.
+`generateTranscript` then loops `decoderLogits` for up to 224 tokens.
+The cross-attention K/V is recomputed against the full 1500-frame
+audio every step (no KV cache on the cross side), so each generated
+token re-pays a `nQuery · nKV · headDim` matmul that should be a
+single GPU SDPA dispatch. Whisper's transcribe test pays the encoder
+cost once + the decoder cost ≈ 224 times.
+
+**QwenOmni site.** `QwenOmniModel.encodeAudio`
+(Sources/FFAI/Models/QwenOmni.swift:163) calls into the same shared
+`AudioEncoder`, so it inherits the encoder-side bottleneck. QwenOmni
+has no decoder cpuAttention of its own (it splices feature tokens
+into the Qwen3 text backbone, which is already on GPU). So the
+expected wall-clock improvement after migration is proportional to
+the time spent in the audio tower alone — but for a multi-second
+input that's still tens of seconds of pure CPU at the encoder.
+
+**Migration needed.** Replace both `cpuAttention` cores
+(`AudioEncoder.swift::cpuAttention` and
+`Whisper.swift::cpuAttention`) with `Ops.sdpaBidirectional`
+(encoder) and `Ops.sdpaMulti(causal: true)` (decoder self-attn,
+already cached) + a cross-attention GPU dispatch. Whisper's head_dim
+is 64 (small) / 80 (medium) / 80 (large-v3) — all already covered by
+[§ Vision tower SDPA](#vision-tower-sdpa--head_dim-coverage). The
+cross-attention path also needs a precomputed-K/V variant: encoder
+K/V should be projected once per utterance, then reused for every
+decoder step (eliminates the per-token K/V recompute). Mirrors the
+VLM splice pattern.
+
+**Status.** Diagnosed only; not in scope for the current bisect
+pass. Tracked here so the audio-tower migration can pick this up as
+the unified "audio CPU-attention → GPU SDPA" port.
+
+## Quantization — missing 2-bit support + mixed-precision schemes
+
+**Gap.** FFAI's quantized weight surface (`QuantizedLinear` /
+`QuantizedEmbedding` + the `int4` / `int8` MetalTile kernels) covers
+the symmetric per-group `affineQuantized` cases we ship today:
+`bits ∈ {3, 4, 5, 6, 8}`. The integration matrix
+(`Tests/ModelTests/Quantized{3,4,5,6,8}bitIntegrationTests.swift`)
+exercises each, and all five passed in the 2026-05-24 bisect.
+
+What's NOT covered yet:
+
+1. **2-bit quantization.** No kernel variant, no `QuantizedLinear`
+   path. `mlx-community` ships 2-bit conversions of several models
+   (Qwen 3 32B, Llama 3 70B, etc.) that we can't load. Need:
+   - `dequant_gemv_int2_{f16,bf16}` and `mt_qmm_int2_*` kernels in
+     metaltile (mirror the int4 codegen — same per-group
+     `(scale, bias)` layout, just 2 bits per index).
+   - `Ops.dequantGemv` + `Ops.qmm` dispatch table extended with
+     `bits == 2` cases.
+   - `QuantizedLinear` accepts `bits == 2` (currently the validator
+     rejects it).
+   - `Tests/ModelTests/Quantized2bitIntegrationTests.swift` mirroring
+     the existing pattern.
+
+2. **Mixed-precision (per-tensor-class) quantization.** Some
+   `mlx-community` checkpoints quantize each weight class at a
+   different bit-width — e.g. attention projections at int4, MLP
+   gate/up/down at int3, embeddings at int8, lm_head at int6.
+   These are advertised as `mixed_3_6`, `mixed_4_8` etc. in the
+   model card. The current loader (`AnyLinear.load(...)`) assumes
+   a single uniform `bits` value from the config's `quantization`
+   block; it can't decode a heterogeneous scheme.
+
+   Sketch: extend the config decoder to recognise per-key
+   bit-widths (probably a `quantization.weight_specs` dict in the
+   config), thread the per-tensor `bits` through `loadLinear` /
+   `loadEmbedding`, and let each call pick the matching kernel
+   variant. No new kernels required — every selected bit-width
+   already has one (modulo gap (1) for int2).
+
+**Why it matters.** 2-bit is the only path to fit the 70B-class
+dense models (Llama 3 70B, Qwen 3 70B) in a single Apple Silicon
+device's wired memory; mixed-precision is what the better
+`mlx-community` conversions are starting to ship (preserves quality
+on the attention projections + lm_head while keeping the MLP slim).
+Without these we can't load 30-40 % of the recent zoo.
+
+**Test bar.** When implemented:
+- `make test-unit` must add a 2-bit dequant_gemv GPU correctness
+  test mirroring the existing int4/int8 ones, against a CPU
+  reference.
+- `Quantized2bitIntegrationTests` + `MixedPrecisionIntegrationTests`
+  added to the bisect runner.
 

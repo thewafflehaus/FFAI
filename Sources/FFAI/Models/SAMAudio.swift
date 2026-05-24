@@ -125,7 +125,13 @@ public struct SAMAudioCodecConfig: Codable, Sendable {
     public init(from decoder: Swift.Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         hopLength = try c.decodeIfPresent(Int.self, forKey: .hopLength) ?? 512
-        sampleRate = try c.decodeIfPresent(Int.self, forKey: .sampleRate) ?? 44100
+        // SAM Audio uses the Descript Audio Codec (DAC), which is fixed
+        // at 44.1 kHz. Some published config.json files ship
+        // `sample_rate: 48000`, but the underlying codec is unconditionally
+        // 44.1 kHz — feeding 48 kHz audio in produces silently incorrect
+        // segmentation. Pin the codec rate so callers see the rate the
+        // model was actually trained on.
+        sampleRate = 44100
         codebookDim = try c.decodeIfPresent(Int.self, forKey: .codebookDim) ?? 128
     }
 }
