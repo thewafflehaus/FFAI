@@ -777,7 +777,15 @@ private func conformerAttn(
             }
         }
 
-        // Compute attention per head — parallelise over heads
+        // Compute attention per head — parallelise over heads.
+        //
+        // TODO(perf): Migrate to a GPU kernel. The Conformer encoder
+        // self-attention has Dh=128 (no `Ops.sdpaBidirectional` variant
+        // ships beyond d=96) AND adds a per-pair relative-position bias
+        // computed against `relPosEmb` — neither fits the current
+        // bidirectional SDPA contract. Until a `sdpaBidirectionalRelPos`
+        // / d128 kernel lands, this stays on the CPU concurrent loop. The
+        // QFormer MHA below (16 × 64) already runs on GPU.
         var headOuts = [[[Float]]](repeating: [[Float]](repeating: [Float](repeating: 0, count: Dh), count: C), count: H)
         DispatchQueue.concurrentPerform(iterations: H) { h in
             // Dot-product scores [C, C]: q[h][i] · k[h][j] * scale
@@ -947,6 +955,15 @@ func runEncoder(_ input: [[Float]], weights: GraniteSpeechEncoderWeights) -> [[F
 
 /// Multi-head attention (self or cross).
 /// queries: [L, hs], kvInput: [M, kvDim] → output: [L, hs]
+///
+/// Hot path. The projector runs a self-attention and a cross-attention
+/// per QFormer layer × per audio window, which on long clips (10 s+)
+/// becomes the dominant CPU cost — long enough to time the integration
+/// test out at 900 s. Migrate the softmax(QKᵀ)·V kernel onto the GPU via
+/// `Ops.sdpaBidirectional` (headDim=64 ships a tuned variant). The Q/K/V
+/// projections are still CPU `batchMatVec` because their dimensions are
+/// modest and we'd otherwise need to copy them up just to copy them back
+/// down for the next layer's residual.
 private func qformerMHA(
     queries: [[Float]], kvInput: [[Float]],
     qW: [Float], qB: [Float],
@@ -957,18 +974,69 @@ private func qformerMHA(
     let L = queries.count
     let M = kvInput.count
     let headDim = hs / numHeads
+    precondition(hs == numHeads * headDim,
+                 "qformerMHA: hs (\(hs)) must equal numHeads*headDim")
+    let scale = pow(Float(headDim), -0.5)
 
     let q = batchMatVec(qW, queries, qB, outDim: hs, inDim: hs)
     let k = batchMatVec(kW, kvInput, kB, outDim: hs, inDim: kvDim)
     let v = batchMatVec(vW, kvInput, vB, outDim: hs, inDim: kvDim)
 
-    let scale = pow(Float(headDim), -0.5)
-    var out = [[Float]](repeating: [Float](repeating: 0, count: hs), count: L)
+    // ── GPU path: dispatch Ops.sdpaBidirectional when the head_dim has
+    // a kernel shipped. Falls back to the CPU per-head loop below for
+    // unusual configurations (e.g. headDim outside {32,64,72,80,96}).
+    if OpsValidation.sdpaBidirectionalSupportedHeadDims.contains(headDim) {
+        let device = Device.shared
+        // Pack Q into [L, numHeads, headDim] — row-major, same memory
+        // order as `q[i][h*Dh+d]`. K/V need transpose to
+        // [numHeads, M, headDim] for the kernel's
+        // `[nKVHeads, kvStride, headDim]` contract.
+        var qFlat = [Float](repeating: 0, count: L * hs)
+        for i in 0..<L {
+            let base = i * hs
+            for d in 0..<hs { qFlat[base + d] = q[i][d] }
+        }
+        var kFlat = [Float](repeating: 0, count: M * hs)
+        var vFlat = [Float](repeating: 0, count: M * hs)
+        for j in 0..<M {
+            for h in 0..<numHeads {
+                let srcOff = h * headDim
+                let dst = (h * M + j) * headDim
+                for d in 0..<headDim {
+                    kFlat[dst + d] = k[j][srcOff + d]
+                    vFlat[dst + d] = v[j][srcOff + d]
+                }
+            }
+        }
+        let qT = Tensor.empty(shape: [L, numHeads, headDim],
+                              dtype: .f32, device: device)
+        qT.copyIn(from: qFlat)
+        let kT = Tensor.empty(shape: [numHeads, M, headDim],
+                              dtype: .f32, device: device)
+        kT.copyIn(from: kFlat)
+        let vT = Tensor.empty(shape: [numHeads, M, headDim],
+                              dtype: .f32, device: device)
+        vT.copyIn(from: vFlat)
+        let cmd = device.makeCommandBuffer()
+        let outT = Ops.sdpaBidirectional(
+            q: qT, k: kT, v: vT,
+            nQHeads: numHeads, nKVHeads: numHeads, headDim: headDim,
+            baseKV: 0, nQuery: L, kvStride: M,
+            scale: scale, on: cmd)
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        let outFlat = outT.toFloatArray()  // [L, numHeads, headDim]
+        // Reassemble back into [L, hs] — the row-major layout matches.
+        return (0..<L).map { i in
+            let src = i * hs
+            return Array(outFlat[src..<src + hs])
+        }
+    }
 
+    // ── CPU fallback (rare head_dim, kept for safety) ───────────────
+    var out = [[Float]](repeating: [Float](repeating: 0, count: hs), count: L)
     DispatchQueue.concurrentPerform(iterations: numHeads) { h in
-        // Extract head slices: q[l][h*Dh..(h+1)*Dh]
         let base = h * headDim
-        // scores [L, M]
         var scores = [[Float]](repeating: [Float](repeating: 0, count: M), count: L)
         for i in 0..<L {
             for j in 0..<M {
@@ -982,7 +1050,6 @@ private func qformerMHA(
             for d in 0..<headDim {
                 var acc: Float = 0
                 for j in 0..<M { acc += attnW[j] * v[j][base + d] }
-                // write to out[i][base + d] — concurrent writes to non-overlapping positions are safe
                 out[i][base + d] = acc
             }
         }

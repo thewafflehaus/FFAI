@@ -307,25 +307,11 @@ private func idefics3GeluTanh(_ x: Float) -> Float {
     return x * 0.5 * (1 + tanh(inner))
 }
 
-/// Matrix multiply: C[m,n] = A[m,k] × B^T[n,k].  B is stored row-major as [n,k].
-private func idefics3Matmul(_ a: [Float], _ b: [Float], m: Int, k: Int, n: Int) -> [Float] {
-    var out = [Float](repeating: 0, count: m * n)
-    for i in 0..<m {
-        for j in 0..<n {
-            var sum: Float = 0
-            let aRow = i * k; let bRow = j * k
-            for l in 0..<k { sum += a[aRow + l] * b[bRow + l] }
-            out[i * n + j] = sum
-        }
-    }
-    return out
-}
-
-/// Bias-add: out[i] += bias[i % biasLen].
-private func idefics3AddBias(_ x: inout [Float], bias: [Float]) {
-    let n = bias.count
-    for i in 0..<x.count { x[i] += bias[i % n] }
-}
+// (CPU `idefics3Matmul` and `idefics3AddBias` were retired during the
+// 2026-05-24 GPU-GEMM migration. Every per-layer projection now dispatches
+// through `idefics3GemmBiased` → `Ops.gemm + Ops.add`, and the connector
+// projection runs as a single `Ops.gemm`. Reintroduce them only if a new
+// CPU-side fallback is genuinely needed.)
 
 /// Scaled dot-product attention for the vision encoder.
 /// q, k, v: [nHeads, seqLen, headDim] — output: [seqLen, nHeads * headDim]
@@ -370,21 +356,26 @@ private func idefics3VisionSDPA(q: [Float], k: [Float], v: [Float],
     return outT.toFloatArray()
 }
 
-// ─── Vision encoder layers (CPU-side) ────────────────────────────────────────
+// ─── Vision encoder layers (GPU GEMM-resident projections) ───────────────────
 
 /// Loaded weights for a single SigLIP-style encoder block.
-/// All weights are pre-converted to Float arrays for CPU-side computation.
+///
+/// Projection weights (Q/K/V/Out, fc1/fc2) and their biases live as f32
+/// GPU `Tensor`s so each per-layer projection collapses into a single
+/// `Ops.gemm` dispatch over the full `[seqLen, dim]` patch batch. Layer-
+/// norm weights stay on the CPU for now — the per-row LayerNorm is
+/// cheap relative to the matmul bandwidth it used to bottleneck.
 struct Idefics3EncoderLayer {
-    // Self-attention: weight [dim, dim], bias [dim]
-    let qW: [Float]; let qB: [Float]
-    let kW: [Float]; let kB: [Float]
-    let vW: [Float]; let vB: [Float]
+    // Self-attention: weight [dim, dim] f32 GPU, bias [dim] f32 GPU
+    let qW: Tensor; let qB: Tensor
+    let kW: Tensor; let kB: Tensor
+    let vW: Tensor; let vB: Tensor
     // Output projection is named "out_proj" in Idefics3 (not "o_proj")
-    let oW: [Float]; let oB: [Float]
-    // MLP: fc1 [intermediate, dim], fc2 [dim, intermediate]
-    let fc1W: [Float]; let fc1B: [Float]
-    let fc2W: [Float]; let fc2B: [Float]
-    // LayerNorms
+    let oW: Tensor; let oB: Tensor
+    // MLP: fc1 [intermediate, dim] f32 GPU, fc2 [dim, intermediate] f32 GPU
+    let fc1W: Tensor; let fc1B: Tensor
+    let fc2W: Tensor; let fc2B: Tensor
+    // LayerNorms (still CPU — applied per row before the GEMMs)
     let ln1W: [Float]; let ln1B: [Float]
     let ln2W: [Float]; let ln2B: [Float]
 
@@ -408,19 +399,29 @@ struct Idefics3EncoderLayer {
         self.nHeads      = cfg.numAttentionHeads
         self.headDim     = cfg.headDim
 
-        qW   = idefics3TensorToFloats(try weights.tensor(named: "\(p).self_attn.q_proj.weight"))
-        qB   = idefics3TensorToFloats(try weights.tensor(named: "\(p).self_attn.q_proj.bias"))
-        kW   = idefics3TensorToFloats(try weights.tensor(named: "\(p).self_attn.k_proj.weight"))
-        kB   = idefics3TensorToFloats(try weights.tensor(named: "\(p).self_attn.k_proj.bias"))
-        vW   = idefics3TensorToFloats(try weights.tensor(named: "\(p).self_attn.v_proj.weight"))
-        vB   = idefics3TensorToFloats(try weights.tensor(named: "\(p).self_attn.v_proj.bias"))
-        oW   = idefics3TensorToFloats(try weights.tensor(named: "\(p).self_attn.out_proj.weight"))
-        oB   = idefics3TensorToFloats(try weights.tensor(named: "\(p).self_attn.out_proj.bias"))
+        // Re-host each projection weight + bias as an f32 GPU Tensor so
+        // `Ops.gemm` / `Ops.add` can consume them directly.
+        func upW(_ key: String, shape: [Int]) throws -> Tensor {
+            let floats = idefics3TensorToFloats(try weights.tensor(named: key))
+            return idefics3FloatsToTensor(floats, shape: shape, dtype: .f32)
+        }
+        func upB(_ key: String) throws -> Tensor {
+            let floats = idefics3TensorToFloats(try weights.tensor(named: key))
+            return idefics3FloatsToTensor(floats, shape: [floats.count], dtype: .f32)
+        }
+        qW = try upW("\(p).self_attn.q_proj.weight", shape: [dim, dim])
+        qB = try upB("\(p).self_attn.q_proj.bias")
+        kW = try upW("\(p).self_attn.k_proj.weight", shape: [dim, dim])
+        kB = try upB("\(p).self_attn.k_proj.bias")
+        vW = try upW("\(p).self_attn.v_proj.weight", shape: [dim, dim])
+        vB = try upB("\(p).self_attn.v_proj.bias")
+        oW = try upW("\(p).self_attn.out_proj.weight", shape: [dim, dim])
+        oB = try upB("\(p).self_attn.out_proj.bias")
 
-        fc1W = idefics3TensorToFloats(try weights.tensor(named: "\(p).mlp.fc1.weight"))
-        fc1B = idefics3TensorToFloats(try weights.tensor(named: "\(p).mlp.fc1.bias"))
-        fc2W = idefics3TensorToFloats(try weights.tensor(named: "\(p).mlp.fc2.weight"))
-        fc2B = idefics3TensorToFloats(try weights.tensor(named: "\(p).mlp.fc2.bias"))
+        fc1W = try upW("\(p).mlp.fc1.weight", shape: [intermediate, dim])
+        fc1B = try upB("\(p).mlp.fc1.bias")
+        fc2W = try upW("\(p).mlp.fc2.weight", shape: [dim, intermediate])
+        fc2B = try upB("\(p).mlp.fc2.bias")
 
         ln1W = idefics3TensorToFloats(try weights.tensor(named: "\(p).layer_norm1.weight"))
         ln1B = idefics3TensorToFloats(try weights.tensor(named: "\(p).layer_norm1.bias"))
@@ -429,11 +430,16 @@ struct Idefics3EncoderLayer {
     }
 
     /// Forward pass: x is [seqLen, dim] flat. Returns [seqLen, dim] flat.
+    /// Each projection now dispatches one `Ops.gemm + Ops.add` pair on a
+    /// single command buffer instead of the per-(row × col) CPU matmul
+    /// loop that previously pinned the CPU during Idefics3 vision prefill.
     func forward(_ x: [Float], seqLen: Int, eps: Float) -> [Float] {
-        var h = x
+        let device = Device.shared
 
         // ── Self-attention ──────────────────────────────────────────────────
-        // LayerNorm per row
+        // Per-row LayerNorm runs CPU (cheap O(seqLen·dim)) before we
+        // upload `normed1` to the GPU.
+        var h = x
         var normed1 = [Float](repeating: 0, count: seqLen * dim)
         for row in 0..<seqLen {
             let start = row * dim
@@ -442,13 +448,22 @@ struct Idefics3EncoderLayer {
             normed1.replaceSubrange(start..<start + dim, with: n)
         }
 
-        // Project Q/K/V: [seqLen, dim] × weight^T [dim, dim] → [seqLen, dim]
-        var q = idefics3Matmul(normed1, qW, m: seqLen, k: dim, n: dim)
-        idefics3AddBias(&q, bias: qB)
-        var k = idefics3Matmul(normed1, kW, m: seqLen, k: dim, n: dim)
-        idefics3AddBias(&k, bias: kB)
-        var v = idefics3Matmul(normed1, vW, m: seqLen, k: dim, n: dim)
-        idefics3AddBias(&v, bias: vB)
+        // Upload normed input once, then dispatch Q/K/V/O over the same
+        // command buffer. All three projections share the input tensor.
+        let normedT = idefics3FloatsToTensor(normed1, shape: [seqLen, dim],
+                                              dtype: .f32, device: device)
+        let cmd = device.makeCommandBuffer()
+        let qT  = idefics3GemmBiased(input: normedT, weight: qW, bias: qB,
+                                      nRows: seqLen, outDim: dim, device: device, on: cmd)
+        let kT  = idefics3GemmBiased(input: normedT, weight: kW, bias: kB,
+                                      nRows: seqLen, outDim: dim, device: device, on: cmd)
+        let vT  = idefics3GemmBiased(input: normedT, weight: vW, bias: vB,
+                                      nRows: seqLen, outDim: dim, device: device, on: cmd)
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        let q = qT.toFloatArray()
+        let k = kT.toFloatArray()
+        let v = vT.toFloatArray()
 
         // Reshape [seqLen, nHeads * headDim] → [nHeads, seqLen, headDim] for SDPA
         var qH = [Float](repeating: 0, count: nHeads * seqLen * headDim)
@@ -464,13 +479,19 @@ struct Idefics3EncoderLayer {
             }
         }
 
-        // Parallel scaled dot-product attention
+        // GPU scaled dot-product attention (already migrated).
         let attnOut = idefics3VisionSDPA(q: qH, k: kH, v: vH,
                                          nHeads: nHeads, seqLen: seqLen, headDim: headDim)
 
-        // Output projection + residual
-        var oOut = idefics3Matmul(attnOut, oW, m: seqLen, k: dim, n: dim)
-        idefics3AddBias(&oOut, bias: oB)
+        // Output projection + residual. Same GPU pattern as Q/K/V.
+        let attnT = idefics3FloatsToTensor(attnOut, shape: [seqLen, dim],
+                                            dtype: .f32, device: device)
+        let cmd2 = device.makeCommandBuffer()
+        let oTGpu = idefics3GemmBiased(input: attnT, weight: oW, bias: oB,
+                                        nRows: seqLen, outDim: dim, device: device, on: cmd2)
+        cmd2.commit()
+        cmd2.waitUntilCompleted()
+        let oOut = oTGpu.toFloatArray()
         for i in 0..<h.count { h[i] += oOut[i] }
 
         // ── MLP ─────────────────────────────────────────────────────────────
@@ -482,18 +503,51 @@ struct Idefics3EncoderLayer {
             normed2.replaceSubrange(start..<start + dim, with: n)
         }
 
-        var fc1Out = idefics3Matmul(normed2, fc1W, m: seqLen, k: dim, n: intermediate)
-        idefics3AddBias(&fc1Out, bias: fc1B)
+        let normed2T = idefics3FloatsToTensor(normed2, shape: [seqLen, dim],
+                                               dtype: .f32, device: device)
+        let cmd3 = device.makeCommandBuffer()
+        let fc1Tgpu = idefics3GemmBiased(input: normed2T, weight: fc1W, bias: fc1B,
+                                          nRows: seqLen, outDim: intermediate,
+                                          device: device, on: cmd3)
+        cmd3.commit()
+        cmd3.waitUntilCompleted()
+        var fc1Out = fc1Tgpu.toFloatArray()
         // GELU tanh approximation (gelu_pytorch_tanh)
         for i in 0..<fc1Out.count { fc1Out[i] = idefics3GeluTanh(fc1Out[i]) }
 
-        var fc2Out = idefics3Matmul(fc1Out, fc2W, m: seqLen, k: intermediate, n: dim)
-        idefics3AddBias(&fc2Out, bias: fc2B)
+        let fc1OutT = idefics3FloatsToTensor(fc1Out, shape: [seqLen, intermediate],
+                                              dtype: .f32, device: device)
+        let cmd4 = device.makeCommandBuffer()
+        let fc2Tgpu = idefics3GemmBiased(input: fc1OutT, weight: fc2W, bias: fc2B,
+                                          nRows: seqLen, outDim: dim,
+                                          device: device, on: cmd4)
+        cmd4.commit()
+        cmd4.waitUntilCompleted()
+        let fc2Out = fc2Tgpu.toFloatArray()
 
         // Residual
         for i in 0..<h.count { h[i] += fc2Out[i] }
         return h
     }
+}
+
+/// Run `out = input · weightᵀ + bias` (broadcast bias across `nRows`)
+/// as one `Ops.gemm` + bias-tile + `Ops.add` on the supplied command
+/// buffer. The bias tile is built CPU-side once and uploaded to GPU.
+/// Returns the result tensor; caller commits and reads back.
+private func idefics3GemmBiased(input: Tensor, weight: Tensor, bias: Tensor,
+                                 nRows: Int, outDim: Int, device: Device,
+                                 on cmd: MTLCommandBuffer) -> Tensor {
+    let out = Ops.gemm(weight: weight, input: input, nRows: nRows, on: cmd)
+    let biasVals = bias.toFloatArray()
+    var tiled = [Float](repeating: 0, count: nRows * outDim)
+    for r in 0..<nRows {
+        let base = r * outDim
+        for c in 0..<outDim { tiled[base + c] = biasVals[c] }
+    }
+    let tiledT = idefics3FloatsToTensor(tiled, shape: [nRows, outDim],
+                                         dtype: .f32, device: device)
+    return Ops.add(out, tiledT, on: cmd)
 }
 
 // ─── Vision encoder ───────────────────────────────────────────────────────────
@@ -657,14 +711,23 @@ public final class Idefics3VisionEncoder: Module {
 ///   6. Reshape → [nPatches/sf², visionHidden*sf²]
 public final class Idefics3Connector: Module {
     let scaleFactor: Int
-    let projW: [Float]     // [textHidden, visionHidden * sf²]
+    /// f32 GPU `Tensor` view of the projector weight `[textHidden, visionHidden·sf²]`.
+    /// The CPU `[[Float]]` copy was retired during the GPU-GEMM migration;
+    /// the original checkpoint tensor is exposed via `projWTensor` for
+    /// `parameters()`.
+    private let projWGpu: Tensor
     let projWTensor: Tensor
 
     init(cfg: Idefics3Config, weights: Idefics3RemappedBundle) throws {
         self.scaleFactor = cfg.scaleFactor
         let projTensor = try weights.tensor(named: "connector.modality_projection.proj.weight")
         self.projWTensor = projTensor
-        self.projW = idefics3TensorToFloats(projTensor)
+        // Re-host the projector weight as f32 on the GPU; it is matmul'd
+        // against the pixel-shuffle output every vision prefill, so we
+        // pay the conversion once.
+        let floats = idefics3TensorToFloats(projTensor)
+        self.projWGpu = idefics3FloatsToTensor(floats, shape: projTensor.shape,
+                                                dtype: .f32)
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -728,8 +791,18 @@ public final class Idefics3Connector: Module {
             }
         }
 
-        // Linear projection: [newNPatches, newHidden] × projW^T [textHidden, newHidden]
-        return idefics3Matmul(step4, projW, m: newNPatches, k: newHidden, n: textHidden)
+        // Linear projection: [newNPatches, newHidden] × projWGpu^T → [newNPatches, textHidden]
+        // One GPU GEMM dispatch instead of the nested-loop CPU matmul that
+        // previously bottlenecked the connector at 4608 → textHidden.
+        let device = Device.shared
+        let inputT = idefics3FloatsToTensor(step4, shape: [newNPatches, newHidden],
+                                             dtype: .f32, device: device)
+        let cmd = device.makeCommandBuffer()
+        let outT = Ops.gemm(weight: projWGpu, input: inputT,
+                            nRows: newNPatches, on: cmd)
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return outT.toFloatArray()
     }
 }
 

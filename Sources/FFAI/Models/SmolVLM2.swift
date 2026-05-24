@@ -323,25 +323,10 @@ private func geluTanh(_ x: Float) -> Float {
     return x * 0.5 * (1 + tanh(inner))
 }
 
-/// Matrix multiply: C[m, n] = A[m, k] * B^T[n, k] (B stored as [n, k]).
-/// CPU-only, used for small vision encoder projections during prefill.
-private func matmul(_ a: [Float], _ b: [Float], m: Int, k: Int, n: Int) -> [Float] {
-    var out = [Float](repeating: 0, count: m * n)
-    for i in 0..<m {
-        for j in 0..<n {
-            var sum: Float = 0
-            for l in 0..<k { sum += a[i * k + l] * b[j * k + l] }
-            out[i * n + j] = sum
-        }
-    }
-    return out
-}
-
-/// Bias add: out[i] += bias[i % biasLen].
-private func addBias(_ x: inout [Float], bias: [Float]) {
-    let n = bias.count
-    for i in 0..<x.count { x[i] += bias[i % n] }
-}
+// (CPU `matmul` and `addBias` retired during the 2026-05-24 GPU-GEMM
+// migration. Per-layer projections dispatch through `smolVLM2GemmBiased`
+// → `Ops.gemm + Ops.add`; the connector projection runs as a single
+// `Ops.gemm`. Add them back only if a fresh CPU fallback is needed.)
 
 /// Scaled dot-product attention for the vision encoder.
 /// q, k, v: [nHeads, seqLen, headDim] — output: [seqLen, nHeads * headDim]
@@ -385,20 +370,26 @@ private func visionSDPA(q: [Float], k: [Float], v: [Float],
     return outT.toFloatArray()
 }
 
-// ─── Vision encoder layers (CPU-side) ────────────────────────────────────────
+// ─── Vision encoder layers (GPU GEMM-resident projections) ───────────────────
 
 /// Loaded weights for a single SigLIP vision encoder layer.
-/// All weights are held as Float arrays for CPU-side computation.
+///
+/// Projection weights (Q/K/V/Out, fc1/fc2) and their biases are uploaded
+/// to f32 GPU `Tensor`s at load time so each per-layer projection
+/// collapses into a single `Ops.gemm + Ops.add` dispatch over the
+/// `[seqLen, dim]` patch batch. LayerNorm weights stay CPU-side; the
+/// per-row LayerNorm is cheap relative to the matmul it used to gate.
 struct SmolVLM2EncoderLayer {
     // Self-attention projections (weight: [dim, dim], bias: [dim])
-    let qW: [Float]; let qB: [Float]
-    let kW: [Float]; let kB: [Float]
-    let vW: [Float]; let vB: [Float]
-    let oW: [Float]; let oB: [Float]
+    // Stored as f32 GPU tensors after the 2026-05-24 GEMM migration.
+    let qW: Tensor; let qB: Tensor
+    let kW: Tensor; let kB: Tensor
+    let vW: Tensor; let vB: Tensor
+    let oW: Tensor; let oB: Tensor
     // MLP: fc1 [intermediate, dim], fc2 [dim, intermediate]
-    let fc1W: [Float]; let fc1B: [Float]
-    let fc2W: [Float]; let fc2B: [Float]
-    // Layer norms
+    let fc1W: Tensor; let fc1B: Tensor
+    let fc2W: Tensor; let fc2B: Tensor
+    // Layer norms (still CPU — applied per row before the GEMMs)
     let ln1W: [Float]; let ln1B: [Float]
     let ln2W: [Float]; let ln2B: [Float]
 
@@ -420,20 +411,28 @@ struct SmolVLM2EncoderLayer {
         self.nHeads     = nHeads
         self.headDim    = headDim
 
-        // Projections (stored as [out, in]; bias: [out])
-        qW = tensorToFloats(try weights.tensor(named: "\(p).self_attn.q_proj.weight"))
-        qB = tensorToFloats(try weights.tensor(named: "\(p).self_attn.q_proj.bias"))
-        kW = tensorToFloats(try weights.tensor(named: "\(p).self_attn.k_proj.weight"))
-        kB = tensorToFloats(try weights.tensor(named: "\(p).self_attn.k_proj.bias"))
-        vW = tensorToFloats(try weights.tensor(named: "\(p).self_attn.v_proj.weight"))
-        vB = tensorToFloats(try weights.tensor(named: "\(p).self_attn.v_proj.bias"))
-        oW = tensorToFloats(try weights.tensor(named: "\(p).self_attn.out_proj.weight"))
-        oB = tensorToFloats(try weights.tensor(named: "\(p).self_attn.out_proj.bias"))
+        // Re-host each projection weight + bias as an f32 GPU Tensor.
+        func upW(_ key: String, shape: [Int]) throws -> Tensor {
+            let floats = tensorToFloats(try weights.tensor(named: key))
+            return floatsToTensor(floats, shape: shape, dtype: .f32)
+        }
+        func upB(_ key: String) throws -> Tensor {
+            let floats = tensorToFloats(try weights.tensor(named: key))
+            return floatsToTensor(floats, shape: [floats.count], dtype: .f32)
+        }
+        qW = try upW("\(p).self_attn.q_proj.weight", shape: [dim, dim])
+        qB = try upB("\(p).self_attn.q_proj.bias")
+        kW = try upW("\(p).self_attn.k_proj.weight", shape: [dim, dim])
+        kB = try upB("\(p).self_attn.k_proj.bias")
+        vW = try upW("\(p).self_attn.v_proj.weight", shape: [dim, dim])
+        vB = try upB("\(p).self_attn.v_proj.bias")
+        oW = try upW("\(p).self_attn.out_proj.weight", shape: [dim, dim])
+        oB = try upB("\(p).self_attn.out_proj.bias")
 
-        fc1W = tensorToFloats(try weights.tensor(named: "\(p).mlp.fc1.weight"))
-        fc1B = tensorToFloats(try weights.tensor(named: "\(p).mlp.fc1.bias"))
-        fc2W = tensorToFloats(try weights.tensor(named: "\(p).mlp.fc2.weight"))
-        fc2B = tensorToFloats(try weights.tensor(named: "\(p).mlp.fc2.bias"))
+        fc1W = try upW("\(p).mlp.fc1.weight", shape: [inter, dim])
+        fc1B = try upB("\(p).mlp.fc1.bias")
+        fc2W = try upW("\(p).mlp.fc2.weight", shape: [dim, inter])
+        fc2B = try upB("\(p).mlp.fc2.bias")
 
         ln1W = tensorToFloats(try weights.tensor(named: "\(p).layer_norm1.weight"))
         ln1B = tensorToFloats(try weights.tensor(named: "\(p).layer_norm1.bias"))
@@ -442,10 +441,15 @@ struct SmolVLM2EncoderLayer {
     }
 
     /// Forward pass: input x is [seqLen, dim] flat. Returns [seqLen, dim] flat.
+    /// Each projection dispatches a single `Ops.gemm + Ops.add` on a
+    /// shared command buffer — replaces the previous per-(row × col) CPU
+    /// matmul loop that bottlenecked SmolVLM2 vision prefill.
     func forward(_ x: [Float], seqLen: Int, eps: Float) -> [Float] {
+        let device = Device.shared
+
         // ─── Self-attention ─────────────────────────────────────
         var h = x
-        // Layer norm 1: apply per-row
+        // Layer norm 1: apply per-row (cheap CPU pass).
         var normed1 = [Float](repeating: 0, count: seqLen * dim)
         for row in 0..<seqLen {
             let start = row * dim
@@ -454,13 +458,24 @@ struct SmolVLM2EncoderLayer {
             normed1.replaceSubrange(start..<start + dim, with: normRow)
         }
 
-        // Linear projections: [seqLen, dim] × [dim, dim]^T
-        var q = matmul(normed1, qW, m: seqLen, k: dim, n: dim)
-        addBias(&q, bias: qB)
-        var k = matmul(normed1, kW, m: seqLen, k: dim, n: dim)
-        addBias(&k, bias: kB)
-        var v = matmul(normed1, vW, m: seqLen, k: dim, n: dim)
-        addBias(&v, bias: vB)
+        // Upload normed input once, dispatch Q/K/V on a shared command buffer.
+        let normedT = floatsToTensor(normed1, shape: [seqLen, dim],
+                                      dtype: .f32, device: device)
+        let cmd = device.makeCommandBuffer()
+        let qT = smolVLM2GemmBiased(input: normedT, weight: qW, bias: qB,
+                                     nRows: seqLen, outDim: dim,
+                                     device: device, on: cmd)
+        let kT = smolVLM2GemmBiased(input: normedT, weight: kW, bias: kB,
+                                     nRows: seqLen, outDim: dim,
+                                     device: device, on: cmd)
+        let vT = smolVLM2GemmBiased(input: normedT, weight: vW, bias: vB,
+                                     nRows: seqLen, outDim: dim,
+                                     device: device, on: cmd)
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        let q = qT.toFloatArray()
+        let k = kT.toFloatArray()
+        let v = vT.toFloatArray()
 
         // Reshape to [nHeads, seqLen, headDim] for SDPA
         // q is [seqLen, nHeads * headDim]; we re-order to [nHeads, seqLen, headDim]
@@ -482,8 +497,15 @@ struct SmolVLM2EncoderLayer {
         let attnOut = visionSDPA(q: qHeads, k: kHeads, v: vHeads,
                                   nHeads: nHeads, seqLen: seqLen, headDim: headDim)
         // attnOut: [seqLen, dim]
-        var oOut = matmul(attnOut, oW, m: seqLen, k: dim, n: dim)
-        addBias(&oOut, bias: oB)
+        let attnT = floatsToTensor(attnOut, shape: [seqLen, dim],
+                                    dtype: .f32, device: device)
+        let cmd2 = device.makeCommandBuffer()
+        let oTgpu = smolVLM2GemmBiased(input: attnT, weight: oW, bias: oB,
+                                        nRows: seqLen, outDim: dim,
+                                        device: device, on: cmd2)
+        cmd2.commit()
+        cmd2.waitUntilCompleted()
+        let oOut = oTgpu.toFloatArray()
 
         // Residual
         for i in 0..<h.count { h[i] += oOut[i] }
@@ -497,18 +519,51 @@ struct SmolVLM2EncoderLayer {
             normed2.replaceSubrange(start..<start + dim, with: normRow)
         }
 
-        var fc1Out = matmul(normed2, fc1W, m: seqLen, k: dim, n: intermediate)
-        addBias(&fc1Out, bias: fc1B)
+        let normed2T = floatsToTensor(normed2, shape: [seqLen, dim],
+                                       dtype: .f32, device: device)
+        let cmd3 = device.makeCommandBuffer()
+        let fc1Tgpu = smolVLM2GemmBiased(input: normed2T, weight: fc1W, bias: fc1B,
+                                          nRows: seqLen, outDim: intermediate,
+                                          device: device, on: cmd3)
+        cmd3.commit()
+        cmd3.waitUntilCompleted()
+        var fc1Out = fc1Tgpu.toFloatArray()
         // GELU tanh approximation (SigLIP / Idefics3 uses gelu_pytorch_tanh)
         for i in 0..<fc1Out.count { fc1Out[i] = geluTanh(fc1Out[i]) }
 
-        var fc2Out = matmul(fc1Out, fc2W, m: seqLen, k: intermediate, n: dim)
-        addBias(&fc2Out, bias: fc2B)
+        let fc1OutT = floatsToTensor(fc1Out, shape: [seqLen, intermediate],
+                                      dtype: .f32, device: device)
+        let cmd4 = device.makeCommandBuffer()
+        let fc2Tgpu = smolVLM2GemmBiased(input: fc1OutT, weight: fc2W, bias: fc2B,
+                                          nRows: seqLen, outDim: dim,
+                                          device: device, on: cmd4)
+        cmd4.commit()
+        cmd4.waitUntilCompleted()
+        let fc2Out = fc2Tgpu.toFloatArray()
 
         // Residual
         for i in 0..<h.count { h[i] += fc2Out[i] }
         return h
     }
+}
+
+/// `out = input · weightᵀ + bias` (bias broadcast across `nRows`) as one
+/// `Ops.gemm` + `Ops.add` on the supplied command buffer. Bias tile is
+/// staged CPU-side and uploaded once per call. Caller commits and reads
+/// back.
+private func smolVLM2GemmBiased(input: Tensor, weight: Tensor, bias: Tensor,
+                                 nRows: Int, outDim: Int, device: Device,
+                                 on cmd: MTLCommandBuffer) -> Tensor {
+    let out = Ops.gemm(weight: weight, input: input, nRows: nRows, on: cmd)
+    let biasVals = bias.toFloatArray()
+    var tiled = [Float](repeating: 0, count: nRows * outDim)
+    for r in 0..<nRows {
+        let base = r * outDim
+        for c in 0..<outDim { tiled[base + c] = biasVals[c] }
+    }
+    let tiledT = floatsToTensor(tiled, shape: [nRows, outDim],
+                                 dtype: .f32, device: device)
+    return Ops.add(out, tiledT, on: cmd)
 }
 
 // ─── Vision encoder ───────────────────────────────────────────────────────────
@@ -677,14 +732,18 @@ public final class SmolVLM2VisionEncoder: Module {
 /// from (visionHidden * scaleFactor²) → textHidden.
 public final class SmolVLM2Connector: Module {
     let scaleFactor: Int
-    let projW: [Float]    // [textHidden, visionHidden * sf²]
+    /// f32 GPU tensor view of the projector weight `[textHidden, visionHidden·sf²]`.
+    /// The CPU `[Float]` copy was retired during the GPU-GEMM migration;
+    /// `projWTensor` keeps the original checkpoint reference for `parameters()`.
+    private let projWGpu: Tensor
     let projWTensor: Tensor
 
     public init(cfg: SmolVLM2Config, weights: SafeTensorsBundle) throws {
         self.scaleFactor = cfg.scaleFactor
         let projTensor = try weights.tensor(named: "connector.modality_projection.proj.weight")
         self.projWTensor = projTensor
-        self.projW = tensorToFloats(projTensor)
+        let floats = tensorToFloats(projTensor)
+        self.projWGpu = floatsToTensor(floats, shape: projTensor.shape, dtype: .f32)
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -772,9 +831,18 @@ public final class SmolVLM2Connector: Module {
         // Step 6: reshape to [newNPatches, newHidden] (already that shape from step 4)
         // = step4 as-is
 
-        // Linear projection: [newNPatches, newHidden] × projW^T [textHidden, newHidden]
-        let out = matmul(step4, projW, m: newNPatches, k: newHidden, n: textHidden)
-        return out
+        // Linear projection: [newNPatches, newHidden] × projWGpu^T → [newNPatches, textHidden]
+        // One GPU GEMM dispatch instead of the nested-loop CPU matmul.
+        let device = Device.shared
+        let inputT = floatsToTensor(step4, shape: [newNPatches, newHidden],
+                                     dtype: .f32, device: device)
+        let cmd = device.makeCommandBuffer()
+        let outT = Ops.gemm(weight: projWGpu, input: inputT,
+                            nRows: newNPatches, on: cmd)
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        _ = textHidden  // textHidden is encoded in projWGpu.shape[0]
+        return outT.toFloatArray()
     }
 }
 
