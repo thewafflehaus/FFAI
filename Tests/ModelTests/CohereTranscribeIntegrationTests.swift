@@ -32,7 +32,14 @@ struct CohereTranscribeIntegrationTests {
         // was renamed when Cohere republished as the 2026-03 release.
         // Try the current mlx-community 8-bit conversion first, then fall
         // back to legacy slugs in case someone has a stale local mirror.
-        try await AudioFixtures.resolveCheckpoint(
+        //
+        // Repo layout note: the published `cohere-transcribe-03-2026-mlx-8bit`
+        // repo nests every model file (config.json, model.safetensors, …)
+        // under an `mlx-int8/` subdirectory rather than at the snapshot
+        // root. After ModelLocator resolves the snapshot dir, descend
+        // into that subdir so `CohereTranscribeModel.load(directory:)`
+        // sees the standard `<dir>/config.json` layout it expects.
+        let snapshot = try await AudioFixtures.resolveCheckpoint(
             mlxAudioSlugs: [
                 "mlx-community_cohere-transcribe-03-2026-mlx-8bit",
                 "mlx-community_c4ai-aya-expanse-transcribe-mlx",
@@ -41,6 +48,13 @@ struct CohereTranscribeIntegrationTests {
                 "mlx-community/cohere-transcribe-03-2026-mlx-8bit",
             ]
         )
+        let nested = snapshot.appendingPathComponent("mlx-int8")
+        if FileManager.default.fileExists(
+            atPath: nested.appendingPathComponent("config.json").path
+        ) {
+            return nested
+        }
+        return snapshot
     }
 
     /// Load the CohereTranscribe model from a resolved checkpoint directory.
