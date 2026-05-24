@@ -117,6 +117,22 @@ test-stress: regenerate-kernels ## canary; production cap with uncapped parallel
 coverage: ## swift test with coverage report (unit suite only, matches ci.yml)
 	FFAI_MAX_COMMAND_BUFFERS=16 ./scripts/coverage.sh
 
+.PHONY: integration-bisect
+integration-bisect: regenerate-kernels ## run each ModelTests/*IntegrationTests suite alone; tag GPU-pinned exits
+	@# Runs every integration suite in its OWN swift-test process, captures
+	@# pass/fail/timeout + GPU active-residency 3 s after exit. Any suite
+	@# that leaves the GPU at ≥ 50% after the test ends is flagged "PINNED"
+	@# and earmarked for xctrace profiling. GPU sampling requires sudo
+	@# (powermetrics) — without it, the table still shows pass/fail but
+	@# the GPU column degrades to "?".
+	@#
+	@# Pass suite names to run only a subset:
+	@#   make integration-bisect SUITES="Whisper Llama"
+	@#
+	@# Or use the script directly for per-suite timeouts:
+	@#   PER_TEST_TIMEOUT=600 ./scripts/integration-bisect.sh Whisper
+	./scripts/integration-bisect.sh $(SUITES)
+
 # ─── Lint / format ────────────────────────────────────────────────────
 .PHONY: format
 format: ## run swift-format on all .swift files
