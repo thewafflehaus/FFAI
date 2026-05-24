@@ -28,7 +28,7 @@ for and how a single token moves through the stack.
 ┌────────────────────────▼────────────────────────────────┐
 │  metaltile (Rust, sibling repo)                         │
 │   • #[kernel] DSL → IR → MSL                            │
-│   • `tile emit` (metaltile-cli) produces:               │
+│   • `tile build --emit all` (metaltile-cli) produces:               │
 │       kernels.metallib   (compiled by xcrun metal)      │
 │       manifest.json      (kernel metadata)              │
 │       MetalTileKernels.swift  (typed wrappers)          │
@@ -76,8 +76,8 @@ The user-facing layer:
 ## The build pipeline
 
 ```
-┌──────────────┐  tile emit        ┌──────────────────┐  xcrun metal   ┌────────────────────┐
-│  Rust kernels│  --out <dir>      │  *.metal sources │   + metallib   │  kernels.metallib  │
+┌──────────────┐ tile build        ┌──────────────────┐  xcrun metal   ┌────────────────────┐
+│  Rust kernels│ --emit all --out  │  *.metal sources │   + metallib   │  kernels.metallib  │
 │  (#[kernel]) │ ─────────────────▶│  manifest.json   │ ──────────────▶│  manifest.json     │
 └──────────────┘                   │  MetalTileKernels│                │  MetalTileKernels  │
                                    │  .swift (typed)  │                │  .swift (typed)    │

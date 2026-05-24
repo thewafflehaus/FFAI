@@ -26,7 +26,7 @@ already forked at `~/Development/personal/ai/metaltile`):
    subcommand produces `kernels.metallib`, `manifest.json`, and
    `MetalTileKernels.swift`. Historical note: Phase 0 originally
    wired a standalone `metaltile-emit` bin for this; that pipeline
-   was rehomed into `metaltile-codegen::emit` + the `tile emit`
+   was rehomed into `metaltile-codegen::emit` + the `tile build --emit all`
    subcommand when upstream consolidated the build/bench/test
    commands under one CLI.
 2. **MetalTileSwift** (Swift, in this repo at `Sources/MetalTileSwift/`) —
@@ -46,7 +46,7 @@ No JIT compilation at runtime. No Rust at runtime. No `MLX*` imports.
 |---|---|
 | Approach | Option B: build-time metallib emission, pure-Swift runtime |
 | Swift package location | Inside FFAI (Sources/MetalTileSwift) |
-| Kernel author flow | Rust `#[kernel]` → `make regenerate-kernels` runs `tile emit --out Sources/MetalTileSwift` (an SPM build plugin would automate this if the `tile` binary ships via Homebrew) |
+| Kernel author flow | Rust `#[kernel]` → `make regenerate-kernels` runs `tile build --emit all --out Sources/MetalTileSwift` (an SPM build plugin would automate this if the `tile` binary ships via Homebrew) |
 | Authoring DSL | Rust (metaltile). Swift macro frontend deferred indefinitely; metaltile IR is serde-serializable so this stays open. |
 | MTLBuffer access | Direct (we own the tensor type, no MLXArray middle-man) |
 | Testing | 100% line coverage target. Every kernel, every Swift function, every model layer gets unit tests. CI gates on coverage + correctness. |
@@ -251,7 +251,7 @@ Swift dispatch, with the SPM build plugin auto-invoking the emit step.
 
 **Deliverables:**
 
-- `tile emit` subcommand in the metaltile CLI
+- `tile build --emit all` subcommand in the metaltile CLI
   - Walks a registered set of kernels (initially: `vector_add`, `rms_norm`)
   - Runs `MslGenerator` to produce one `.metal` file per kernel
   - Shells out to `xcrun -sdk macosx metal` and `xcrun metallib` to build
@@ -262,7 +262,7 @@ Swift dispatch, with the SPM build plugin auto-invoking the emit step.
     kernel (function-constant specialization keyed in PSO cache)
 - FFAI `Package.swift`
   - Targets: `MetalTileSwift`, `FFAI`, `FFAITests`
-  - `make regenerate-kernels` runs `tile emit` against the local
+  - `make regenerate-kernels` runs `tile build --emit all` against the local
     metaltile checkout before each build
   - Resources: `kernels.metallib`, `manifest.json` bundled into
     `MetalTileSwift`

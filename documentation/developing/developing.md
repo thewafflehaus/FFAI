@@ -52,7 +52,7 @@ For the per-Sources-file purpose see
 ```bash
 make build              # regenerate kernels + swift build (debug)
 make build-release      # regenerate kernels + swift build -c release
-make regenerate-kernels # run `tile emit` only
+make regenerate-kernels # run `tile build --emit all` only
 make test               # regenerate kernels + swift test
 make coverage           # swift test --enable-code-coverage + summary
 make format             # swift-format the repo in place
