@@ -108,41 +108,6 @@ on this branch's `kernels.metallib` is enough to trigger it. That
 makes the kernel-side hypothesis (one of the freshly-regenerated
 kernels) substantially more likely than an FFAI-side busy-loop.
 
-## CPU attention single-threaded sweep — complete (2026-05-23)
-
-`VisionEncoder.cpuAttention` and `AudioEncoder.cpuAttention` were
-single-threaded scalar attentions over `O(nHeads · nTokens² · headDim)`.
-At Whisper's 1500 audio-context rows and SigLIP-896's 4096 patch
-tokens those loops took 15-60+ minutes per encoder pass — what
-surfaced as the VLM image+text "hang" and the Whisper `transcribe`
-empty-output "bug" (the decoder timed out before any token came back).
-Both fixed by parallelising over `(head, query-row)` with
-`DispatchQueue.concurrentPerform` (commits `9bb4e5f`, `3fdb81b`).
-
-Sites swept (audit + fix where serial):
-
-- `Whisper.cpuAttention` — already parallel `(head, query-row)`.
-- `SenseVoice.cpuAttention` — already parallel `(head, query-row)`.
-- `Qwen3ASR` encoder MHA — already parallel `(head, seq)`; text
-  decoder is GPU-resident via `Ops.sdpaDecode` (no CPU attn).
-- `Gemma4VL.cpuAttention` — already two-stage parallel (`(token)`
-  Stage 1, `(head, token)` Stage 2).
-- `Qwen25VL`, `Qwen2VL`, `Qwen3VL` vision towers — already
-  parallel `(head, token)` two-stage.
-- `Pixtral`, `Idefics3`, `Paligemma`, `GlmOcr`, `MiniCPMV`,
-  `Mistral3`, `FastVLM` — all already parallel `(head, token)`.
-- `SmolVLM2.visionSDPA` — **was serial across heads**; converted
-  to parallel `(head, query-row)` (this sweep).
-- `Parakeet.runRelMHA` — **was serial across heads**; converted
-  to parallel `(head)` (this sweep). Each head allocates its own
-  scratch (qU/qV/kH/vH/pH/scores/attnWeights/ctx) and writes a
-  disjoint `[hOff, hOff + headDim)` output slice — race-free.
-- `GPT-OSS.sinkCorrection` — **was serial across heads + ran
-  two redundant passes over the same dot products**. Converted
-  to parallel `(head)` AND folded into a single online-softmax
-  pass (running-max renormalisation). Halves per-head FLOPs at
-  long contexts; was a per-layer per-decode CPU bubble.
-
 ## Gap 3 (GPU vision attention) — blocked on metaltile
 
 Closing this gap was scoped as wiring the four CPU-bound vision
@@ -164,14 +129,12 @@ FastVLM additionally needs `conv2d_depthwise_*` (depthwise +
 pointwise conv chain in FastViTHD's RepMixerBlock — `Ops.gemm`
 covers pointwise, but no depthwise wrapper exists).
 
-What's already mitigated in FFAI today:
-- All four families' CPU attention is **parallelised across (head,
-  token)** with `DispatchQueue.concurrentPerform` (see the
-  "CPU attention single-threaded sweep" entry above). That collapsed
-  Whisper / SigLIP-896 from minutes to seconds. The remaining cold-
-  inference tail is FastVLM at 1024px specifically — its early
-  stages run 256×256×96 + 128×128×192 depthwise convs that need
-  the GPU port.
+What's already mitigated in FFAI today: all four families' CPU
+attention is parallelised across `(head, token)` with
+`DispatchQueue.concurrentPerform`. That collapsed Whisper /
+SigLIP-896 from minutes to seconds. The remaining cold-inference
+tail is FastVLM at 1024px specifically — its early stages run
+256×256×96 + 128×128×192 depthwise convs that need the GPU port.
 
 **Re-scoped Phase 6.5b (metaltile work):**
 1. `ffai_sdpa_bidirectional_{d64,d72,d80,d128}_{f16,bf16}` — single
@@ -182,62 +145,3 @@ What's already mitigated in FFAI today:
 3. FFAI Ops wrappers + migrate the four families.
 
 Tracked, but blocked outside this session.
-
-## Marvis TTS — loader rejects quantized weights
-
-**Fixed in commit `6fd6a87`.** `MarvisConfig.quantization` is now
-plumbed through `build` → `buildTransformer` → `loadLinear` /
-`loadEmbedding`, and the `MarvisModel` fields switched from
-`Embedding`/`Linear` to `AnyEmbedding`/`AnyLinear`. Every
-`mlx-community` `-4bit`/`-8bit` Marvis checkpoint now binds to
-`QuantizedLinear`/`QuantizedEmbedding`. Suite re-enabled.
-
-## NemotronVL — no MLX checkpoint exists upstream
-
-**Self-skipping in commit `69306a6`.** The suite no longer carries
-`.disabled`; instead each test calls `nemotronVLIsCached()` which
-probes the HF cache for the candidate snapshot names and exits
-early when none is present. Drop an mlx-style Nemotron-VL
-conversion into the cache and the suite auto-enables on the next
-run — no code change needed.
-
-## Idefics3 + Paligemma + GlmOcr — landed; full VLModel adapter pending
-
-All three were ported by background agents and landed (commits
-`0f33924`, `777cf63`). Each ships as a `LanguageModel` engine — the
-test casts `m.engine` to the concrete family type to access the vision
-APIs (`encodeImage(...)` / `setImagePixels(_:)` / etc). Conformance gaps
-fixed inline:
-
-- Idefics3 + GlmOcr: added the missing `forward(...:on:device:)` overload
-  that `LanguageModel` requires for command-buffer chaining.
-- Paligemma: same `forward(...:on:device:)` overload, plus the missing
-  `.auraQuantized` case in `makeLayerCaches` (falls back to raw KV cache),
-  plus renamed `bfloat16ToFloat` → `paligemmaBfloat16ToFloat` to dodge
-  the file-scope collision with FishSpeechLayers' helper.
-- GlmOcr: renamed its custom `SafeTensorsBundle.prefixed(...)` extension
-  to `glmOcrPrefixed(...)` to dodge the public-API collision, dropped a
-  shadowing `Tensor.toFloatArray()` extension, made `textEmbedding(...)`
-  public.
-
-**Design note — engine downcast is intentional for these three.**
-FFAI's `VLModel` adapter wraps `VisionEncoder + LanguageModel + splice`
-for families that cleanly factor into those three layers (Pixtral,
-Mistral3, Qwen3VL, SmolVLM2, MiniCPM-V, Gemma3/4-VL …). Idefics3,
-PaliGemma, and GLM-OCR all inline image substitution *into* the
-engine's `forward(tokenId:...)`: at every image-token position the
-forward swaps the text embedding for a precomputed vision feature.
-That keeps their forward path identical to a plain text decode (no
-adapter intermediation needed for the splice), so the `Model.engine`
-downcast is the supported access pattern. `VLMTestSupport` now ships
-`dogImageCHW(targetSize:)` + `dogImageCHWNormalized(targetSize:
-normalization:)` so each of these tests can run the full image+text
-dog assertion at its native resolution.
-
-## Indirect-dispatch test gap on metaltile
-
-`Ops.dequantGemvIndirect` exists; metaltile generates the
-`dequant_gemv_int4_{f16,bf16}_indirect` Swift wrappers via the opt-in
-`Kernel.wants_indirect_variant` field on `dev`. Integration tests
-already exercise this. No outstanding gap, just noting it lives in the
-GPU-router code path and is default-off pending the host-side router.
