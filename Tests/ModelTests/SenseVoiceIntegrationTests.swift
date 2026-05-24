@@ -80,8 +80,8 @@ struct SenseVoiceIntegrationTests {
     @Test("transcribe — real speech decodes to a non-degenerate token stream")
     func transcribe_realSpeech() async throws {
         let model = try await loadSenseVoice()
-        // The bundled 16 kHz fixture: "Sure, I can help you with that."
-        let wave = try AudioFixtures.clean001Waveform()
+        // The bundled conversational speech fixture (~13 s, 24 kHz resampled to 16 kHz).
+        let wave = try AudioFixtures.conversationalAWaveform()
         #expect(!wave.isEmpty, "fixture waveform failed to load")
 
         let tokens = model.transcribeTokens(waveform: wave)

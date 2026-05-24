@@ -139,8 +139,8 @@ struct FireRedASR2IntegrationTests {
     func transcribeRealSpeech() async throws {
         let model = try await loadModel()
 
-        // Bundled 16 kHz fixture: "Sure, I can help you with that." (≈1.85 s).
-        let wave = try AudioFixtures.clean001Waveform()
+        // Bundled fixture: conversational_a.wav (~13 s, 24 kHz source resampled to 16 kHz).
+        let wave = try AudioFixtures.conversationalAWaveform()
         #expect(!wave.isEmpty, "audio fixture waveform is empty")
 
         // Use the model's bundled tokenizer (loaded from dict.txt).

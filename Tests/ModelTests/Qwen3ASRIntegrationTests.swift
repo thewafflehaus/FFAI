@@ -95,9 +95,9 @@ struct Qwen3ASRIntegrationTests {
     func transcribeRealSpeech() async throws {
         let model = try await loadModel()
 
-        // Load the bundled 16 kHz fixture:
-        // "Sure, I can help you with that." (≈1.85 s).
-        let wave = try AudioFixtures.clean001Waveform()
+        // Load the bundled conversational speech fixture
+        // (~13 s, 24 kHz source resampled to 16 kHz).
+        let wave = try AudioFixtures.conversationalAWaveform()
         #expect(!wave.isEmpty, "audio fixture failed to load")
 
         // We need a tokenizer — for Qwen3ASR checkpoints it lives in the

@@ -63,8 +63,8 @@ struct QwenOmniIntegrationTests {
     @Test("encodeAudio — real speech yields non-degenerate feature tokens")
     func encodeAudio_realSpeech() async throws {
         let model = try await loadQwenOmni()
-        // The bundled 16 kHz fixture: "Sure, I can help you with that."
-        let wave = try AudioFixtures.clean001Waveform()
+        // The bundled conversational speech fixture (~13 s, 24 kHz resampled to 16 kHz).
+        let wave = try AudioFixtures.conversationalAWaveform()
         #expect(!wave.isEmpty, "fixture waveform failed to load")
 
         let features = model.encodeAudio(waveform: wave)

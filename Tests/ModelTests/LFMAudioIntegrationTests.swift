@@ -109,9 +109,9 @@ struct LFMAudioIntegrationTests {
     @Test("encodeAudio — real speech produces non-degenerate feature tokens")
     func encodeAudio_realSpeech() async throws {
         let model = try await loadLFMAudio()
-        // Bundled 16 kHz fixture: "Sure, I can help you with that."
-        let wave = try AudioFixtures.clean001Waveform()
-        #expect(!wave.isEmpty, "AudioFixtures.clean001Waveform() returned an empty array")
+        // Bundled conversational speech fixture (~13 s, 24 kHz → 16 kHz).
+        let wave = try AudioFixtures.conversationalAWaveform()
+        #expect(!wave.isEmpty, "AudioFixtures.conversationalAWaveform() returned an empty array")
 
         let features = model.encodeAudio(waveform: wave)
 

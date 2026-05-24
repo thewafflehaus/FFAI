@@ -1,6 +1,6 @@
-// Shared helpers for the audio integration suites (STT / TTS / Omni).
+// Shared helpers for the audio integration suites (STT / TTS / Omni / VAD).
 //
-// Two responsibilities:
+// Three responsibilities:
 //
 //  1. `cachedSnapshot(...)` — resolve a checkpoint directory. Some audio
 //     checkpoints are only present in the HF-cache *mlx-audio* sibling
@@ -12,10 +12,18 @@
 //     a local path. The helper returns the first candidate that exists
 //     and looks complete (a config + at least one weight file).
 //
-//  2. `clean001Waveform()` — load the bundled 16 kHz speech fixture
+//  2. `conversationalAWaveform()` — load the longer-form conversational
+//     speech fixture (`Resources/conversational_a.wav`, 24 kHz source
+//     resampled to 16 kHz, ~13 s) for the STT suites. Multi-sentence
+//     dialogue gives more transcription text to assert against than the
+//     1.85 s clean_001 clip. Sourced from
+//     github.com/ekryski/mlx-audio-swift @ ek/audio-benchmarks.
+//
+//  3. `clean001Waveform()` — load the shorter 16 kHz speech fixture
 //     (`Resources/clean_001.wav`, "Sure, I can help you with that.")
-//     for the STT suites. Referenced via a `#filePath`-relative path so
-//     it works without a SwiftPM resource bundle.
+//     for VAD / STS suites whose assertions are tuned to its
+//     1.85 s "Sure, I…" clip. Referenced via a `#filePath`-relative path
+//     so it works without a SwiftPM resource bundle.
 //
 // Unlike the old catch-and-skip helpers, nothing here swallows a load
 // failure: a missing checkpoint surfaces as a thrown error so the test
@@ -85,10 +93,24 @@ enum AudioFixtures {
 
     /// Load the bundled 16 kHz speech fixture as a mono float waveform.
     /// "Sure, I can help you with that." — clean synthetic speech, 1.85 s.
+    /// Kept for VAD / STS suites whose assertions are tuned to this clip;
+    /// new STT tests should prefer `conversationalAWaveform()`.
     static func clean001Waveform() throws -> [Float] {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .appendingPathComponent("Resources/clean_001.wav")
+        return try AudioPreprocessing.loadWaveform(url: url, targetRate: 16_000)
+    }
+
+    /// Load the bundled conversational speech fixture as a mono 16 kHz
+    /// float waveform. ~13 s of multi-sentence dialogue (24 kHz source,
+    /// resampled at load), giving STT suites more text to assert
+    /// transcription quality against than the 1.85 s "Sure, I…" clip.
+    /// Sourced from ekryski/mlx-audio-swift @ ek/audio-benchmarks.
+    static func conversationalAWaveform() throws -> [Float] {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("Resources/conversational_a.wav")
         return try AudioPreprocessing.loadWaveform(url: url, targetRate: 16_000)
     }
 }

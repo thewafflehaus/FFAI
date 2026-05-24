@@ -88,24 +88,15 @@ struct ParakeetIntegrationTests {
         return (0..<n).map { 0.3 * sin(2 * Float.pi * hz * Float($0) / Float(sr)) }
     }
 
-    /// Load the bundled 16 kHz speech fixture, if present.
+    /// Load the bundled conversational speech fixture, if present.
     /// Falls back to a synthetic tone when the fixture file is absent
-    /// (the worktree does not include the Resources/ subtree).
+    /// (the worktree does not include the Resources/ subtree). Routes
+    /// through `AudioPreprocessing.loadWaveform` so the 24 kHz source
+    /// is resampled to 16 kHz for Parakeet's front-end.
     private func speechFixtureWaveform() -> [Float] {
-        let url = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .appendingPathComponent("Resources/clean_001.wav")
-        if let data = try? Data(contentsOf: url) {
-            // Minimal WAV PCM reader for 16-bit mono 16 kHz files.
-            // Skips the 44-byte standard RIFF header.
-            let headerSize = 44
-            guard data.count > headerSize else { return syntheticTone() }
-            let body = data.subdata(in: headerSize..<data.count)
-            let samples = body.withUnsafeBytes { ptr -> [Float] in
-                let int16Ptr = ptr.bindMemory(to: Int16.self)
-                return int16Ptr.map { Float($0) / 32768.0 }
-            }
-            return samples.isEmpty ? syntheticTone() : samples
+        if let wave = try? AudioFixtures.conversationalAWaveform(),
+           !wave.isEmpty {
+            return wave
         }
         return syntheticTone()
     }

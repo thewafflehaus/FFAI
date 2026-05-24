@@ -116,8 +116,8 @@ struct VoxtralRealtimeIntegrationTests {
     func transcribeRealSpeech() async throws {
         let model = try await loadModel()
 
-        // Load the bundled 16 kHz fixture: "Sure, I can help you with that."
-        let wave = try AudioFixtures.clean001Waveform()
+        // Load the bundled conversational speech fixture (~13 s, 24 kHz resampled to 16 kHz).
+        let wave = try AudioFixtures.conversationalAWaveform()
         #expect(!wave.isEmpty, "audio fixture failed to load")
 
         let transcript = model.transcribe(waveform: wave, maxTokens: 256)
