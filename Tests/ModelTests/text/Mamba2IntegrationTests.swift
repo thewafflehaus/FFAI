@@ -62,7 +62,7 @@ struct Mamba2IntegrationTests {
         // and we accept 50 tokens instead of the default 50 floor.
         let result = try await m.generate(
             prompt: "The quick brown fox jumps over the",
-            parameters: GenerationParameters(maxTokens: 50, temperature: 0)
+            parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
         #expect(result.tokensPerSecond > 0)
         expectCoherentOutput(

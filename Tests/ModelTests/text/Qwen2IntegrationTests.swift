@@ -18,7 +18,7 @@ struct Qwen2IntegrationTests {
     func loadAndGenerate() async throws {
         let modelId = "Qwen/Qwen2.5-0.5B-Instruct"
         let prompt = "Once upon a time, in a quiet village"
-        let maxTokens = 64
+        let maxTokens = 200
 
         let m: Model
         do {

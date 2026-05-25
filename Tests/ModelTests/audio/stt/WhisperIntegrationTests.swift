@@ -104,7 +104,7 @@ struct WhisperIntegrationTests {
         let generated = model.generateTranscript(
             audioFeatures: features,
             initialTokens: prefix.isEmpty ? [0] : prefix,
-            eosToken: eos, maxTokens: 32)
+            eosToken: eos, maxTokens: 200)
 
         // A real utterance must produce a non-empty, in-vocab stream.
         #expect(!generated.isEmpty,

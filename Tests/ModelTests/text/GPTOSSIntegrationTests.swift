@@ -133,7 +133,7 @@ struct GPTOSSIntegrationTests {
         // ── End-to-end greedy generation ──────────────────────────────
         let result = try await m.generate(
             prompt: prompt,
-            parameters: GenerationParameters(maxTokens: 64, temperature: 0)
+            parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
         #expect(result.tokensPerSecond > 0)
 

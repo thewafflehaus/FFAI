@@ -17,7 +17,7 @@ struct LlamaIntegrationTests {
     func loadAndGenerate() async throws {
         let modelId = "unsloth/Llama-3.2-1B"
         let prompt = "Once upon a time, in a quiet village"
-        let maxTokens = 64
+        let maxTokens = 200
         let bosTokenId = 128_000
 
         let m: Model

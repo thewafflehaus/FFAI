@@ -195,7 +195,7 @@ struct GlmOcrIntegrationTests {
 
         let generated = model.generate(
             image: image, promptTokens: promptTokens,
-            maxTokens: 64, device: Device.shared)
+            maxTokens: 200, device: Device.shared)
 
         // The model must produce at least one token.
         #expect(!generated.isEmpty)

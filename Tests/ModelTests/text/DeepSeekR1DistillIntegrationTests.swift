@@ -21,7 +21,7 @@ struct DeepSeekR1DistillIntegrationTests {
         // plumbing.
         let modelId = "mlx-community/DeepSeek-R1-Distill-Llama-8B-4bit"
         let prompt = "Once upon a time, in a quiet village"
-        let maxTokens = 64
+        let maxTokens = 200
 
         let m: Model
         do {
@@ -56,7 +56,7 @@ struct DeepSeekR1DistillIntegrationTests {
         // Qwen 2.x family wiring.
         let modelId = "mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit"
         let prompt = "Once upon a time, in a quiet village"
-        let maxTokens = 64
+        let maxTokens = 200
 
         let m: Model
         do {

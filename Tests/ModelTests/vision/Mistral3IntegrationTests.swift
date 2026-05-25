@@ -75,7 +75,7 @@ struct Mistral3IntegrationTests {
 
         let generated = try vlm.generate(
             promptTokens: promptTokens, image: image,
-            maxTokens: 64, eosTokenId: m.config.eosTokenId)
+            maxTokens: 200, eosTokenId: m.config.eosTokenId)
 
         // Coherence gate: the model must produce at least 8 tokens of
         // non-trivial text.

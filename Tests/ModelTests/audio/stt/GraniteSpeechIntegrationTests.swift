@@ -64,7 +64,7 @@ struct GraniteSpeechIntegrationTests {
         let waveform = Self.syntheticTone()
         let result = try model.transcribe(
             waveform,
-            maxNewTokens: 64,
+            maxNewTokens: 200,
             temperature: 0.0  // greedy for determinism
         )
 

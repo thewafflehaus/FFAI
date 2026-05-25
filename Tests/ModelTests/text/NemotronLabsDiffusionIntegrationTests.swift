@@ -68,7 +68,7 @@ struct NemotronLabsDiffusionIntegrationTests {
         // Mode 1 — autoregressive decoding via the standard loop.
         let ar = try await m.generate(
             prompt: prompt,
-            parameters: GenerationParameters(maxTokens: 64, temperature: 0))
+            parameters: GenerationParameters(maxTokens: 200, temperature: 0))
         #expect(ar.tokensPerSecond > 0)
         expectCoherentOutput(ar.generatedTokens, label: "Nemotron-Labs-Diffusion 3B AR")
 

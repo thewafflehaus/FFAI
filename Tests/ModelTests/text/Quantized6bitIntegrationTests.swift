@@ -15,7 +15,7 @@ struct Quantized6bitIntegrationTests {
     func loadAndGenerate() async throws {
         let modelId = "mlx-community/Qwen3-1.7B-6bit"
         let prompt = "Once upon a time, in a quiet village"
-        let maxTokens = 64
+        let maxTokens = 200
 
         let m: Model
         do {

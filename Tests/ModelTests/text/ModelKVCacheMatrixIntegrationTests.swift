@@ -109,7 +109,7 @@ enum MatrixCatalog {
     static let prompt = "Once upon a time, in a quiet village"
     /// Tokens to greedy-decode per cell. Kept modest so the matrix
     /// stays tractable; `expectCoherentOutput` needs only a handful.
-    static let maxTokens = 64
+    static let maxTokens = 200
 
     /// `true` when the env var is set — flips the env-gated cells on.
     static let buildMachineEnabled =

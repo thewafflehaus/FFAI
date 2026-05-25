@@ -30,7 +30,7 @@ struct SlidingWindowIntegrationTests {
         // wraps the buffer roughly once. The first 4 slots are pinned
         // as attention sinks (Xiao et al. 2023 default).
         let prompt = "Once upon a time"
-        let maxTokens = 64
+        let maxTokens = 200
         let windowSize = 64
         let keep = 4
 
