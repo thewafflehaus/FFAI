@@ -312,8 +312,8 @@ final class Qwen25VLVisionBlock {
                              outDim: Int, on cmd: MTLCommandBuffer) -> Tensor {
         let y = Ops.gemm(weight: linear.weight, input: x, nRows: nTokens, on: cmd)
         guard let bias = linear.bias else { return y }
-        return Qwen25VLVisionModel.addRowBias(y, bias: bias, nRows: nTokens,
-                                              rowSize: outDim, on: cmd)
+        return addRowBias(y, bias: bias, nRows: nTokens,
+                          rowSize: outDim, on: cmd)
     }
 }
 
@@ -404,7 +404,8 @@ final class Qwen25VLVisionModel: @unchecked Sendable {
             * cfg.patchSize * cfg.patchSize
         // Round the unfold dim up to the GEMM K-tile width so the
         // patch-embed projection dispatches as a single `Ops.gemm`.
-        let patchDimPadded = ((patchDim + gemmKTile - 1) / gemmKTile) * gemmKTile
+        let patchDimPadded =
+            ((patchDim + gemmKTileWidth - 1) / gemmKTileWidth) * gemmKTileWidth
         let patchEmbedWeight = flattenPatchEmbed(
             rawPatch, hidden: cfg.hidden, patchDim: patchDim,
             patchDimPadded: patchDimPadded, device: device)
@@ -414,7 +415,8 @@ final class Qwen25VLVisionModel: @unchecked Sendable {
         // `gate`/`up` output rows and `down` input columns are
         // zero-extended to the padded dim.
         let paddedIntermediate =
-            ((cfg.intermediate + gemmKTile - 1) / gemmKTile) * gemmKTile
+            ((cfg.intermediate + gemmKTileWidth - 1) / gemmKTileWidth)
+            * gemmKTileWidth
         var blocks: [Qwen25VLVisionBlock] = []
         blocks.reserveCapacity(cfg.depth)
         for i in 0..<cfg.depth {
@@ -458,9 +460,6 @@ final class Qwen25VLVisionModel: @unchecked Sendable {
             mergerNorm: mergerNorm, mergerFC1: mergerFC1, mergerFC2: mergerFC2,
             textHidden: textHidden, dtype: dtype, gridSide: defaultGridSide)
     }
-
-    /// The `Ops.gemm` K-tile width — `inDim` must be a multiple of it.
-    static let gemmKTile = 16
 
     /// Run the full vision forward on a preprocessed image. `image` is a
     /// normalized NCHW tensor `[1, inChannels, side, side]` where
@@ -745,7 +744,7 @@ final class Qwen25VLVisionModel: @unchecked Sendable {
         var x = Ops.gemm(weight: mergerFC1.weight, input: grouped,
                          nRows: merged, on: cmd2)
         if let b = mergerFC1.bias {
-            x = Qwen25VLVisionModel.addRowBias(
+            x = addRowBias(
                 x, bias: b, nRows: merged,
                 rowSize: mergerFC1.weight.shape[0], on: cmd2)
         }
@@ -753,7 +752,7 @@ final class Qwen25VLVisionModel: @unchecked Sendable {
         var y = Ops.gemm(weight: mergerFC2.weight, input: x,
                          nRows: merged, on: cmd2)
         if let b = mergerFC2.bias {
-            y = Qwen25VLVisionModel.addRowBias(
+            y = addRowBias(
                 y, bias: b, nRows: merged,
                 rowSize: mergerFC2.weight.shape[0], on: cmd2)
         }
@@ -762,131 +761,8 @@ final class Qwen25VLVisionModel: @unchecked Sendable {
         return y
     }
 
-    // ── Static helpers ──
-
-    /// Flatten the patch-embed conv weight into a 2D GEMM weight
-    /// `[hidden, patchDimPadded]` whose first `patchDim` columns match
-    /// `unfoldPatches`' row layout `(tP, in_ch, py, px)` and whose
-    /// trailing `patchDimPadded - patchDim` columns are zero-pad.
-    ///
-    /// The mlx-community Qwen 2.5-VL conversion stores the Conv3d weight
-    /// in MLX's channel-last layout `[hidden, tP, py, px, in_ch]`; a
-    /// PyTorch checkpoint would store `[hidden, in_ch, tP, py, px]`.
-    /// Both 5D layouts are detected (by the trailing dim) and repacked.
-    static func flattenPatchEmbed(_ w: Tensor, hidden: Int, patchDim: Int,
-                                  patchDimPadded: Int, device: Device) -> Tensor {
-        precondition(w.shape.count == 5,
-                     "Qwen25VL: patch-embed weight must be 5D Conv3d, "
-                     + "got \(w.shape)")
-        let src = w.toFloatArray()
-        // Zero-initialized — the pad columns stay zero.
-        var dst = [Float](repeating: 0, count: hidden * patchDimPadded)
-        // dst column order: (((t·inCh + ch)·p + py)·p + px).
-        let mlxLayout = w.shape[4] <= 4   // trailing dim is in_channels
-        if mlxLayout {
-            // src `[hidden, tP, py, px, inCh]` — channel last.
-            let tP = w.shape[1], p = w.shape[2], inCh = w.shape[4]
-            for o in 0..<hidden {
-                for t in 0..<tP {
-                    for py in 0..<p {
-                        for px in 0..<p {
-                            for ch in 0..<inCh {
-                                let s = ((((o * tP + t) * p + py) * p + px) * inCh + ch)
-                                let col = (((t * inCh + ch) * p + py) * p + px)
-                                dst[o * patchDimPadded + col] = src[s]
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            // src `[hidden, inCh, tP, py, px]` — PyTorch channel-first.
-            let inCh = w.shape[1], tP = w.shape[2], p = w.shape[3]
-            for o in 0..<hidden {
-                for ch in 0..<inCh {
-                    for t in 0..<tP {
-                        for py in 0..<p {
-                            for px in 0..<p {
-                                let s = ((((o * inCh + ch) * tP + t) * p + py) * p + px)
-                                let col = (((t * inCh + ch) * p + py) * p + px)
-                                dst[o * patchDimPadded + col] = src[s]
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return ImagePreprocessing.makeTensor(
-            from: dst, shape: [hidden, patchDimPadded], dtype: w.dtype,
-            device: device)
-    }
-
-    /// Zero-extend a `Linear`'s output rows from `[outOld, inDim]` to
-    /// `[toRows, inDim]` (and its bias to `[toRows]`). The extra rows
-    /// are zero, so the extra outputs are zero — used to pad the
-    /// SwiGLU `gate`/`up` outputs up to the K-tile-aligned intermediate.
-    static func padLinearRows(_ linear: Linear, toRows: Int,
-                              device: Device) -> Linear {
-        let outOld = linear.weight.shape[0]
-        let inDim = linear.weight.shape[1]
-        if outOld == toRows { return linear }
-        precondition(toRows >= outOld,
-                     "Qwen25VL.padLinearRows: target \(toRows) < \(outOld)")
-        let src = linear.weight.toFloatArray()
-        var dst = [Float](repeating: 0, count: toRows * inDim)
-        for r in 0..<outOld {
-            for c in 0..<inDim { dst[r * inDim + c] = src[r * inDim + c] }
-        }
-        let w = ImagePreprocessing.makeTensor(
-            from: dst, shape: [toRows, inDim], dtype: linear.weight.dtype,
-            device: device)
-        var b: Tensor?
-        if let bias = linear.bias {
-            let bs = bias.toFloatArray()
-            var bd = [Float](repeating: 0, count: toRows)
-            for i in 0..<outOld { bd[i] = bs[i] }
-            b = ImagePreprocessing.makeTensor(
-                from: bd, shape: [toRows], dtype: bias.dtype, device: device)
-        }
-        return Linear(weight: w, bias: b)
-    }
-
-    /// Zero-extend a `Linear`'s input columns from `[outDim, inOld]` to
-    /// `[outDim, toCols]`. The extra columns are zero, so they
-    /// contribute nothing — used to pad the SwiGLU `down` projection's
-    /// `inDim` up to the K-tile-aligned intermediate.
-    static func padLinearCols(_ linear: Linear, toCols: Int,
-                              device: Device) -> Linear {
-        let outDim = linear.weight.shape[0]
-        let inOld = linear.weight.shape[1]
-        if inOld == toCols { return linear }
-        precondition(toCols >= inOld,
-                     "Qwen25VL.padLinearCols: target \(toCols) < \(inOld)")
-        let src = linear.weight.toFloatArray()
-        var dst = [Float](repeating: 0, count: outDim * toCols)
-        for r in 0..<outDim {
-            for c in 0..<inOld { dst[r * toCols + c] = src[r * inOld + c] }
-        }
-        let w = ImagePreprocessing.makeTensor(
-            from: dst, shape: [outDim, toCols], dtype: linear.weight.dtype,
-            device: device)
-        return Linear(weight: w, bias: linear.bias)
-    }
-
-    /// Broadcast-add a `[rowSize]` bias to each of `nRows` rows of a
-    /// flat `[nRows, rowSize]` tensor. Shared by the vision blocks +
-    /// the merger.
-    static func addRowBias(_ x: Tensor, bias: Tensor, nRows: Int,
-                           rowSize: Int, on cmd: MTLCommandBuffer) -> Tensor {
-        let biasVals = bias.toFloatArray()
-        var flat = [Float](repeating: 0, count: nRows * rowSize)
-        for r in 0..<nRows {
-            for c in 0..<rowSize { flat[r * rowSize + c] = biasVals[c] }
-        }
-        let tiled = Tensor.empty(shape: [nRows, rowSize], dtype: x.dtype)
-        ImagePreprocessing.copyFloats(flat, into: tiled)
-        return Ops.add(x, tiled, on: cmd)
-    }
+    // Shared `addRowBias`, `padLinearRows`, `padLinearCols`, and
+    // `flattenPatchEmbed` helpers live in `VisionTowerOps.swift`.
 }
 
 // ─── Encoder facade ──────────────────────────────────────────────────

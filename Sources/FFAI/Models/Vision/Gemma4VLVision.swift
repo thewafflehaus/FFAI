@@ -306,8 +306,8 @@ final class Gemma4VLVisionBlock {
                              outDim: Int, on cmd: MTLCommandBuffer) -> Tensor {
         let y = Ops.gemm(weight: linear.weight, input: x, nRows: nTokens, on: cmd)
         guard let bias = linear.bias else { return y }
-        return Qwen25VLVisionModel.addRowBias(y, bias: bias, nRows: nTokens,
-                                              rowSize: outDim, on: cmd)
+        return addRowBias(y, bias: bias, nRows: nTokens,
+                          rowSize: outDim, on: cmd)
     }
 }
 
@@ -362,9 +362,6 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
         self.tokensPerImage = tokensPerImage
     }
 
-    /// The `Ops.gemm` K-tile width — `inDim` must be a multiple of it.
-    static let gemmKTile = 16
-
     static func load(
         visionConfig: ModelConfig, textHidden: Int,
         weights: SafeTensorsBundle, dtype: DType,
@@ -387,7 +384,8 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
         // `inDim` to the GEMM K-tile width.
         let rawPatch = try vt.tensor(named: "patch_embedder.input_proj.weight")
         let patchDim = 3 * cfg.patchSize * cfg.patchSize
-        let patchDimPadded = ((patchDim + gemmKTile - 1) / gemmKTile) * gemmKTile
+        let patchDimPadded =
+            ((patchDim + gemmKTileWidth - 1) / gemmKTileWidth) * gemmKTileWidth
         let patchEmbedWeight = padLinearColsTo(
             rawPatch, toCols: patchDimPadded, device: device)
 
@@ -400,7 +398,8 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
 
         // ── Block stack ──
         let paddedIntermediate =
-            ((cfg.intermediate + gemmKTile - 1) / gemmKTile) * gemmKTile
+            ((cfg.intermediate + gemmKTileWidth - 1) / gemmKTileWidth)
+            * gemmKTileWidth
         var blocks: [Gemma4VLVisionBlock] = []
         blocks.reserveCapacity(cfg.depth)
         for i in 0..<cfg.depth {
@@ -442,8 +441,8 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
                 oProj: try lin("self_attn.o_proj"),
                 qNorm: try headNorm("self_attn.q_norm"),
                 kNorm: try headNorm("self_attn.k_norm"),
-                gate: padLinearRowsTo(gate, toRows: paddedIntermediate, device: device),
-                up: padLinearRowsTo(up, toRows: paddedIntermediate, device: device),
+                gate: padLinearRows(gate, toRows: paddedIntermediate, device: device),
+                up: padLinearRows(up, toRows: paddedIntermediate, device: device),
                 down: Linear(
                     weight: padLinearColsTo(down.weight, toCols: paddedIntermediate,
                                             device: device),
@@ -694,52 +693,8 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
         return (xT, yT)
     }
 
-    /// Zero-extend a weight's input columns from `[outDim, inOld]` to
-    /// `[outDim, toCols]` — the trailing columns are zero, so they
-    /// contribute nothing (used to K-tile-align a GEMM weight).
-    static func padLinearColsTo(_ w: Tensor, toCols: Int, device: Device)
-        -> Tensor
-    {
-        let outDim = w.shape[0], inOld = w.shape[1]
-        if inOld == toCols { return w }
-        precondition(toCols >= inOld,
-                     "Gemma4VL.padLinearColsTo: target \(toCols) < \(inOld)")
-        let src = w.toFloatArray()
-        var dst = [Float](repeating: 0, count: outDim * toCols)
-        for r in 0..<outDim {
-            for c in 0..<inOld { dst[r * toCols + c] = src[r * inOld + c] }
-        }
-        return ImagePreprocessing.makeTensor(
-            from: dst, shape: [outDim, toCols], dtype: w.dtype, device: device)
-    }
-
-    /// Zero-extend a `Linear`'s output rows from `[outOld, inDim]` to
-    /// `[toRows, inDim]` (and its bias to `[toRows]`).
-    static func padLinearRowsTo(_ linear: Linear, toRows: Int, device: Device)
-        -> Linear
-    {
-        let outOld = linear.weight.shape[0], inDim = linear.weight.shape[1]
-        if outOld == toRows { return linear }
-        precondition(toRows >= outOld,
-                     "Gemma4VL.padLinearRowsTo: target \(toRows) < \(outOld)")
-        let src = linear.weight.toFloatArray()
-        var dst = [Float](repeating: 0, count: toRows * inDim)
-        for r in 0..<outOld {
-            for c in 0..<inDim { dst[r * inDim + c] = src[r * inDim + c] }
-        }
-        let w = ImagePreprocessing.makeTensor(
-            from: dst, shape: [toRows, inDim], dtype: linear.weight.dtype,
-            device: device)
-        var b: Tensor?
-        if let bias = linear.bias {
-            let bs = bias.toFloatArray()
-            var bd = [Float](repeating: 0, count: toRows)
-            for i in 0..<outOld { bd[i] = bs[i] }
-            b = ImagePreprocessing.makeTensor(
-                from: bd, shape: [toRows], dtype: bias.dtype, device: device)
-        }
-        return Linear(weight: w, bias: b)
-    }
+    // Shared `addRowBias`, `padLinearRows`, and `padLinearColsTo`
+    // helpers live in `VisionTowerOps.swift`.
 }
 
 /// A `VisionEncoder` subclass whose `encode` runs the Gemma 4 vision

@@ -618,19 +618,7 @@ final class PixtralProjector: @unchecked Sendable {
         return y
     }
 
-    /// Broadcast-add a `[rowSize]` bias to each of `nRows` rows of a
-    /// `[nRows, rowSize]` tensor.
-    private func addRowBias(_ x: Tensor, bias: Tensor, nRows: Int,
-                            rowSize: Int, on cmd: MTLCommandBuffer) -> Tensor {
-        let biasVals = bias.toFloatArray()
-        var flat = [Float](repeating: 0, count: nRows * rowSize)
-        for r in 0..<nRows {
-            for c in 0..<rowSize { flat[r * rowSize + c] = biasVals[c] }
-        }
-        let tiled = Tensor.empty(shape: [nRows, rowSize], dtype: x.dtype)
-        ImagePreprocessing.copyFloats(flat, into: tiled)
-        return Ops.add(x, tiled, on: cmd)
-    }
+    // Shared `addRowBias` helper lives in `VisionTowerOps.swift`.
 }
 
 // ─── Composed tower ───────────────────────────────────────────────────

@@ -223,8 +223,8 @@ final class Qwen2VLVisionBlock {
                              outDim: Int, on cmd: MTLCommandBuffer) -> Tensor {
         let y = Ops.gemm(weight: linear.weight, input: x, nRows: nTokens, on: cmd)
         guard let bias = linear.bias else { return y }
-        return Qwen25VLVisionModel.addRowBias(y, bias: bias, nRows: nTokens,
-                                              rowSize: outDim, on: cmd)
+        return addRowBias(y, bias: bias, nRows: nTokens,
+                          rowSize: outDim, on: cmd)
     }
 }
 
@@ -307,9 +307,9 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
         let rawPatch = try weights.tensor(named: "patch_embed.proj.weight")
         let patchDim = cfg.inChannels * cfg.temporalPatchSize
             * cfg.patchSize * cfg.patchSize
-        let kTile = Qwen25VLVisionModel.gemmKTile
+        let kTile = gemmKTileWidth
         let patchDimPadded = ((patchDim + kTile - 1) / kTile) * kTile
-        let patchEmbedWeight = Qwen25VLVisionModel.flattenPatchEmbed(
+        let patchEmbedWeight = flattenPatchEmbed(
             rawPatch, hidden: cfg.hidden, patchDim: patchDim,
             patchDimPadded: patchDimPadded, device: device)
 
@@ -338,9 +338,9 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
             blocks.append(Qwen2VLVisionBlock(
                 norm1: try norm("norm1"), norm2: try norm("norm2"),
                 qkv: try lin("attn.qkv"), proj: try lin("attn.proj"),
-                fc1: Qwen25VLVisionModel.padLinearRows(
+                fc1: padLinearRows(
                     fc1, toRows: paddedIntermediate, device: device),
-                fc2: Qwen25VLVisionModel.padLinearCols(
+                fc2: padLinearCols(
                     fc2, toCols: paddedIntermediate, device: device),
                 paddedIntermediate: paddedIntermediate, cfg: cfg))
         }
@@ -620,7 +620,7 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
         var x = Ops.gemm(weight: mergerFC1.weight, input: grouped,
                          nRows: merged, on: cmd2)
         if let b = mergerFC1.bias {
-            x = Qwen25VLVisionModel.addRowBias(
+            x = addRowBias(
                 x, bias: b, nRows: merged,
                 rowSize: mergerFC1.weight.shape[0], on: cmd2)
         }
@@ -628,7 +628,7 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
         var y = Ops.gemm(weight: mergerFC2.weight, input: x,
                          nRows: merged, on: cmd2)
         if let b = mergerFC2.bias {
-            y = Qwen25VLVisionModel.addRowBias(
+            y = addRowBias(
                 y, bias: b, nRows: merged,
                 rowSize: mergerFC2.weight.shape[0], on: cmd2)
         }

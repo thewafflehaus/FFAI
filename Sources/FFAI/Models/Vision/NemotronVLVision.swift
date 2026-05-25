@@ -137,7 +137,7 @@ public final class NemotronVLProjector: @unchecked Sendable {
         var x = Ops.gemm(weight: linear1.weight, input: encoderTokens,
                          nRows: numTokens, on: cmd)
         if let b = linear1.bias {
-            x = Qwen25VLVisionModel.addRowBias(
+            x = addRowBias(
                 x, bias: b, nRows: numTokens,
                 rowSize: linear1.weight.shape[0], on: cmd)
         }
@@ -145,7 +145,7 @@ public final class NemotronVLProjector: @unchecked Sendable {
         var y = Ops.gemm(weight: linear2.weight, input: x,
                          nRows: numTokens, on: cmd)
         if let b = linear2.bias {
-            y = Qwen25VLVisionModel.addRowBias(
+            y = addRowBias(
                 y, bias: b, nRows: numTokens,
                 rowSize: linear2.weight.shape[0], on: cmd)
         }
