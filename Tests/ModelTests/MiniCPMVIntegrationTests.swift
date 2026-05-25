@@ -65,15 +65,23 @@ struct MiniCPMVIntegrationTests {
             return
         }
 
-        // Build an image+text prompt. The MiniCPM chat template normally
-        // wraps the image with <image>…<unk>×N…</image>; here we assemble
-        // a minimal stream: `imageTokenCount` image placeholders, then
-        // a brief text question.
+        // Build an image+text prompt. MiniCPM-V uses the Qwen-style chat
+        // wrapper (<|im_start|>user … <|im_end|> <|im_start|>assistant)
+        // around a run of <|image_pad|> placeholders, NO <|vision_start|>
+        // / <|vision_end|> markers (the MiniCPM-V chat template only
+        // emits <|image_pad|>; checkpoint config + chat_template.jinja
+        // confirm this). Without the chat wrapping the model has no
+        // signal that it's in assistant-response mode and falls into a
+        // degenerate emit-only-space loop (token 220 = `Ġ`), which is
+        // exactly how this test had been failing.
         let imageTokenId = vlm.imageTokenId
-        let questionTokens = m.tokenizer.encode(
-            text: "\nDescribe this image briefly.")
-        let promptTokens = Array(repeating: imageTokenId,
-                                 count: vlm.imageTokenCount) + questionTokens
+        let header = m.tokenizer.encode(text: "<|im_start|>user\n")
+        let trailer = m.tokenizer.encode(
+            text: "\nDescribe this image briefly.<|im_end|>\n"
+                + "<|im_start|>assistant\n")
+        let promptTokens = header
+            + Array(repeating: imageTokenId, count: vlm.imageTokenCount)
+            + trailer
 
         // A solid test image at the encoder's runtime resolution (448).
         let cfg = vlm.visionEncoder.config
