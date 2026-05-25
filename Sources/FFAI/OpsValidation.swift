@@ -154,8 +154,8 @@ public enum OpsValidation {
         headDim: Int, nQHeads: Int, nKVHeads: Int,
         baseKV: Int, nQuery: Int, kvStride: Int
     ) -> String? {
-        if headDim != 128 {
-            return "head_dim must be 128 (got \(headDim)); ffai_sdpa_multi is head_dim-128 only"
+        if headDim != 128 && headDim != 256 {
+            return "head_dim must be 128 or 256 (got \(headDim)); ffai_sdpa_multi covers 128 and ffai_sdpa_multi_d256 covers 256"
         }
         if nQHeads <= 0 {
             return "nQHeads must be positive (got \(nQHeads))"

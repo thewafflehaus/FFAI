@@ -209,16 +209,23 @@ struct OpsValidationTests {
             baseKV: 8, nQuery: 8, kvStride: 4096) == nil)
     }
 
-    @Test("sdpaMulti rejects head_dim != 128")
+    @Test("sdpaMulti rejects head_dim != 128 and != 256")
     func sdpaMultiRejectsBadHeadDim() {
-        // The kernel hardcodes 4 elements/lane (128/32); other head
-        // dims OOB-read.
-        for hd in [32, 64, 96, 256] {
+        // d=128 hardcodes 4 elements/lane; d=256 hardcodes 8
+        // elements/lane. Other head dims OOB-read.
+        for hd in [32, 64, 96, 192, 512] {
             #expect(OpsValidation.validateSdpaMulti(
                 headDim: hd, nQHeads: 8, nKVHeads: 8,
                 baseKV: 0, nQuery: 8, kvStride: 8) != nil,
                 "head_dim \(hd) should be rejected")
         }
+    }
+
+    @Test("sdpaMulti accepts head_dim == 256 (Qwen3.6-A3B full-attention)")
+    func sdpaMultiAcceptsHeadDim256() {
+        #expect(OpsValidation.validateSdpaMulti(
+            headDim: 256, nQHeads: 8, nKVHeads: 8,
+            baseKV: 0, nQuery: 8, kvStride: 8) == nil)
     }
 
     @Test("sdpaMulti rejects non-integer GQA fan-out")

@@ -2244,15 +2244,15 @@ public final class Qwen35AttentionMixer: Module {
         }
         kv.appendRangeOnGPU(kRows: kRows, vRows: vRows, on: cmd)
 
-        // ── SDPA — ITER 90 (Bagel 2): when head_dim == 128, fuse the
-        // T-token causal attention into ONE `Ops.sdpaMulti` dispatch.
-        // For other head_dims (e.g. 256 on some Qwen variants), keep
-        // the T-loop `sdpaDecode` fallback. sdpaMulti's per-query
-        // causal mask attends `[0, baseKV + r + 1)` for query r —
-        // exactly what the per-token loop computes.
+        // ── SDPA — ITER 90 / 93 (Bagel 2): fuse the T-token causal
+        // attention into ONE `Ops.sdpaMulti` dispatch. d=128 wraps
+        // `ffai_sdpa_multi`; d=256 (Qwen3.6-A3B full-attention layers)
+        // wraps `ffai_sdpa_multi_d256` — same semantics, head_dim-256
+        // 2-phase output reduction internally. T-loop `sdpaDecode`
+        // fallback only fires for other head_dims.
         let (cacheK, cacheV) = kv.prepareForAttention(on: cmd)
         let attnAll: Tensor
-        if headDim == 128 {
+        if headDim == 128 || headDim == 256 {
             // qNormed is `[T, nHeads, headDim]` flat. Reshape into the
             // shape sdpaMulti expects (same buffer, no copy).
             let qBlock = qNormed.reshaped(to: [t, nHeads, headDim])
