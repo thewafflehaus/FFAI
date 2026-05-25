@@ -1314,7 +1314,7 @@ public struct TranscriptionResult: Sendable {
 
 /// The loaded GraniteSpeech model: encoder + projector (CPU) + LM (GPU).
 /// Note: does NOT conform to the `AudioModel` protocol declared in
-/// `AudioGenerationModel.swift` — that one is for TTS (`synthesize(text:...)`).
+/// `AudioModel.swift` — that one is for TTS (`synthesize(text:...)`).
 /// GraniteSpeech follows the standalone STT pattern: `load(...)` + `transcribe(...)`.
 public final class GraniteSpeechModel: Module {
     public let config: GraniteSpeechConfig

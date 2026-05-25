@@ -9,7 +9,7 @@
 //     for plain (Ops.gemm) and quantized (per-row dequant gemv) paths.
 //   • Mistral3ComposedTower / Mistral3ComposedEncoder — couples the Pixtral
 //     ViT (see `Vision/PixtralVision.swift`) with the Mistral3 projector and
-//     presents a single VisionEncoder surface to VLModel.
+//     presents a single VisionEncoder surface to VisionModel.
 //   • SafeTensorsBundle.mistral3ProjectorQuantization — quantization probe.
 
 import Foundation
@@ -268,7 +268,7 @@ private func mistral3BroadcastAddBias(
 // ─── Composed tower ───────────────────────────────────────────────────
 
 /// Couples `PixtralVisionEncoder` with `Mistral3Projector` so the pair
-/// presents a single `VisionEncoder`-shaped surface to `VLModel`.
+/// presents a single `VisionEncoder`-shaped surface to `VisionModel`.
 final class Mistral3ComposedTower {
     let encoder: PixtralVisionEncoder
     let projector: Mistral3Projector

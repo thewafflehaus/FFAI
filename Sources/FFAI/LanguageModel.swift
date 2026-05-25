@@ -107,7 +107,7 @@ public protocol LanguageModel: Module {
 
     /// Queue a single-token forward pass that takes a precomputed
     /// `[hidden]` embedding row instead of a token id — the primitive a
-    /// `VLModel` uses to inject vision-encoder tokens at image-placeholder
+    /// `VisionModel` uses to inject vision-encoder tokens at image-placeholder
     /// positions. Everything after the embedding lookup (norm scale,
     /// layer stack, lm_head) is identical to `forward(tokenId:...)`.
     ///
@@ -120,7 +120,7 @@ public protocol LanguageModel: Module {
     /// Look up the raw `[hidden]` embedding row for a text token — the
     /// table gather *without* any family-specific post-scale (Gemma's
     /// embed-scale is applied inside `forward(inputEmbedding:...)`, not
-    /// here). A `VLModel` uses this to build the spliced prompt-embedding
+    /// here). A `VisionModel` uses this to build the spliced prompt-embedding
     /// stream: text tokens get `textEmbedding(...)`, image-placeholder
     /// positions get vision-encoder rows. VL-target families implement
     /// it; the default traps. Check `supportsEmbeddingInput` first.

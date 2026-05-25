@@ -99,7 +99,7 @@ its loader is a follow-on port.
 
 VL checkpoints store a text backbone under `language_model.` plus a
 vision tower; `SafeTensorsBundle.prefixed(_:)` lets the existing text
-loader run unchanged on the sub-tree, and [`VLModel`](../Sources/FFAI/VLModel.swift)
+loader run unchanged on the sub-tree, and [`VisionModel`](../Sources/FFAI/VisionModel.swift)
 splices the projected image tokens into the text stream.
 
 | Family | File | `architectures` | Notes |

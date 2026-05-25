@@ -522,7 +522,7 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
         return embed(pooled, device: device)
     }
 
-    /// Present the tower as a `VisionEncoder` so `VLModel` accepts it.
+    /// Present the tower as a `VisionEncoder` so `VisionModel` accepts it.
     func asVisionEncoder() -> VisionEncoder {
         Gemma4VLComposedEncoder(tower: self)
     }
@@ -698,7 +698,7 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
 }
 
 /// A `VisionEncoder` subclass whose `encode` runs the Gemma 4 vision
-/// tower + multi-modal embedder — so `VLModel` (which holds a
+/// tower + multi-modal embedder — so `VisionModel` (which holds a
 /// `VisionEncoder`) transparently gets the pooled, projected soft
 /// tokens.
 final class Gemma4VLComposedEncoder: VisionEncoder {

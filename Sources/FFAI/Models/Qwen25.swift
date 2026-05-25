@@ -21,7 +21,7 @@
 //     checkpoint's top-level (Qwen2.5-VL stores text weights under
 //     `model.*` / `lm_head.*`, the standard text layout).
 //
-// The two are joined by `VLModel`'s cross-modal token splice: each
+// The two are joined by `VisionModel`'s cross-modal token splice: each
 // `<|image_pad|>` placeholder (`image_token_id`) in the prompt takes one
 // of the merged vision tokens; for video, each `<|video_pad|>`
 // placeholder (`video_token_id`) takes one of the per-temporal-patch
@@ -58,17 +58,17 @@ public enum Qwen25VL {
     /// repeated `temporal_patch_size` times) and video (N consecutive
     /// frames per temporal patch). The actual video-token splice is
     /// gated on the caller passing `videoFrames` to
-    /// `VLModel.generate(...)`.
+    /// `VisionModel.generate(...)`.
     public static let availableCapabilities: Set<Capability> =
         Capability.textOnly.union([.visionIn, .videoIn])
 
-    /// Build a `VLModel` from a `Qwen2_5_VLForConditionalGeneration`
+    /// Build a `VisionModel` from a `Qwen2_5_VLForConditionalGeneration`
     /// checkpoint: the dynamic-resolution vision tower + the Qwen 2.x
     /// text backbone, joined by the cross-modal splice.
     public static func load(
         config: ModelConfig, weights: SafeTensorsBundle,
         options: LoadOptions, device: Device
-    ) throws -> VLModel {
+    ) throws -> VisionModel {
         guard let visionConfig = config.subConfig("vision_config") else {
             throw Qwen25VLError.missingConfig
         }
@@ -96,7 +96,7 @@ public enum Qwen25VL {
         let videoTokenId = config.int("video_token_id") ?? defaultVideoTokenId
         // The vision tower decides its own merged-token count from the
         // dynamic image geometry; the encoder facade reports it.
-        return try VLModel(
+        return try VisionModel(
             visionEncoder: vision.asVisionEncoder(),
             engine: textEngine,
             imageTokenId: imageTokenId,

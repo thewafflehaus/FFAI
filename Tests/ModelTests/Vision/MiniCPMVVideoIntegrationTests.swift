@@ -40,7 +40,7 @@ struct MiniCPMVVideoIntegrationTests {
             try await Model.load(Self.modelId)
         }
         // The MiniCPM-V 4.6 family loader threads video_token_id (248057)
-        // through to VLModel.init; confirm it landed.
+        // through to VisionModel.init; confirm it landed.
         let vlm = try #require(m.vlModel,
                                "MiniCPM-V 4.6 checkpoint is not a VLM")
         #expect(vlm.videoTokenId != nil,

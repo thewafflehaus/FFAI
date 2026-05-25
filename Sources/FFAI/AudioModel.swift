@@ -1,4 +1,4 @@
-// AudioGenerationModel — protocol + shared types for TTS / audio-generation
+// AudioModel — protocol + shared types for TTS / audio-generation
 // families. The runtime registry is `AudioModelRegistry` in
 // `AudioModelRegistry.swift`; this file declares the model-facing protocol
 // + generation-parameter struct + error enum that audio families implement.

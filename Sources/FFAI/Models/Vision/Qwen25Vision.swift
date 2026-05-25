@@ -4,7 +4,7 @@
 // family — the patch-embed, the windowed-attention + M-RoPE block stack,
 // and the patch-merger that projects merged tokens into the text hidden
 // dim. The family orchestrator (`Models/Qwen25.swift`) wires this
-// tower into a `VLModel` together with the Qwen 2.x text backbone.
+// tower into a `VisionModel` together with the Qwen 2.x text backbone.
 //
 // Image vs video:
 //   • encode(image:)  — one square image, `temporal_patch_size` copies
@@ -343,7 +343,7 @@ final class Qwen25VLVisionModel: @unchecked Sendable {
     let gridSide: Int
 
     /// Number of merged vision tokens one image contributes — the
-    /// `imageTokenCount` `VLModel` splices.
+    /// `imageTokenCount` `VisionModel` splices.
     var mergedTokenCount: Int {
         let llmSide = gridSide / cfg.spatialMergeSize
         return llmSide * llmSide
@@ -548,7 +548,7 @@ final class Qwen25VLVisionModel: @unchecked Sendable {
         return mergePatches(h, nPatches: nPatches, device: device)
     }
 
-    /// Present the tower as a `VisionEncoder` so `VLModel` accepts it.
+    /// Present the tower as a `VisionEncoder` so `VisionModel` accepts it.
     func asVisionEncoder() -> VisionEncoder {
         Qwen25VLComposedEncoder(tower: self)
     }
@@ -768,7 +768,7 @@ final class Qwen25VLVisionModel: @unchecked Sendable {
 // ─── Encoder facade ──────────────────────────────────────────────────
 
 /// A `VisionEncoder` subclass whose `encode` runs the Qwen 2.5-VL vision
-/// tower — so `VLModel` (which holds a `VisionEncoder`) transparently
+/// tower — so `VisionModel` (which holds a `VisionEncoder`) transparently
 /// gets the merged, projected vision tokens.
 final class Qwen25VLComposedEncoder: VisionEncoder {
     let tower: Qwen25VLVisionModel
@@ -778,7 +778,7 @@ final class Qwen25VLComposedEncoder: VisionEncoder {
         let c = tower.cfg
         // The facade config reports the square image side the tower
         // expects (`gridSide · patchSize`) and the merged token count
-        // as `numPatches` so `VLModel.imageTokenCount` is correct.
+        // as `numPatches` so `VisionModel.imageTokenCount` is correct.
         let side = tower.gridSide * c.patchSize
         let facadeConfig = VisionEncoderConfig(
             inChannels: c.inChannels, imageSize: side,

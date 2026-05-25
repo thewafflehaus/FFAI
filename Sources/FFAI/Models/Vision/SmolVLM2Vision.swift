@@ -3,7 +3,7 @@
 // Config structs, CPU-path vision ops, `SmolVLM2VisionEncoder`,
 // `SmolVLM2Connector`, and `SmolVLM2Model` (the `LanguageModel`-conforming
 // engine) live here. SmolVLM2 is unusual in that it does not route through
-// `VLModel` — the engine handles vision prefill internally.
+// `VisionModel` — the engine handles vision prefill internally.
 //
 // The family orchestrator (registry metadata, `SmolVLM2Error`,
 // `SmolVLM2Dense.loadModel`) lives in `Models/SmolVLM2.swift`.

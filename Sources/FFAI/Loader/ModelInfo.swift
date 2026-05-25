@@ -99,7 +99,7 @@ public struct ModelInfo: Sendable {
 
     // ── VLM ────────────────────────────────────────────────────────────
 
-    /// `true` when the checkpoint is wrapped in a `VLModel` (a vision
+    /// `true` when the checkpoint is wrapped in a `VisionModel` (a vision
     /// tower + cross-modal splice on top of the text engine). Mirrors
     /// `Model.vlModel != nil`.
     public let isVLM: Bool
@@ -122,9 +122,9 @@ extension Model {
             paramCount += t.elementCount
             paramBytes += t.byteCount
         }
-        // VLM image-token count is exposed on VLModel; it's also
+        // VLM image-token count is exposed on VisionModel; it's also
         // mirror-stored on PaligemmaModel / Gemma3VLComposedEncoder /
-        // etc. for the engine-internal-vision families. The VLModel
+        // etc. for the engine-internal-vision families. The VisionModel
         // path covers the modern composition; engine-internal-vision
         // checkpoints (Paligemma) get a `numImageTokens` accessor
         // we can pick up via `as?` cast — but to keep this generic,

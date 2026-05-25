@@ -22,7 +22,7 @@
 //     stores text weights under `language_model.model.*` /
 //     `language_model.lm_head.*`).
 //
-// The two are joined by `VLModel`'s cross-modal token splice: each
+// The two are joined by `VisionModel`'s cross-modal token splice: each
 // `<|image_pad|>` placeholder (`image_token_id`) in the prompt takes one
 // of the merged vision tokens.
 //
@@ -30,7 +30,7 @@
 // CPU (vision token counts are at most a few thousand, so an O(n²·d)
 // attention is cheap next to the GPU projection GEMMs and is
 // unambiguously correct). The text M-RoPE — Qwen's 3D position scheme —
-// is approximated by `VLModel`'s sequential scalar positions; the splice
+// is approximated by `VisionModel`'s sequential scalar positions; the splice
 // itself is exact. The Qwen3-VL `deepstack` feature (injecting
 // intermediate vision features into the text stack) is omitted in this
 // coherence-first port — only the final merged tokens are spliced. A
@@ -72,13 +72,13 @@ public enum Qwen3VL {
     public static let availableCapabilities: Set<Capability> =
         Capability.textOnly.union([.visionIn, .videoIn])
 
-    /// Build a `VLModel` from a `Qwen3VLForConditionalGeneration`
+    /// Build a `VisionModel` from a `Qwen3VLForConditionalGeneration`
     /// checkpoint: the dynamic-resolution vision tower + the Qwen 3
     /// text backbone, joined by the cross-modal splice.
     public static func load(
         config: ModelConfig, weights: SafeTensorsBundle,
         options: LoadOptions, device: Device
-    ) throws -> VLModel {
+    ) throws -> VisionModel {
         guard let visionConfig = config.subConfig("vision_config"),
               let textConfigRaw = config.nested("text_config")
         else {
@@ -117,7 +117,7 @@ public enum Qwen3VL {
         let imageTokenId = config.int("image_token_id")
             ?? config.int("image_token_index") ?? defaultImageTokenId
         let videoTokenId = config.int("video_token_id") ?? defaultVideoTokenId
-        return try VLModel(
+        return try VisionModel(
             visionEncoder: vision.asVisionEncoder(),
             engine: textEngine, imageTokenId: imageTokenId,
             videoTokenId: videoTokenId,

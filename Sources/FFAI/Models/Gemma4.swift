@@ -26,7 +26,7 @@
 //     from the `language_model.`-prefixed sub-tree (the `Gemma4Loader`
 //     probes the prefix and reads `text_config` itself).
 //
-// The three are joined by `VLModel`'s cross-modal token splice: each
+// The three are joined by `VisionModel`'s cross-modal token splice: each
 // `<image_soft_token>` placeholder (`image_token_id`) in the prompt
 // takes one of the pooled, projected vision tokens.
 //
@@ -55,13 +55,13 @@ public enum Gemma4VL {
     /// `image_token_id` default for Gemma 4 VL checkpoints.
     public static let defaultImageTokenId = 262_144
 
-    /// Build a `VLModel` from a `Gemma4ForConditionalGeneration`
+    /// Build a `VisionModel` from a `Gemma4ForConditionalGeneration`
     /// checkpoint: the Gemma 4 vision tower + multi-modal embedder +
     /// Gemma 4 text backbone, joined by the cross-modal splice.
     public static func load(
         config: ModelConfig, weights: SafeTensorsBundle,
         options: LoadOptions, device: Device
-    ) throws -> VLModel {
+    ) throws -> VisionModel {
         guard let visionConfig = config.subConfig("vision_config") else {
             throw Gemma4VLError.missingConfig
         }
@@ -84,7 +84,7 @@ public enum Gemma4VL {
 
         let imageTokenId = config.int("image_token_id")
             ?? config.int("image_token_index") ?? defaultImageTokenId
-        return try VLModel(
+        return try VisionModel(
             visionEncoder: vision.asVisionEncoder(),
             engine: textEngine, imageTokenId: imageTokenId,
             normalization: .siglip,

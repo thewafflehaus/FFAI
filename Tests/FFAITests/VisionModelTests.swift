@@ -3,7 +3,7 @@ import Metal
 import Testing
 @testable import FFAI
 
-// VLModel — cross-modal token splice + VL generate composition.
+// VisionModel — cross-modal token splice + VL generate composition.
 //
 // The splice is the load-bearing VL-specific logic: it interleaves
 // vision-encoder patch tokens into the text embedding stream at the
@@ -11,11 +11,11 @@ import Testing
 // engine so the splice contract is exercised without a multi-GB
 // checkpoint (real-checkpoint coherence is the ModelTests integration
 // suites' job).
-@Suite("VLModel")
-struct VLModelTests {
+@Suite("VisionModel")
+struct VisionModelTests {
 
     /// Minimal `LanguageModel` stub — supports the embedding-input
-    /// surface a `VLModel` needs. `textEmbedding` returns a tagged
+    /// surface a `VisionModel` needs. `textEmbedding` returns a tagged
     /// constant row per token id so the splice ordering is checkable.
     final class StubEngine: LanguageModel {
         let hidden: Int
@@ -90,7 +90,7 @@ struct VLModelTests {
             layers: [layer], postLayerNorm: ln, projection: nil, dtype: .f32)
     }
 
-    @Test("VLModel — rejects an engine without embedding-input support")
+    @Test("VisionModel — rejects an engine without embedding-input support")
     func rejectsUnsupportedEngine() {
         // A text-only engine (supportsEmbeddingInput == false) can't VLM.
         final class TextOnly: LanguageModel {
@@ -110,8 +110,8 @@ struct VLModelTests {
                                device: Device) -> Int { 0 }
         }
         let enc = makeStubVisionEncoder(hidden: 8)
-        #expect(throws: VLModelError.self) {
-            _ = try VLModel(visionEncoder: enc, engine: TextOnly(),
+        #expect(throws: VisionModelError.self) {
+            _ = try VisionModel(visionEncoder: enc, engine: TextOnly(),
                             imageTokenId: 42, normalization: .siglip)
         }
     }
@@ -120,7 +120,7 @@ struct VLModelTests {
     func spliceInjectsImageTokens() throws {
         let hidden = 8
         let enc = makeStubVisionEncoder(hidden: hidden)
-        let vlm = try VLModel(visionEncoder: enc, engine: StubEngine(hidden: hidden),
+        let vlm = try VisionModel(visionEncoder: enc, engine: StubEngine(hidden: hidden),
                               imageTokenId: 99, normalization: .siglip)
 
         // Prompt: text, text, <image>, <image>, text.
@@ -146,13 +146,13 @@ struct VLModelTests {
     func splicePlaceholderMismatch() throws {
         let hidden = 8
         let enc = makeStubVisionEncoder(hidden: hidden)
-        let vlm = try VLModel(visionEncoder: enc, engine: StubEngine(hidden: hidden),
+        let vlm = try VisionModel(visionEncoder: enc, engine: StubEngine(hidden: hidden),
                               imageTokenId: 99, normalization: .siglip)
         // One placeholder, but two vision rows.
         let prompt = [10, 99, 11]
         let imageTokens = Tensor.empty(shape: [2, hidden], dtype: .f32)
         imageTokens.copyIn(from: [Float](repeating: 0, count: 2 * hidden))
-        #expect(throws: VLModelError.self) {
+        #expect(throws: VisionModelError.self) {
             _ = try vlm.splice(promptTokens: prompt, imageTokens: imageTokens)
         }
     }
@@ -161,7 +161,7 @@ struct VLModelTests {
     func spliceImageAtHead() throws {
         let hidden = 8
         let enc = makeStubVisionEncoder(hidden: hidden)
-        let vlm = try VLModel(visionEncoder: enc, engine: StubEngine(hidden: hidden),
+        let vlm = try VisionModel(visionEncoder: enc, engine: StubEngine(hidden: hidden),
                               imageTokenId: 99, normalization: .siglip)
         let prompt = [99, 5, 6, 7]
         let imageTokens = Tensor.empty(shape: [1, hidden], dtype: .f32)
@@ -174,7 +174,7 @@ struct VLModelTests {
     @Test("imageTokenCount — equals the vision encoder patch count")
     func imageTokenCount() throws {
         let enc = makeStubVisionEncoder(hidden: 8)
-        let vlm = try VLModel(visionEncoder: enc, engine: StubEngine(hidden: 8),
+        let vlm = try VisionModel(visionEncoder: enc, engine: StubEngine(hidden: 8),
                               imageTokenId: 99, normalization: .siglip)
         // 16x16 image, 16x16 patch → 1 patch.
         #expect(vlm.imageTokenCount == 1)

@@ -384,7 +384,7 @@ private func lfm2vlBroadcastAddBias(
 // ─── Composed tower (encoder + projector) ────────────────────────────
 
 /// Couples the SigLIP2 `VisionEncoder` with the LFM2-VL projector so the
-/// pair presents a single `VisionEncoder`-shaped surface to `VLModel`.
+/// pair presents a single `VisionEncoder`-shaped surface to `VisionModel`.
 /// The composed tower's `encode` produces
 /// `[imageTokenCount, textHidden]` — the pixel-unshuffled, projected
 /// vision tokens.
@@ -412,7 +412,7 @@ final class LFM2VLComposedTower {
 }
 
 /// A `VisionEncoder` subclass whose `encode` runs the SigLIP2 ViT then
-/// the LFM2-VL pixel-unshuffle + projector — so `VLModel` sees one tower
+/// the LFM2-VL pixel-unshuffle + projector — so `VisionModel` sees one tower
 /// producing `[imageTokenCount, textHidden]` tokens.
 final class LFM2VLComposedEncoder: VisionEncoder {
     let tower: LFM2VLComposedTower
@@ -421,7 +421,7 @@ final class LFM2VLComposedEncoder: VisionEncoder {
         self.tower = tower
         let e = tower.encoder
         // Override numPatches to the projected (post-pixel-unshuffle) count
-        // so `VLModel.imageTokenCount` matches.
+        // so `VisionModel.imageTokenCount` matches.
         let pooledConfig = VisionEncoderConfig(
             inChannels: e.config.inChannels,
             imageSize: tower.imageSize,

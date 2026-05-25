@@ -21,7 +21,7 @@
 //     is architecturally identical to Llama). Weights live under
 //     `language_model.*` (prefixed bundle).
 //
-// The three are joined by `VLModel`'s cross-modal token splice.
+// The three are joined by `VisionModel`'s cross-modal token splice.
 //
 // Image token count:
 //   With patchSize=14 and spatialMergeSize=2, a P×P patch grid produces
@@ -79,13 +79,13 @@ public enum Mistral3 {
     /// Default spatial merge size (2×2 pooling in the patch merger).
     public static let defaultSpatialMergeSize = 2
 
-    /// Build a `VLModel` from a Mistral3 checkpoint: the Pixtral 2D-RoPE ViT
+    /// Build a `VisionModel` from a Mistral3 checkpoint: the Pixtral 2D-RoPE ViT
     /// + the Mistral3 patch-merger projector + the Mistral text backbone,
     /// joined by the cross-modal splice.
     public static func load(
         config: ModelConfig, weights: SafeTensorsBundle,
         options: LoadOptions, device: Device
-    ) throws -> VLModel {
+    ) throws -> VisionModel {
         guard let visionConfig = config.subConfig("vision_config"),
               let textConfig = config.subConfig("text_config")
         else {
@@ -151,7 +151,7 @@ public enum Mistral3 {
             visionCfg: visionCfg, spatialMergeSize: spatialMergeSize,
             textHidden: textEngine.hidden, dtype: textEngine.dtype)
 
-        return try VLModel(
+        return try VisionModel(
             visionEncoder: composedTower.asVisionEncoder(),
             engine: textEngine, imageTokenId: imageTokenId,
             normalization: .clip,

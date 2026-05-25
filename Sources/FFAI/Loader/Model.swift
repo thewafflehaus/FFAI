@@ -20,10 +20,10 @@ public enum ModelError: Error, CustomStringConvertible {
         case .visionModelNotIntegrated(let a):
             return "Vision-language checkpoint '\(a)' detected. The FFAI "
                 + "vision foundation (VisionEncoder, ImagePreprocessing, "
-                + "VLModel cross-modal splice, conv2d/patch_embed/rope_2d "
+                + "VisionModel cross-modal splice, conv2d/patch_embed/rope_2d "
                 + "Ops) is in tree, but this VL family is not yet wired to "
                 + "a checkpoint loader. Load the text-only checkpoint, or "
-                + "compose a VLModel directly from VisionEncoder + the text "
+                + "compose a VisionModel directly from VisionEncoder + the text "
                 + "engine."
         }
     }
@@ -109,12 +109,12 @@ public enum ModelRegistry {
         /// VLM. `nil` for text-only families. The `engine` is the VL
         /// model's text backbone, so text-only generation works
         /// regardless; `vlModel` adds the cross-modal image path.
-        public let vlModel: VLModel?
+        public let vlModel: VisionModel?
 
         public init(engine: any LanguageModel,
                     defaultGenerationParameters: GenerationParameters,
                     availableCapabilities: Set<Capability> = Capability.textOnly,
-                    vlModel: VLModel? = nil) {
+                    vlModel: VisionModel? = nil) {
             self.engine = engine
             self.defaultGenerationParameters = defaultGenerationParameters
             self.availableCapabilities = availableCapabilities
@@ -285,7 +285,7 @@ public enum ModelRegistry {
             // encoder + pixel-shuffle connector + Llama text backbone.
             // The engine is itself an Idefics3Model exposing
             // `encodeImage(...)` + `prefillWithImage(...)` directly;
-            // VLModel adapter integration is a follow-up.
+            // VisionModel adapter integration is a follow-up.
             // GLM-OCR — Zhipu's OCR-specialised VLM (GLM-Lite text backbone +
             // dynamic-resolution ViT). Engine is itself a GlmOcrModel
             // exposing generate(image:promptTokens:...) directly.
@@ -379,7 +379,7 @@ public enum ModelRegistry {
             // SmolVLM2 — handles image+text internally via the
             // `prefillWithImage` API on its `LanguageModel` engine
             // (a Llama backbone wrapped with a CPU SigLIP vision tower
-            // + pixel-shuffle connector). Does NOT use the VLModel
+            // + pixel-shuffle connector). Does NOT use the VisionModel
             // splice; returns a plain `Loaded` whose `engine` is the
             // composite `SmolVLM2Model` and exposes `.visionIn`.
             if let arch = config.architecture, SmolVLM2.architectures.contains(arch) {
@@ -401,7 +401,7 @@ public enum ModelRegistry {
                     availableCapabilities: SmolVLM2Dense.availableCapabilities)
             }
             // Other VL families — the FFAI vision foundation
-            // (VisionEncoder, ImagePreprocessing, VLModel splice,
+            // (VisionEncoder, ImagePreprocessing, VisionModel splice,
             // conv2d/patch_embed/rope_2d Ops) is in tree, but these
             // towers are not yet wired to a checkpoint loader. Fail with
             // an actionable error rather than a generic "unsupported".
@@ -821,7 +821,7 @@ public final class Model: @unchecked Sendable {
     /// The composed vision-language model — `nil` unless the checkpoint
     /// is a VLM. Use `vlModel.generate(...)` for an image+text prompt;
     /// available only when `availableCapabilities` contains `.visionIn`.
-    public let vlModel: VLModel?
+    public let vlModel: VisionModel?
 
     /// Currently-enabled capabilities. Mutated via `enable(_:)` /
     /// `disable(_:)`; guarded by `capabilityLock` for thread safety.
@@ -908,7 +908,7 @@ public final class Model: @unchecked Sendable {
          availableCapabilities: Set<Capability>,
          enabledCapabilities: Set<Capability>,
          defaultGenerationParameters: GenerationParameters,
-         vlModel: VLModel? = nil) {
+         vlModel: VisionModel? = nil) {
         self.engine = engine
         self.tokenizer = tokenizer
         self.config = config

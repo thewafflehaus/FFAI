@@ -12,7 +12,7 @@
 //   • PixtralVisionEncoder — patch embed conv + block stack.
 //   • PixtralProjector — two-layer GELU MLP projecting vision → text dim.
 //   • PixtralComposedTower / PixtralComposedEncoder — single VisionEncoder
-//     surface coupling the ViT with the projector for VLModel splice.
+//     surface coupling the ViT with the projector for VisionModel splice.
 
 import Foundation
 import Metal
@@ -624,7 +624,7 @@ final class PixtralProjector: @unchecked Sendable {
 // ─── Composed tower ───────────────────────────────────────────────────
 
 /// Couples the `PixtralVisionEncoder` with the `PixtralProjector` so the
-/// pair presents a single `VisionEncoder`-shaped surface to `VLModel`.
+/// pair presents a single `VisionEncoder`-shaped surface to `VisionModel`.
 final class PixtralComposedTower {
     let encoder: PixtralVisionEncoder
     let projector: PixtralProjector
@@ -655,7 +655,7 @@ final class PixtralComposedEncoder: VisionEncoder {
         self.tower = tower
         let cfg = tower.visionCfg
         // The facade config uses imageSize and patchSize to expose the
-        // patch count (`numPatches`) to `VLModel.imageTokenCount`.
+        // patch count (`numPatches`) to `VisionModel.imageTokenCount`.
         // textHidden is the projected output hidden dim.
         let facadeConfig = VisionEncoderConfig(
             inChannels: cfg.numChannels,

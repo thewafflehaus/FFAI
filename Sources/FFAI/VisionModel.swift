@@ -1,4 +1,4 @@
-// VLModel — vision-language model composition.
+// VisionModel — vision-language model composition.
 //
 // A VLM is a vision encoder + a text backbone joined by a cross-modal
 // token splice: the prompt contains image-placeholder tokens, the vision
@@ -9,7 +9,7 @@
 //
 // This file is the family-agnostic core: the splice + a self-contained
 // greedy generate. Each VL family file (Gemma3VL, Qwen25VL, …) builds a
-// `VLModel` from its checkpoint — a `VisionEncoder` (.5
+// `VisionModel` from its checkpoint — a `VisionEncoder` (.5
 // `VisionEncoder.swift`) plus the already-shipped text engine — and
 // declares its image-placeholder token id.
 //
@@ -20,7 +20,7 @@
 import Foundation
 import Metal
 
-public enum VLModelError: Error, CustomStringConvertible {
+public enum VisionModelError: Error, CustomStringConvertible {
     case engineLacksEmbeddingInput(String)
     case placeholderCountMismatch(expected: Int, found: Int)
     case videoTokenIdMissing(String)
@@ -29,17 +29,17 @@ public enum VLModelError: Error, CustomStringConvertible {
     public var description: String {
         switch self {
         case .engineLacksEmbeddingInput(let name):
-            return "VLModel: text engine \(name) does not support "
+            return "VisionModel: text engine \(name) does not support "
                 + "embedding-input forward — VLM splice impossible"
         case .placeholderCountMismatch(let expected, let found):
-            return "VLModel: prompt has \(found) image-placeholder tokens "
+            return "VisionModel: prompt has \(found) image-placeholder tokens "
                 + "but the vision encoder produced \(expected) image tokens"
         case .videoTokenIdMissing(let family):
-            return "VLModel: \(family) was built without a videoTokenId; "
+            return "VisionModel: \(family) was built without a videoTokenId; "
                 + "generate(promptTokens:videoFrames:...) needs the family "
-                + "loader to thread `video_token_index` through to VLModel.init"
+                + "loader to thread `video_token_index` through to VisionModel.init"
         case .videoPlaceholderCountMismatch(let expected, let found):
-            return "VLModel: prompt has \(found) video-placeholder tokens "
+            return "VisionModel: prompt has \(found) video-placeholder tokens "
                 + "but the vision encoder produced \(expected) video tokens"
         }
     }
@@ -48,7 +48,7 @@ public enum VLModelError: Error, CustomStringConvertible {
 /// A loaded vision-language model: a `VisionEncoder` + a text
 /// `LanguageModel` engine + the image-placeholder token id its chat
 /// template uses.
-public final class VLModel: @unchecked Sendable {
+public final class VisionModel: @unchecked Sendable {
     /// The vision tower.
     public let visionEncoder: VisionEncoder
     /// The text backbone (Gemma3Model, Qwen3Model, …).
@@ -76,7 +76,7 @@ public final class VLModel: @unchecked Sendable {
                 normalization: ImageNormalization,
                 imageTokenCount: Int? = nil) throws {
         guard engine.supportsEmbeddingInput else {
-            throw VLModelError.engineLacksEmbeddingInput(String(describing: type(of: engine)))
+            throw VisionModelError.engineLacksEmbeddingInput(String(describing: type(of: engine)))
         }
         self.visionEncoder = visionEncoder
         self.engine = engine
@@ -106,12 +106,12 @@ public final class VLModel: @unchecked Sendable {
         let placeholderCount = promptTokens.filter { $0 == imageTokenId }.count
         let visionRows = imageTokens.shape[0]
         guard placeholderCount == visionRows else {
-            throw VLModelError.placeholderCountMismatch(
+            throw VisionModelError.placeholderCountMismatch(
                 expected: visionRows, found: placeholderCount)
         }
         let hidden = engine.hidden
         precondition(imageTokens.shape == [visionRows, hidden],
-                     "VLModel.splice: image tokens \(imageTokens.shape) "
+                     "VisionModel.splice: image tokens \(imageTokens.shape) "
                      + "≠ [\(visionRows), \(hidden)]")
 
         let imageRowBytes = hidden * imageTokens.dtype.byteSize
@@ -154,7 +154,7 @@ public final class VLModel: @unchecked Sendable {
     public func encodeVideo(_ frames: [RGBImage],
                             device: Device = .shared) throws -> Tensor {
         precondition(!frames.isEmpty,
-                     "VLModel.encodeVideo: expected at least one frame")
+                     "VisionModel.encodeVideo: expected at least one frame")
         let cfg = visionEncoder.config
         let pixels: [Tensor] = frames.map { frame in
             ImagePreprocessing.preprocess(
@@ -180,7 +180,7 @@ public final class VLModel: @unchecked Sendable {
         let imagePlaceholderCount = promptTokens.filter { $0 == imageTokenId }.count
         let imageVisionRows = imageTokens?.shape[0] ?? 0
         guard imagePlaceholderCount == imageVisionRows else {
-            throw VLModelError.placeholderCountMismatch(
+            throw VisionModelError.placeholderCountMismatch(
                 expected: imageVisionRows, found: imagePlaceholderCount)
         }
         let videoPlaceholderCount: Int
@@ -191,17 +191,17 @@ public final class VLModel: @unchecked Sendable {
         }
         let videoVisionRows = videoTokens?.shape[0] ?? 0
         guard videoPlaceholderCount == videoVisionRows else {
-            throw VLModelError.videoPlaceholderCountMismatch(
+            throw VisionModelError.videoPlaceholderCountMismatch(
                 expected: videoVisionRows, found: videoPlaceholderCount)
         }
         if let imageTokens {
             precondition(imageTokens.shape == [imageVisionRows, hidden],
-                         "VLModel.splice: image tokens \(imageTokens.shape) "
+                         "VisionModel.splice: image tokens \(imageTokens.shape) "
                          + "≠ [\(imageVisionRows), \(hidden)]")
         }
         if let videoTokens {
             precondition(videoTokens.shape == [videoVisionRows, hidden],
-                         "VLModel.splice: video tokens \(videoTokens.shape) "
+                         "VisionModel.splice: video tokens \(videoTokens.shape) "
                          + "≠ [\(videoVisionRows), \(hidden)]")
         }
         // Byte stride for slicing a single [hidden] row out of the
@@ -248,7 +248,7 @@ public final class VLModel: @unchecked Sendable {
     /// Returns the generated token ids. Coherence-first: this is the
     /// minimal path the integration tests exercise; sampling
     /// filters / streaming are a later pass — the text-only `Generate`
-    /// already has them and `VLModel` will route through it once the
+    /// already has them and `VisionModel` will route through it once the
     /// engine grows a public embedding-prefill entry point.
     public func generate(promptTokens: [Int], image: RGBImage?,
                          maxTokens: Int, eosTokenId: Int?,
@@ -269,10 +269,10 @@ public final class VLModel: @unchecked Sendable {
     /// the splice substitutes one vision-token row at every
     /// `<|video_pad|>` placeholder.
     ///
-    /// Throws `VLModelError.videoTokenIdMissing` for VLMs that were
+    /// Throws `VisionModelError.videoTokenIdMissing` for VLMs that were
     /// built without a `videoTokenId` (`Gemma3VL`, `Paligemma`,
     /// `FastVLM`, …), or
-    /// `VLModelError.videoPlaceholderCountMismatch` if the prompt
+    /// `VisionModelError.videoPlaceholderCountMismatch` if the prompt
     /// doesn't contain exactly `(T/temporal_patch_size) × spatial`
     /// `<|video_pad|>` placeholders.
     public func generate(promptTokens: [Int], videoFrames: [RGBImage],
@@ -280,7 +280,7 @@ public final class VLModel: @unchecked Sendable {
                          eosTokenIds: [Int] = [],
                          device: Device = .shared) throws -> [Int] {
         guard videoTokenId != nil else {
-            throw VLModelError.videoTokenIdMissing(
+            throw VisionModelError.videoTokenIdMissing(
                 String(describing: type(of: visionEncoder)))
         }
         let videoTokens = try encodeVideo(videoFrames, device: device)

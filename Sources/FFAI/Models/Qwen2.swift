@@ -18,7 +18,7 @@
 //     routes through LlamaDense), loaded from the top-level config with
 //     the `language_model.`-prefixed weight sub-tree.
 //
-// The two are joined by `VLModel`'s cross-modal token splice: each
+// The two are joined by `VisionModel`'s cross-modal token splice: each
 // `<|image_pad|>` placeholder (`image_token_id`) in the prompt takes one
 // of the merged vision tokens.
 //
@@ -33,7 +33,7 @@
 //   – Merger MLP keys are `merger.mlp.0` / `merger.mlp.2`.
 //
 // Coherence-first port: vision attention + M-RoPE run on the CPU.
-// The text M-RoPE is approximated by VLModel's sequential scalar positions;
+// The text M-RoPE is approximated by VisionModel's sequential scalar positions;
 // the splice itself is exact.
 //
 // The vision tower internals live in `Models/Vision/Qwen2Vision.swift` —
@@ -71,13 +71,13 @@ public enum Qwen2VL {
     public static let availableCapabilities: Set<Capability> =
         Capability.textOnly.union([.visionIn, .videoIn])
 
-    /// Build a `VLModel` from a `Qwen2VLForConditionalGeneration`
+    /// Build a `VisionModel` from a `Qwen2VLForConditionalGeneration`
     /// checkpoint: the dynamic-resolution vision tower + the Qwen 2
     /// text backbone, joined by the cross-modal splice.
     public static func load(
         config: ModelConfig, weights: SafeTensorsBundle,
         options: LoadOptions, device: Device
-    ) throws -> VLModel {
+    ) throws -> VisionModel {
         guard let visionConfig = config.subConfig("vision_config") else {
             throw Qwen2VLError.missingConfig
         }
@@ -100,7 +100,7 @@ public enum Qwen2VL {
 
         let imageTokenId = config.int("image_token_id") ?? defaultImageTokenId
         let videoTokenId = config.int("video_token_id") ?? defaultVideoTokenId
-        return try VLModel(
+        return try VisionModel(
             visionEncoder: vision.asVisionEncoder(),
             engine: textEngine, imageTokenId: imageTokenId,
             videoTokenId: videoTokenId,

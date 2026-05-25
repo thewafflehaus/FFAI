@@ -1086,7 +1086,7 @@ final class FastVLMProjector {
 // ─── Composed vision tower ────────────────────────────────────────────
 
 /// Couples the FastViTHD tower with the mlp2x_gelu projector so the pair
-/// presents a single `VisionEncoder`-shaped surface to `VLModel`.
+/// presents a single `VisionEncoder`-shaped surface to `VisionModel`.
 /// The composed tower's `encode` produces `[imageTokenCount, textHidden]`.
 final class FastVLMComposedTower {
     let tower: FastVLMVisionTower
@@ -1112,7 +1112,7 @@ final class FastVLMComposedTower {
 }
 
 /// A `VisionEncoder` subclass whose `encode` runs the FastViTHD tower
-/// then the mlp2x_gelu projector — so `VLModel` sees a single tower
+/// then the mlp2x_gelu projector — so `VisionModel` sees a single tower
 /// producing `[imageTokenCount, textHidden]` tokens.
 final class FastVLMComposedEncoder: VisionEncoder {
     let composedTower: FastVLMComposedTower
@@ -1120,7 +1120,7 @@ final class FastVLMComposedEncoder: VisionEncoder {
     init(tower: FastVLMComposedTower) {
         self.composedTower = tower
         // Build a facade VisionEncoderConfig that reports the correct
-        // `numPatches` (imageTokenCount) so `VLModel.imageTokenCount` works.
+        // `numPatches` (imageTokenCount) so `VisionModel.imageTokenCount` works.
         // The actual image encode path is overridden below — the
         // parent's conv2d / block stack is never called.
         let imageSize = tower.tower.cfg.imageSize

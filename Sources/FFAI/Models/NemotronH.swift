@@ -19,7 +19,7 @@
 //     `language_model.`-prefixed sub-tree with the checkpoint's
 //     `text_config`.
 //
-// The three are joined by `VLModel`'s cross-modal token splice: each
+// The three are joined by `VisionModel`'s cross-modal token splice: each
 // image-placeholder token (`image_token_id`) in the prompt takes one of
 // the projected vision tokens.
 //
@@ -48,13 +48,13 @@ public enum NemotronVL {
     /// `image_token_id` fallback for Nemotron Nano VL checkpoints.
     public static let defaultImageTokenId = 131_072
 
-    /// Build a `VLModel` from a Nemotron Nano VL checkpoint: the ViT
+    /// Build a `VisionModel` from a Nemotron Nano VL checkpoint: the ViT
     /// vision tower + multi-modal projector + the NemotronH hybrid text
     /// backbone, joined by the cross-modal splice.
     public static func load(
         config: ModelConfig, weights: SafeTensorsBundle,
         options: LoadOptions, device: Device
-    ) throws -> VLModel {
+    ) throws -> VisionModel {
         guard let visionConfig = config.subConfig("vision_config"),
               let textConfigRaw = config.nested("text_config")
         else {
@@ -92,7 +92,7 @@ public enum NemotronVL {
 
         let imageTokenId = config.int("image_token_id")
             ?? config.int("image_token_index") ?? defaultImageTokenId
-        return try VLModel(
+        return try VisionModel(
             visionEncoder: composedTower.asVisionEncoder(),
             engine: textEngine, imageTokenId: imageTokenId,
             normalization: .siglip,

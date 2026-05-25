@@ -445,7 +445,7 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
         return mergePatches(hidden, nPatches: nPatches, device: device)
     }
 
-    /// Present the tower as a `VisionEncoder` so `VLModel` accepts it.
+    /// Present the tower as a `VisionEncoder` so `VisionModel` accepts it.
     func asVisionEncoder() -> VisionEncoder {
         Qwen2VLComposedEncoder(tower: self)
     }
@@ -639,7 +639,7 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
 }
 
 /// A `VisionEncoder` subclass whose `encode` runs the Qwen 2-VL vision
-/// tower — so `VLModel` (which holds a `VisionEncoder`) transparently
+/// tower — so `VisionModel` (which holds a `VisionEncoder`) transparently
 /// gets the merged, projected vision tokens.
 final class Qwen2VLComposedEncoder: VisionEncoder {
     let tower: Qwen2VLVisionModel

@@ -420,7 +420,7 @@ final class MergerBlock {
 // A `VisionEncoder` subclass whose `encode` runs the SigLIP2 stack
 // with `vit_merger` injected after `insertLayerId`, then `post_layernorm`,
 // then `merger`. The exposed `numPatches` is the final token count
-// (after both mergers), so `VLModel.imageTokenCount` is correct.
+// (after both mergers), so `VisionModel.imageTokenCount` is correct.
 
 final class MiniCPMVComposedEncoder: VisionEncoder {
     let vitMerger: MiniCPMVViTMerger
@@ -428,7 +428,7 @@ final class MiniCPMVComposedEncoder: VisionEncoder {
     let insertLayerId: Int
     /// Initial patch grid (`runtimeImageSize / patchSize`).
     let initialGridSide: Int
-    /// Final output tokens per image — the count `VLModel` splices.
+    /// Final output tokens per image — the count `VisionModel` splices.
     let outputTokenCount: Int
 
     init(config: VisionEncoderConfig,

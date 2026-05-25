@@ -12,7 +12,7 @@
 //     hidden dim (`MergerBlock`: LayerNorm → Linear → GELU → Linear).
 //
 // The vision tokens are spliced into the text embedding stream at every
-// `image_token_id` (248056) position by the shared `VLModel`.
+// `image_token_id` (248056) position by the shared `VisionModel`.
 //
 // ─── v1 scope ────────────────────────────────────────────────────────
 //
@@ -71,13 +71,13 @@ public enum MiniCPMV4_6 {
     /// 8×8 = 64 tokens — matches `query_num: 64`.
     public static let runtimeImageSize = 448
 
-    /// Build a `VLModel` from a `MiniCPMV4_6ForConditionalGeneration`
+    /// Build a `VisionModel` from a `MiniCPMV4_6ForConditionalGeneration`
     /// checkpoint: SigLIP2-400M encoder + `vit_merger` + `merger` +
-    /// Qwen3.5 text backbone, joined by `VLModel`'s cross-modal splice.
+    /// Qwen3.5 text backbone, joined by `VisionModel`'s cross-modal splice.
     public static func load(
         config: ModelConfig, weights: SafeTensorsBundle,
         options: LoadOptions, device: Device
-    ) throws -> VLModel {
+    ) throws -> VisionModel {
         guard let visionConfig = config.subConfig("vision_config"),
               config.nested("text_config") != nil
         else {
@@ -117,7 +117,7 @@ public enum MiniCPMV4_6 {
 
         let imageTokenId = config.int("image_token_id") ?? defaultImageTokenId
         let videoTokenId = config.int("video_token_id") ?? defaultVideoTokenId
-        return try VLModel(
+        return try VisionModel(
             visionEncoder: composed, engine: textEngine,
             imageTokenId: imageTokenId,
             videoTokenId: videoTokenId,

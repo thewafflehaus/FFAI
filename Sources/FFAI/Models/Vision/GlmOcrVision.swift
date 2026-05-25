@@ -12,7 +12,7 @@
 // stays host-side where Metal launch overhead would dominate.
 //
 // Per the GLM-OCR design: the engine itself is a LanguageModel (not a
-// VLModel splice), so GlmOcrModel owns both the ViT and the text decoder —
+// VisionModel splice), so GlmOcrModel owns both the ViT and the text decoder —
 // the whole file stays together rather than splitting the engine from the
 // tower.
 //

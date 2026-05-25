@@ -28,7 +28,7 @@ Models/
 - **Paired family** (text + VLM, e.g. Qwen3 / Gemma3 / Gemma4 / LFM2 / NemotronH).
   Three files:
   - `Models/<F>.swift` — VL orchestrator (load entry-point for the VLM
-    checkpoint, image-token id, splice into `VLModel`).
+    checkpoint, image-token id, splice into `VisionModel`).
   - `Text/<F>Text.swift` — text family enum + impl (the `Text` suffix
     disambiguates the SwiftPM basename from `<F>.swift`).
   - `Vision/<F>Vision.swift` — vision tower internals (patch-embed,

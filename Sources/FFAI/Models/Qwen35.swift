@@ -16,7 +16,7 @@
 //     text weights are taken from the `language_model.`-prefixed
 //     sub-tree.
 //
-// The two are joined by `VLModel`'s cross-modal token splice. Coherence
+// The two are joined by `VisionModel`'s cross-modal token splice. Coherence
 // caveats are the same as the dense Qwen3-VL port (CPU vision attention,
 // scalar text positions, deepstack omitted) — see `Qwen3VL.swift`.
 
@@ -49,13 +49,13 @@ public enum Qwen3VLMoe {
     public static let availableCapabilities: Set<Capability> =
         Capability.textOnly.union([.visionIn, .videoIn])
 
-    /// Build a `VLModel` from a `Qwen3VLMoeForConditionalGeneration`
+    /// Build a `VisionModel` from a `Qwen3VLMoeForConditionalGeneration`
     /// checkpoint: the Qwen3-VL vision tower + the Qwen 3.5-MoE text
     /// backbone, joined by the cross-modal splice.
     public static func load(
         config: ModelConfig, weights: SafeTensorsBundle,
         options: LoadOptions, device: Device
-    ) throws -> VLModel {
+    ) throws -> VisionModel {
         guard let visionConfig = config.subConfig("vision_config") else {
             throw Qwen3VLMoeError.missingConfig
         }
@@ -83,7 +83,7 @@ public enum Qwen3VLMoe {
             ?? config.int("image_token_index") ?? defaultImageTokenId
         let videoTokenId = config.int("video_token_id")
             ?? config.int("video_token_index") ?? defaultVideoTokenId
-        return try VLModel(
+        return try VisionModel(
             visionEncoder: vision.asVisionEncoder(),
             engine: textEngine, imageTokenId: imageTokenId,
             videoTokenId: videoTokenId,

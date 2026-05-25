@@ -159,7 +159,7 @@ public final class NemotronVLProjector: @unchecked Sendable {
 
 /// Couples the ViT `VisionEncoder` with the Nemotron-VLM projector so
 /// the pair presents a single `VisionEncoder`-shaped surface to
-/// `VLModel`. The composed tower's `encode` produces `[numPatches,
+/// `VisionModel`. The composed tower's `encode` produces `[numPatches,
 /// textHidden]` — the projected vision tokens.
 final class NemotronVLVisionTower {
     let encoder: VisionEncoder
@@ -183,7 +183,7 @@ final class NemotronVLVisionTower {
 }
 
 /// A `VisionEncoder` subclass whose `encode` runs the ViT encoder then
-/// the Nemotron-VLM projector — so `VLModel` sees one tower producing
+/// the Nemotron-VLM projector — so `VisionModel` sees one tower producing
 /// `[numPatches, textHidden]` tokens.
 final class NemotronVLComposedEncoder: VisionEncoder {
     let tower: NemotronVLVisionTower

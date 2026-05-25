@@ -57,7 +57,7 @@ public enum LFM2VL {
     /// `image_token_index` for LFM2-VL checkpoints.
     public static let defaultImageTokenId = 396
 
-    /// Build a `VLModel` from a `Lfm2VlForConditionalGeneration`
+    /// Build a `VisionModel` from a `Lfm2VlForConditionalGeneration`
     /// checkpoint: SigLIP2 vision tower + pixel-unshuffle projector +
     /// LFM2 text backbone, joined by the cross-modal splice.
     public static func load(
@@ -65,7 +65,7 @@ public enum LFM2VL {
         weights: SafeTensorsBundle,
         options: LoadOptions,
         device: Device
-    ) throws -> VLModel {
+    ) throws -> VisionModel {
         guard let visionConfigRaw = config.nested("vision_config"),
               let textConfigRaw  = config.nested("text_config")
         else {
@@ -136,7 +136,7 @@ public enum LFM2VL {
         let imageTokenCount = numPatches / (downsample * downsample)
 
         // Compose the vision tower + projector behind a VisionEncoder
-        // facade so VLModel's splice sees a single encode surface.
+        // facade so VisionModel's splice sees a single encode surface.
         let numPatches1D = Int(Double(numPatches).squareRoot().rounded())
         let patchSize = visionConfig.int("patch_size") ?? 16
         let imageSize = numPatches1D * patchSize   // natural resolution (256)
@@ -149,7 +149,7 @@ public enum LFM2VL {
             dtype: textEngine.dtype)
 
         let imageTokenId = config.int("image_token_index") ?? defaultImageTokenId
-        return try VLModel(
+        return try VisionModel(
             visionEncoder: composed.asVisionEncoder(),
             engine: textEngine,
             imageTokenId: imageTokenId,

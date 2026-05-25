@@ -43,7 +43,7 @@ struct Qwen25VisionVideoIntegrationTests {
 
         let vlm = try #require(m.vlModel)
         // The video splice needs the family loader to thread
-        // `video_token_id` through to VLModel.init.
+        // `video_token_id` through to VisionModel.init.
         #expect(vlm.videoTokenId != nil)
     }
 

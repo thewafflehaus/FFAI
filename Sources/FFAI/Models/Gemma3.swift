@@ -12,7 +12,7 @@
 //     the `language_model.`-prefixed sub-tree with the checkpoint's
 //     `text_config`.
 //
-// The three are joined by `VLModel`'s cross-modal token splice: each
+// The three are joined by `VisionModel`'s cross-modal token splice: each
 // `<image>` placeholder (`image_token_index`) in the prompt takes one
 // of the 256 projected vision tokens.
 //
@@ -27,13 +27,13 @@ public enum Gemma3VL {
     /// `image_token_index` default for Gemma 3 VL checkpoints.
     public static let defaultImageTokenId = 262_144
 
-    /// Build a `VLModel` from a `Gemma3ForConditionalGeneration`
+    /// Build a `VisionModel` from a `Gemma3ForConditionalGeneration`
     /// checkpoint: SigLIP `VisionEncoder` + projector + Gemma 3 text
     /// backbone, joined by the cross-modal splice.
     public static func load(
         config: ModelConfig, weights: SafeTensorsBundle,
         options: LoadOptions, device: Device
-    ) throws -> VLModel {
+    ) throws -> VisionModel {
         guard let visionConfig = config.subConfig("vision_config"),
               let textConfigRaw = config.nested("text_config")
         else {
@@ -70,7 +70,7 @@ public enum Gemma3VL {
             device: device)
 
         // The projector pools the encoder grid down to mmTokensPerImage
-        // tokens, so the VLModel's image-token count is the pooled
+        // tokens, so the VisionModel's image-token count is the pooled
         // count — wrap the encoder + projector behind a composed
         // `VisionEncoder`-shaped tower.
         let composedTower = Gemma3VLVisionTower(
@@ -79,7 +79,7 @@ public enum Gemma3VL {
             dtype: textEngine.dtype)
 
         let imageTokenId = config.int("image_token_index") ?? defaultImageTokenId
-        return try VLModel(
+        return try VisionModel(
             visionEncoder: composedTower.asVisionEncoder(),
             engine: textEngine, imageTokenId: imageTokenId,
             normalization: .siglip,

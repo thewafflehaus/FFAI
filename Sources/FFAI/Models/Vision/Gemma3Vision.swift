@@ -245,7 +245,7 @@ public final class Gemma3VLProjector: @unchecked Sendable {
 // ─── Composed vision tower (encoder + projector) ─────────────────────
 
 /// Couples the SigLIP `VisionEncoder` with the Gemma 3 projector so the
-/// pair presents a single `VisionEncoder`-shaped surface to `VLModel`.
+/// pair presents a single `VisionEncoder`-shaped surface to `VisionModel`.
 /// The composed tower's `encode` produces `[mmTokensPerImage,
 /// textHidden]` — the pooled, projected vision tokens.
 final class Gemma3VLVisionTower {
@@ -267,7 +267,7 @@ final class Gemma3VLVisionTower {
     /// Present the composed encoder+projector as a `VisionEncoder` whose
     /// `numPatches` is the pooled token count and whose `encode` runs
     /// the SigLIP forward + the projector. Implemented by subclassing
-    /// `VisionEncoder` so `VLModel` (which holds a `VisionEncoder`)
+    /// `VisionEncoder` so `VisionModel` (which holds a `VisionEncoder`)
     /// transparently gets the pooled-and-projected output.
     func asVisionEncoder() -> VisionEncoder {
         Gemma3VLComposedEncoder(tower: self)
@@ -275,7 +275,7 @@ final class Gemma3VLVisionTower {
 }
 
 /// A `VisionEncoder` subclass whose `encode` runs the SigLIP encoder
-/// then the Gemma 3 projector — so `VLModel` sees one tower producing
+/// then the Gemma 3 projector — so `VisionModel` sees one tower producing
 /// `[mmTokensPerImage, textHidden]` tokens.
 final class Gemma3VLComposedEncoder: VisionEncoder {
     let tower: Gemma3VLVisionTower
@@ -284,7 +284,7 @@ final class Gemma3VLComposedEncoder: VisionEncoder {
         self.tower = tower
         // Re-expose the SigLIP encoder's geometry, but with numPatches
         // overridden (via config) to the pooled token count so
-        // `VLModel.imageTokenCount` is correct.
+        // `VisionModel.imageTokenCount` is correct.
         let e = tower.encoder
         let pooledConfig = VisionEncoderConfig(
             imageSize: e.config.imageSize, patchSize: e.config.patchSize,

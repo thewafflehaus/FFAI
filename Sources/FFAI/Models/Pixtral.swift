@@ -19,7 +19,7 @@
 //     dense loader). Text weights live under `language_model.*` in the
 //     mlx-community conversion.
 //
-// The three are joined by `VLModel`'s cross-modal token splice: each
+// The three are joined by `VisionModel`'s cross-modal token splice: each
 // `[IMG]` placeholder (`image_token_id`) in the prompt is replaced by
 // one of the projected vision tokens.
 //
@@ -75,13 +75,13 @@ public enum Pixtral {
     /// The tokenizer's `[IMG]` special token resolves to id 10.
     public static let defaultImageTokenId = 10
 
-    /// Build a `VLModel` from a Pixtral checkpoint: the custom 2D-RoPE
+    /// Build a `VisionModel` from a Pixtral checkpoint: the custom 2D-RoPE
     /// ViT + the multi-modal projector + the Mistral text backbone,
     /// joined by the cross-modal splice.
     public static func load(
         config: ModelConfig, weights: SafeTensorsBundle,
         options: LoadOptions, device: Device
-    ) throws -> VLModel {
+    ) throws -> VisionModel {
         guard let visionConfig = config.subConfig("vision_config"),
               let textConfig = config.subConfig("text_config")
         else {
@@ -126,12 +126,12 @@ public enum Pixtral {
         // this is dynamic (image-size dependent), but the token
         // replacement count must match the placeholder count in the
         // prompt. The prompt builder determines the count from the
-        // image geometry; `VLModel.imageTokenCount` is used only for
+        // image geometry; `VisionModel.imageTokenCount` is used only for
         // the facade config numPatches — pass the true patch count.
         let numPatches = visionCfg.patchesPerSide * visionCfg.patchesPerSide
 
         // Wrap encoder + projector as a composed VisionEncoder so the
-        // VLModel splice sees a single tower returning [numPatches,
+        // VisionModel splice sees a single tower returning [numPatches,
         // textHidden] tokens.
         let composedTower = PixtralComposedTower(
             encoder: vision, projector: projector,
@@ -142,7 +142,7 @@ public enum Pixtral {
             ?? config.int("image_token_index")
             ?? defaultImageTokenId
 
-        return try VLModel(
+        return try VisionModel(
             visionEncoder: composedTower.asVisionEncoder(),
             engine: textEngine, imageTokenId: imageTokenId,
             normalization: .clip,

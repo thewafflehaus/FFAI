@@ -18,7 +18,7 @@
 //     architecturally identical to Llama; QKV biases are auto-detected
 //     by `loadLinear`). Text weights live under `language_model.*`.
 //
-// The three are joined by `VLModel`'s cross-modal token splice: each
+// The three are joined by `VisionModel`'s cross-modal token splice: each
 // image-placeholder token (id -200) in the prompt is replaced by one
 // of the projected vision tokens.
 //
@@ -93,7 +93,7 @@ public enum FastVLM {
     /// Not stored in config.json — hardcoded in the reference processor.
     public static let defaultImageTokenId = -200
 
-    /// Build a `VLModel` from a FastVLM checkpoint: the FastViTHD tower
+    /// Build a `VisionModel` from a FastVLM checkpoint: the FastViTHD tower
     /// + the mlp2x_gelu projector + the Qwen2 text backbone, joined by
     /// the cross-modal token splice.
     public static func load(
@@ -101,7 +101,7 @@ public enum FastVLM {
         weights: SafeTensorsBundle,
         options: LoadOptions,
         device: Device
-    ) throws -> VLModel {
+    ) throws -> VisionModel {
         guard let visionConfig = config.subConfig("vision_config")
         else { throw FastVLMError.missingConfig }
 
@@ -139,7 +139,7 @@ public enum FastVLM {
         let imageTokenCount = tower.patchH * tower.patchW
 
         // Compose tower + projector behind a single VisionEncoder facade
-        // so VLModel's splice sees `[imageTokenCount, textHidden]` tokens.
+        // so VisionModel's splice sees `[imageTokenCount, textHidden]` tokens.
         let composedTower = FastVLMComposedTower(
             tower: tower, projector: projector,
             imageTokenCount: imageTokenCount,
@@ -155,7 +155,7 @@ public enum FastVLM {
         let normalization = ImageNormalization(
             mean: (0.0, 0.0, 0.0), std: (1.0, 1.0, 1.0))
 
-        return try VLModel(
+        return try VisionModel(
             visionEncoder: composedTower.asVisionEncoder(),
             engine: textEngine, imageTokenId: imageTokenId,
             normalization: normalization,
