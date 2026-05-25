@@ -3011,8 +3011,11 @@ public final class Qwen35Model: LanguageModel {
             let lastRow = Tensor(buffer: h.buffer,
                                  offset: h.offset + (t - 1) * hidden * dtBytes,
                                  shape: [hidden], dtype: dt)
-            let normed = finalNorm(lastRow, on: cmd)
-            return lmHead(normed, on: cmd)
+            // ITER 77: same fused-or-fallback dispatch as the
+            // decode-T=1 path. Lastrow is `[hidden]`, identical shape
+            // contract as the other call site.
+            return qwen35FinalNormLmHead(h: lastRow, finalNorm: finalNorm,
+                                          lmHead: lmHead, on: cmd)
         }
         // All-T path: batched RMSNorm over T rows + batched lm_head.
         let normedAll = Ops.rmsNormRows(
