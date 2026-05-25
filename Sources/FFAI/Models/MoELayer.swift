@@ -991,27 +991,52 @@ public final class MoELayer: Module, DecoderLayer {
         let gateLogitsAll = gateLogitsMany(hRows, t: t, on: cmd, device: device)
         // gateLogitsAll shape: [T, nExperts]
 
-        // ── 2. Commit + wait so the router can read logits ───────────────
-        cmd.commit()
-        cmd.waitUntilCompleted()
-
-        // ── 3. Per-token routing on host ─────────────────────────────────
-        // `router.route` is a pure function over a per-row logit slice —
-        // independent across `r`, so the T calls fan out across CPU cores
-        // via `DispatchQueue.concurrentPerform`. At Qwen3.6-A3B T=512 ×
-        // 40 layers = 20 480 route() calls per prefill; serial they add
-        // up. Pre-allocate the result array sized to `t` so each iteration
-        // writes its own slot (race-free).
+        // ── 2. Routing — GPU fast path or CPU sync ──────────────────────
+        // ITER 92 (Bagel 2): when the router config matches
+        // `mt_moe_router_topk`'s semantic envelope (softmax → topK + Qwen
+        // MoE renorm, no expert bias, k=8), run the T-batched router on
+        // GPU via `Ops.moeRouterTopKMany`. Eliminates the T-parallel
+        // host `router.route` loop (~50 ms of CPU work per prefill at
+        // T=512 × 40 MoE layers). One commit+wait still needed to read
+        // indices+weights for the host-side sort plan.
         let nExperts = router.nExperts
         let topK = router.topK
-        let logitsHost = gateLogitsAll.toFloatArray()  // [T·nExperts]
         var routings = [MoERouter.Routing](repeating: MoERouter.Routing(indices: [], weights: []),
                                            count: t)
-        routings.withUnsafeMutableBufferPointer { buf in
-            DispatchQueue.concurrentPerform(iterations: t) { r in
-                let start = r * nExperts
-                let rowLogits = Array(logitsHost[start..<(start + nExperts)])
-                buf[r] = router.route(logits: rowLogits)
+        let useGPURouter = self.gpuRouterEnabled
+            && router.gatingMode == .softmaxThenTopK
+            && router.normTopKProb
+            && router.expertBias == nil
+            && router.topK == 8
+        if useGPURouter {
+            let indicesBuf = Tensor.empty(shape: [t, topK], dtype: .u32, device: device)
+            let weightsBuf = Tensor.empty(shape: [t, topK], dtype: gateLogitsAll.dtype,
+                                          device: device)
+            Ops.moeRouterTopKMany(
+                logits: gateLogitsAll, indicesOut: indicesBuf,
+                weightsOut: weightsBuf,
+                t: t, nExperts: nExperts, k: topK,
+                normTopkProb: router.normTopKProb, on: cmd)
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            let indicesHost: [UInt32] = indicesBuf.toArray(as: UInt32.self)
+            let weightsHost: [Float] = weightsBuf.toFloatArray()
+            for r in 0..<t {
+                let base = r * topK
+                let idxs = (0..<topK).map { Int(indicesHost[base + $0]) }
+                let wts = Array(weightsHost[base..<(base + topK)])
+                routings[r] = MoERouter.Routing(indices: idxs, weights: wts)
+            }
+        } else {
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            let logitsHost = gateLogitsAll.toFloatArray()
+            routings.withUnsafeMutableBufferPointer { buf in
+                DispatchQueue.concurrentPerform(iterations: t) { r in
+                    let start = r * nExperts
+                    let rowLogits = Array(logitsHost[start..<(start + nExperts)])
+                    buf[r] = router.route(logits: rowLogits)
+                }
             }
         }
 
