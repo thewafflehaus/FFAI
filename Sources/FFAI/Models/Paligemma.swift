@@ -83,40 +83,42 @@ public struct PaligemmaStandard: PaligemmaVariant {
         options: LoadOptions,
         device: Device
     ) throws -> PaligemmaModel {
-        // ── Text config (from top-level — PaliGemma flattens some into root) ──
-        // The text sub-config lives under text_config in config.json. We read
-        // the nested dict directly from config.raw since ModelConfig only
-        // exposes typed accessors for top-level keys.
+        // ── Text backbone — delegate to the shared Gemma 2 family ────────────
+        //
+        // PaliGemma 2 ships with a Gemma 2 2B text backbone (vs PaliGemma 1's
+        // Gemma 1 backbone). We promote `text_config` to a synthetic
+        // root-level ModelConfig and hand it to `Gemma2Dense.loadModel`,
+        // pointed at the `language_model.`-prefixed weight sub-tree. The
+        // resulting `Gemma2Model` handles all four Gemma 2 norms per layer,
+        // alternating sliding / full attention, the sqrt(hidden) embed-scale,
+        // tied LM head, and per-layer KV cache split — no PaliGemma-specific
+        // forward code needed.
+        //
+        // Same pattern Gemma3VL uses for its text backbone (see
+        // `Gemma3VL.load` + `gemma3TextConfigWithDefaults`).
         guard let textRaw = config.nested("text_config") else {
             throw PaligemmaError.missingConfig("text_config")
         }
-        func textInt(_ key: String) -> Int? {
-            if let v = textRaw[key] as? Int { return v }
-            if let v = textRaw[key] as? Double { return Int(v) }
-            return nil
+        // PaliGemma 2's `quantization` block lives at the ROOT config (HF
+        // convention for VLMs — the same quant scheme covers vision +
+        // text), and the text_config in 8-bit / 4-bit conversions is
+        // silent on it. Merge the root-level field into the synthetic
+        // text-only config so `Gemma2Dense.loadModel` sees it and
+        // routes through `QuantizedLinear` / `QuantizedEmbedding`
+        // instead of trying to plain-`gather` a U32-packed weight.
+        var mergedTextRaw = textRaw
+        if let rootQuant = config.raw["quantization"],
+           mergedTextRaw["quantization"] == nil {
+            mergedTextRaw["quantization"] = rootQuant
         }
-        func textDouble(_ key: String) -> Double? {
-            if let v = textRaw[key] as? Double { return v }
-            if let v = textRaw[key] as? Int { return Double(v) }
-            return nil
-        }
-        guard let textHidden    = textInt("hidden_size"),
-              let textNLayers   = textInt("num_hidden_layers"),
-              let textNHeads    = textInt("num_attention_heads"),
-              let textVocab     = textInt("vocab_size"),
-              let textIntermed  = textInt("intermediate_size")
-        else {
-            throw PaligemmaError.missingConfig("text_config fields")
-        }
-        let textKVHeads  = textInt("num_key_value_heads") ?? textNHeads
-        // head_dim is explicit in Gemma 2+ configs (e.g. Gemma 2 2B:
-        // hidden=2304, nHeads=8, head_dim=256 — q_proj output is 8×256
-        // = 2048, NOT 2304). Fall back to hidden / nHeads only for
-        // checkpoints (PaliGemma 1's Gemma 1 backbone) that omit it.
-        let textHeadDim  = textInt("head_dim") ?? (textHidden / textNHeads)
-        let textEps      = Float(textDouble("rms_norm_eps") ?? 1e-6)
-        let textTheta    = Float(textDouble("rope_theta") ?? 10_000)
-        let maxSeq       = config.int("max_position_embeddings") ?? 4096
+        let textConfig = ModelConfig(
+            architecture: "Gemma2ForCausalLM",
+            modelType: "gemma2",
+            raw: mergedTextRaw)
+        let textEngine = try Gemma2Dense.loadModel(
+            config: textConfig,
+            weights: weights.prefixed("language_model."),
+            options: options, device: device)
 
         // ── Vision config ────────────────────────────────────────────────────
         guard let visionRaw = config.nested("vision_config") else {
@@ -147,68 +149,11 @@ public struct PaligemmaStandard: PaligemmaVariant {
 
         // ── Projector config ─────────────────────────────────────────────────
         // projection_dim lives at top level in the PaliGemma config.
-        let projDim = config.int("projection_dim") ?? textHidden
+        let projDim = config.int("projection_dim") ?? textEngine.hidden
         let imageTokenIndex = config.int("image_token_index") ?? 257152
 
         // ── Quantization ─────────────────────────────────────────────────────
         let quant = config.quantization
-
-        // ── Text backbone weights (Gemma) ────────────────────────────────────
-        // Weight prefix: "language_model.model."
-        let lmPrefix = "language_model.model"
-        let embedTokens = try loadEmbedding(
-            base: "\(lmPrefix).embed_tokens", in: weights,
-            hidden: textHidden, quantization: quant
-        )
-
-        var textLayers: [PaligemmaTextLayer] = []
-        textLayers.reserveCapacity(textNLayers)
-        for i in 0..<textNLayers {
-            let p = "\(lmPrefix).layers.\(i)"
-            let qProj   = try loadLinear(base: "\(p).self_attn.q_proj", in: weights, quantization: quant)
-            let kProj   = try loadLinear(base: "\(p).self_attn.k_proj", in: weights, quantization: quant)
-            let vProj   = try loadLinear(base: "\(p).self_attn.v_proj", in: weights, quantization: quant)
-            let oProj   = try loadLinear(base: "\(p).self_attn.o_proj", in: weights, quantization: quant)
-            let gateProj = try loadLinear(base: "\(p).mlp.gate_proj", in: weights, quantization: quant)
-            let upProj   = try loadLinear(base: "\(p).mlp.up_proj",   in: weights, quantization: quant)
-            let downProj = try loadLinear(base: "\(p).mlp.down_proj",  in: weights, quantization: quant)
-            let inputNorm   = RMSNorm(weight: try weights.tensor(named: "\(p).input_layernorm.weight"),          eps: textEps)
-            let postAttnNorm = RMSNorm(weight: try weights.tensor(named: "\(p).post_attention_layernorm.weight"), eps: textEps)
-            textLayers.append(PaligemmaTextLayer(
-                qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
-                gateProj: gateProj, upProj: upProj, downProj: downProj,
-                inputNorm: inputNorm, postAttnNorm: postAttnNorm,
-                hidden: textHidden, nHeads: textNHeads, nKVHeads: textKVHeads,
-                headDim: textHeadDim, intermediate: textIntermed,
-                ropeTheta: textTheta
-            ))
-        }
-
-        let finalNorm = RMSNorm(
-            weight: try weights.tensor(named: "\(lmPrefix).norm.weight"),
-            eps: textEps)
-
-        // LM head — Gemma / PaliGemma always ties embeddings.
-        let lmHead: AnyLinear
-        if let q = quant, [3, 4, 5, 6, 8].contains(q.bits),
-           weights.isQuantized("\(lmPrefix).embed_tokens") {
-            let t = try weights.quantizedTriplet("\(lmPrefix).embed_tokens")
-            lmHead = AnyLinear(QuantizedLinear(
-                weight: t.weight, scales: t.scales, biases: t.biases,
-                bits: q.bits, groupSize: q.groupSize
-            ))
-        } else {
-            lmHead = AnyLinear(Linear(weight: embedTokens.weight))
-        }
-
-        // Activation dtype from embedding scales (quantized model) or weight dtype.
-        let activationDtype: DType
-        if weights.isQuantized("\(lmPrefix).embed_tokens"),
-           let scales = try? weights.tensor(named: "\(lmPrefix).embed_tokens.scales") {
-            activationDtype = scales.dtype
-        } else {
-            activationDtype = embedTokens.weight.dtype
-        }
 
         // ── Vision encoder weights (SigLIP ViT) ──────────────────────────────
         // These are loaded into plain CPU float arrays. The vision encoder
@@ -274,13 +219,7 @@ public struct PaligemmaStandard: PaligemmaVariant {
         }
 
         return PaligemmaModel(
-            // Text
-            embedTokens: embedTokens, textLayers: textLayers,
-            finalNorm: finalNorm, lmHead: lmHead,
-            textHidden: textHidden, nTextLayers: textNLayers,
-            nTextHeads: textNHeads, nTextKVHeads: textKVHeads,
-            textHeadDim: textHeadDim, textVocab: textVocab,
-            maxSeq: maxSeq, ropeTheta: textTheta, dtype: activationDtype,
+            textEngine: textEngine,
             // Vision
             patchW: patchW, patchB: patchB, posEmbedding: posEmbedding,
             visLayers: visLayers, postLNW: postLNW, postLNB: postLNB,
@@ -289,8 +228,7 @@ public struct PaligemmaStandard: PaligemmaVariant {
             // Projector
             projLinear: projLinear, projDim: projDim,
             // Shared
-            imageTokenIndex: imageTokenIndex,
-            kvCacheKind: options.kvCache
+            imageTokenIndex: imageTokenIndex
         )
     }
 }
@@ -802,98 +740,6 @@ final class SigLIPLayer: @unchecked Sendable {
     }
 }
 
-// ─── Gemma text layer (GPU) ───────────────────────────────────────────────────
-
-/// One Gemma transformer block. Identical to LlamaLayer except:
-///   • Gemma uses GeLU (not SiLU) in the MLP — but the checkpoint is text-only
-///     for this family and FFAI's SiLU kernel is close enough for inference
-///     (the actual Gemma uses GELU but we can call Ops.silu as an approximation
-///     that keeps us within the GPU pipeline; the accuracy delta for downstream
-///     tasks is negligible for greedy decoding).
-///   • No additional q/k norms.
-///   • RoPE uses traditional=false (same as Llama).
-///
-/// Note: PaliGemma uses Gemma 2B/3B (not Gemma2), so standard GeLU is the
-/// correct activation. FFAI's `Ops.silu` is a stand-in until a GELU kernel
-/// lands — for greedy VQA/caption tasks the difference is negligible.
-public final class PaligemmaTextLayer: Module {
-    let qProj, kProj, vProj, oProj: AnyLinear
-    let gateProj, upProj, downProj: AnyLinear
-    let inputNorm, postAttnNorm: RMSNorm
-    let hidden, nHeads, nKVHeads, headDim, intermediate: Int
-    let ropeTheta: Float
-    let scale: Float
-
-    init(qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
-         gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
-         inputNorm: RMSNorm, postAttnNorm: RMSNorm,
-         hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         intermediate: Int, ropeTheta: Float) {
-        self.qProj = qProj; self.kProj = kProj; self.vProj = vProj; self.oProj = oProj
-        self.gateProj = gateProj; self.upProj = upProj; self.downProj = downProj
-        self.inputNorm = inputNorm; self.postAttnNorm = postAttnNorm
-        self.hidden = hidden; self.nHeads = nHeads; self.nKVHeads = nKVHeads
-        self.headDim = headDim; self.intermediate = intermediate
-        self.ropeTheta = ropeTheta
-        self.scale = 1.0 / Float(Double(headDim).squareRoot())
-    }
-
-    public func parameters() -> [(String, Tensor)] {
-        var out: [(String, Tensor)] = []
-        for (k, v) in qProj.parameters() { out.append(("self_attn.q_proj.\(k)", v)) }
-        for (k, v) in kProj.parameters() { out.append(("self_attn.k_proj.\(k)", v)) }
-        for (k, v) in vProj.parameters() { out.append(("self_attn.v_proj.\(k)", v)) }
-        for (k, v) in oProj.parameters() { out.append(("self_attn.o_proj.\(k)", v)) }
-        for (k, v) in gateProj.parameters() { out.append(("mlp.gate_proj.\(k)", v)) }
-        for (k, v) in upProj.parameters() { out.append(("mlp.up_proj.\(k)", v)) }
-        for (k, v) in downProj.parameters() { out.append(("mlp.down_proj.\(k)", v)) }
-        for (k, v) in inputNorm.parameters() { out.append(("input_layernorm.\(k)", v)) }
-        for (k, v) in postAttnNorm.parameters() { out.append(("post_attention_layernorm.\(k)", v)) }
-        return out
-    }
-
-    /// Single-token forward. Called on GPU via Metal command buffer.
-    /// Gemma's hidden-scale multiplier is applied by the model before
-    /// layer dispatch (not inside the layer).
-    func forward(_ h: Tensor, position: Int, cache: any KVCacheProtocol,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        let xNorm = inputNorm(h, on: cmd)
-        let q = qProj(xNorm, on: cmd)
-        let k = kProj(xNorm, on: cmd)
-        let v = vProj(xNorm, on: cmd)
-
-        let qRot = Ops.rope(q.reshaped(to: [nHeads, headDim]),
-                            position: position, headDim: headDim,
-                            thetaBase: ropeTheta, scaling: .none, on: cmd)
-        let kRot = Ops.rope(k.reshaped(to: [nKVHeads, headDim]),
-                            position: position, headDim: headDim,
-                            thetaBase: ropeTheta, scaling: .none, on: cmd)
-
-        cache.appendOnGPU(kFlat: kRot,
-                          vFlat: v.reshaped(to: [nKVHeads, headDim]),
-                          on: cmd)
-
-        let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
-        let attnOut = Ops.sdpaDecode(
-            q: qRot, k: cacheK, v: cacheV,
-            nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: cache.length, kvStride: cache.maxSeq,
-            scale: scale, on: cmd)
-        let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
-        let postAttn = Ops.add(h, oOut, on: cmd)
-
-        // MLP — Gemma uses GELU but Ops.silu is used here as a GPU stand-in
-        // (see class doc). For greedy VQA/caption generation the difference
-        // in output quality is negligible.
-        let mlpNorm = postAttnNorm(postAttn, on: cmd)
-        let gate = gateProj(mlpNorm, on: cmd)
-        let up   = upProj(mlpNorm, on: cmd)
-        let siluGate = Ops.silu(gate, on: cmd)
-        let mlpInner = Ops.mul(siluGate, up, on: cmd)
-        let mlpOut = downProj(mlpInner, on: cmd)
-        return Ops.add(postAttn, mlpOut, on: cmd)
-    }
-}
 
 // ─── PaligemmaModel ───────────────────────────────────────────────────────────
 
@@ -909,24 +755,12 @@ public final class PaligemmaTextLayer: Module {
 // field (imageFeatures). @unchecked Sendable is safe given the NSLock guard.
 public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
     // ── Text backbone ───────────────────────────────────────────────────
-    public let embedTokens: AnyEmbedding
-    public let textLayers: [PaligemmaTextLayer]
-    public let finalNorm: RMSNorm
-    public let lmHead: AnyLinear
-
-    public let hidden: Int          // textHidden
-    public let nLayers: Int
-    public let nHeads: Int
-    public let nKVHeads: Int
-    public let headDim: Int
-    public let vocab: Int
-    public let maxSeq: Int
-    public let ropeTheta: Float
-    public let dtype: DType
-    public let kvCacheKind: KVCacheKind
-
-    // Gemma scales the embedding by sqrt(hidden) before the first layer.
-    private let hiddenScale: Float
+    /// The PaliGemma 2 text decoder. The shared `Gemma2Model` handles
+    /// the 4 norms per layer, alternating sliding / full attention,
+    /// the sqrt(hidden) embed-scale, tied LM head, per-layer KV cache
+    /// split — everything Gemma 2 needs. PaliGemma's wrapper is now
+    /// just the SigLIP vision tower + image-token splice on top.
+    public let textEngine: Gemma2Model
 
     // ── Vision encoder ───────────────────────────────────────────────────
     // Patch embedding conv: [outC, kH, kW, inC] (MLX layout).
@@ -947,7 +781,7 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
 
     // ── Projector ────────────────────────────────────────────────────────
     private let projLinear: CpuLinear
-    let projDim: Int        // == hidden (textHidden)
+    let projDim: Int        // == textEngine.hidden
 
     // ── Shared ───────────────────────────────────────────────────────────
     /// Token id the chat template emits as an image placeholder. The
@@ -956,40 +790,38 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
     public let imageTokenIndex: Int
 
     // ── Runtime state ────────────────────────────────────────────────────
-    /// Precomputed image features [numImageTokens, hidden] on GPU.
-    /// Set by `setImagePixels(...)` before generation begins.
+    /// Precomputed image features [numImageTokens, hidden] on GPU, in
+    /// the text backbone's activation dtype. Set by `setImagePixels(...)`
+    /// before generation begins.
     private var imageFeatures: Tensor?
     /// Lock protecting `imageFeatures` for thread safety.
     private let featuresLock = NSLock()
 
+    // ── LanguageModel-protocol forwarding properties ────────────────────
+    // These delegate straight to the text engine so external callers
+    // (tests, the Model wrapper, the generation loop) see the same
+    // surface they always have. The bespoke text-layer fields the old
+    // PaligemmaModel exposed are gone — everything routes through
+    // `textEngine`.
+    public var hidden: Int { textEngine.hidden }
+    public var nLayers: Int { textEngine.nLayers }
+    public var nHeads: Int { textEngine.nHeads }
+    public var nKVHeads: Int { textEngine.nKVHeads }
+    public var headDim: Int { textEngine.headDim }
+    public var vocab: Int { textEngine.vocab }
+    public var maxSeq: Int { textEngine.maxSeq }
+    public var dtype: DType { textEngine.dtype }
+
     init(
-        embedTokens: AnyEmbedding, textLayers: [PaligemmaTextLayer],
-        finalNorm: RMSNorm, lmHead: AnyLinear,
-        textHidden: Int, nTextLayers: Int, nTextHeads: Int, nTextKVHeads: Int,
-        textHeadDim: Int, textVocab: Int, maxSeq: Int, ropeTheta: Float, dtype: DType,
+        textEngine: Gemma2Model,
         patchW: Tensor, patchB: Tensor, posEmbedding: CpuEmbedding,
         visLayers: [SigLIPLayer], postLNW: Tensor, postLNB: Tensor,
         visHidden: Int, numImageTokens: Int, visNumChannels: Int,
         visPatchSize: Int, visImgSize: Int,
         projLinear: CpuLinear, projDim: Int,
-        imageTokenIndex: Int,
-        kvCacheKind: KVCacheKind = .raw
+        imageTokenIndex: Int
     ) {
-        self.embedTokens = embedTokens
-        self.textLayers = textLayers
-        self.finalNorm = finalNorm
-        self.lmHead = lmHead
-        self.hidden = textHidden
-        self.nLayers = nTextLayers
-        self.nHeads = nTextHeads
-        self.nKVHeads = nTextKVHeads
-        self.headDim = textHeadDim
-        self.vocab = textVocab
-        self.maxSeq = maxSeq
-        self.ropeTheta = ropeTheta
-        self.dtype = dtype
-        self.kvCacheKind = kvCacheKind
-        self.hiddenScale = Float(Double(textHidden).squareRoot())
+        self.textEngine = textEngine
         self.patchW = patchW
         self.patchB = patchB
         self.posEmbedding = posEmbedding
@@ -1007,52 +839,24 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
     }
 
     public func parameters() -> [(String, Tensor)] {
+        // Re-prefix the text engine's parameters with `language_model.`
+        // so the round-tripped name matches what's on disk.
+        // (PaliGemma stores its text weights under `language_model.`.)
         var out: [(String, Tensor)] = []
-        for (k, v) in embedTokens.parameters() {
-            out.append(("language_model.model.embed_tokens.\(k)", v))
+        for (k, v) in textEngine.parameters() {
+            out.append(("language_model.\(k)", v))
         }
-        for (i, layer) in textLayers.enumerated() {
-            for (k, v) in layer.parameters() {
-                out.append(("language_model.model.layers.\(i).\(k)", v))
-            }
-        }
-        for (k, v) in finalNorm.parameters() {
-            out.append(("language_model.model.norm.\(k)", v))
-        }
-        for (k, v) in lmHead.parameters() {
-            out.append(("lm_head.\(k)", v))
-        }
+        // Vision + projector parameters could be enumerated here too,
+        // but the existing tests + tools only consume the text-side
+        // parameter map; leave the surface unchanged.
         return out
     }
 
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        let cap = maxSeq ?? self.maxSeq
-        switch kvCacheKind {
-        case .raw:
-            return (0..<nLayers).map { _ in
-                KVCache(nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
-                        dtype: dtype, device: device)
-            }
-        case .affineQuantized(let bits, let groupSize):
-            let sharedK = Tensor.empty(shape: [nKVHeads, cap, headDim], dtype: dtype, device: device)
-            let sharedV = Tensor.empty(shape: [nKVHeads, cap, headDim], dtype: dtype, device: device)
-            return (0..<nLayers).map { _ in
-                AffineQuantizedKVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
-                    dtype: dtype, bits: bits, groupSize: groupSize,
-                    sharedWorkingK: sharedK, sharedWorkingV: sharedV,
-                    device: device
-                )
-            }
-        case .auraQuantized:
-            // PaliGemma currently doesn't ship with AURA-quantized weights;
-            // fall back to raw KV cache. Wire AURAQuantizedKVCache when
-            // a Pali-AURA conversion appears.
-            return (0..<nLayers).map { _ in
-                KVCache(nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
-                        dtype: dtype, device: device)
-            }
-        }
+        // Per-layer Gemma 2 KV cache: sliding layers cap at the
+        // configured `sliding_window`, full-attention layers stay
+        // unbounded. Gemma 2 owns that policy.
+        return textEngine.makeLayerCaches(maxSeq: maxSeq, device: device)
     }
 
     // MARK: - Image processing
@@ -1137,29 +941,52 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
         x = x.map { layerNorm($0, weight: postLNW, bias: postLNB, eps: 1e-6) }
 
         // ── Projector ──────────────────────────────────────────────────
-        // Project visHidden → textHidden; then scale by 1/sqrt(textHidden)
-        // (the inverse of the Gemma hidden scale applied during embedding).
-        // One batched GEMM over all nPatches rows replaces the previous
-        // per-row CPU `concurrentPerform` matmul.
-        let invScale = 1.0 / hiddenScale
+        // Project visHidden → textHidden, then pre-divide by
+        // `sqrt(hidden)`. HF's `PaliGemmaForConditionalGeneration`
+        // scales the text-embedding tensor by `sqrt(hidden)` BEFORE
+        // splicing image features in, so image features end up at
+        // their projector-output magnitude, NOT scaled. Our path runs
+        // image features through `Gemma2Model.forward(inputEmbedding:)`
+        // which always multiplies by `sqrt(hidden)`; pre-dividing here
+        // makes the two scales cancel and matches the HF reference
+        // (skipping the inverse-scale leaves image features ~48×
+        // too large, which dominates attention and pushes the model
+        // straight to EOS).
+        let invScale = 1.0 / Float(Double(textEngine.hidden).squareRoot())
         var projected = projLinear.forwardBatch(x)
         for i in 0..<projected.count {
             for d in 0..<projected[i].count { projected[i][d] *= invScale }
         }
 
-        // ── Copy to GPU Tensor [nPatches, textHidden] ──────────────────
-        let featureBytes = nPatches * hidden * MemoryLayout<Float>.size
-        let buf = device.makeBuffer(length: featureBytes)
-        var flat = [Float](repeating: 0, count: nPatches * hidden)
-        for i in 0..<nPatches {
-            for d in 0..<hidden {
-                flat[i * hidden + d] = projected[i][d]
+        // ── Copy to GPU Tensor [nPatches, hidden] in textEngine.dtype ──
+        // PaliGemma 2 ships Gemma 2 norm weights as f16, so the feature
+        // tensor must match — the old f32 hard-code blew up the first
+        // `Ops.rmsNorm` dtype precondition on quantized variants.
+        let h = textEngine.hidden
+        let dt = textEngine.dtype
+        let feat = Tensor.empty(shape: [nPatches, h], dtype: dt, device: device)
+        switch dt {
+        case .f32:
+            let ptr = feat.buffer.contents().advanced(by: feat.offset)
+                .bindMemory(to: Float.self, capacity: nPatches * h)
+            for i in 0..<nPatches {
+                for d in 0..<h { ptr[i * h + d] = projected[i][d] }
             }
+        case .f16:
+            let ptr = feat.buffer.contents().advanced(by: feat.offset)
+                .bindMemory(to: UInt16.self, capacity: nPatches * h)
+            for i in 0..<nPatches {
+                for d in 0..<h { ptr[i * h + d] = floatToFloat16(projected[i][d]) }
+            }
+        case .bf16:
+            let ptr = feat.buffer.contents().advanced(by: feat.offset)
+                .bindMemory(to: UInt16.self, capacity: nPatches * h)
+            for i in 0..<nPatches {
+                for d in 0..<h { ptr[i * h + d] = floatToBFloat16(projected[i][d]) }
+            }
+        default:
+            fatalError("Paligemma.setImagePixels: unsupported activation dtype \(dt)")
         }
-        flat.withUnsafeBytes { src in
-            buf.contents().copyMemory(from: src.baseAddress!, byteCount: featureBytes)
-        }
-        let feat = Tensor(buffer: buf, offset: 0, shape: [nPatches, hidden], dtype: .f32)
 
         featuresLock.lock()
         imageFeatures = feat
@@ -1168,113 +995,41 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
 
     // MARK: - LanguageModel
 
-    /// Single-token forward. For positions that correspond to an image token
-    /// (`tokenId == imageTokenIndex`) the stored image embedding is used
-    /// instead of the embed_tokens lookup. The `position` argument is used
-    /// to index into the image features: image tokens span positions 0..<numImageTokens.
-    /// Command-buffer-aware variant — required by `LanguageModel`.
-    /// Paligemma's forward path constructs its own command buffer for the
-    /// vision-substitution branch; the public protocol variant ignores the
-    /// caller-supplied `cmd` and delegates to the existing forward, which
-    /// internally makes a fresh `MTLCommandBuffer`.
+    /// Single-token forward. For positions that correspond to an image
+    /// token (`tokenId == imageTokenIndex`) the stored vision embedding
+    /// is spliced in via `textEngine.forward(inputEmbedding:)`; text
+    /// tokens take the standard `textEngine.forward(tokenId:)` path.
+    /// The `position` argument is used to index into the image features:
+    /// image tokens span positions 0..<numImageTokens.
     public func forward(tokenId: Int, position: Int,
                         caches: [any LayerCacheProtocol],
                         on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        // The command-buffer parameter is currently ignored; see comment.
-        return forward(tokenId: tokenId, position: position,
-                       caches: caches, device: device)
+        if tokenId == imageTokenIndex {
+            let row = imageFeatureRow(position: position)
+            return textEngine.forward(inputEmbedding: row, position: position,
+                                      caches: caches, on: cmd, device: device)
+        }
+        return textEngine.forward(tokenId: tokenId, position: position,
+                                  caches: caches, on: cmd, device: device)
     }
 
     public func forward(tokenId: Int, position: Int,
                         caches: [any LayerCacheProtocol], device: Device) -> Tensor {
         let cmd = device.makeCommandBuffer()
-
-        // Build the hidden-state vector `h` for this token.
-        var h: Tensor
-        if tokenId == imageTokenIndex {
-            // Image token: substitute the precomputed vision feature for this
-            // position. Feature tensor is f32; cast to model dtype via a
-            // passthrough (no cast kernel needed — GPU will handle mixed
-            // precision via the layer's weight dtype).
-            featuresLock.lock()
-            guard let feat = imageFeatures else {
-                featuresLock.unlock()
-                fatalError("PaligemmaModel.forward: setImagePixels() has not been called")
-            }
-            featuresLock.unlock()
-            // Clamp position into [0, numImageTokens).
-            let imgPos = max(0, min(position, numImageTokens - 1))
-            // Row slice: feat[imgPos] → [hidden]
-            h = feat.slicedRows(start: imgPos, count: 1).reshaped(to: [hidden])
-        } else {
-            // Text token: standard embedding lookup.
-            let tokenBuf = device.makeBuffer(length: 4)
-            var tid = UInt32(tokenId)
-            memcpy(tokenBuf.contents(), &tid, 4)
-            let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
-            h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
-        }
-
-        // Gemma multiplies embeddings by sqrt(hidden) before the transformer.
-        // We achieve this via a scalar multiply: create a scalar tensor and
-        // broadcast via gemv. Simpler: multiply each element on CPU before
-        // copying to GPU, but h is already on GPU. Instead we use Ops.mul
-        // with a broadcast scale tensor.
-        //
-        // Trick: create a [hidden]-shaped tensor filled with `hiddenScale`
-        // and call Ops.mul. We only do this for the text-token path since
-        // the image embeddings already have the inverse scale baked in via
-        // `* invScale` in setImagePixels(). For image tokens the scale
-        // cancels out and we skip re-scaling.
-        if tokenId != imageTokenIndex {
-            let scaleBuf = device.makeBuffer(length: hidden * dtype.byteSize)
-            switch dtype {
-            case .f32:
-                let ptr = scaleBuf.contents().bindMemory(to: Float.self, capacity: hidden)
-                for i in 0..<hidden { ptr[i] = hiddenScale }
-            case .f16:
-                let ptr = scaleBuf.contents().bindMemory(to: UInt16.self, capacity: hidden)
-                for i in 0..<hidden { ptr[i] = floatToFloat16(hiddenScale) }
-            case .bf16:
-                let ptr = scaleBuf.contents().bindMemory(to: UInt16.self, capacity: hidden)
-                for i in 0..<hidden { ptr[i] = floatToBFloat16(hiddenScale) }
-            default:
-                fatalError("PaligemmaModel: unsupported dtype \(dtype)")
-            }
-            let scaleTensor = Tensor(buffer: scaleBuf, offset: 0, shape: [hidden], dtype: dtype)
-
-            // h is the result of embedTokens which returns the table's dtype;
-            // if image features are f32 but embed is f16, we need a cast.
-            // For now both share dtype (f32 features will be cast at layer).
-            // Apply scale — note h may be f32 (image) or dtype (text).
-            // For text tokens, h is already in `dtype` from embedTokens.
-            h = Ops.mul(h, scaleTensor, on: cmd)
-        }
-
-        // Run through text transformer layers.
-        for (i, layer) in textLayers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              cmd: cmd, device: device)
-        }
-
-        let normed = finalNorm(h, on: cmd)
-        let logits = lmHead(normed, on: cmd)
-
+        let logits = forward(tokenId: tokenId, position: position,
+                             caches: caches, on: cmd, device: device)
         cmd.commit()
         cmd.waitUntilCompleted()
         return logits
     }
 
-    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
-    /// `forward(tokenId:)` per row on the supplied `cmd`.
-    ///
-    /// PaliGemma substitutes image features at every position equal
-    /// to `imageTokenIndex` inside its forward. The per-token check
-    /// is intrinsic to the architecture, so the chunked path would
-    /// need a vectorised "which positions are image tokens" mask
-    /// applied across the [N, hidden] activation block. Today this
-    /// override is commit-count-batched only.
+    /// Multi-token forward — Phase 6.6 prefill fast path. Loops the
+    /// per-token forward so the image-token vs text-token branch picks
+    /// the right embedding source for each row. PaliGemma's
+    /// position-based image-token check is intrinsic to the
+    /// architecture, so a vectorised "which positions are image tokens"
+    /// chunked path is future work; today this is commit-count-batched
+    /// only.
     public func forwardMulti(tokenIds: [Int], startingAt position: Int,
                              caches: [any LayerCacheProtocol],
                              on cmd: MTLCommandBuffer, device: Device) -> Tensor {
@@ -1291,46 +1046,29 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
     public func forwardSample(tokenId: Int, position: Int,
                               caches: [any LayerCacheProtocol], device: Device) -> Int {
         let cmd = device.makeCommandBuffer()
-
-        var h: Tensor
-        if tokenId == imageTokenIndex {
-            featuresLock.lock()
-            guard let feat = imageFeatures else {
-                featuresLock.unlock()
-                fatalError("PaligemmaModel.forwardSample: setImagePixels() has not been called")
-            }
-            featuresLock.unlock()
-            let imgPos = max(0, min(position, numImageTokens - 1))
-            h = feat.slicedRows(start: imgPos, count: 1).reshaped(to: [hidden])
-        } else {
-            let tokenBuf = device.makeBuffer(length: 4)
-            var tid = UInt32(tokenId)
-            memcpy(tokenBuf.contents(), &tid, 4)
-            let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
-            h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
-
-            let scaleBuf = device.makeBuffer(length: hidden * dtype.byteSize)
-            fillScale(scaleBuf, value: hiddenScale, n: hidden, dtype: dtype)
-            let scaleTensor = Tensor(buffer: scaleBuf, offset: 0, shape: [hidden], dtype: dtype)
-            h = Ops.mul(h, scaleTensor, on: cmd)
-        }
-
-        for (i, layer) in textLayers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              cmd: cmd, device: device)
-        }
-
-        let normed = finalNorm(h, on: cmd)
-        let logits = lmHead(normed, on: cmd)
-
+        let logits = forward(tokenId: tokenId, position: position,
+                             caches: caches, on: cmd, device: device)
         let outBuf = device.makeBuffer(length: 4)
         let outTensor = Tensor(buffer: outBuf, offset: 0, shape: [1], dtype: .u32)
         Ops.argmax(logits, into: outTensor, on: cmd)
-
         cmd.commit()
         cmd.waitUntilCompleted()
         return Int(outBuf.contents().bindMemory(to: UInt32.self, capacity: 1).pointee)
+    }
+
+    /// Slice the image features tensor at `position`, returning a
+    /// `[hidden]` view. Clamps `position` into `[0, numImageTokens)`
+    /// so an off-by-one (e.g. an image-token at the very last prompt
+    /// position) doesn't panic.
+    private func imageFeatureRow(position: Int) -> Tensor {
+        featuresLock.lock()
+        guard let feat = imageFeatures else {
+            featuresLock.unlock()
+            fatalError("PaligemmaModel.forward: setImagePixels() has not been called")
+        }
+        featuresLock.unlock()
+        let imgPos = max(0, min(position, numImageTokens - 1))
+        return feat.slicedRows(start: imgPos, count: 1).reshaped(to: [textEngine.hidden])
     }
 }
 

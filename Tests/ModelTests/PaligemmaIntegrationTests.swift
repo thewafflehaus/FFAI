@@ -61,17 +61,36 @@ struct PaligemmaIntegrationTests {
         #expect(pixels.count == 3 * 448 * 448)
         pg.setImagePixels(pixels)
 
-        // Build the prompt: 1024 image tokens followed by "describe image".
+        // Build the canonical PaliGemma prompt — matches HF's
+        // `PaliGemmaProcessor`:
+        //
+        //   <image>×N <bos> <prompt> \n
+        //
+        // Where:
+        //   • <image>×N is the per-image placeholder run that
+        //     PaligemmaModel.forward swaps with vision features.
+        //   • <bos> (id 2) delimits images from the text prompt — the
+        //     model was trained to treat everything after <bos> as the
+        //     instruction. Skipping it leaves the model in an undefined
+        //     state and it immediately samples EOS.
+        //   • <prompt> is free-form English for the mix-* checkpoints;
+        //     we use the canonical "caption en" task prefix.
+        //   • Trailing newline (id 108) terminates the prompt and is
+        //     the model's signal to start generating the answer.
         let imageTokenId   = pg.imageTokenIndex
         let numImageTokens = pg.numImageTokens
-        let textTokens = m.tokenizer.encode(text: "describe image")
+        let bosId = 2
+        // tokenizer.encode does NOT auto-prepend BOS on its own here —
+        // we splice it in explicitly so the prompt structure is right
+        // regardless of how the tokenizer is configured.
+        let textTokens = m.tokenizer.encode(text: "caption en\n")
         let promptTokens = Array(repeating: imageTokenId, count: numImageTokens)
-            + textTokens
+            + [bosId] + textTokens.filter { $0 != bosId }
 
-        // Greedy decode up to 200 tokens (the shared VLM integration
-        // ceiling — covers any polite preamble + a full caption).
-        // PaligemmaModel.forward injects the precomputed image features
-        // at imageTokenIndex positions.
+        // Greedy decode up to 200 tokens — the shared VLM integration
+        // ceiling. PaligemmaModel.forward injects the precomputed image
+        // features at imageTokenIndex positions; non-image positions
+        // route to Gemma2Model's embed lookup.
         let caches = m.engine.makeLayerCaches()
         var generated: [Int] = []
         var nextToken = 0
@@ -95,7 +114,7 @@ struct PaligemmaIntegrationTests {
         }
 
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
-        print("PaliGemma generated: \(text)")
+        print("PaliGemma generated (\(generated.count) tokens): \(text)")
         VLMTestSupport.expectMentionsDog(text, label: "PaliGemma")
     }
 }
