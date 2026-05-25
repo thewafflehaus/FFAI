@@ -309,14 +309,51 @@ public enum ConvertDriver {
         obj["quantization"] = quantBlock
         obj["quantization_config"] = quantBlock
 
+        // Sanitize before NSJSONSerialization: Python's `json` module emits
+        // `Infinity` / `-Infinity` / `NaN` literals when `allow_nan=True`
+        // (the default), and several upstream configs use them
+        // (e.g. NemotronH's `time_step_limit: [0.0, Infinity]`).
+        // `JSONSerialization` is strict JSON — it throws on non-finite
+        // doubles. Replace each with a JSON-legal sentinel that the
+        // model code won't trip on (`1e308` ≈ DBL_MAX; NaN → null).
+        let sanitized = sanitizeForJSON(obj)
+
         let outData = try JSONSerialization.data(
-            withJSONObject: obj, options: [.sortedKeys, .prettyPrinted])
+            withJSONObject: sanitized, options: [.sortedKeys, .prettyPrinted])
         let destURL = destDir.appendingPathComponent("config.json")
         do {
             try outData.write(to: destURL, options: .atomic)
         } catch {
             throw ConvertDriverError.configJSONWriteFailed(destURL, error)
         }
+    }
+
+    /// Walk a JSON-shaped tree and replace non-finite `Double` / `Float`
+    /// values with JSON-legal stand-ins. `+Inf` → `1e308`, `-Inf` →
+    /// `-1e308`, `NaN` → `NSNull`. NSJSONSerialization rejects non-finite
+    /// numbers; Python's `json` module writes them as `Infinity` / `NaN`
+    /// literals (a non-spec extension), which is what upstream configs
+    /// like NemotronH ship.
+    private static func sanitizeForJSON(_ value: Any) -> Any {
+        if let n = value as? Double {
+            if n.isNaN { return NSNull() }
+            if n == .infinity { return 1e308 }
+            if n == -.infinity { return -1e308 }
+            return n
+        }
+        if let n = value as? Float {
+            if n.isNaN { return NSNull() }
+            if n == .infinity { return Float(1e30) }
+            if n == -.infinity { return Float(-1e30) }
+            return n
+        }
+        if let dict = value as? [String: Any] {
+            return dict.mapValues(sanitizeForJSON)
+        }
+        if let arr = value as? [Any] {
+            return arr.map(sanitizeForJSON)
+        }
+        return value
     }
 
     // ─── Auxiliary file copy ─────────────────────────────────────────

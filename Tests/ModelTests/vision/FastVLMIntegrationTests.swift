@@ -22,7 +22,7 @@ import Testing
 @Suite("FastVLM integration", .serialized)
 struct FastVLMIntegrationTests {
 
-    static let modelId = "mlx-community/FastVLM-0.5B-bf16"
+    static let modelId = "ekryski/FastVLM-0.5B-4bit"
 
     @Test("load — FastVLM checkpoint loads with vision capability")
     func loadVLCheckpoint() async throws {

@@ -12,7 +12,7 @@
 // grouped-B/C Mamba path (`n_groups = 8`), the gated mixer RMSNorm, and
 // no-RoPE attention.
 //
-// nvidia/Nemotron-H-4B-Base-8K (~4B params, bf16) is the smallest
+// ekryski/Nemotron-H-4B-Base-8K-4bit (~4B params, bf16) is the smallest
 // published NemotronH checkpoint whose config the shipped FFAI path can
 // run end-to-end: its Mamba layers have d_inner/n_groups = 896, a valid
 // rmsNormRows row size, and the pattern carries no MoE ("E") layers.
@@ -28,7 +28,7 @@ struct NemotronHIntegrationTests {
 
     @Test("load + greedy generate produces coherent stack-interleaved hybrid output")
     func loadAndGenerate() async throws {
-        let modelId = "nvidia/Nemotron-H-4B-Base-8K"
+        let modelId = "ekryski/Nemotron-H-4B-Base-8K-4bit"
         let prompt = "The history of the printing press began when"
 
         let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }

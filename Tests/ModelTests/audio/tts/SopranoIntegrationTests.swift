@@ -81,7 +81,7 @@ struct SopranoIntegrationTests {
             }
         }
         let locator = ModelLocator(downloader: ModelDownloader())
-        return try await locator.resolve(idOrPath: "mlx-community/Soprano-1.1-80M-bf16")
+        return try await locator.resolve(idOrPath: "ekryski/Soprano-1.1-80M-4bit")
     }
 
     // ─── Load helpers ─────────────────────────────────────────────────
