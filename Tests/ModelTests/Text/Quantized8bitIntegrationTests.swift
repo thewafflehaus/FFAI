@@ -8,7 +8,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Qwen3 1.7B 8-bit integration", .serialized)
+@Suite("Qwen3 8-bit Integration", .serialized)
 struct Quantized8bitIntegrationTests {
 
     @Test("load + greedy generate produces coherent output")

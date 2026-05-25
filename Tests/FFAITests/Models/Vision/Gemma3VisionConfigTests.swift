@@ -10,7 +10,7 @@ import Testing
 // typed geometry: VL routing, the nested `vision_config` / `text_config`
 // split, the SigLIP `VisionEncoderConfig` geometry, and the sparse
 // `text_config` default-merge.
-@Suite("Gemma 3 VL config")
+@Suite("Gemma3 Vision Config")
 struct Gemma3VisionConfigTests {
 
     /// A representative `Gemma3ForConditionalGeneration` config: a

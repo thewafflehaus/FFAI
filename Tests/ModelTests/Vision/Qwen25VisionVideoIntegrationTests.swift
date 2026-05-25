@@ -16,7 +16,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Qwen 2.5-VL video integration", .serialized)
+@Suite("Qwen25 Vision Video Integration", .serialized)
 struct Qwen25VisionVideoIntegrationTests {
 
     /// The smallest published Qwen 2.5-VL conversion that ships the

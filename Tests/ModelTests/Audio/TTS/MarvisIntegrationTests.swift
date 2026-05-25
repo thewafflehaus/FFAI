@@ -21,7 +21,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Marvis (CSM) TTS integration", .serialized)
+@Suite("Marvis Integration", .serialized)
 struct MarvisIntegrationTests {
 
     /// Load Marvis from the HF cache. Throws on failure so a missing

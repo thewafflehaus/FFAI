@@ -24,7 +24,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Qwen3TTSBase integration", .serialized)
+@Suite("Qwen3TTSBase Integration", .serialized)
 struct Qwen3TTSBaseIntegrationTests {
 
     /// Resolve and load the VyvoTTS checkpoint. Throws on failure so a

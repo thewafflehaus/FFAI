@@ -12,7 +12,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Chatterbox TTS")
+@Suite("Chatterbox")
 struct ChatterboxTests {
 
     // ─── Config decoding ──────────────────────────────────────────────

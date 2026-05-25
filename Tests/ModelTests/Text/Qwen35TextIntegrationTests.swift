@@ -34,7 +34,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Qwen3.5 integration", .serialized)
+@Suite("Qwen35 Text Integration", .serialized)
 struct Qwen35TextIntegrationTests {
 
     @Test("dense GDN hybrid: load + greedy generate produces coherent output")

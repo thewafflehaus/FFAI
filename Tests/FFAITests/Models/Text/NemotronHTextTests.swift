@@ -11,7 +11,7 @@ import Metal
 import Testing
 @testable import FFAI
 
-@Suite("NemotronH — hybrid layer parsing + dense MLP layer")
+@Suite("NemotronH Text Hybrid Layer Parsing + Dense MLP Layer")
 struct NemotronHTextTests {
 
     // ─── Layer-kind parsing ──────────────────────────────────────────

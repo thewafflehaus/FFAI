@@ -13,7 +13,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Qwen 2-VL integration", .serialized)
+@Suite("Qwen2 Vision Integration", .serialized)
 struct Qwen2VisionIntegrationTests {
 
     static let modelId = "mlx-community/Qwen2-VL-2B-Instruct-4bit"

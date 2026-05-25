@@ -18,7 +18,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Gemma 4 VL integration", .serialized)
+@Suite("Gemma4 Vision Integration", .serialized)
 struct Gemma4VisionIntegrationTests {
 
     static let modelId = "mlx-community/gemma-4-e2b-it-4bit"

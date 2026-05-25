@@ -18,7 +18,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("FalconH1 Tiny-90M integration", .serialized)
+@Suite("FalconH1 Integration", .serialized)
 struct FalconH1IntegrationTests {
 
     @Test("load + greedy generate produces coherent hybrid output")

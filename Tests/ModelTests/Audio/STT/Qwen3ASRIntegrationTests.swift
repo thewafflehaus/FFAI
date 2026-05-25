@@ -15,7 +15,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Qwen3ASR 0.6B integration", .serialized)
+@Suite("Qwen3ASR Integration", .serialized)
 struct Qwen3ASRIntegrationTests {
 
     /// Resolve the Qwen3-ASR checkpoint directory from the mlx-audio cache

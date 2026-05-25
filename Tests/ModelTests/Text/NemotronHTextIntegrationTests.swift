@@ -23,7 +23,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("NemotronH-4B integration", .serialized)
+@Suite("NemotronH Text Integration", .serialized)
 struct NemotronHTextIntegrationTests {
 
     @Test("load + greedy generate produces coherent stack-interleaved hybrid output")

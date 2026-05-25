@@ -13,7 +13,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("ffai inspect — smoke", .serialized)
+@Suite("FFAI Inspect Smoke", .serialized)
 struct InspectSmokeTests {
 
     @Test("inspect path runs end-to-end on Llama 3.2 1B")

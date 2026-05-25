@@ -15,7 +15,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("LlamaTTS (Orpheus) integration", .serialized)
+@Suite("LlamaTTS Integration", .serialized)
 struct LlamaTTSIntegrationTests {
 
     /// Load LlamaTTS from the HF cache / network. Throws on failure so a

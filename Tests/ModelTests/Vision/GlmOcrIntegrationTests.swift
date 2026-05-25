@@ -24,7 +24,7 @@ import CoreGraphics
 #endif
 @testable import FFAI
 
-@Suite("GlmOcr integration", .serialized)
+@Suite("GlmOcr Vision Integration", .serialized)
 struct GlmOcrIntegrationTests {
 
     static let modelId = "mlx-community/GLM-OCR-4bit"

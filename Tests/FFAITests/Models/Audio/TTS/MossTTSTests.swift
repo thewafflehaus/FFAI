@@ -15,7 +15,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("MOSS-TTS")
+@Suite("MossTTS")
 struct MossTTSTests {
 
     // ─── Config decoding ──────────────────────────────────────────────

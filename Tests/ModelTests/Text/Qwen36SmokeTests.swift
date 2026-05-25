@@ -16,7 +16,7 @@ private let qwen36CheckpointAvailable =
     FileManager.default.fileExists(atPath: qwen36LocalPath)
 
 @Suite(
-    "Qwen3.6 smoke", .serialized,
+    "Qwen36 Smoke", .serialized,
     .enabled(
         if: qwen36CheckpointAvailable,
         "Qwen3.6 smoke requires a local checkpoint at \(qwen36LocalPath)")

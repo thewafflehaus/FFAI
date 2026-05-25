@@ -17,7 +17,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("SmartTurn integration", .serialized)
+@Suite("SmartTurn Integration", .serialized)
 struct SmartTurnIntegrationTests {
 
     /// The published SmartTurn-v3 checkpoint (matches the

@@ -27,7 +27,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Jamba integration", .serialized)
+@Suite("Jamba Integration", .serialized)
 struct JambaIntegrationTests {
 
     @Test("load + greedy generate produces coherent hybrid output")

@@ -11,7 +11,7 @@ import Testing
 // Generation` is shared with text-only Gemma 4) and
 // `Gemma4VLVisionConfig.decode`, which turns the nested `vision_config`
 // into the RoPE-attention ViT geometry.
-@Suite("Gemma 4 VL config")
+@Suite("Gemma4 Vision Config")
 struct Gemma4VisionConfigTests {
 
     /// A representative `Gemma4ForConditionalGeneration` VL config.

@@ -23,7 +23,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("VoxtralRealtime 4B integration", .serialized)
+@Suite("VoxtralRealtime Integration", .serialized)
 struct VoxtralRealtimeIntegrationTests {
 
     /// Resolve the Voxtral-Mini-4B checkpoint. Prefers the 4-bit variant

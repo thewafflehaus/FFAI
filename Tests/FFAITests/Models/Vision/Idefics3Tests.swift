@@ -15,7 +15,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Idefics3Config parsing")
+@Suite("Idefics3 Vision Config")
 struct Idefics3ConfigTests {
 
     // ─── Minimal valid raw dicts ──────────────────────────────────────────────

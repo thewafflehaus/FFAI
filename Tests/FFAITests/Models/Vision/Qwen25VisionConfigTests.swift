@@ -10,7 +10,7 @@ import Testing
 // turns the nested `vision_config` into the windowed-attention ViT
 // geometry (depth, head dim, spatial-merge unit, full-attention block
 // set) the vision tower is built from.
-@Suite("Qwen 2.5-VL config")
+@Suite("Qwen25 Vision Config")
 struct Qwen25VisionConfigTests {
 
     /// A representative `Qwen2_5_VLForConditionalGeneration` config.

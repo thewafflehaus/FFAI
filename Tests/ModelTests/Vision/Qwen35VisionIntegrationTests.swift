@@ -17,7 +17,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Qwen 3-VL-MoE integration", .serialized)
+@Suite("Qwen35 Vision Integration", .serialized)
 struct Qwen35VisionIntegrationTests {
 
     static let modelId = "mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit"

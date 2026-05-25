@@ -9,7 +9,7 @@ import Testing
 // Offline — covers VL routing and `Qwen3VLVisionConfig.decode`, which
 // turns the nested `vision_config` into the full-attention ViT geometry
 // (depth, head dim, spatial-merge unit, learned position-table size).
-@Suite("Qwen 3-VL config")
+@Suite("Qwen3 Vision Config")
 struct Qwen3VisionConfigTests {
 
     /// A representative `Qwen3VLForConditionalGeneration` config.

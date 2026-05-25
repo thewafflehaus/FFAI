@@ -18,7 +18,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Kokoro TTS integration", .serialized)
+@Suite("Kokoro Integration", .serialized)
 struct KokoroIntegrationTests {
 
     /// Load Kokoro from the HF cache. Throws on failure so a missing

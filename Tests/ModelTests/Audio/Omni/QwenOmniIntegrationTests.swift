@@ -14,7 +14,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Qwen-Omni audio-in integration", .serialized)
+@Suite("QwenOmni Integration", .serialized)
 struct QwenOmniIntegrationTests {
 
     /// Load Qwen-Omni from the HF cache / network. Throws on failure so

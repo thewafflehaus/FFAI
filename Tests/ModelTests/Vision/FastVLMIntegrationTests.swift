@@ -19,7 +19,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("FastVLM integration", .serialized)
+@Suite("FastVLM Vision Integration", .serialized)
 struct FastVLMIntegrationTests {
 
     static let modelId = "ekryski/FastVLM-0.5B-4bit"

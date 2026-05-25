@@ -16,7 +16,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Parakeet TDT integration", .serialized)
+@Suite("Parakeet Integration", .serialized)
 struct ParakeetIntegrationTests {
 
     // ─── HF cache helpers ────────────────────────────────────────────

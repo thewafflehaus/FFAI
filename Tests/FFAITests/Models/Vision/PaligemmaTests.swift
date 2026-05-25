@@ -4,7 +4,7 @@ import Testing
 
 // ─── Config parse ─────────────────────────────────────────────────────────────
 
-@Suite("Paligemma — config parsing and registry detection")
+@Suite("Paligemma Vision Config")
 struct PaligemmaTests {
 
     // A minimal PaliGemma-like config.json payload to exercise ModelConfig

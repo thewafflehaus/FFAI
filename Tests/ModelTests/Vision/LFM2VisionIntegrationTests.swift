@@ -18,7 +18,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("LFM2 VL integration", .serialized)
+@Suite("LFM2 Vision Integration", .serialized)
 struct LFM2VisionIntegrationTests {
 
     static let modelId = "mlx-community/LFM2-VL-1.6B-4bit"

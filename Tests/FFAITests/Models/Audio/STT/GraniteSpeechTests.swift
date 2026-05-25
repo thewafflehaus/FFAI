@@ -5,7 +5,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("GraniteSpeech config + registry")
+@Suite("GraniteSpeech")
 struct GraniteSpeechTests {
 
     // MARK: - Helpers

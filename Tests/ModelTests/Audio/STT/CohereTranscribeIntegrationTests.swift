@@ -20,7 +20,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("CohereTranscribe integration", .serialized)
+@Suite("CohereTranscribe Integration", .serialized)
 struct CohereTranscribeIntegrationTests {
 
     // ─── Checkpoint resolution ───────────────────────────────────────────

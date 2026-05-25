@@ -19,7 +19,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("FireRedASR2 integration", .serialized)
+@Suite("FireRedASR2 Integration", .serialized)
 struct FireRedASR2IntegrationTests {
 
     // ─── Checkpoint resolution ───────────────────────────────────────────

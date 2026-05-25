@@ -5,7 +5,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("DeepFilterNet unit tests")
+@Suite("DeepFilterNet")
 struct DeepFilterNetTests {
 
     // MARK: - Config parsing

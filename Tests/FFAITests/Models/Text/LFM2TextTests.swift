@@ -19,7 +19,7 @@ import Testing
 
 // ─── Layer-schedule resolver ─────────────────────────────────────────
 
-@Suite("LFM2 — layer schedule")
+@Suite("LFM2 Text Layer Schedule")
 struct LFM2LayerScheduleTests {
 
     @Test("layer_types drives the conv / attention schedule")
@@ -80,7 +80,7 @@ struct LFM2LayerScheduleTests {
 
 // ─── Family registration ─────────────────────────────────────────────
 
-@Suite("LFM2 — family registration")
+@Suite("LFM2 Text Family Registration")
 struct LFM2RegistrationTests {
 
     @Test("LFM2 owns the lfm2 / lfm2_moe model_types and architectures")
@@ -94,7 +94,7 @@ struct LFM2RegistrationTests {
 
 // ─── LFM2-MoE expert-bias routing ────────────────────────────────────
 
-@Suite("LFM2-MoE — expert-bias routing")
+@Suite("LFM2-MoE Text Expert-bias Routing")
 struct LFM2MoERoutingTests {
 
     /// LFM2-MoE adds a per-expert `expert_bias` to the post-softmax gate
@@ -134,7 +134,7 @@ struct LFM2MoERoutingTests {
 
 // ─── Host per-head RMSNorm ───────────────────────────────────────────
 
-@Suite("LFM2 — host per-head RMSNorm")
+@Suite("LFM2 Text Host Per-head RMSNorm")
 struct LFM2HostRMSNormTests {
 
     /// Two heads of width 4, unit weight. Checked against a hand-computed

@@ -16,7 +16,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Idefics3 8B integration", .serialized)
+@Suite("Idefics3 Vision Integration", .serialized)
 struct Idefics3IntegrationTests {
 
     /// Load dog.jpeg from the test Fixtures directory.

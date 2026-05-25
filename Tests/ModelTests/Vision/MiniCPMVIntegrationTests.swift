@@ -16,7 +16,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("MiniCPM-V 4.6 integration", .serialized)
+@Suite("MiniCPMV Vision Integration", .serialized)
 struct MiniCPMVIntegrationTests {
 
     @Test("load — MiniCPM-V 4.6 loads with vision capability")

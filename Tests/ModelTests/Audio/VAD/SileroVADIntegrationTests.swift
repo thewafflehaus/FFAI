@@ -14,7 +14,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("SileroVAD integration", .serialized)
+@Suite("SileroVAD Integration", .serialized)
 struct SileroVADIntegrationTests {
 
     /// The published SileroVAD checkpoint.

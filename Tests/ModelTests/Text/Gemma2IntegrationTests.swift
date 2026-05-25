@@ -12,7 +12,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Gemma 2 2B-it integration", .serialized)
+@Suite("Gemma2 Integration", .serialized)
 struct Gemma2IntegrationTests {
 
     @Test("load + greedy generate produces coherent output")

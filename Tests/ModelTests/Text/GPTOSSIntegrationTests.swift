@@ -34,7 +34,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "GPT-OSS-20B integration", .serialized,
+    "GPTOSS Integration", .serialized,
     .enabled(
         if: ProcessInfo.processInfo.environment["FFAI_BUILD_MACHINE"] != nil,
         "GPT-OSS-20B is build-machine-only; set FFAI_BUILD_MACHINE to run")

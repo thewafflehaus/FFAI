@@ -10,7 +10,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Mistral 7B integration", .serialized)
+@Suite("Mistral Integration", .serialized)
 struct MistralIntegrationTests {
 
     @Test("load + greedy generate produces coherent output")

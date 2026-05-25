@@ -20,7 +20,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Soprano TTS integration", .serialized)
+@Suite("Soprano Integration", .serialized)
 struct SopranoIntegrationTests {
 
     // ─── Checkpoint resolution ────────────────────────────────────────

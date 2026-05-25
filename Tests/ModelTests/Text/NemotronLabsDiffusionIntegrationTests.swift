@@ -10,7 +10,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Nemotron-Labs-Diffusion 3B integration", .serialized)
+@Suite("NemotronLabsDiffusion Integration", .serialized)
 struct NemotronLabsDiffusionIntegrationTests {
 
     @Test("load + tri-mode generation produces coherent output")

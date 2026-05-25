@@ -13,7 +13,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("SAMAudio integration", .serialized)
+@Suite("SAMAudio Integration", .serialized)
 struct SAMAudioIntegrationTests {
 
     @Test("load + segment produces correctly-shaped output")

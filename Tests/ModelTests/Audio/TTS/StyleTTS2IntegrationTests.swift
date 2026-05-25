@@ -19,7 +19,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("StyleTTS2 / KittenTTS integration", .serialized)
+@Suite("StyleTTS2 Integration", .serialized)
 struct StyleTTS2IntegrationTests {
 
     /// Cached snapshot directory for `mlx-community/kitten-tts-nano-0.8-fp16`.

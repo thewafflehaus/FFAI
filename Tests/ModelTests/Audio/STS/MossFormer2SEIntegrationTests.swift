@@ -18,7 +18,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("MossFormer2SE integration", .serialized)
+@Suite("MossFormer2SE Integration", .serialized)
 struct MossFormer2SEIntegrationTests {
 
     // ─── Checkpoint resolution ────────────────────────────────────────

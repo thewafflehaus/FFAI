@@ -16,7 +16,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("SmolVLM2 500M integration", .serialized)
+@Suite("SmolVLM2 Vision Integration", .serialized)
 struct SmolVLM2IntegrationTests {
 
     /// Resolve the HF cache snapshot directory for SmolVLM2-500M.

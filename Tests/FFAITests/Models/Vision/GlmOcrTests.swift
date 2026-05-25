@@ -6,7 +6,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("GlmOcr unit tests")
+@Suite("GlmOcr Vision Tests")
 struct GlmOcrTests {
 
     // ── Helpers ──────────────────────────────────────────────────────

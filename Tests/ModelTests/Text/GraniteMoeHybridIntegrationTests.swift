@@ -25,7 +25,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("GraniteMoeHybrid integration", .serialized)
+@Suite("GraniteMoeHybrid Integration", .serialized)
 struct GraniteMoeHybridIntegrationTests {
 
     @Test("load + greedy generate produces coherent hybrid output")

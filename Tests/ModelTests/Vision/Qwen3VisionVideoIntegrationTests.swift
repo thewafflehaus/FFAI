@@ -16,7 +16,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Qwen 3-VL video integration", .serialized)
+@Suite("Qwen3 Vision Video Integration", .serialized)
 struct Qwen3VisionVideoIntegrationTests {
 
     /// The smallest published Qwen 3-VL conversion — 2B-Instruct-4bit

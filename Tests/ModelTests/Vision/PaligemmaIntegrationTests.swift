@@ -21,7 +21,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("PaliGemma 3B integration", .serialized)
+@Suite("Paligemma Vision Integration", .serialized)
 struct PaligemmaIntegrationTests {
 
     @Test("load + image+text generation mentions dog")

@@ -19,7 +19,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("FishSpeech S2 Pro 8-bit integration", .serialized)
+@Suite("FishSpeech Integration", .serialized)
 struct FishSpeechIntegrationTests {
 
     // Resolved HuggingFace snapshot directory (pre-cached).

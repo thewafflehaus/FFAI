@@ -7,7 +7,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("NemotronLabsDiffusion — family registry")
+@Suite("NemotronLabsDiffusion Family Registry")
 struct NemotronLabsDiffusionRegistryTests {
 
     @Test("family declares the expected model_type / architecture keys")
@@ -27,7 +27,7 @@ struct NemotronLabsDiffusionRegistryTests {
     }
 }
 
-@Suite("NemotronLabsDiffusion — confidence transfer")
+@Suite("NemotronLabsDiffusion Confidence Transfer")
 struct NemotronLabsDiffusionTransferTests {
 
     @Test("numTransferTokens splits evenly with the remainder front-loaded")

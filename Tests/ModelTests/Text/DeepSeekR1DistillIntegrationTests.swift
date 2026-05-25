@@ -10,7 +10,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("DeepSeek R1 Distill integration", .serialized)
+@Suite("DeepSeek R1 Distill Integration", .serialized)
 struct DeepSeekR1DistillIntegrationTests {
 
     @Test("R1-Distill-Llama-8B (Llama architecture) generates coherent output")

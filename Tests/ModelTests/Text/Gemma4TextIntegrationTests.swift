@@ -24,7 +24,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Gemma 4 integration", .serialized)
+@Suite("Gemma4 Text Integration", .serialized)
 struct Gemma4TextIntegrationTests {
 
     @Test("Gemma4E (E2B): load + greedy generate produces coherent output")

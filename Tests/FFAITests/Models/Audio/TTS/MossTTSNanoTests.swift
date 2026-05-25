@@ -16,7 +16,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("MOSS-TTS-Nano")
+@Suite("MossTTSNano")
 struct MossTTSNanoTests {
 
     // ─── Config decoding ──────────────────────────────────────────────

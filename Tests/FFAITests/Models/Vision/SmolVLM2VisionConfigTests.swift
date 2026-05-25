@@ -13,7 +13,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("SmolVLM2Config parsing")
+@Suite("SmolVLM2 Vision Config")
 struct SmolVLM2VisionConfigTests {
 
     // ─── Minimal valid raw dicts ──────────────────────────────────────────────

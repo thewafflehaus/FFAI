@@ -9,7 +9,7 @@ import Testing
 // Offline — covers VL routing and `FastVLMVisionConfig.decode`, which
 // turns the nested `vision_config` into the FastViTHD geometry
 // (stages, mixers, spatial resolution path).
-@Suite("FastVLM config")
+@Suite("FastVLM Vision Config")
 struct FastVLMTests {
 
     /// A representative FastVLM-0.5B `config.json` structure. The

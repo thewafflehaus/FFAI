@@ -11,7 +11,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Phi-3 mini integration", .serialized)
+@Suite("Phi Integration", .serialized)
 struct Phi3IntegrationTests {
 
     @Test("load + greedy generate produces coherent output")

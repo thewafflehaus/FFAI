@@ -9,7 +9,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("SAMAudio unit tests")
+@Suite("SAMAudio")
 struct SAMAudioTests {
 
     // ─── Config decode ────────────────────────────────────────────────────

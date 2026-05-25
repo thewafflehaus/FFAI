@@ -11,7 +11,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Mamba 2 130M integration", .serialized)
+@Suite("Mamba2 Integration", .serialized)
 struct Mamba2IntegrationTests {
 
     @Test("load + greedy generate produces non-degenerate text")

@@ -9,7 +9,7 @@ import Testing
 // Offline — covers VL routing and `PixtralVisionConfig.decode`, which
 // turns the nested `vision_config` into the 2D-RoPE ViT geometry (depth,
 // head dim, patch count) the vision tower is built from.
-@Suite("Pixtral config")
+@Suite("Pixtral Vision Config")
 struct PixtralVisionConfigTests {
 
     /// A representative Pixtral-12B `config.json` structure. The

@@ -10,7 +10,7 @@ import Testing
 // typed geometry: VL routing, the architecture string, the nested
 // `vision_config` / `text_config` split, and the derived image-token
 // count (numPatches / downsampleFactor²).
-@Suite("LFM2 VL config")
+@Suite("LFM2 Vision Config")
 struct LFM2VisionConfigTests {
 
     /// A representative `Lfm2VlForConditionalGeneration` config matching

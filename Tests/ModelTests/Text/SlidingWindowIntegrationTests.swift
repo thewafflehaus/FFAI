@@ -18,7 +18,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Sliding window KV cache — integration", .serialized)
+@Suite("Sliding Window KV Cache Integration", .serialized)
 struct SlidingWindowIntegrationTests {
 
     @Test("Llama 3.2 1B with .window(maxSize: 64) produces coherent output beyond window")

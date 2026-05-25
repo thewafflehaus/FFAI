@@ -7,7 +7,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("FishSpeech config + registry")
+@Suite("FishSpeech")
 struct FishSpeechTests {
 
     // ─── Config parsing ──────────────────────────────────────────────────

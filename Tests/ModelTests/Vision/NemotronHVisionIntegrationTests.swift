@@ -24,7 +24,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Nemotron-VLM integration", .serialized)
+@Suite("NemotronH Vision Integration", .serialized)
 struct NemotronHVisionIntegrationTests {
 
     static let modelId = "mlx-community/Llama-3.1-Nemotron-Nano-VL-8B-V1-4bit"

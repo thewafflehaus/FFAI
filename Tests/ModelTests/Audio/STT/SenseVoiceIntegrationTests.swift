@@ -13,7 +13,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("SenseVoice integration", .serialized)
+@Suite("SenseVoice Integration", .serialized)
 struct SenseVoiceIntegrationTests {
 
     /// Load SenseVoiceSmall from the HF cache / network. Throws on

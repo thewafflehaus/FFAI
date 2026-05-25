@@ -7,7 +7,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("EchoTTS config + registry")
+@Suite("EchoTTS")
 struct EchoTTSTests {
 
     // ─── EchoDiTConfig ────────────────────────────────────────────────────

@@ -21,7 +21,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("MiniCPM-V 4.6 video integration", .serialized)
+@Suite("MiniCPMV Vision Video Integration", .serialized)
 struct MiniCPMVVideoIntegrationTests {
 
     /// The base openbmb checkpoint (non-quantized bf16). A future pass can

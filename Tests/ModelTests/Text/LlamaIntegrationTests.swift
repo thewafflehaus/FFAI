@@ -10,7 +10,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Llama 3.2 1B integration", .serialized)
+@Suite("Llama Integration", .serialized)
 struct LlamaIntegrationTests {
 
     @Test("load + greedy generate produces coherent output")

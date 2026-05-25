@@ -21,7 +21,7 @@ import Testing
 import Tokenizers
 @testable import FFAI
 
-@Suite("GLMASR integration", .serialized)
+@Suite("GLMASR Integration", .serialized)
 struct GLMASRIntegrationTests {
 
     // ─── Checkpoint resolution ───────────────────────────────────────────

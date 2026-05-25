@@ -8,7 +8,7 @@ import Testing
 // Offline — covers VL routing and `Qwen2VLVisionConfig.decode`, which
 // turns the nested `vision_config` into the ViT geometry (depth, head dim,
 // spatial-merge unit) the vision tower is built from.
-@Suite("Qwen 2-VL config")
+@Suite("Qwen2 Vision Config")
 struct Qwen2VisionConfigTests {
 
     /// A representative `Qwen2VLForConditionalGeneration` config matching

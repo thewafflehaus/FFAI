@@ -27,7 +27,7 @@ import Metal
 import Testing
 @testable import FFAI
 
-@Suite("GraniteMoeHybrid — forward MoE-commit path")
+@Suite("GraniteMoeHybrid Forward MoE-commit Path")
 struct GraniteMoeHybridForwardTests {
 
     // Synthetic geometry. `headDim == 128` satisfies the `sdpaDecode`

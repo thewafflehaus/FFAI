@@ -9,7 +9,7 @@ import Testing
 // Offline — covers VL routing and the shared `Qwen3VLVisionConfig.decode`
 // (the MoE variant reuses the dense Qwen3-VL vision tower), plus the
 // MoE-specific `text_config` keys (`num_experts`, `num_experts_per_tok`).
-@Suite("Qwen 3-VL-MoE config")
+@Suite("Qwen35 Vision Config")
 struct Qwen35VisionConfigTests {
 
     /// A representative `Qwen3VLMoeForConditionalGeneration` config.

@@ -23,7 +23,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Sortformer diarization integration", .serialized)
+@Suite("Sortformer Integration", .serialized)
 struct SortformerIntegrationTests {
 
     /// Published checkpoint slug (mlx-audio flat cache) and HF repo id.

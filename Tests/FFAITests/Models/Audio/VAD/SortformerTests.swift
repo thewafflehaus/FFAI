@@ -11,7 +11,7 @@ import Testing
 // Note: `SortformerModel.remapAndTranspose` requires `[String: Tensor]`
 // (GPU-resident SafeTensors), so it cannot be exercised here without a
 // real GPU device; its correctness is verified by the integration suite.
-@Suite("Sortformer VAD")
+@Suite("Sortformer")
 struct SortformerTests {
 
     // ─── SortformerFCConfig ──────────────────────────────────────────

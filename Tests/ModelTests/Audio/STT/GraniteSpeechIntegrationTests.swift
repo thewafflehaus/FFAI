@@ -15,7 +15,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("GraniteSpeech 4.0 1B integration", .serialized)
+@Suite("GraniteSpeech Integration", .serialized)
 struct GraniteSpeechIntegrationTests {
 
     // MARK: - Fixture helpers

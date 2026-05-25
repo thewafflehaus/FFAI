@@ -11,7 +11,7 @@ import Testing
 // `model_type == nemotron_h` since the VL conversion carries no single
 // canonical top-level architecture string) and the SigLIP-style
 // `vision_config` → `VisionEncoderConfig` geometry.
-@Suite("Nemotron-VLM config")
+@Suite("NemotronH Vision Config")
 struct NemotronHVisionConfigTests {
 
     /// A representative Nemotron Nano VL config: a ViT vision tower + a

@@ -16,7 +16,7 @@ import Metal
 import Testing
 @testable import FFAI
 
-@Suite("Gemma 3 weight-fold round-trip")
+@Suite("Gemma3 Text Weight Fold Round-trip")
 struct Gemma3TextWeightFoldTests {
 
     /// Build a tensor of size `n` with the given fp32 values, then

@@ -17,7 +17,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("LFMAudio integration", .serialized)
+@Suite("LFMAudio Integration", .serialized)
 struct LFMAudioIntegrationTests {
 
     // ── Checkpoint resolution ────────────────────────────────────────────

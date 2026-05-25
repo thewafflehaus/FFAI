@@ -34,7 +34,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("LlamaCompatibles integration", .serialized)
+@Suite("LlamaCompatibles Integration", .serialized)
 struct LlamaCompatiblesIntegrationTests {
 
     @Test("SmolLM2-360M-Instruct (LlamaForCausalLM, no biases) decodes coherently")

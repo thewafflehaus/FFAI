@@ -12,7 +12,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("FFAI determinism smoke", .serialized)
+@Suite("FFAI Determinism Smoke", .serialized)
 struct DeterminismSmokeTests {
 
     @Test("forwardSample(BOS) returns the same token on three back-to-back calls")

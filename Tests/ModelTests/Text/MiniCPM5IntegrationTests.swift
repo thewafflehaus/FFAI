@@ -18,7 +18,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("MiniCPM5-1B integration", .serialized)
+@Suite("MiniCPM5 Integration", .serialized)
 struct MiniCPM5IntegrationTests {
 
     @Test("MiniCPM5-1B (bf16) — Llama dispatch + coherent decode")

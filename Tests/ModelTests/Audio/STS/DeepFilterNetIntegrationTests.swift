@@ -31,7 +31,7 @@ enum DeepFilterNetFixtures {
     }
 }
 
-@Suite("DeepFilterNet integration", .serialized)
+@Suite("DeepFilterNet Integration", .serialized)
 struct DeepFilterNetIntegrationTests {
 
     @Test("enhance returns non-empty waveform with same length as input")

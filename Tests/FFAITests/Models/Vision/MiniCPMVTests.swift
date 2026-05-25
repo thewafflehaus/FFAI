@@ -10,7 +10,7 @@ import Testing
 
 // ─── Family registration ─────────────────────────────────────────────
 
-@Suite("MiniCPM-V 4.6 — family registration")
+@Suite("MiniCPMV Vision Registration")
 struct MiniCPMVRegistrationTests {
 
     @Test("MiniCPMV4_6 owns the minicpmv4_6 model_type + ConditionalGeneration arch")
@@ -34,7 +34,7 @@ struct MiniCPMVRegistrationTests {
 
 // ─── Position-embedding bilinear interpolation ───────────────────────
 
-@Suite("MiniCPM-V 4.6 — position-embedding interpolation")
+@Suite("MiniCPMV Vision Position Embedding Interpolation")
 struct MiniCPMVPosEmbInterpTests {
 
     /// Identity case: target side equals stored side → returned tensor

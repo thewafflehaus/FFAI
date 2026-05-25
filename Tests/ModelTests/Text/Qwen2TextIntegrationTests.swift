@@ -11,7 +11,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Qwen 2.5 0.5B integration", .serialized)
+@Suite("Qwen2 Text Integration", .serialized)
 struct Qwen2TextIntegrationTests {
 
     @Test("load + greedy generate produces coherent output")

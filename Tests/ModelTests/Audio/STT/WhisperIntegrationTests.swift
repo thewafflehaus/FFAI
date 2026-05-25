@@ -17,7 +17,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Whisper tiny integration", .serialized)
+@Suite("Whisper Integration", .serialized)
 struct WhisperIntegrationTests {
 
     /// Load whisper-tiny from the HF cache / network. Throws on failure

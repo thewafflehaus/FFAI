@@ -9,7 +9,7 @@ import Testing
 // Offline — covers VL routing and the decoded vision geometry (depth,
 // head dim, patch count) as well as projector config fields
 // (spatial_merge_size, merged token count).
-@Suite("Mistral3 config")
+@Suite("Mistral3 Vision Config")
 struct Mistral3Tests {
 
     /// A representative Mistral-Small-3.1-24B `config.json` structure.

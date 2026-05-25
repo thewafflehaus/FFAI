@@ -5,7 +5,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("StyleTTS2 config + registry")
+@Suite("StyleTTS2")
 struct StyleTTS2Tests {
 
     // ─── Config parsing ────────────────────────────────────────────────

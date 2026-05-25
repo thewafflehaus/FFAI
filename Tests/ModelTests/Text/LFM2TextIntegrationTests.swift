@@ -21,7 +21,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("LFM2 integration", .serialized)
+@Suite("LFM2 Text Integration", .serialized)
 struct LFM2TextIntegrationTests {
 
     @Test("load + greedy generate produces coherent hybrid output")
