@@ -1681,6 +1681,100 @@ public enum Ops {
     }
 
     /// Backwards-compatible 4-bit alias.
+    /// ITER 75 (Bagel 2): fused RMSNorm + 4-bit dequant-GEMV in ONE
+    /// dispatch via `ffai_rms_norm_qgemv_fast`. Computes
+    ///   `y[row] = Σ_i (q[row,i]·scale + bias) ·
+    ///            (x[i] · norm_weight[i] · inv_rms)`
+    /// with `inv_rms = rsqrt(mean(x²) + eps)` and the normalised
+    /// activation never leaving registers. Replaces a 2-dispatch chain
+    /// (`Ops.rmsNorm` + `Ops.dequantGemvInt4`) with one kernel, saving
+    /// a full `[in_dim]` DRAM roundtrip on the intermediate `normed`.
+    ///
+    /// Use at the finalNorm + lmHead boundary (one dispatch per token)
+    /// and ANY other site where a pre-norm immediately precedes a
+    /// single int4 qmm projection.
+    ///
+    /// Kernel constraints (`ffai_rms_norm_qgemv_fast`):
+    /// - `in_dim` MUST be a multiple of 512 (and 8 and 64; the kernel's
+    ///   block size = 512 K-elements per outer iter).
+    /// - `out_dim` MUST be a multiple of 8 (the fast kernel processes
+    ///   8 output rows per TG).
+    /// - `group_size` MUST equal 64.
+    /// - TPG = 64 (2 simdgroups × 32 lanes).
+    public static func rmsNormQgemvInt4Fast(
+        x: Tensor, normWeight: Tensor, eps: Float,
+        qWeight: Tensor, qScales: Tensor, qBiases: Tensor,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor
+    ) {
+        precondition(qWeight.dtype == .u32, "rmsNormQgemvInt4Fast: qWeight must be u32-packed")
+        precondition(qWeight.shape.count == 2,
+                     "rmsNormQgemvInt4Fast: qWeight must be [outDim, inDim/8]")
+        let outDim = qWeight.shape[0]
+        let packedPerRow = qWeight.shape[1]
+        let inDim = packedPerRow * 8
+        precondition(x.elementCount == inDim,
+                     "rmsNormQgemvInt4Fast: x.elementCount \(x.elementCount) ≠ inDim \(inDim)")
+        precondition(normWeight.elementCount == inDim,
+                     "rmsNormQgemvInt4Fast: normWeight.elementCount \(normWeight.elementCount) ≠ inDim \(inDim)")
+        precondition(out.elementCount == outDim,
+                     "rmsNormQgemvInt4Fast: out.elementCount \(out.elementCount) ≠ outDim \(outDim)")
+        precondition(x.dtype == normWeight.dtype && normWeight.dtype == qScales.dtype
+                      && qScales.dtype == qBiases.dtype && qBiases.dtype == out.dtype,
+                     "rmsNormQgemvInt4Fast: all non-weight tensors must share dtype")
+        precondition(inDim % 512 == 0,
+                     "rmsNormQgemvInt4Fast: in_dim \(inDim) must be a multiple of 512 (fast variant)")
+        precondition(outDim % 8 == 0,
+                     "rmsNormQgemvInt4Fast: out_dim \(outDim) must be a multiple of 8")
+        // INVARIANT: kernel pins group_size=64 + TPG=64 for the fast
+        // 8-rows-per-TG variant. group_size is checked as a constexpr
+        // by the kernel; we re-assert here for early failure.
+        let groupSize = 64
+        precondition(inDim % groupSize == 0,
+                     "rmsNormQgemvInt4Fast: in_dim must divide group_size=64")
+        let epsBuf = epsBuffer(eps)
+        let tg = MTLSize(width: 64, height: 1, depth: 1)
+        let nTiles = outDim / 8
+        let grid = MTLSize(width: nTiles * 64, height: 1, depth: 1)
+        switch x.dtype {
+        case .f32:
+            MetalTileKernels.ffai_rms_norm_qgemv_fast_f32(
+                x: x.buffer, xOffset: x.offset,
+                norm_weight: normWeight.buffer, norm_weightOffset: normWeight.offset,
+                weight: qWeight.buffer, weightOffset: qWeight.offset,
+                scales: qScales.buffer, scalesOffset: qScales.offset,
+                biases: qBiases.buffer, biasesOffset: qBiases.offset,
+                output: out.buffer, outputOffset: out.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                in_dim: UInt32(inDim), group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.ffai_rms_norm_qgemv_fast_f16(
+                x: x.buffer, xOffset: x.offset,
+                norm_weight: normWeight.buffer, norm_weightOffset: normWeight.offset,
+                weight: qWeight.buffer, weightOffset: qWeight.offset,
+                scales: qScales.buffer, scalesOffset: qScales.offset,
+                biases: qBiases.buffer, biasesOffset: qBiases.offset,
+                output: out.buffer, outputOffset: out.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                in_dim: UInt32(inDim), group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.ffai_rms_norm_qgemv_fast_bf16(
+                x: x.buffer, xOffset: x.offset,
+                norm_weight: normWeight.buffer, norm_weightOffset: normWeight.offset,
+                weight: qWeight.buffer, weightOffset: qWeight.offset,
+                scales: qScales.buffer, scalesOffset: qScales.offset,
+                biases: qBiases.buffer, biasesOffset: qBiases.offset,
+                output: out.buffer, outputOffset: out.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                in_dim: UInt32(inDim), group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.rmsNormQgemvInt4Fast: unsupported dtype \(x.dtype)")
+        }
+    }
+
     public static func dequantGemvInt4(
         weight: Tensor, scales: Tensor, biases: Tensor,
         input: Tensor, groupSize: Int = 64,
