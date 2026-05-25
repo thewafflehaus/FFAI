@@ -2127,15 +2127,21 @@ public final class Qwen35AttentionMixer: Module {
             gateFlat = nil
         }
 
-        // ── Q/K norm — one rmsNormRows over (T*nHeads) and (T*nKVHeads)
-        // rows. rmsNormRows is already row-wise, so the T-batched form is
-        // a count change, not a kernel change.
-        let qNormed = Ops.rmsNormRows(
-            queriesFlat, weight: qNorm.weight, eps: qNorm.eps,
-            nRows: t * nHeads, rowSize: headDim, on: cmd)
-        let kNormed = Ops.rmsNormRows(
-            kOut, weight: kNorm.weight, eps: kNorm.eps,
-            nRows: t * nKVHeads, rowSize: headDim, on: cmd)
+        // ── Q/K norm — one shared encoder over (T*nHeads) and (T*nKVHeads)
+        // rows. ITER 83 (Bagel 2): collapse the two separate `rmsNormRows`
+        // dispatches into one `rmsNormRowsTwo` shared encoder, mirroring
+        // the single-token `forward` path (ITER 12+35). Saves 1 encoder
+        // begin/end per attn-layer prefill call.
+        let qNormed = Tensor.empty(shape: queriesFlat.shape, dtype: queriesFlat.dtype,
+                                    device: device)
+        let kNormed = Tensor.empty(shape: kOut.shape, dtype: kOut.dtype,
+                                    device: device)
+        Ops.rmsNormRowsTwo(
+            queriesFlat, weight: qNorm.weight, eps1: qNorm.eps,
+            nRows1: t * nHeads, rowSize1: headDim, into: qNormed,
+            kOut, weight: kNorm.weight, eps2: kNorm.eps,
+            nRows2: t * nKVHeads, rowSize2: headDim, into: kNormed,
+            on: cmd)
 
         // ── RoPE per token + KV append — T dispatches each, all on `cmd`.
         // The single-token RoPE kernel grids `[nHeads, halfRotary]` —
