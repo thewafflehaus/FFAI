@@ -239,7 +239,7 @@ public struct Gemma3Dense: Gemma3Variant {
 /// The original weight buffer stays in place but is no longer
 /// referenced by this RMSNorm — its retain count drops to zero with
 /// the SafeTensors file's `entries` map.
-private func loadGemmaRMSNorm(
+internal func loadGemmaRMSNorm(
     base: String, in weights: SafeTensorsBundle, eps: Double
 ) throws -> RMSNorm {
     let raw = try weights.tensor(named: base)
@@ -282,7 +282,7 @@ private func loadGemmaRMSNorm(
 
 /// Fill a flat [n] tensor with a single scalar value at runtime.
 /// Used once at load to materialize the sqrt(hidden) embedding scale.
-private func fillScalar(_ t: Tensor, scalar: Float, dtype: DType) {
+internal func fillScalar(_ t: Tensor, scalar: Float, dtype: DType) {
     let n = t.elementCount
     let ptr = t.buffer.contents().advanced(by: t.offset)
     switch dtype {

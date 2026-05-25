@@ -461,6 +461,19 @@ public enum ModelRegistry {
             return try loadLlama(config: config, weights: weights,
                                  options: options, device: device)
         }
+        // Gemma 2 — 2B / 9B / 27B text decoder. Ships under model_type
+        // `gemma2`; the family file is the only variant. Checked before
+        // Gemma 3 because Gemma 2's model_type is distinct (`gemma2` vs
+        // `gemma3` / `gemma3_text`) — order matters only when the
+        // architecture string disambiguates.
+        if let arch = config.architecture, Gemma2.architectures.contains(arch) {
+            return try loadGemma2(config: config, weights: weights,
+                                  options: options, device: device)
+        }
+        if let mt = config.modelType, Gemma2.modelTypes.contains(mt) {
+            return try loadGemma2(config: config, weights: weights,
+                                  options: options, device: device)
+        }
         if let arch = config.architecture, Gemma3.architectures.contains(arch) {
             return try loadGemma3(config: config, weights: weights,
                                   options: options, device: device)
@@ -641,6 +654,19 @@ public enum ModelRegistry {
         options: LoadOptions, device: Device
     ) throws -> Loaded {
         let variant = try Gemma3.variant(for: config)
+        let engine = try variant.loadModel(
+            config: config, weights: weights,
+            options: options, device: device
+        )
+        return Loaded(engine: engine,
+                      defaultGenerationParameters: variant.defaultGenerationParameters)
+    }
+
+    public static func loadGemma2(
+        config: ModelConfig, weights: SafeTensorsBundle,
+        options: LoadOptions, device: Device
+    ) throws -> Loaded {
+        let variant = try Gemma2.variant(for: config)
         let engine = try variant.loadModel(
             config: config, weights: weights,
             options: options, device: device
@@ -841,6 +867,9 @@ public final class Model: @unchecked Sendable {
 
     /// Convenience accessor for the Qwen3.5 hybrid engine.
     public var qwen35: Qwen35Model? { engine as? Qwen35Model }
+
+    /// Convenience accessor for the Gemma 2 engine.
+    public var gemma2: Gemma2Model? { engine as? Gemma2Model }
 
     /// Convenience accessor for the GPT-OSS MoE engine.
     public var gptOSS: GPTOSSModel? { engine as? GPTOSSModel }
