@@ -117,12 +117,28 @@ public enum GPTOSSAttentionKind: Equatable, Sendable {
 
 // ─── GPTOSSMoEVariant — the single GPT-OSS-20B variant ───────────────
 
-public struct GPTOSSMoEVariant: GPTOSSVariant {
-    public static let availableCapabilities: Set<Capability> = [.textIn, .textOut]
+public struct GPTOSSMoEVariant: GPTOSSVariant, ReasoningCapable {
+    /// GPT-OSS-20B advertises text + reasoning-level control. The
+    /// Harmony template renders a `reasoning_effort` variable; FFAI's
+    /// public `ReasoningLevel` dial maps onto it via `clamped(to:)`
+    /// against `supportedReasoningLevels` below.
+    public static let availableCapabilities: Set<Capability> = [
+        .textIn, .textOut, .reasoningLevel,
+    ]
+
+    /// GPT-OSS-20B's Harmony template recognises low / medium / high
+    /// for the `reasoning_effort` variable. User requests of
+    /// `.extraHigh` or `.max` clamp to `.high` (the highest native
+    /// value); `.none` always disables reasoning regardless.
+    public static let supportedReasoningLevels: Set<ReasoningLevel> = [
+        .low, .medium, .high,
+    ]
 
     /// GPT-OSS-20B greedy defaults — keeps the integration suite
     /// deterministic. 2048-token prefill chunk matches mlx-swift-lm's
     /// audited optimum (pure-attention model, no SSM bottleneck).
+    /// Reasoning defaults to `.none` (disabled until the caller
+    /// explicitly opts in) per the FFAI convention.
     public static let defaultGenerationParameters = GenerationParameters(
         maxTokens: 256,
         prefillStepSize: 2048,
@@ -130,7 +146,8 @@ public struct GPTOSSMoEVariant: GPTOSSVariant {
         topP: 1.0,
         topK: 0,
         minP: 0.0,
-        repetitionPenalty: 1.0
+        repetitionPenalty: 1.0,
+        reasoningLevel: .none
     )
 
     public static func loadModel(

@@ -64,6 +64,23 @@ public struct GenerationParameters: Sendable, Equatable {
     /// Optional sampling seed for reproducibility. `nil` = system-random.
     public var seed: UInt64?
 
+    // ─── Reasoning ───────────────────────────────────────────────────
+
+    /// User-requested reasoning effort. `nil` (the default) means
+    /// "don't override the model" — the family's own
+    /// `defaultGenerationParameters.reasoningLevel` then decides, and
+    /// non-reasoning families ignore the field entirely.
+    ///
+    /// Reasoning-capable families (those declaring
+    /// `Capability.reasoningLevel`) conform to `ReasoningCapable` and
+    /// publish a `supportedReasoningLevels` set. The user-facing dial
+    /// here always accepts the full `ReasoningLevel` enum
+    /// (`none / low / medium / high / extraHigh / max`); each model
+    /// clamps to what it natively understands via
+    /// `ReasoningLevel.clamped(to:)`. `.none` always disables
+    /// reasoning regardless of the model's catalogue.
+    public var reasoningLevel: ReasoningLevel?
+
     public init(
         maxTokens: Int = 256,
         stopOnEOS: Bool = true,
@@ -75,7 +92,8 @@ public struct GenerationParameters: Sendable, Equatable {
         minP: Float = 0.0,
         repetitionPenalty: Float = 1.0,
         presencePenalty: Float = 0.0,
-        seed: UInt64? = nil
+        seed: UInt64? = nil,
+        reasoningLevel: ReasoningLevel? = nil
     ) {
         self.maxTokens = maxTokens
         self.stopOnEOS = stopOnEOS
@@ -88,6 +106,7 @@ public struct GenerationParameters: Sendable, Equatable {
         self.repetitionPenalty = repetitionPenalty
         self.presencePenalty = presencePenalty
         self.seed = seed
+        self.reasoningLevel = reasoningLevel
     }
 
     /// Returns a copy with `body` applied — convenient for "family default
