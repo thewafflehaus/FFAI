@@ -5141,15 +5141,38 @@ public enum Ops {
         nExperts: Int, k: Int, normTopkProb: Bool,
         on cmd: MTLCommandBuffer
     ) {
-        precondition(logits.elementCount == nExperts,
-                     "moeRouterTopK: logits must be [nExperts]")
-        precondition(indicesOut.elementCount == k && indicesOut.dtype == .u32,
-                     "moeRouterTopK: indicesOut must be [k] u32")
-        precondition(weightsOut.elementCount == k && weightsOut.dtype == logits.dtype,
-                     "moeRouterTopK: weightsOut must be [k] matching logits dtype")
+        // Single-row form: `logits: [nExperts]`, `indices/weights: [k]`.
+        moeRouterTopKMany(
+            logits: logits, indicesOut: indicesOut, weightsOut: weightsOut,
+            t: 1, nExperts: nExperts, k: k, normTopkProb: normTopkProb,
+            on: cmd)
+    }
+
+    /// ITER 91 (Bagel 2): T-batched MoE router. The underlying
+    /// `mt_moe_router_topk` kernel already iterates `B*T` rows along
+    /// `program_id<0>()` (one threadgroup per row); only the Swift
+    /// wrapper was hardcoded to a single row. T-batched routing
+    /// eliminates the CPU sync at MoE prefill (commit+wait to read
+    /// logits, then `router.route` on host across T rows × 40 layers).
+    ///
+    /// `logits: [T, nExperts]`, `indicesOut: [T, k]` u32,
+    /// `weightsOut: [T, k]` matching logits dtype. All flat,
+    /// row-major.
+    public static func moeRouterTopKMany(
+        logits: Tensor, indicesOut: Tensor, weightsOut: Tensor,
+        t: Int, nExperts: Int, k: Int, normTopkProb: Bool,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(t > 0, "moeRouterTopKMany: t must be positive")
+        precondition(logits.elementCount == t * nExperts,
+                     "moeRouterTopKMany: logits must be [T*nExperts]")
+        precondition(indicesOut.elementCount == t * k && indicesOut.dtype == .u32,
+                     "moeRouterTopKMany: indicesOut must be [T*k] u32")
+        precondition(weightsOut.elementCount == t * k && weightsOut.dtype == logits.dtype,
+                     "moeRouterTopKMany: weightsOut must be [T*k] matching logits dtype")
         // INVARIANT: kernel pins tpg=32 (one simdgroup per token row).
         let tg = MTLSize(width: 32, height: 1, depth: 1)
-        let grid = MTLSize(width: 32, height: 1, depth: 1)
+        let grid = MTLSize(width: t * 32, height: 1, depth: 1)
         let normFlag: UInt32 = normTopkProb ? 1 : 0
         switch logits.dtype {
         case .f32:
