@@ -977,9 +977,19 @@ final class FastVLMVisionTower {
             return t.toFloatArray()  // [outC*kH*kW*1] = [outC*kH*kW]
         }
 
-        // Helper: load pointwise weight [outC, 1, 1, inC] OHWI as 2D [outC, inC].
+        // Helper: load pointwise weight as 2D [outC, inC].
+        // Handles two storage layouts emitted by different FastViTHD layers:
+        //   • OHWI 4D [outC, 1, 1, inC] — ConvStem block 2, PatchEmbed reparam_conv,
+        //     and ConvFFN fc1/fc2. Strip the two unit spatial dims.
+        //   • Plain 2D [outC, inC] — attention token_mixer.proj.weight.
+        // Accessing shape[3] on a 2D tensor crashes with "Index out of range"
+        // (ContiguousArrayBuffer fatal error), which was the load-time crash.
         func loadPW2D(_ key: String) throws -> Tensor {
             let t = try weights.tensor(named: key)
+            if t.shape.count == 2 {
+                // Already [outC, inC] — return as-is (no copy needed).
+                return t
+            }
             // Shape [outC, 1, 1, inC] — strip spatial dims to [outC, inC].
             let outC = t.shape[0], inC = t.shape[3]
             let flat = t.toFloatArray()
