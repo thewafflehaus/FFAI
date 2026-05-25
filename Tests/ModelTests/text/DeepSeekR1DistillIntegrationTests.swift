@@ -23,13 +23,7 @@ struct DeepSeekR1DistillIntegrationTests {
         let prompt = "Once upon a time, in a quiet village"
         let maxTokens = 200
 
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("R1-Distill-Llama test skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // 8B shape sanity:
         //   hidden = 4096, nLayers = 32, nHeads = 32, nKVHeads = 8,
@@ -58,13 +52,7 @@ struct DeepSeekR1DistillIntegrationTests {
         let prompt = "Once upon a time, in a quiet village"
         let maxTokens = 200
 
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("R1-Distill-Qwen test skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // 1.5B shape sanity (per the HF config):
         //   hidden = 1536, nLayers = 28, nHeads = 12, nKVHeads = 2,

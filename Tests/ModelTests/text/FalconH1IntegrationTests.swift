@@ -26,13 +26,7 @@ struct FalconH1IntegrationTests {
         let modelId = "mlx-community/Falcon-H1-Tiny-90M-Instruct-bf16"
         let prompt = "Once upon a time, in a quiet village"
 
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("FalconH1 integration test skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // Engine should be FalconH1 (not Llama / Qwen3 / Mamba 2).
         #expect(m.falconH1 != nil)

@@ -1,31 +1,36 @@
 // Temporary smoke test for Qwen3.6-35B-A3B local checkpoint.
 // Verifies the load path succeeds end-to-end (no precondition trap).
+//
+// The whole suite is gated on the local-checkpoint path existing —
+// it's a developer-machine smoke test that ships with FFAI as a
+// reference for how to load Qwen3.6-A3B from a local snapshot. When
+// the path doesn't resolve, the suite is disabled (visibly, by Swift
+// Testing) rather than silently returning from each test.
 
 import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("Qwen3.6 smoke", .serialized)
+private let qwen36LocalPath = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
+private let qwen36CheckpointAvailable =
+    FileManager.default.fileExists(atPath: qwen36LocalPath)
+
+@Suite(
+    "Qwen3.6 smoke", .serialized,
+    .enabled(
+        if: qwen36CheckpointAvailable,
+        "Qwen3.6 smoke requires a local checkpoint at \(qwen36LocalPath)")
+)
 struct Qwen36SmokeTests {
 
     @Test("Qwen3.6-35B-A3B local checkpoint loads")
     func loadLocal() async throws {
-        let path = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
-        guard FileManager.default.fileExists(atPath: path) else {
-            print("Qwen3.6 smoke skipped: \(path) not found")
-            return
-        }
+        let path = qwen36LocalPath
         var optsBuilder = LoadOptions()
         optsBuilder.prewarm = false  // skip prewarm to isolate load failures
         let opts = optsBuilder
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load(path, options: opts)
-            }
-        } catch {
-            print("LOAD FAILED: \(error)")
-            throw error
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(path, options: opts)
         }
         print("LOAD OK")
         #expect(m.qwen35 != nil, "expected Qwen35Model engine")
@@ -67,11 +72,7 @@ struct Qwen36SmokeTests {
     /// repeating a base sentence. Returns (promptTokens, prefillSecs,
     /// decodeSecs, decodeTokens).
     private func runBench(targetPromptTokens: Int, decodeSteps: Int, label: String) async throws {
-        let path = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
-        guard FileManager.default.fileExists(atPath: path) else {
-            print("Qwen3.6 bench skipped: \(path) not found")
-            return
-        }
+        let path = qwen36LocalPath
         var optsBuilder = LoadOptions()
         optsBuilder.prewarm = false
         let opts = optsBuilder
@@ -149,21 +150,14 @@ struct Qwen36SmokeTests {
     }
 
     private func runForwardManyBench(targetT: Int) async throws {
-        let path = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
-        guard FileManager.default.fileExists(atPath: path) else {
-            print("Qwen3.6 forwardManyBench(T=\(targetT)) skipped: \(path) not found")
-            return
-        }
+        let path = qwen36LocalPath
         var optsBuilder = LoadOptions()
         optsBuilder.prewarm = false
         let opts = optsBuilder
         let m: Model = try await ModelLoadLock.shared.loadSerially {
             try await Model.load(path, options: opts)
         }
-        guard let qwen = m.qwen35 else {
-            Issue.record("expected Qwen35Model engine")
-            return
-        }
+        let qwen = try #require(m.qwen35, "expected Qwen35Model engine")
         // Seed prompt — 32 tokens. Tile until we hit targetT, then trim.
         let seed = "The history of the printing press began when European craftsmen of the 15th century combined movable metal type with oil based ink screw presses paper to mass produce printed books pamphlets and broadsheets revolutionising communication"
         let seedEncoded = m.tokenizer.encode(text: seed)
@@ -229,21 +223,14 @@ struct Qwen36SmokeTests {
 
     @Test("Qwen3.6-35B-A3B forwardMany matches per-token forward")
     func forwardManyEquivalence() async throws {
-        let path = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
-        guard FileManager.default.fileExists(atPath: path) else {
-            print("Qwen3.6 smoke skipped: \(path) not found")
-            return
-        }
+        let path = qwen36LocalPath
         var optsBuilder = LoadOptions()
         optsBuilder.prewarm = false
         let opts = optsBuilder
         let m: Model = try await ModelLoadLock.shared.loadSerially {
             try await Model.load(path, options: opts)
         }
-        guard let qwen = m.qwen35 else {
-            Issue.record("expected Qwen35Model engine, got \(type(of: m.engine))")
-            return
-        }
+        let qwen = try #require(m.qwen35, "expected Qwen35Model engine, got \(type(of: m.engine))")
         let prompt = "The history of the printing press began when"
         let encoded = m.tokenizer.encode(text: prompt)
         precondition(encoded.count >= 4,
@@ -288,22 +275,12 @@ struct Qwen36SmokeTests {
 
     @Test("Qwen3.6-35B-A3B forward pass — first-token greedy decode")
     func firstTokenForward() async throws {
-        let path = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
-        guard FileManager.default.fileExists(atPath: path) else {
-            print("Qwen3.6 smoke skipped: \(path) not found")
-            return
-        }
+        let path = qwen36LocalPath
         var optsBuilder = LoadOptions()
         optsBuilder.prewarm = false
         let opts = optsBuilder
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load(path, options: opts)
-            }
-        } catch {
-            print("LOAD FAILED: \(error)")
-            throw error
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(path, options: opts)
         }
         // 11-token probe (matches the existing Qwen3.6 baseline prompt
         // used in the prefill-hypothesis sweeps). Greedy decode of one

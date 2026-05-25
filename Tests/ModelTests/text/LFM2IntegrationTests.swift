@@ -29,13 +29,7 @@ struct LFM2IntegrationTests {
         let modelId = "LiquidAI/LFM2-350M"
         let prompt = "The history of the printing press began when"
 
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("LFM2 integration test skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // Engine should be LFM2 (not Llama / a hybrid family).
         #expect(m.lfm2 != nil)
@@ -115,13 +109,7 @@ struct LFM2IntegrationTests {
         let modelId = "LiquidAI/LFM2-8B-A1B"
         let prompt = "The history of the printing press began when"
 
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("LFM2-MoE integration test skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         #expect(m.lfm2 != nil)
         #expect(m.engine.headDim == 64)

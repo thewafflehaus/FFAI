@@ -21,14 +21,8 @@ struct InspectSmokeTests {
         let modelId = "unsloth/Llama-3.2-1B"
         let prompt = "Once upon a time, in a quiet"
 
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load(modelId)
-            }
-        } catch {
-            print("Inspect smoke skipped: \(error)")
-            return
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(modelId)
         }
 
         // Architecture sanity. This is the same surface

@@ -23,7 +23,9 @@
 //     matrix on with one env var; nothing source-side changes.
 //
 // A cell whose checkpoint can't be fetched (offline, gated repo, repo
-// renamed) prints a skip line and returns — never a hard failure.
+// renamed) fails the cell — load errors propagate to the test runner.
+// The build-machine gate above already keeps the matrix to checkpoints
+// the running machine is expected to have.
 //
 // Set `FFAI_MATRIX_FAMILY=<family>` to run just one row (e.g.
 // `FFAI_MATRIX_FAMILY=Gemma4`) — useful for targeted re-runs.
@@ -282,32 +284,28 @@ struct ModelKVCacheMatrixIntegrationTests {
     @Test("matrix cell decodes coherent output", arguments: MatrixCatalog.cases)
     func decodeMatrixCell(_ cell: MatrixCase) async throws {
         // Family filter (FFAI_MATRIX_FAMILY) — when set, only the named
-        // family's cells run; everything else skips.
-        if let only = MatrixCatalog.familyFilter,
-           cell.model.family.lowercased() != only {
-            print("matrix cell skipped (family filter = \(only)): \(cell.label)")
-            return
+        // family's cells run. Anything outside the filter is gated off
+        // for this run; `#require` surfaces that explicitly instead of
+        // silently passing.
+        if let only = MatrixCatalog.familyFilter {
+            try #require(cell.model.family.lowercased() == only,
+                         "matrix cell gated by FFAI_MATRIX_FAMILY=\(only): \(cell.label)")
         }
 
         // Gate: smallest-per-family cells always run; the rest need
-        // FFAI_BUILD_MACHINE. A skipped cell is a pass with a log line.
-        guard cell.model.alwaysRun || MatrixCatalog.buildMachineEnabled else {
-            print("matrix cell skipped (build-machine gated): \(cell.label)")
-            return
-        }
+        // FFAI_BUILD_MACHINE. Build-machine-gated cells `#require` the
+        // env so they fail visibly on non-build machines rather than
+        // silently pass.
+        try #require(cell.model.alwaysRun || MatrixCatalog.buildMachineEnabled,
+                     "matrix cell is build-machine gated; set FFAI_BUILD_MACHINE: \(cell.label)")
 
-        // Load under the cell's KV-cache scheme. Network / missing-repo
-        // failures skip rather than fail — the matrix lists more
-        // checkpoints than any one machine can fetch.
-        let model: Model
-        do {
-            let opts = LoadOptions(kvCache: cell.kv)
-            model = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load(cell.model.id, options: opts)
-            }
-        } catch {
-            print("matrix cell skipped (load failed): \(cell.label) — \(error)")
-            return
+        // Load under the cell's KV-cache scheme. Load failures fail the
+        // cell — a missing checkpoint is a real failure, not a silent
+        // pass. Build-machine gating above keeps the matrix to the
+        // checkpoints actually expected on each machine.
+        let opts = LoadOptions(kvCache: cell.kv)
+        let model = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(cell.model.id, options: opts)
         }
 
         let result = try await model.generate(

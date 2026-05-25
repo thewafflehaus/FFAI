@@ -42,13 +42,7 @@ struct Qwen35IntegrationTests {
         let modelId = "mlx-community/Qwen3.5-0.8B-MLX-bf16"
         let prompt = "The history of the printing press began when"
 
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("Qwen3.5 integration test skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // Engine should be Qwen3.5 (not Qwen3 / Jamba / the other
         // hybrid families).

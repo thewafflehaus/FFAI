@@ -16,13 +16,7 @@ struct Mamba2IntegrationTests {
 
     @Test("load + greedy generate produces non-degenerate text")
     func loadAndGenerate() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load("mlx-community/mamba2-130m") }
-        } catch {
-            print("Mamba 2 integration test skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load("mlx-community/mamba2-130m") }
 
         // Engine should be Mamba 2 (not Llama / Qwen3).
         #expect(m.mamba2 != nil)

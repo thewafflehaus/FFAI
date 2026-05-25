@@ -20,13 +20,7 @@ struct Qwen2IntegrationTests {
         let prompt = "Once upon a time, in a quiet village"
         let maxTokens = 200
 
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("Qwen 2.5 integration test skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // Qwen 2.5 0.5B canonical shapes.
         #expect(m.engine.hidden == 896)

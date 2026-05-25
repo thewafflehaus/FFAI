@@ -55,10 +55,8 @@ struct NemotronVLIntegrationTests {
 
     @Test("load — Nemotron-VLM checkpoint loads with vision capability")
     func loadVLCheckpoint() async throws {
-        guard nemotronVLIsCached() else {
-            print("Nemotron-VL skip: no cached mlx-style Nemotron-VL checkpoint")
-            return
-        }
+        try #require(nemotronVLIsCached(),
+                     "Nemotron-VL checkpoint not cached locally — no mlx-style conversion published on HF yet")
         let m = try await ModelLoadLock.shared.loadSerially {
             try await Model.load(Self.modelId)
         }
@@ -76,10 +74,8 @@ struct NemotronVLIntegrationTests {
 
     @Test("enable / disable .visionIn — runtime capability flip")
     func capabilityFlip() async throws {
-        guard nemotronVLIsCached() else {
-            print("Nemotron-VL skip: no cached mlx-style Nemotron-VL checkpoint")
-            return
-        }
+        try #require(nemotronVLIsCached(),
+                     "Nemotron-VL checkpoint not cached locally — no mlx-style conversion published on HF yet")
         let m = try await ModelLoadLock.shared.loadSerially {
             try await Model.load(Self.modelId)
         }
@@ -92,10 +88,8 @@ struct NemotronVLIntegrationTests {
 
     @Test("image + text prompt — describes the dog photo")
     func imageTextGeneration() async throws {
-        guard nemotronVLIsCached() else {
-            print("Nemotron-VL skip: no cached mlx-style Nemotron-VL checkpoint")
-            return
-        }
+        try #require(nemotronVLIsCached(),
+                     "Nemotron-VL checkpoint not cached locally — no mlx-style conversion published on HF yet")
         let m = try await ModelLoadLock.shared.loadSerially {
             try await Model.load(Self.modelId)
         }

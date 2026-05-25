@@ -28,13 +28,7 @@ struct FishSpeechIntegrationTests {
 
     @Test("load config + weights from cached checkpoint")
     func loadModel() async throws {
-        let dir: URL
-        do {
-            dir = try await resolveSnapshotDirectory(repoID: Self.repoID)
-        } catch {
-            print("FishSpeech integration test skipped (checkpoint not cached): \(error)")
-            return
-        }
+        let dir = try await resolveSnapshotDirectory(repoID: Self.repoID)
 
         // Load config
         let config = try ModelConfig.load(from: dir)
@@ -72,13 +66,7 @@ struct FishSpeechIntegrationTests {
 
     @Test("synthesize produces a waveform (Stage-2) or throws codecNotAvailable")
     func synthesizeStage2() async throws {
-        let dir: URL
-        do {
-            dir = try await resolveSnapshotDirectory(repoID: Self.repoID)
-        } catch {
-            print("FishSpeech Stage-2 test skipped (checkpoint not cached): \(error)")
-            return
-        }
+        let dir = try await resolveSnapshotDirectory(repoID: Self.repoID)
 
         let config = try ModelConfig.load(from: dir)
         let weights = try SafeTensorsBundle(directory: dir)
@@ -115,13 +103,7 @@ struct FishSpeechIntegrationTests {
 
     @Test("generateCodes produces non-empty code frames for short text (Stage-1)")
     func generateCodesSmoke() async throws {
-        let dir: URL
-        do {
-            dir = try await resolveSnapshotDirectory(repoID: Self.repoID)
-        } catch {
-            print("FishSpeech generateCodes test skipped (checkpoint not cached): \(error)")
-            return
-        }
+        let dir = try await resolveSnapshotDirectory(repoID: Self.repoID)
 
         let config = try ModelConfig.load(from: dir)
         let weights = try SafeTensorsBundle(directory: dir)

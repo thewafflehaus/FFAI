@@ -33,13 +33,7 @@ struct GraniteMoeHybridIntegrationTests {
         let modelId = "mlx-community/granite-4.0-h-350m-bf16"
         let prompt = "The history of the printing press began when"
 
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("GraniteMoeHybrid integration test skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // Engine should be GraniteMoeHybrid (not Llama / FalconH1 /
         // NemotronH / Mamba 2).

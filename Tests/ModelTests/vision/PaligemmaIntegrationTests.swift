@@ -31,13 +31,7 @@ struct PaligemmaIntegrationTests {
         // is 2 years old and the test moves with the supported lineage.
         let modelId = "mlx-community/paligemma2-3b-mix-448-8bit"
 
-        let m: Model
-        do {
-            m = try await Model.load(modelId)
-        } catch {
-            print("PaliGemma integration test skipped: \(error)")
-            return
-        }
+        let m = try await Model.load(modelId)
 
         // Verify basic shapes from the PaliGemma 2 3B (Gemma 2 2B backbone)
         // published config. Gemma 2 2B = hidden 2304, 26 layers, 8 heads,
@@ -49,10 +43,8 @@ struct PaligemmaIntegrationTests {
         #expect(m.engine.headDim == 256)
         #expect(m.engine.vocab == 257216)
 
-        guard let pg = m.engine as? PaligemmaModel else {
-            Issue.record("Expected a PaligemmaModel engine")
-            return
-        }
+        let pg = try #require(m.engine as? PaligemmaModel,
+                              "Expected a PaligemmaModel engine")
 
         // Load + preprocess the dog fixture at PaliGemma's 448 resolution
         // with SigLIP normalization (mean 0.5 / std 0.5 per channel).

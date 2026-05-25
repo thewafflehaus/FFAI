@@ -4,10 +4,9 @@
 // our Llama loader. We test one representative from each cluster so
 // future loader refactors can't silently break these checkpoints.
 //
-// All tests skip gracefully when the checkpoint isn't reachable
-// locally — they exist to pin coverage, not to gate CI on network
-// availability. Set the env var noted per-test to enforce a hard
-// fail.
+// Load failures propagate to the test runner — these tests exist to
+// pin coverage; a missing checkpoint is a real failure, not a silent
+// pass.
 
 import Foundation
 import Testing
@@ -18,14 +17,8 @@ struct LlamaCompatiblesIntegrationTests {
 
     @Test("SmolLM2-360M-Instruct (LlamaForCausalLM, no biases) decodes coherently")
     func smolLM2() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load("mlx-community/SmolLM2-360M-Instruct-bf16")
-            }
-        } catch {
-            print("SmolLM2 test skipped: \(error)")
-            return
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load("mlx-community/SmolLM2-360M-Instruct-bf16")
         }
         // SmolLM2 360M canonical: hidden=960, nLayers=32, nHeads=15,
         // nKVHeads=5, headDim=64. Verifies the head_dim=64 SDPA path
@@ -42,14 +35,8 @@ struct LlamaCompatiblesIntegrationTests {
 
     @Test("Starcoder2-3B (Starcoder2ForCausalLM, attention biases) decodes coherently")
     func starcoder2() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load("mlx-community/Starcoder2-3B-bf16")
-            }
-        } catch {
-            print("Starcoder2 test skipped: \(error)")
-            return
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load("mlx-community/Starcoder2-3B-bf16")
         }
         // Starcoder2 3B canonical: hidden=3072, nLayers=30, nHeads=24,
         // nKVHeads=2, headDim=128. The attention biases pass through
@@ -66,14 +53,8 @@ struct LlamaCompatiblesIntegrationTests {
 
     @Test("OLMo-2-0425-1B-Instruct (Olmo2ForCausalLM) decodes coherently")
     func olmo2() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load("mlx-community/OLMo-2-0425-1B-Instruct-bf16")
-            }
-        } catch {
-            print("OLMo 2 test skipped: \(error)")
-            return
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load("mlx-community/OLMo-2-0425-1B-Instruct-bf16")
         }
         // OLMo 2 1B canonical: hidden=2048, nLayers=16, nHeads=16,
         // nKVHeads=16 (MHA), headDim=128.
@@ -88,14 +69,8 @@ struct LlamaCompatiblesIntegrationTests {
 
     @Test("SmolLM3-3B (SmolLM3ForCausalLM, every-Nth attention layer) decodes coherently")
     func smolLM3() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load("mlx-community/SmolLM3-3B-bf16")
-            }
-        } catch {
-            print("SmolLM3 test skipped: \(error)")
-            return
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load("mlx-community/SmolLM3-3B-bf16")
         }
         // SmolLM3 3B: hidden=2048, nLayers=36, nHeads=16, nKVHeads=4.
         #expect(m.engine.hidden == 2048)
@@ -108,14 +83,8 @@ struct LlamaCompatiblesIntegrationTests {
 
     @Test("Granite-3-2B-Instruct (GraniteForCausalLM) decodes coherently")
     func granite3() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load("mlx-community/granite-3.0-2b-instruct-bf16")
-            }
-        } catch {
-            print("Granite 3 test skipped: \(error)")
-            return
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load("mlx-community/granite-3.0-2b-instruct-bf16")
         }
         // Granite 3 2B canonical: hidden=2048, nLayers=40, nHeads=32,
         // nKVHeads=8, headDim=64.
@@ -129,14 +98,8 @@ struct LlamaCompatiblesIntegrationTests {
 
     @Test("InternLM2-1.8B-Chat (InternLM2ForCausalLM) decodes coherently")
     func internLM2() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load("mlx-community/internlm2-chat-1_8b-bf16")
-            }
-        } catch {
-            print("InternLM 2 test skipped: \(error)")
-            return
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load("mlx-community/internlm2-chat-1_8b-bf16")
         }
         // InternLM 2 1.8B canonical: hidden=2048, nLayers=24, nHeads=16,
         // nKVHeads=8, headDim=128.
@@ -150,14 +113,8 @@ struct LlamaCompatiblesIntegrationTests {
 
     @Test("SmolLM-360M (SmolLMForCausalLM, original family) decodes coherently")
     func smolLM1() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load("mlx-community/SmolLM-360M-Instruct-bf16")
-            }
-        } catch {
-            print("SmolLM 1 test skipped: \(error)")
-            return
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load("mlx-community/SmolLM-360M-Instruct-bf16")
         }
         // SmolLM 1 360M canonical: hidden=960, nLayers=32, nHeads=15,
         // nKVHeads=5, headDim=64.

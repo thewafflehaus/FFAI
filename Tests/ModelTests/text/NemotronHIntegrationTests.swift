@@ -31,13 +31,7 @@ struct NemotronHIntegrationTests {
         let modelId = "nvidia/Nemotron-H-4B-Base-8K"
         let prompt = "The history of the printing press began when"
 
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("NemotronH integration test skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // Engine should be NemotronH (not Llama / FalconH1 / Mamba 2).
         #expect(m.nemotronH != nil)

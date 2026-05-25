@@ -37,20 +37,11 @@ struct StyleTTS2IntegrationTests {
 
     @Test("load kitten-tts-nano checkpoint + synthesize placeholder produces sane waveform")
     func loadAndSynthesize() async throws {
-        guard let dir = Self.cachedSnapshotDir else {
-            print("StyleTTS2 integration test skipped: cache miss "
-                + "~/.cache/huggingface/hub/models--mlx-community--kitten-tts-nano-0.8-fp16")
-            return
-        }
+        let dir = try #require(Self.cachedSnapshotDir,
+                               "StyleTTS2: kitten-tts-nano-0.8-fp16 not cached at ~/.cache/huggingface/hub/")
 
         // ── 1. Load via AudioModelRegistry ──────────────────────────────
-        let loaded: LoadedAudioModel
-        do {
-            loaded = try await AudioModelRegistry.load(directory: dir)
-        } catch {
-            print("StyleTTS2 integration test skipped: load failed: \(error)")
-            return
-        }
+        let loaded = try await AudioModelRegistry.load(directory: dir)
 
         guard case .styleTTS2(let model) = loaded else {
             Issue.record("expected LoadedAudioModel.styleTTS2, got \(loaded)")
@@ -86,9 +77,10 @@ struct StyleTTS2IntegrationTests {
         if shardsPresent {
             #expect(model.weightCount > 0,
                     "expected at least one weight tensor in the checkpoint")
-        } else {
-            print("StyleTTS2 integration: weight shards not cached — skipping weight count assertion")
         }
+        // When shards are absent the index file alone confirms the
+        // checkpoint shape; the weight-count assertion is skipped only
+        // because the data isn't there to assert on.
 
         // ── 5. synthesize() throws acousticFrontEndNotWired ──────────────
         do {
@@ -121,10 +113,8 @@ struct StyleTTS2IntegrationTests {
         // vocoder check: feed a synthetic complex spectrogram and assert the
         // reconstructed waveform is finite, non-silent, non-constant, and the
         // expected length.
-        guard let dir = Self.cachedSnapshotDir else {
-            print("StyleTTS2 vocoder test skipped: cache miss")
-            return
-        }
+        let dir = try #require(Self.cachedSnapshotDir,
+                               "StyleTTS2 vocoder: kitten-tts checkpoint not cached")
         let loaded = try await AudioModelRegistry.load(directory: dir)
         guard case .styleTTS2(let model) = loaded else {
             Issue.record("expected LoadedAudioModel.styleTTS2, got \(loaded)")

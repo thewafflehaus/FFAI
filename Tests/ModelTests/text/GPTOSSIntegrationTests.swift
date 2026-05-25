@@ -66,11 +66,8 @@ struct GPTOSSIntegrationTests {
                 continue
             }
         }
-        guard let m = loaded else {
-            print("GPT-OSS integration test skipped: "
-                  + "\(lastError.map { "\($0)" } ?? "no checkpoint cached")")
-            return
-        }
+        let m = try #require(loaded,
+                             "GPT-OSS-20B: none of \(candidates) loaded — \(lastError.map { "\($0)" } ?? "no checkpoint cached")")
 
         // Engine should be GPT-OSS (not a dense / hybrid family).
         #expect(m.gptOSS != nil)

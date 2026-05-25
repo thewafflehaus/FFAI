@@ -36,32 +36,17 @@ struct DeepFilterNetIntegrationTests {
 
     @Test("enhance returns non-empty waveform with same length as input")
     func loadAndEnhance() async throws {
-        let model: DeepFilterNetModel
-        do {
-            // mlx-community/DeepFilterNet-mlx ships v1/v2/v3 subfolders.
-            // Default: load v3 (recommended).
-            model = try await DeepFilterNetModel.fromPretrained(
-                "mlx-community/DeepFilterNet-mlx",
-                subfolder: "v3"
-            )
-        } catch {
-            // Graceful skip: checkpoint not available (no network or cache miss).
-            print("DeepFilterNet integration test skipped: \(error)")
-            return
-        }
+        // mlx-community/DeepFilterNet-mlx ships v1/v2/v3 subfolders.
+        // Default: load v3 (recommended).
+        let model = try await DeepFilterNetModel.fromPretrained(
+            "mlx-community/DeepFilterNet-mlx",
+            subfolder: "v3"
+        )
 
         let waveform = DeepFilterNetFixtures.clean001Waveform()
         #expect(!waveform.isEmpty)
 
-        let enhanced: [Float]
-        do {
-            enhanced = try model.enhance(waveform: waveform)
-        } catch {
-            // Enhancement can throw if weights are missing / incompatible.
-            // Treat as a graceful skip.
-            print("DeepFilterNet enhance failed (skipping): \(error)")
-            return
-        }
+        let enhanced = try model.enhance(waveform: waveform)
 
         // Core contract: output is non-empty and has the same length as input.
         #expect(!enhanced.isEmpty, "enhanced waveform must not be empty")

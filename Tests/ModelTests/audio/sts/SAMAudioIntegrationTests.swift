@@ -18,13 +18,7 @@ struct SAMAudioIntegrationTests {
 
     @Test("load + segment produces correctly-shaped output")
     func loadAndSegment() async throws {
-        let model: SAMAudioModel
-        do {
-            model = try await SAMAudioModel.load(SAMAudio.defaultRepo)
-        } catch {
-            print("SAMAudio integration test skipped (checkpoint unavailable): \(error)")
-            return
-        }
+        let model = try await SAMAudioModel.load(SAMAudio.defaultRepo)
 
         // Config sanity: large variant.
         #expect(model.config.transformer.dim == 2816)

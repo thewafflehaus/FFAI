@@ -34,18 +34,12 @@ struct SlidingWindowIntegrationTests {
         let windowSize = 64
         let keep = 4
 
-        let m: Model
-        do {
-            let opts = LoadOptions(
-                kvCache: .raw,
-                kvEviction: .window(maxSize: windowSize, keep: keep)
-            )
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load(modelId, options: opts)
-            }
-        } catch {
-            print("Sliding-window integration test skipped: \(error)")
-            return
+        let opts = LoadOptions(
+            kvCache: .raw,
+            kvEviction: .window(maxSize: windowSize, keep: keep)
+        )
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(modelId, options: opts)
         }
 
         // Sanity: every layer cache reports the window we asked for,

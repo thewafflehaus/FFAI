@@ -21,13 +21,7 @@ struct Gemma2IntegrationTests {
         let prompt = "Once upon a time, in a quiet village"
         let maxTokens = 200
 
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("Gemma 2 2B-it integration test skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // Gemma 2 2B canonical shapes (from the published config).
         #expect(m.engine.hidden == 2304)
