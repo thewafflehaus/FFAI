@@ -22,13 +22,7 @@ struct MiniCPMVIntegrationTests {
     @Test("load — MiniCPM-V 4.6 loads with vision capability")
     func loadVLCheckpoint() async throws {
         let modelId = "openbmb/MiniCPM-V-4.6"
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("MiniCPM-V 4.6 integration test skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // The checkpoint is a VLM — vlModel is present, .visionIn is
         // available, and the text backbone is Qwen 3.5 (hidden 1024).
@@ -39,7 +33,7 @@ struct MiniCPMVIntegrationTests {
         // Qwen 3.5 is the text backbone (`qwen3_5_text` text_config).
         #expect(m.qwen35 != nil)
 
-        guard let vlm = m.vlModel else { return }
+        let vlm = try #require(m.vlModel, "MiniCPM-V 4.6 checkpoint is not a VLM")
         // v1: 448×448 / patch-14 → 32×32 patches → vit_merger 16×16 →
         // merger 8×8 = 64 tokens per image (matches `query_num: 64`).
         #expect(vlm.imageTokenCount == 64)
@@ -53,17 +47,8 @@ struct MiniCPMVIntegrationTests {
     @Test("image + text prompt — coherent multi-modal generation")
     func imageTextGeneration() async throws {
         let modelId = "openbmb/MiniCPM-V-4.6"
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("MiniCPM-V 4.6 generation test skipped: \(error)")
-            return
-        }
-        guard let vlm = m.vlModel else {
-            print("MiniCPM-V 4.6 generation test skipped: not a VLM")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
+        let vlm = try #require(m.vlModel, "MiniCPM-V 4.6 checkpoint is not a VLM")
 
         // Build an image+text prompt. MiniCPM-V uses the Qwen-style chat
         // wrapper (<|im_start|>user … <|im_end|> <|im_start|>assistant)

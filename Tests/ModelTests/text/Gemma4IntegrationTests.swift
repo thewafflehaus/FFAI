@@ -39,13 +39,7 @@ struct Gemma4IntegrationTests {
         let prompt = "Once upon a time, in a quiet village"
         let maxTokens = 200
 
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("Gemma 4 E2B integration test skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // E2B canonical shapes (from HF text_config):
         //   hidden 1536, 35 layers, 8 heads, sliding head_dim 256,
@@ -102,40 +96,28 @@ struct Gemma4IntegrationTests {
                              label: "Gemma 4 E2B-it bf16")
     }
 
-    @Test("Gemma4Dense (31B): load + greedy generate produces coherent output")
+    @Test(
+        "Gemma4Dense (31B): load + greedy generate produces coherent output",
+        .enabled(
+            if: ProcessInfo.processInfo.environment["FFAI_BUILD_MACHINE"] != nil,
+            "Gemma 4 31B is build-machine-only; set FFAI_BUILD_MACHINE to run")
+    )
     func loadAndGenerateDense() async throws {
         // The smallest non-PLE dense Gemma 4 is 31B — only available as
-        // a 4-/8-bit quantization. Guard-skip if not present locally.
+        // a 4-/8-bit quantization. Build-machine only: the checkpoint is
+        // large (4-bit ~17 GB) and greedy-decoding 48 tokens is slow.
+        // The 5376-wide hidden state routes through the wide-row RMSNorm
+        // kernel (the old 4096-row cap is gone). The E2B test above
+        // covers the same code paths unconditionally; this is the
+        // dense-variant spot check.
         let modelId = "mlx-community/gemma-4-31b-it-4bit"
         let prompt = "Once upon a time, in a quiet village"
 
-        // Guard-skip if the 31B checkpoint isn't cached locally — it is
-        // large (4-bit ~17 GB) and not in the default test set. The
-        // 5376-wide hidden state exercises the wide-row RMSNorm kernel
-        // during the prewarm forward, so a successful load already
-        // proves that path.
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("Gemma 4 31B integration test skipped (checkpoint not available): \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
         let gemma4 = m.engine as? Gemma4Model
         #expect(gemma4 != nil)
         #expect(gemma4?.ple == nil, "31B is a dense (non-PLE) variant")
 
-        // Generation gated behind `FFAI_BUILD_MACHINE`: the 31B
-        // checkpoint is large and greedy-decoding 48 tokens is slow for
-        // a routine run. The 5376-wide hidden state routes through the
-        // wide-row RMSNorm kernel (the old 4096-row cap is gone). The
-        // E2B test above covers the same code paths unconditionally;
-        // this is the dense-variant spot check.
-        guard ProcessInfo.processInfo.environment["FFAI_BUILD_MACHINE"] != nil else {
-            print("Gemma 4 31B generation check skipped " +
-                  "(set FFAI_BUILD_MACHINE to run — large checkpoint).")
-            return
-        }
         let result = try await m.generate(
             prompt: prompt,
             parameters: GenerationParameters(maxTokens: 200, temperature: 0)
@@ -144,7 +126,12 @@ struct Gemma4IntegrationTests {
                              label: "Gemma 4 31B-it 4bit")
     }
 
-    @Test("Gemma4MoE (26B-A4B): load + greedy generate produces coherent output")
+    @Test(
+        "Gemma4MoE (26B-A4B): load + greedy generate produces coherent output",
+        .enabled(
+            if: ProcessInfo.processInfo.environment["FFAI_BUILD_MACHINE"] != nil,
+            "Gemma 4 26B-A4B is build-machine-only; set FFAI_BUILD_MACHINE to run")
+    )
     func loadAndGenerateMoE() async throws {
         // 26B-A4B is the mixture-of-experts variant: every layer runs a
         // shared dense MLP and an 8-of-128 routed expert mixture in
@@ -152,29 +139,17 @@ struct Gemma4IntegrationTests {
         // Gemma 4 router (input RMSNorm + per-expert scale). This test
         // uses the uniformly-8-bit checkpoint; the 4-bit checkpoint
         // mixes 4-/8-bit per layer, now handled by the per-tensor
-        // `deriveAffineQuantBits` bit-width derivation.
+        // `deriveAffineQuantBits` bit-width derivation. Build-machine
+        // only: the 8-bit checkpoint is ~28 GB and slow to greedy-decode.
         let modelId = "mlx-community/gemma-4-26b-a4b-it-8bit"
         let prompt = "The capital of France is"
 
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("Gemma 4 26B-A4B integration test skipped (checkpoint not available): \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
         let gemma4 = m.engine as? Gemma4Model
         #expect(gemma4 != nil, "expected Gemma4Model engine")
         // 26B-A4B has hidden_size_per_layer_input = 0 → MoE, not PLE.
         #expect(gemma4?.ple == nil, "26B-A4B is the MoE (non-PLE) variant")
 
-        // Generation gated behind `FFAI_BUILD_MACHINE`: the 26B
-        // checkpoint is large (8-bit ~28 GB) and slow to greedy-decode.
-        guard ProcessInfo.processInfo.environment["FFAI_BUILD_MACHINE"] != nil else {
-            print("Gemma 4 26B-A4B generation coherence check skipped " +
-                  "(set FFAI_BUILD_MACHINE to run).")
-            return
-        }
         let result = try await m.generate(
             prompt: prompt,
             parameters: GenerationParameters(maxTokens: 200, temperature: 0)

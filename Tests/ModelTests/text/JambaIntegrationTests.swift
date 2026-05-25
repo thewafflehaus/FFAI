@@ -35,13 +35,7 @@ struct JambaIntegrationTests {
         let modelId = "mlx-community/AI21-Jamba-Reasoning-3B-bf16"
         let prompt = "The history of the printing press began when"
 
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("Jamba integration test skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // Engine should be Jamba (not Llama / FalconH1 / NemotronH /
         // GraniteMoeHybrid / Mamba 2).

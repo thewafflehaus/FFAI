@@ -36,17 +36,10 @@ struct GraniteSpeechIntegrationTests {
         // Use the cached 5-bit checkpoint.
         let modelID = "mlx-community/granite-4.0-1b-speech-5bit"
 
-        let model: GraniteSpeechModel
-        do {
-            let dir = try await ModelLocator().resolve(idOrPath: modelID)
-            let loaded = try await AudioModelRegistry.load(directory: dir)
-            guard case let .graniteSpeech(gs) = loaded else {
-                Issue.record("AudioModelRegistry did not route to .graniteSpeech; got \(loaded)")
-                return
-            }
-            model = gs
-        } catch {
-            print("GraniteSpeech integration test skipped: \(error)")
+        let dir = try await ModelLocator().resolve(idOrPath: modelID)
+        let loaded = try await AudioModelRegistry.load(directory: dir)
+        guard case let .graniteSpeech(model) = loaded else {
+            Issue.record("AudioModelRegistry did not route to .graniteSpeech; got \(loaded)")
             return
         }
 

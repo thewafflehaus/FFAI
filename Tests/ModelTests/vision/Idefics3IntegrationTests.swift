@@ -110,25 +110,15 @@ struct Idefics3IntegrationTests {
 
     @Test("load Idefics3-8B + shape check + image encode + generate")
     func loadAndGenerate() async throws {
-        guard let dir = Self.snapshotDir() else {
-            print("Idefics3 integration test skipped: checkpoint not found in HF cache")
-            return
-        }
+        let dir = try #require(Self.snapshotDir(),
+                               "Idefics3 checkpoint not found in HF cache")
 
         // ─── Load model ──────────────────────────────────────────────────────
-        let m: Model
-        do {
-            m = try await Model.load(dir.path)
-        } catch {
-            print("Idefics3 integration test skipped: load failed: \(error)")
-            return
-        }
+        let m = try await Model.load(dir.path)
 
         // Verify the engine is an Idefics3Model
-        guard let idefics3 = m.engine as? Idefics3Model else {
-            Issue.record("expected engine to be Idefics3Model, got \(type(of: m.engine))")
-            return
-        }
+        let idefics3 = try #require(m.engine as? Idefics3Model,
+                                    "expected engine to be Idefics3Model, got \(type(of: m.engine))")
 
         // ─── Shape checks (Idefics3-8B config values) ────────────────────────
         let tc = idefics3.cfg.textConfig
@@ -162,10 +152,8 @@ struct Idefics3IntegrationTests {
         #expect(topTokens[0].1 != 0)
 
         // ─── Image encoding ───────────────────────────────────────────────────
-        guard let pixels = Self.dogImagePixels(imageSize: vc.imageSize) else {
-            print("Idefics3 integration test: dog.jpeg not found, skipping image encode")
-            return
-        }
+        let pixels = try #require(Self.dogImagePixels(imageSize: vc.imageSize),
+                                  "Idefics3 integration test: dog.jpeg fixture not found")
 
         let imageEmbeds = idefics3.encodeImage(
             pixels: pixels,

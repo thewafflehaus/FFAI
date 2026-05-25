@@ -98,25 +98,15 @@ struct SmolVLM2IntegrationTests {
 
     @Test("load SmolVLM2-500M + shape check + image encode + generate")
     func loadAndGenerate() async throws {
-        guard let dir = Self.snapshotDir() else {
-            print("SmolVLM2 integration test skipped: checkpoint not found in HF cache")
-            return
-        }
+        let dir = try #require(Self.snapshotDir(),
+                               "SmolVLM2 checkpoint not found in HF cache")
 
         // ─── Load model ──────────────────────────────────────────────────────
-        let m: Model
-        do {
-            m = try await Model.load(dir.path)
-        } catch {
-            print("SmolVLM2 integration test skipped: load failed: \(error)")
-            return
-        }
+        let m = try await Model.load(dir.path)
 
         // Verify the engine is a SmolVLM2Model
-        guard let smolVLM2 = m.smolVLM2 else {
-            Issue.record("expected engine to be SmolVLM2Model, got \(type(of: m.engine))")
-            return
-        }
+        let smolVLM2 = try #require(m.smolVLM2,
+                                    "expected engine to be SmolVLM2Model, got \(type(of: m.engine))")
 
         // ─── Shape checks (500M config values) ───────────────────────────────
         let tc = smolVLM2.cfg.textConfig
@@ -147,10 +137,8 @@ struct SmolVLM2IntegrationTests {
         #expect(topTokens[0].1 != 0)
 
         // ─── Image encoding ───────────────────────────────────────────────────
-        guard let pixels = Self.dogImagePixels(imageSize: vc.imageSize) else {
-            print("SmolVLM2 integration test: dog.jpeg not found, skipping image encode")
-            return
-        }
+        let pixels = try #require(Self.dogImagePixels(imageSize: vc.imageSize),
+                                  "SmolVLM2 integration test: dog.jpeg fixture not found")
 
         let imageEmbeds = smolVLM2.encodeImage(
             pixels: pixels,

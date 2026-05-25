@@ -72,10 +72,8 @@ struct MossFormer2SEIntegrationTests {
 
     @Test("config — checkpoint config.json decodes expected fields")
     func configDecodesFromCheckpoint() throws {
-        guard let snap = Self.resolveCheckpoint() else {
-            print("MossFormer2SEIntegration: checkpoint not cached, skipping config test")
-            return
-        }
+        let snap = try #require(Self.resolveCheckpoint(),
+                                "MossFormer2-SE checkpoint not cached locally")
         let modelConfig = try ModelConfig.load(from: snap)
         let se = MossFormer2SEConfig.from(modelConfig)
         #expect(se.sampleRate == 48_000)
@@ -91,10 +89,8 @@ struct MossFormer2SEIntegrationTests {
 
     @Test("registry — AudioModelRegistry routes checkpoint to .mossFormer2SE (config only)")
     func registryRoutesFromConfig() throws {
-        guard let snap = Self.resolveCheckpoint() else {
-            print("MossFormer2SEIntegration: checkpoint not cached, skipping registry test")
-            return
-        }
+        let snap = try #require(Self.resolveCheckpoint(),
+                                "MossFormer2-SE checkpoint not cached locally")
         let modelConfig = try ModelConfig.load(from: snap)
         // Detection is config-only; no weights needed.
         #expect(MossFormer2SEModel.handles(modelConfig))
@@ -105,14 +101,10 @@ struct MossFormer2SEIntegrationTests {
 
     @Test("enhance — produces non-empty output matching input length")
     func enhanceProducesMatchingLengthOutput() throws {
-        guard let snap = Self.resolveCheckpoint() else {
-            print("MossFormer2SEIntegration: checkpoint not cached, skipping enhance test")
-            return
-        }
-        guard Self.hasWeights(snap) else {
-            print("MossFormer2SEIntegration: no .safetensors weights in snapshot, skipping enhance test")
-            return
-        }
+        let snap = try #require(Self.resolveCheckpoint(),
+                                "MossFormer2-SE checkpoint not cached locally")
+        try #require(Self.hasWeights(snap),
+                     "MossFormer2-SE snapshot is missing .safetensors weights")
 
         let model = try MossFormer2SEModel.load(directory: snap)
         let waveform = Self.syntheticWaveform(sampleRate: model.sampleRate)

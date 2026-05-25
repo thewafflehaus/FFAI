@@ -24,17 +24,7 @@ struct Phi3IntegrationTests {
         let prompt = "Once upon a time, in a quiet village"
         let maxTokens = 200
 
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            // Includes the case where the checkpoint is quantized-fused
-            // and we throw PhiError.quantizedFusedNotSupported. That's a
-            // known gap — the test surfaces the descriptive error rather
-            // than silently passing.
-            print("Phi-3 integration test skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // Phi-3 mini canonical shapes (3.8B parameters):
         //   hidden = 3072, nLayers = 32, nHeads = 32, nKVHeads = 32 (MHA),

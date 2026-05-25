@@ -21,13 +21,7 @@ struct Gemma3IntegrationTests {
         let prompt = "Once upon a time, in a quiet village"
         let maxTokens = 200
 
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("Gemma 3 1B integration test skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // 1B canonical shapes (from HF config.json):
         //   hidden = 1152, nLayers = 26, nHeads = 4, nKVHeads = 1, headDim = 256.

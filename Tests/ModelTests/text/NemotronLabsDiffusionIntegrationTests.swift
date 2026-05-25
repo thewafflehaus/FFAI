@@ -18,16 +18,10 @@ struct NemotronLabsDiffusionIntegrationTests {
         let modelId = "nvidia/Nemotron-Labs-Diffusion-3B"
         let prompt = "Once upon a time, in a quiet village"
 
-        let m: Model
-        do {
-            // 4096-token context is plenty for the test prompts and keeps
-            // the KV cache small; the checkpoint's YaRN window is 262144.
-            m = try await ModelLoadLock.shared.loadSerially {
-                try await Model.load(modelId, options: LoadOptions(maxContextLength: 4096))
-            }
-        } catch {
-            print("Nemotron-Labs-Diffusion integration test skipped: \(error)")
-            return
+        // 4096-token context is plenty for the test prompts and keeps
+        // the KV cache small; the checkpoint's YaRN window is 262144.
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(modelId, options: LoadOptions(maxContextLength: 4096))
         }
 
         // Engine should be the tri-mode diffusion model, not Llama.

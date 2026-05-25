@@ -17,13 +17,7 @@ struct Quantized6bitIntegrationTests {
         let prompt = "Once upon a time, in a quiet village"
         let maxTokens = 200
 
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("6-bit Qwen3 integration test skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         #expect(m.config.quantization?.bits == 6)
         #expect(m.config.quantization?.groupSize == 64)

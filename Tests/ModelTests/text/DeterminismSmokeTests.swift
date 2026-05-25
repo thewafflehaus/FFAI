@@ -17,17 +17,8 @@ struct DeterminismSmokeTests {
 
     @Test("forwardSample(BOS) returns the same token on three back-to-back calls")
     func forwardSampleIsDeterministic() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load("mlx-community/Qwen3-1.7B-bf16") }
-        } catch {
-            print("determinism smoke skipped: \(error)")
-            return
-        }
-        guard let qwen3 = m.qwen3 else {
-            print("determinism smoke: expected Qwen3 engine")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load("mlx-community/Qwen3-1.7B-bf16") }
+        let qwen3 = try #require(m.qwen3, "determinism smoke: expected Qwen3 engine")
 
         // Three back-to-back forwards from a fresh KV cache each time.
         // Each call should produce identical logits → identical argmax.
@@ -59,13 +50,7 @@ struct DeterminismSmokeTests {
     /// pipeline (or the generate loop's bookkeeping).
     @Test("generate(prompt) returns the same token stream on three back-to-back calls")
     func multiTokenGenerateIsDeterministic() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load("mlx-community/Qwen3-1.7B-bf16") }
-        } catch {
-            print("multi-token determinism smoke skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load("mlx-community/Qwen3-1.7B-bf16") }
 
         var streams: [[Int]] = []
         for run in 0..<3 {
@@ -90,16 +75,8 @@ struct DeterminismSmokeTests {
     /// is nondeterministic.
     @Test("layer-0 K cache contents are deterministic after 2 prefill forwards")
     func kvCacheIsDeterministic() async throws {
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load("mlx-community/Qwen3-1.7B-bf16") }
-        } catch {
-            print("KV-cache determinism smoke skipped: \(error)")
-            return
-        }
-        guard let qwen3 = m.qwen3 else {
-            print("KV-cache determinism smoke: expected Qwen3 engine"); return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load("mlx-community/Qwen3-1.7B-bf16") }
+        let qwen3 = try #require(m.qwen3, "KV-cache determinism smoke: expected Qwen3 engine")
 
         // First 5 prompt tokens (no BOS for Qwen3): "The capital of France is".
         let promptTokens = m.tokenizer.encode(text: "The capital of France is")

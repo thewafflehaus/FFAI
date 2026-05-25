@@ -20,13 +20,7 @@ struct LlamaIntegrationTests {
         let maxTokens = 200
         let bosTokenId = 128_000
 
-        let m: Model
-        do {
-            m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
-        } catch {
-            print("Llama integration test skipped: \(error)")
-            return
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // Sanity: shapes match the published config.
         #expect(m.engine.hidden == 2048)
