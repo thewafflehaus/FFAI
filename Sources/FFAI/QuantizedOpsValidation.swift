@@ -80,19 +80,24 @@ public enum QuantizedOpsValidation {
         if groupSize <= 0 {
             return "groupSize must be positive (got \(groupSize))"
         }
+        // The metaltile quantize kernels (`mt_affine_quantize_int{2,4,8}`
+        // in `crates/metaltile-std/src/mlx/quantized.rs`) hardcode the
+        // min/max reduction shape at one simdgroup × 2 elements/lane =
+        // 64 elements/group. Each lane reads `w[in_base + lane * 2]`
+        // and `w[in_base + lane * 2 + 1]`, then a simdgroup-wide
+        // `simd_min` / `simd_max` reduces across all 32 lanes. Passing
+        // `groupSize != 64` makes lanes either read past the group
+        // boundary (groupSize < 64 → lanes 16..31 spill into the next
+        // group) or skip elements (groupSize > 64 → lanes don't cover
+        // the tail). Only group_size=64 is emitted at this layer.
+        if groupSize != 64 {
+            return "groupSize=\(groupSize) unsupported for affine quantize — only group_size=64 is emitted (kernel reduces over one simdgroup × 2 elements/lane = 64 elements; see metaltile mt_affine_quantize_int\(bits))"
+        }
         if !numel.isMultiple(of: groupSize) {
             return "numel=\(numel) must be a multiple of groupSize=\(groupSize) — partial trailing group would be silently dropped"
         }
         if !groupSize.isMultiple(of: pf) {
             return "groupSize=\(groupSize) must be a multiple of pack_factor=\(pf) for bits=\(bits)"
-        }
-        // The quantize kernel uses TPG = 32 (one simdgroup). The lane
-        // count writes packs_per_group = groupSize / pack_factor packed
-        // words. packs_per_group must be ≤ 32 for the single-simdgroup
-        // path; otherwise the kernel silently drops the tail packs.
-        let packsPerGroup = groupSize / pf
-        if packsPerGroup > 32 {
-            return "groupSize=\(groupSize) too large for bits=\(bits) — packs_per_group=\(packsPerGroup) exceeds the simdgroup width of 32 (only group_size ≤ \(32 * pf) supported)"
         }
         let nGroups = numel / groupSize
         let expectedPacks = numel / pf

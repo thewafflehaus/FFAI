@@ -73,7 +73,11 @@ else
   SUITES=()
   while IFS= read -r line; do
     SUITES+=("$line")
-  done < <(ls Tests/ModelTests/*IntegrationTests.swift | sed 's|Tests/ModelTests/||;s|\.swift$||' | sort)
+    # Phase A.3 reorg moved suites into Tests/ModelTests/{Text,Vision,Audio}/...
+    # subfolders; recurse with `find` so every nested IntegrationTests.swift
+    # is picked up, and de-dupe in case macOS APFS surfaces case-insensitive
+    # path twins.
+  done < <(find Tests/ModelTests -name '*IntegrationTests.swift' -type f | sed 's|.*/||;s|\.swift$||' | sort -u)
 fi
 
 # Use sudo -n (no password) to test whether powermetrics is callable.

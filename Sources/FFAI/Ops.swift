@@ -551,11 +551,13 @@ public enum Ops {
 
     /// Shared RMSNorm dispatch for `rmsNorm` (nRows = 1) and
     /// `rmsNormRows`. Routes by row width:
-    ///   • `n ≤ 4096` → `mt_rms_norm`, 4 elements per thread,
-    ///     TPG = n / 4 (the fast straight-line kernel).
-    ///   • `n > 4096` → `mt_rms_norm_wide`, whose strided loop covers
-    ///     any width at a fixed TPG of 1024 (large-hidden models such
-    ///     as Gemma 4 31B, hidden 5376).
+    ///   • `n ≤ 4096` AND `n` is a multiple of 128 → `mt_rms_norm`,
+    ///     4 elements per thread, TPG = n / 4 (the fast straight-line
+    ///     kernel — every standard transformer hidden size).
+    ///   • Anything else → `mt_rms_norm_wide`, whose strided loop covers
+    ///     any width at a fixed TPG of 1024. Used by large-hidden text
+    ///     models (Gemma 4 27B+ hidden 5376) AND by vision/audio towers
+    ///     whose hidden dim isn't a 128-multiple (SmolVLM2 d=960 etc).
     /// One threadgroup per row in both cases.
     private static func dispatchRmsNorm(
         x: Tensor, weight: Tensor, result: Tensor,
@@ -566,7 +568,10 @@ public enum Ops {
         let epsBuf = device.makeBuffer(length: 4)
         memcpy(epsBuf.contents(), &epsValue, 4)
 
-        let useWide = n > 4096
+        // Fast kernel needs TPG = n/4 with TPG a multiple of 32 and
+        // ≤ 1024. Anything outside that — too wide, too narrow, or not
+        // a 128-multiple — goes through the always-correct wide kernel.
+        let useWide = n > 4096 || !n.isMultiple(of: 128)
         let tgWidth = useWide ? 1024 : n / 4
         let grid = MTLSize(width: nRows * tgWidth, height: 1, depth: 1)
         let tg = MTLSize(width: tgWidth, height: 1, depth: 1)

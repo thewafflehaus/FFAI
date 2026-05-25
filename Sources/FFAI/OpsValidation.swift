@@ -30,25 +30,25 @@ public enum OpsValidation {
     //
     // `Ops.dispatchRmsNorm` routes by row width across two metaltile
     // kernels (`crates/metaltile-std/src/mlx/rms_norm.rs`):
-    //   • `n ≤ 4096` → `mt_rms_norm`. `N = TPG * 4` (4 elements per
+    //   • `mt_rms_norm` (fast path). `N = TPG * 4` (4 elements per
     //     thread), `TPG = n / 4`, `TPG` a multiple of 32 ⇒ `n` a
     //     multiple of 128, `TPG ≤ 1024` ⇒ `n ≤ 4096`.
-    //   • `n > 4096` → `mt_rms_norm_wide`. Each thread strides over
-    //     the row, so there is no upper bound; `TPG` is fixed at 1024.
+    //   • `mt_rms_norm_wide` (any width). Each thread strides over the
+    //     row with `TPG = 1024`; no 128-alignment or upper bound. Used
+    //     when `n > 4096` (Gemma 4 27B+ hidden 5376) AND when `n` is
+    //     not a multiple of 128 (SmolVLM2 vision tower d=960 etc).
     //
-    // The only row-width invariant common to both — and the one the
-    // wrapper must enforce — is the 128-element (simdgroup × 4)
-    // granularity. Every real model hidden size satisfies it.
+    // Caller-facing invariant: just `n > 0`. The wrapper picks the
+    // right kernel.
 
     /// Validate the row-width parameter for `Ops.rmsNorm` and
     /// `Ops.rmsNormRows`. The single-row and multi-row dispatches
-    /// share the per-row invariant.
+    /// share the per-row invariant. Any positive `n` is accepted —
+    /// `dispatchRmsNorm` routes 128-aligned rows ≤ 4096 to the fast
+    /// kernel and everything else to the always-correct wide kernel.
     public static func validateRmsNorm(n: Int) -> String? {
         if n <= 0 {
             return "n must be positive (got \(n))"
-        }
-        if !n.isMultiple(of: 128) {
-            return "n=\(n) must be a multiple of 128 (32-lane simdgroup × 4 elements/thread)"
         }
         return nil
     }

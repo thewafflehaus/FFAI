@@ -32,7 +32,7 @@ struct OpsValidationTests {
         #expect(OpsValidation.validateRmsNorm(n: 4096) == nil)
         // Wide rows (> 4096 → mt_rms_norm_wide): Gemma 4 31B hidden
         // 5376 and beyond. No upper bound — the strided kernel covers
-        // any 128-aligned width.
+        // any width.
         #expect(OpsValidation.validateRmsNorm(n: 5376) == nil)
         #expect(OpsValidation.validateRmsNorm(n: 8192) == nil)
     }
@@ -43,16 +43,24 @@ struct OpsValidationTests {
         #expect(OpsValidation.validateRmsNorm(n: -128) != nil)
     }
 
-    @Test("rmsNorm rejects n not multiple of 128")
-    func rmsNormRejectsNonMultipleOf128() {
-        // The 2026-05-19 GPU freeze precursor: this was n=4 + the wrapper
-        // computed tgWidth=1, generated MSL with n_simd=0 → tg_ssq=0.
-        #expect(OpsValidation.validateRmsNorm(n: 4) != nil)
-        #expect(OpsValidation.validateRmsNorm(n: 32) != nil)
-        #expect(OpsValidation.validateRmsNorm(n: 100) != nil)
-        // Right next to 128 — these all fail the mod check.
-        #expect(OpsValidation.validateRmsNorm(n: 127) != nil)
-        #expect(OpsValidation.validateRmsNorm(n: 129) != nil)
+    @Test("rmsNorm accepts non-128-multiples (routed to mt_rms_norm_wide)")
+    func rmsNormAcceptsNonMultipleOf128() {
+        // SmolVLM2's vision tower has hidden dim 960 (= 128*7 + 64) —
+        // not a multiple of 128. The wrapper routes anything not
+        // 128-aligned through the always-correct wide kernel
+        // (`mt_rms_norm_wide`, TPG=1024 strided, no alignment
+        // requirement). Pre-2026-05-25 the validator rejected these
+        // widths because only the fast kernel was wired; the wide path
+        // makes the rejection obsolete.
+        #expect(OpsValidation.validateRmsNorm(n: 960) == nil)
+        #expect(OpsValidation.validateRmsNorm(n: 100) == nil)
+        #expect(OpsValidation.validateRmsNorm(n: 127) == nil)
+        #expect(OpsValidation.validateRmsNorm(n: 129) == nil)
+        // The 2026-05-19 GPU freeze precursor (n=4) is now also safe —
+        // the wide kernel handles any positive n correctly. (Real
+        // models will never call this with n=4; included as a regression
+        // guard against a future tightening that would mishandle it.)
+        #expect(OpsValidation.validateRmsNorm(n: 4) == nil)
     }
 
     @Test("rmsNorm accepts wide rows (routed to mt_rms_norm_wide)")
@@ -605,9 +613,13 @@ struct OpsValidationTests {
         // The point of returning String? instead of Bool: callers and
         // the user see WHY the dispatch was rejected, not just THAT it
         // was. This pins the contract.
-        let rmsMsg = OpsValidation.validateRmsNorm(n: 100)
-        #expect(rmsMsg?.contains("100") == true)
-        #expect(rmsMsg?.contains("128") == true)
+        //
+        // `validateRmsNorm` accepts any positive `n` (since the wrapper
+        // routes non-128-aligned rows to the wide kernel), so the only
+        // remaining rejection path is `n <= 0`. Probe that.
+        let rmsMsg = OpsValidation.validateRmsNorm(n: -7)
+        #expect(rmsMsg?.contains("-7") == true)
+        #expect(rmsMsg?.contains("positive") == true)
 
         // head_dim=192 is unsupported (no specialization). The message
         // mentions the offending value + the supported set.

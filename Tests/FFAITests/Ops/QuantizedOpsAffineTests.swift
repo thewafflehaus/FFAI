@@ -51,17 +51,22 @@ struct QuantizedOpsAffineTests {
         }
     }
 
-    @Test("int8 round-trip — 32 elements / group=32 recovers within ~0.01")
-    func int8RoundTrip32() {
+    @Test("int8 round-trip — 64 elements / group=64 recovers within ~0.01")
+    func int8RoundTrip64() {
         autoreleasepool {
-            let numel = 32
-            let groupSize = 32
+            // The metaltile int8 quantize kernel reads 2 elements per lane
+            // (`lane * 2`, `lane * 2 + 1`) across a 32-lane simdgroup, so
+            // group_size MUST be 64. Earlier this test passed groupSize=32
+            // and silently spilled the upper 16 lanes into the next group's
+            // memory — the validator now rejects that explicitly.
+            let numel = 64
+            let groupSize = 64
             let pf = 4
             let nGroups = numel / groupSize
             let packs = numel / pf
 
             let src = Tensor.empty(shape: [numel], dtype: .f32)
-            let srcVals: [Float] = (0..<numel).map { Float($0) * 0.04 - 0.5 }
+            let srcVals: [Float] = (0..<numel).map { Float($0) * 0.02 - 0.5 }
             src.copyIn(from: srcVals)
 
             let packed = Tensor.empty(shape: [packs], dtype: .u32)
@@ -144,9 +149,15 @@ struct QuantizedOpsAffineTests {
             bits: 4, groupSize: 64) != nil)
     }
 
-    @Test("validateAffineQuantize rejects pack-misaligned groupSize")
+    @Test("validateAffineQuantize rejects pack-misaligned groupSize (via group≠64 path)")
     func rejectPackMisalignment() {
-        // bits=4 → pack_factor=8. groupSize=10 isn't a multiple of 8.
+        // Pre-2026-05-25 this test probed the pack-alignment branch
+        // (groupSize=10 not a multiple of pack_factor=8). With the new
+        // group_size=64 hard constraint the same value gets caught one
+        // check earlier — the rejection is still correct, just for a
+        // sharper reason. Both branches remain in the validator (the
+        // pack-alignment check would re-engage if we ever broaden the
+        // accepted group sizes).
         #expect(QuantizedOpsValidation.validateAffineQuantize(
             numel: 100, packedCount: 12, scalesCount: 10, biasesCount: 10,
             bits: 4, groupSize: 10) != nil)
@@ -172,17 +183,27 @@ struct QuantizedOpsAffineTests {
             bits: 4, groupSize: 64) != nil)
     }
 
-    @Test("validateAffineQuantize rejects group_size > 32 * pack_factor")
-    func rejectGroupExceedingSimdgroupWidth() {
-        // bits=4, pack_factor=8 → max group_size = 32*8 = 256.
+    @Test("validateAffineQuantize rejects group_size != 64")
+    func rejectGroupNotEqual64() {
+        // The metaltile quantize kernels (`mt_affine_quantize_int{2,4,8}`)
+        // bake in one simdgroup × 2 elements/lane = 64 elements/group via
+        // the `lane * 2` / `lane * 2 + 1` loads + `simd_min` / `simd_max`
+        // reduction. Only group_size=64 is emitted; anything else either
+        // reads past the group boundary (smaller) or skips elements
+        // (larger). The validator rejects every group_size != 64.
+        #expect(QuantizedOpsValidation.validateAffineQuantize(
+            numel: 1024, packedCount: 128, scalesCount: 32, biasesCount: 32,
+            bits: 4, groupSize: 32) != nil)
+        #expect(QuantizedOpsValidation.validateAffineQuantize(
+            numel: 128, packedCount: 16, scalesCount: 1, biasesCount: 1,
+            bits: 4, groupSize: 128) != nil)
         #expect(QuantizedOpsValidation.validateAffineQuantize(
             numel: 1024, packedCount: 128, scalesCount: 2, biasesCount: 2,
             bits: 4, groupSize: 512) != nil)
-        // 256 is the cap; should pass shape-wise but the 256-group test
-        // is overkill at unit-test scale. Use 128 instead.
+        // group_size = 64 is the only accepted shape.
         #expect(QuantizedOpsValidation.validateAffineQuantize(
-            numel: 128, packedCount: 16, scalesCount: 1, biasesCount: 1,
-            bits: 4, groupSize: 128) == nil)
+            numel: 128, packedCount: 16, scalesCount: 2, biasesCount: 2,
+            bits: 4, groupSize: 64) == nil)
     }
 
     @Test("packFactor returns correct ratio")
@@ -234,12 +255,15 @@ struct QuantizedOpsAffineTests {
     @Test("affine round-trip bf16 — int8 dispatch fires + recovers approx")
     func int8RoundTripBF16() {
         autoreleasepool {
-            let numel = 32, groupSize = 32, pf = 4
+            // Same kernel-side group_size=64 constraint as int8RoundTrip64;
+            // see the comment there. Earlier this test passed groupSize=32
+            // and silently corrupted the upper-lane reads.
+            let numel = 64, groupSize = 64, pf = 4
             let nGroups = numel / groupSize
             let packs = numel / pf
             // 1.0 as bf16 = 0x3F80; vary lightly so quant has range.
             let vals: [UInt16] = (0..<numel).map { i -> UInt16 in
-                let f: Float = Float(i) * 0.04 - 0.5
+                let f: Float = Float(i) * 0.02 - 0.5
                 return UInt16(f.bitPattern >> 16)
             }
             let src = Tensor.empty(shape: [numel], dtype: .bf16)
@@ -261,7 +285,7 @@ struct QuantizedOpsAffineTests {
                     bits: 8, groupSize: groupSize, on: cb)
             }
             // bf16 has ~3 decimal digits of precision; quant adds maybe
-            // another 0.005 step. Use 0.05 tolerance.
+            // another 0.005 step. Just confirm finiteness end-to-end.
             for v in out.toFloatArray() { #expect(v.isFinite) }
         }
     }
@@ -269,9 +293,12 @@ struct QuantizedOpsAffineTests {
     @Test("int2 round-trip f32 — quantize + dequantize within step tolerance")
     func int2RoundTripF32() {
         autoreleasepool {
-            // bits=2 → pack_factor=16. One group of 16 elements.
-            let numel = 16, groupSize = 16, pf = 16
-            let nGroups = 1
+            // bits=2 → pack_factor=16. The kernel uses one simdgroup ×
+            // 2 elements/lane = 64-element groups; pack_factor=16 means
+            // 4 packs per group. Use numel=64 to stay on the only
+            // emitted variant.
+            let numel = 64, groupSize = 64, pf = 16
+            let nGroups = numel / groupSize
             let packs = numel / pf
             let src = Tensor.empty(shape: [numel], dtype: .f32)
             let vals: [Float] = (0..<numel).map { Float($0) / Float(numel - 1) }  // [0, 1]
