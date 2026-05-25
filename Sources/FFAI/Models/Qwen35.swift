@@ -804,6 +804,9 @@ public final class Qwen35MoEFFN: Module {
     /// next forward.
     private var sharedSgScratch: Tensor?
     private var sharedSuScratch: Tensor?
+    /// ITER 82 (Bagel 2): scratch for the `sharedExpertGate` qmm output
+    /// when fused with sg/su on a `dequantGemvInt4Three` shared encoder.
+    private var sharedGateLogitScratch: Tensor?
     private var sharedResultScratch: Tensor?
 
     init(moe: MoELayer,
@@ -860,11 +863,46 @@ public final class Qwen35MoEFFN: Module {
         let work = device.makeCommandBuffer()
         // ITER 26: batch shared gate+up if both int4. Saves 1 encoder
         // begin/end per layer × 40 = ~680 µs/decode token.
+        //
+        // ITER 82 (Bagel 2): also fold `sharedExpertGate` (an int4 qmm
+        // that produces a single scalar from the same `xNorm`) into the
+        // SAME shared encoder via `dequantGemvInt4Three`. Saves another
+        // encoder begin/end pair per MoE layer × 40 layers ≈ 40 pairs
+        // per decode token vs the prior 2-encoder split (Two + the
+        // implicit single `sharedExpertGate` qmm).
         let sg: Tensor
         let su: Tensor
-        if let qg = sharedGateProj.inner as? QuantizedLinear,
-           let qu = sharedUpProj.inner as? QuantizedLinear,
-           qg.bits == 4 && qu.bits == 4 && qg.groupSize == qu.groupSize {
+        let gateLogit: Tensor
+        let qg = sharedGateProj.inner as? QuantizedLinear
+        let qu = sharedUpProj.inner as? QuantizedLinear
+        let qgate = sharedExpertGate.inner as? QuantizedLinear
+        if let qg = qg, let qu = qu, let qgate = qgate,
+           qg.bits == 4, qu.bits == 4, qgate.bits == 4,
+           qg.groupSize == qu.groupSize, qu.groupSize == qgate.groupSize {
+            let outDim = qg.weight.shape[0]
+            let gateOutDim = qgate.weight.shape[0]
+            if sharedSgScratch == nil || sharedSgScratch!.dtype != xNorm.dtype
+                || sharedSgScratch!.elementCount != outDim {
+                sharedSgScratch = Tensor.empty(shape: [outDim], dtype: xNorm.dtype)
+                sharedSuScratch = Tensor.empty(shape: [outDim], dtype: xNorm.dtype)
+            }
+            if sharedGateLogitScratch == nil
+                || sharedGateLogitScratch!.dtype != xNorm.dtype
+                || sharedGateLogitScratch!.elementCount != gateOutDim {
+                sharedGateLogitScratch = Tensor.empty(shape: [gateOutDim],
+                                                      dtype: xNorm.dtype)
+            }
+            sg = sharedSgScratch!
+            su = sharedSuScratch!
+            gateLogit = sharedGateLogitScratch!
+            Ops.dequantGemvInt4Three(
+                input: xNorm,
+                w0: qg.weight, s0: qg.scales, b0: qg.biases, out0: sg,
+                w1: qu.weight, s1: qu.scales, b1: qu.biases, out1: su,
+                w2: qgate.weight, s2: qgate.scales, b2: qgate.biases, out2: gateLogit,
+                groupSize: qg.groupSize, on: work)
+        } else if let qg = qg, let qu = qu,
+                  qg.bits == 4, qu.bits == 4, qg.groupSize == qu.groupSize {
             let outDim = qg.weight.shape[0]
             if sharedSgScratch == nil || sharedSgScratch!.dtype != xNorm.dtype
                 || sharedSgScratch!.elementCount != outDim {
@@ -878,13 +916,14 @@ public final class Qwen35MoEFFN: Module {
                 w0: qg.weight, s0: qg.scales, b0: qg.biases, out0: sg,
                 w1: qu.weight, s1: qu.scales, b1: qu.biases, out1: su,
                 groupSize: qg.groupSize, on: work)
+            gateLogit = sharedExpertGate(xNorm, on: work)
         } else {
             sg = sharedGateProj(xNorm, on: work)
             su = sharedUpProj(xNorm, on: work)
+            gateLogit = sharedExpertGate(xNorm, on: work)
         }
         let sharedInner = Ops.swiglu(gate: sg, up: su, on: work)
         let sharedOut = sharedDownProj(sharedInner, on: work)
-        let gateLogit = sharedExpertGate(xNorm, on: work)
         work.commit()
 
         // GPU fan-out: `out = routed + sigmoid(gateLogit) * sharedOut`
