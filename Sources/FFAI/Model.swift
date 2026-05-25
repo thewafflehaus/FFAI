@@ -184,7 +184,7 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: vlm.engine,
                     defaultGenerationParameters: LlamaDense.defaultGenerationParameters,
-                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    availableCapabilities: Qwen2VL.availableCapabilities,
                     vlModel: vlm)
             }
             // Qwen 3-VL — dynamic-resolution full-attention ViT tower
@@ -197,7 +197,7 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: vlm.engine,
                     defaultGenerationParameters: Qwen3Dense.defaultGenerationParameters,
-                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    availableCapabilities: Qwen3VL.availableCapabilities,
                     vlModel: vlm)
             }
             // Qwen 3-VL-MoE — the Qwen3-VL vision tower + the Qwen 3.5
@@ -210,7 +210,7 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: vlm.engine,
                     defaultGenerationParameters: Qwen35Hybrid.defaultGenerationParameters,
-                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    availableCapabilities: Qwen3VLMoe.availableCapabilities,
                     vlModel: vlm)
             }
             // Gemma 4 VL — the bespoke Gemma 4 ViT tower (RoPE attention,
@@ -341,7 +341,7 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: vlm.engine,
                     defaultGenerationParameters: Qwen35Hybrid.defaultGenerationParameters,
-                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    availableCapabilities: MiniCPMV4_6.availableCapabilities,
                     vlModel: vlm)
             }
             // Nemotron-VLM — NVIDIA's Nemotron Nano VL: a ViT tower +
@@ -389,7 +389,7 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: engine,
                     defaultGenerationParameters: SmolVLM2Dense.defaultGenerationParameters,
-                    availableCapabilities: Capability.textOnly.union([.visionIn]))
+                    availableCapabilities: SmolVLM2Dense.availableCapabilities)
             }
             if let mt = config.modelType, SmolVLM2.modelTypes.contains(mt) {
                 let engine = try SmolVLM2Dense.loadModel(
@@ -398,7 +398,7 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: engine,
                     defaultGenerationParameters: SmolVLM2Dense.defaultGenerationParameters,
-                    availableCapabilities: Capability.textOnly.union([.visionIn]))
+                    availableCapabilities: SmolVLM2Dense.availableCapabilities)
             }
             // Other VL families — the FFAI vision foundation
             // (VisionEncoder, ImagePreprocessing, VLModel splice,

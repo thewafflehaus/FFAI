@@ -38,6 +38,17 @@ public enum Qwen3VLMoe {
     /// `image_token_id` default for Qwen 3-VL-MoE checkpoints.
     public static let defaultImageTokenId = 151_655
 
+    /// `video_token_id` default for Qwen 3-VL-MoE checkpoints
+    /// (`<|video_pad|>`, same id as the dense Qwen 3-VL).
+    public static let defaultVideoTokenId = 151_656
+
+    /// Capabilities a Qwen 3-VL-MoE checkpoint exposes. Identical to the
+    /// dense Qwen 3-VL — the MoE variant only swaps the text backbone;
+    /// the vision tower (and its multi-frame `encode(frames:)` path) is
+    /// shared with `Qwen3VL`.
+    public static let availableCapabilities: Set<Capability> =
+        Capability.textOnly.union([.visionIn, .videoIn])
+
     /// Build a `VLModel` from a `Qwen3VLMoeForConditionalGeneration`
     /// checkpoint: the Qwen3-VL vision tower + the Qwen 3.5-MoE text
     /// backbone, joined by the cross-modal splice.
@@ -60,6 +71,9 @@ public enum Qwen3VLMoe {
             options: options, device: device)
 
         // ── Vision tower — identical to the dense Qwen3-VL tower ──
+        // Including the multi-frame `encode(frames:)` path: the MoE
+        // variant ships the same vision weights at the same prefix and
+        // produces tokens with the same temporal-patch unfold.
         let visionWeights = weights.prefixed("model.visual.")
         let vision = try Qwen3VLVisionModel.load(
             visionConfig: visionConfig, textHidden: textEngine.hidden,
@@ -67,9 +81,12 @@ public enum Qwen3VLMoe {
 
         let imageTokenId = config.int("image_token_id")
             ?? config.int("image_token_index") ?? defaultImageTokenId
+        let videoTokenId = config.int("video_token_id")
+            ?? config.int("video_token_index") ?? defaultVideoTokenId
         return try VLModel(
             visionEncoder: vision.asVisionEncoder(),
             engine: textEngine, imageTokenId: imageTokenId,
+            videoTokenId: videoTokenId,
             normalization: .clip,
             imageTokenCount: vision.mergedTokenCount)
     }

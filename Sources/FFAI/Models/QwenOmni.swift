@@ -19,6 +19,19 @@
 // `QwenOmni.encodeAudio` is the supported entry point: it produces the
 // `[nAudioTokens, textHidden]` features a caller splices into a Qwen3
 // prompt's embedding stream.
+//
+// ## TODO — Phase F.10 follow-up: video inference
+//
+// Qwen-Omni supports video input upstream (it composes Qwen 2.5-VL's
+// dynamic-resolution vision tower with the omni text backbone). FFAI's
+// QwenOmni currently exposes ONLY the audio path — there is no vision
+// tower wired here at all, no `VLModel` adapter, and no video token id
+// surfaced. Adding video requires first wiring vision (the Qwen-VL
+// tower would compose cleanly: load `vision_tower.*` via
+// `Qwen25VLVisionModel.load` and wrap the QwenOmniModel in a `VLModel`
+// alongside the audio encoder). Once vision is wired, video falls out
+// of `Qwen25VLVisionModel.encode(frames:)` for free since the omni
+// variant shares the 2.5-VL tower. Tracked under task #150.
 
 import Foundation
 import Metal
