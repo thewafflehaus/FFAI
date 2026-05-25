@@ -60,27 +60,45 @@ struct Gemma3VLIntegrationTests {
         }
         let vlm = try #require(m.vlModel, "Gemma 3 VL checkpoint is not a VLM")
 
-        // Build an image+text prompt. Gemma 3's chat template wraps the
-        // image with <start_of_image> … <image_soft_token>×256 …
-        // <end_of_image>; here we assemble the token stream directly:
-        // a run of `imageTokenCount` image placeholders followed by a
-        // text question.
+        // Build the prompt with the Gemma 3 chat template. HF's
+        // `processing_gemma3.py` expands every `<image>` content item
+        // into:
+        //
+        //     <start_of_image>(image_soft_token×N)<end_of_image>
+        //
+        // and the chat template wraps it INSIDE the user turn — not
+        // before it. The previous version of this test passed a raw run
+        // of `image_soft_token`s BEFORE `<start_of_turn>user` and without
+        // any start_of_image / end_of_image markers, giving the model
+        // no structural signal that those tokens were a single image
+        // block. Result: a coherent but blind response — "Okay, I'll do
+        // my best to describe the image. I'm sorry if my description is
+        // difficult to assess!" — i.e. the model decoded a polite
+        // disclaimer because it never saw the image.
+        //
+        // Token map (from the checkpoint's `config.json`):
+        //   • `<start_of_image>` = `boi_token_index` → id 255999
+        //   • `<end_of_image>`   = `eoi_token_index` → id 256000
+        //   • `<image_soft_token>` = `image_token_index` → id 262144
         let imageTokenId = vlm.imageTokenId
-        let questionTokens = m.tokenizer.encode(
-            text: "<start_of_turn>user\nDescribe this image.<end_of_turn>\n"
+        let header = m.tokenizer.encode(
+            text: "<bos><start_of_turn>user\n<start_of_image>")
+        let trailer = m.tokenizer.encode(
+            text: "<end_of_image>Describe this image.<end_of_turn>\n"
                 + "<start_of_turn>model\n")
-        let promptTokens = Array(repeating: imageTokenId,
-                                 count: vlm.imageTokenCount) + questionTokens
+        let promptTokens = header
+            + Array(repeating: imageTokenId, count: vlm.imageTokenCount)
+            + trailer
 
         // A real photograph — the golden-retriever fixture.
         let image = try VLMTestSupport.dogImage()
 
         let generated = try vlm.generate(
             promptTokens: promptTokens, image: image,
-            // Gemma 3 VL 4B opens with a hedge-y preamble ("okay, i'll do my
-            // best to describe the image…") before getting to content;
-            // 64 tokens isn't enough to clear it. 192 gives the model room
-            // to actually describe the dog.
+            // 4B-it opens with a preamble — "Here's a description of the
+            // image:" — before it gets to the content. 192 tokens gives
+            // it room to clear the preamble and actually describe the
+            // dog. Lower values cut off mid-preamble.
             maxTokens: 192, eosTokenId: m.config.eosTokenId, eosTokenIds: m.config.eosTokenIds)
 
         // Coherence first, then the content check: the caption should
