@@ -1767,6 +1767,13 @@ public final class Qwen35AttentionMixer: Module {
     private var qOutScratch: Tensor?
     private var kOutScratch: Tensor?
     private var vOutScratch: Tensor?
+    /// ITER 78: fused-QKV single-dispatch fast path. When set, `forward`
+    /// uses `Ops.batchedQkvQgemvInt4Fast` (1 dispatch) instead of
+    /// `dequantGemvInt4Three` (3 dispatches on shared encoder). Backing
+    /// scratch is one contiguous `[qDim+kDim+vDim]` buffer; qOutScratch /
+    /// kOutScratch / vOutScratch are offset views into it.
+    private var fusedQKVEligible: Bool = false
+    private var qkvFusedScratch: Tensor?
     /// ITER 35: cached q_norm + k_norm outputs (was fresh per call).
     private var qNormedScratch: Tensor?
     private var kNormedScratch: Tensor?
@@ -1830,6 +1837,18 @@ public final class Qwen35AttentionMixer: Module {
                                 kW: kQL.weight, kS: kQL.scales, kB: kQL.biases,
                                 vW: vQL.weight, vS: vQL.scales, vB: vQL.biases,
                                 groupSize: qQL.groupSize)
+            // ITER 78: fused single-dispatch QKV gemv. Constraints:
+            // in_dim multiple of 512, each out_dim multiple of 8, group_size=64.
+            let inDim = qQL.weight.shape[1] * 8
+            let qDim = qQL.weight.shape[0]
+            let kDim = kQL.weight.shape[0]
+            let vDim = vQL.weight.shape[0]
+            if inDim % 512 == 0
+                && qDim % 8 == 0 && kDim % 8 == 0 && vDim % 8 == 0
+                && qQL.groupSize == 64
+                && ProcessInfo.processInfo.environment["FFAI_NO_FUSED_QKV"] == nil {
+                self.fusedQKVEligible = true
+            }
         }
     }
 
@@ -1861,25 +1880,49 @@ public final class Qwen35AttentionMixer: Module {
             let qDim = bq.qW.shape[0]
             let kDim = bq.kW.shape[0]
             let vDim = bq.vW.shape[0]
-            // Lazy-init scratches.
-            if qOutScratch == nil || qOutScratch!.elementCount != qDim {
-                qOutScratch = Tensor.empty(shape: [qDim], dtype: xNorm.dtype)
+            if fusedQKVEligible {
+                // ITER 78: ONE dispatch into a [qDim+kDim+vDim] scratch.
+                // qOut/kPre/vPre are offset views into the same buffer.
+                let total = qDim + kDim + vDim
+                if qkvFusedScratch == nil
+                    || qkvFusedScratch!.elementCount != total
+                    || qkvFusedScratch!.dtype != xNorm.dtype {
+                    qkvFusedScratch = Tensor.empty(shape: [total], dtype: xNorm.dtype)
+                    qOutScratch = qkvFusedScratch!.slicedRows(start: 0, count: qDim)
+                    kOutScratch = qkvFusedScratch!.slicedRows(start: qDim, count: kDim)
+                    vOutScratch = qkvFusedScratch!.slicedRows(start: qDim + kDim, count: vDim)
+                }
+                qOut = qOutScratch!
+                kPre = kOutScratch!
+                vPre = vOutScratch!
+                Ops.batchedQkvQgemvInt4Fast(
+                    x: xNorm,
+                    wQ: bq.qW, scalesQ: bq.qS, biasesQ: bq.qB,
+                    wK: bq.kW, scalesK: bq.kS, biasesK: bq.kB,
+                    wV: bq.vW, scalesV: bq.vS, biasesV: bq.vB,
+                    outQ: qDim, outK: kDim, outV: vDim,
+                    on: cmd, into: qkvFusedScratch!)
+            } else {
+                // Legacy 3-dispatch shared-encoder path (ITER 24).
+                if qOutScratch == nil || qOutScratch!.elementCount != qDim {
+                    qOutScratch = Tensor.empty(shape: [qDim], dtype: xNorm.dtype)
+                }
+                if kOutScratch == nil || kOutScratch!.elementCount != kDim {
+                    kOutScratch = Tensor.empty(shape: [kDim], dtype: xNorm.dtype)
+                }
+                if vOutScratch == nil || vOutScratch!.elementCount != vDim {
+                    vOutScratch = Tensor.empty(shape: [vDim], dtype: xNorm.dtype)
+                }
+                qOut = qOutScratch!
+                kPre = kOutScratch!
+                vPre = vOutScratch!
+                Ops.dequantGemvInt4Three(
+                    input: xNorm,
+                    w0: bq.qW, s0: bq.qS, b0: bq.qB, out0: qOut,
+                    w1: bq.kW, s1: bq.kS, b1: bq.kB, out1: kPre,
+                    w2: bq.vW, s2: bq.vS, b2: bq.vB, out2: vPre,
+                    groupSize: bq.groupSize, on: cmd)
             }
-            if kOutScratch == nil || kOutScratch!.elementCount != kDim {
-                kOutScratch = Tensor.empty(shape: [kDim], dtype: xNorm.dtype)
-            }
-            if vOutScratch == nil || vOutScratch!.elementCount != vDim {
-                vOutScratch = Tensor.empty(shape: [vDim], dtype: xNorm.dtype)
-            }
-            qOut = qOutScratch!
-            kPre = kOutScratch!
-            vPre = vOutScratch!
-            Ops.dequantGemvInt4Three(
-                input: xNorm,
-                w0: bq.qW, s0: bq.qS, b0: bq.qB, out0: qOut,
-                w1: bq.kW, s1: bq.kS, b1: bq.kB, out1: kPre,
-                w2: bq.vW, s2: bq.vS, b2: bq.vB, out2: vPre,
-                groupSize: bq.groupSize, on: cmd)
         } else {
             qOut = qProj(xNorm, on: cmd)
             kPre = kProj(xNorm, on: cmd)
