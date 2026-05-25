@@ -36,7 +36,15 @@ struct CapabilityTests {
             let decoded = try JSONDecoder().decode(ReasoningLevel.self, from: data)
             #expect(decoded == level)
         }
-        #expect(ReasoningLevel.allCases.count == 4) // minimal, low, medium, high
+        #expect(ReasoningLevel.allCases.count == 6)
+        // Raw values follow the Claude Opus convention — extraHigh
+        // serialises as the hyphenated "extra-high" on the wire.
+        #expect(ReasoningLevel.none.rawValue == "none")
+        #expect(ReasoningLevel.low.rawValue == "low")
+        #expect(ReasoningLevel.medium.rawValue == "medium")
+        #expect(ReasoningLevel.high.rawValue == "high")
+        #expect(ReasoningLevel.extraHigh.rawValue == "extra-high")
+        #expect(ReasoningLevel.max.rawValue == "max")
     }
 
     @Test("Codable round-trip via raw value")

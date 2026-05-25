@@ -28,21 +28,31 @@ public enum Capability: String, Sendable, Hashable, CaseIterable, Codable {
     /// fenced in `<think>…</think>` (or family-specific tokens) and
     /// stripped by `ThinkingSplit` before being shown to the user.
     case thinking
-    /// Model supports a user-tunable reasoning-effort dial (minimal /
-    /// low / medium / high), distinct from just having `.thinking`.
-    /// The selected level is set on `GenerationParameters`, not here —
-    /// this capability just advertises that the model honours it.
+    /// Model supports a user-tunable reasoning-effort dial (none / low /
+    /// medium / high / extra-high / max), distinct from just having
+    /// `.thinking`. The selected level is set on `GenerationParameters`,
+    /// not here — this capability just advertises that the model
+    /// honours it.
     case reasoningLevel
 }
 
 /// User-tunable reasoning effort for models that advertise the
 /// `Capability.reasoningLevel` capability. Models without it ignore
 /// the setting.
+///
+/// Values follow the Claude Opus convention (`none` → `max`) that
+/// other reasoning-tuned model families are adopting. `.none` disables
+/// the reasoning trace entirely; `.max` lets the model spend as long
+/// as it needs to.
 public enum ReasoningLevel: String, Sendable, Hashable, CaseIterable, Codable {
-    case minimal
+    case none
     case low
     case medium
     case high
+    /// Raw value `"extra-high"` to match the hyphenated convention
+    /// other model families use on the wire.
+    case extraHigh = "extra-high"
+    case max
 }
 
 extension Capability {
