@@ -33,11 +33,31 @@ private let modelCatalog: [CatalogGroup] = [
                     "mlx-community/Llama-3.2-3B-Instruct-4bit",
                     "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"]),
         CatalogEntry(
-            family: "Llama-compatible zoo", modelType: "smollm / olmo2 / starcoder2 / internlm2 / …",
-            summary: "Llama-shaped architectures that reuse the Llama loader.",
+            family: "SmolLM", modelType: "smollm / smollm2 / smollm3",
+            summary: "HuggingFace SmolLM 1 / 2 / 3 — small (135M–3B) Llama-shaped models.",
             repos: ["mlx-community/SmolLM2-360M-Instruct-bf16",
-                    "mlx-community/OLMo-2-0425-1B-Instruct-bf16",
-                    "mlx-community/Starcoder2-3B-bf16"]),
+                    "mlx-community/SmolLM3-3B-bf16"]),
+        CatalogEntry(
+            family: "OLMo", modelType: "olmo / olmo2",
+            summary: "AI2 OLMo 1 / 2 — open Llama-shaped research models.",
+            repos: ["mlx-community/OLMo-2-0425-1B-Instruct-bf16",
+                    "mlx-community/OLMo-2-1124-7B-Instruct-bf16"]),
+        CatalogEntry(
+            family: "Granite 3", modelType: "granite",
+            summary: "IBM Granite v3 dense — Llama-shaped GQA backbone.",
+            repos: ["mlx-community/granite-3.2-2b-instruct-bf16"]),
+        CatalogEntry(
+            family: "Starcoder 2", modelType: "starcoder2",
+            summary: "BigCode Starcoder 2 — Llama-shaped code model with attention biases.",
+            repos: ["mlx-community/starcoder2-3b-4bit"]),
+        CatalogEntry(
+            family: "InternLM 2", modelType: "internlm2",
+            summary: "Shanghai AI Lab InternLM 2 / 2.5 — Llama-shaped GQA backbone.",
+            repos: ["mlx-community/internlm2_5-7b-chat-bf16"]),
+        CatalogEntry(
+            family: "Yi", modelType: "yi",
+            summary: "01.AI Yi — Llama-shaped dense backbone.",
+            repos: ["mlx-community/Yi-1.5-6B-Chat-bf16"]),
         CatalogEntry(
             family: "Qwen 2", modelType: "qwen2",
             summary: "Qwen 2 / 2.5 dense transformer.",
