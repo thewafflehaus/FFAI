@@ -2688,6 +2688,79 @@ public enum Ops {
         return result
     }
 
+    /// ITER 70 (Bagel 2): tree-causal SDPA for tree-verify spec decode.
+    /// Identical to `sdpaMulti` but the `causal` boolean is replaced by
+    /// an additive `[nQuery, nQuery]` mask tensor — consulted only for
+    /// in-block KV positions, applied as 0.0 (allow) or -inf (block).
+    /// Cached prefix (KV positions < baseKV) is always fully attended.
+    ///
+    /// Wraps `ffai_sdpa_multi_tree_mask` (0xClandestine/metaltile#194).
+    /// Mask is canonically produced by `DraftTreeNode.treeCausalMask()`
+    /// (ITER 69).
+    public static func sdpaMultiTreeMask(
+        q: Tensor, k: Tensor, v: Tensor, mask: Tensor,
+        nQHeads: Int, nKVHeads: Int, headDim: Int,
+        baseKV: Int, nQuery: Int, kvStride: Int,
+        scale: Float,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
+        if let reason = OpsValidation.validateSdpaMulti(
+            headDim: headDim, nQHeads: nQHeads, nKVHeads: nKVHeads,
+            baseKV: baseKV, nQuery: nQuery, kvStride: kvStride
+        ) {
+            preconditionFailure("Ops.sdpaMultiTreeMask: \(reason)")
+        }
+        precondition(mask.dtype == q.dtype,
+                     "Ops.sdpaMultiTreeMask: mask dtype \(mask.dtype) must match q dtype \(q.dtype)")
+        precondition(mask.elementCount == nQuery * nQuery,
+                     "Ops.sdpaMultiTreeMask: mask elementCount \(mask.elementCount) ≠ nQuery·nQuery \(nQuery * nQuery)")
+        let headsPerGroup = nQHeads / nKVHeads
+        let result = out ?? Tensor.empty(shape: [nQuery, nQHeads, headDim], dtype: q.dtype)
+        let threadsPerGroup = 1024
+        let grid = MTLSize(width: nQHeads * nQuery * threadsPerGroup,
+                            height: 1, depth: 1)
+        let tg = MTLSize(width: threadsPerGroup, height: 1, depth: 1)
+        switch q.dtype {
+        case .f32:
+            MetalTileKernels.ffai_sdpa_multi_tree_mask_f32(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                mask: mask.buffer, maskOffset: mask.offset,
+                out: result.buffer, outOffset: result.offset,
+                head_dim: UInt32(headDim), n_q_heads: UInt32(nQHeads),
+                base_kv: UInt32(baseKV), n_query: UInt32(nQuery),
+                kv_stride: UInt32(kvStride), heads_per_group: UInt32(headsPerGroup),
+                scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.ffai_sdpa_multi_tree_mask_f16(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                mask: mask.buffer, maskOffset: mask.offset,
+                out: result.buffer, outOffset: result.offset,
+                head_dim: UInt32(headDim), n_q_heads: UInt32(nQHeads),
+                base_kv: UInt32(baseKV), n_query: UInt32(nQuery),
+                kv_stride: UInt32(kvStride), heads_per_group: UInt32(headsPerGroup),
+                scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.ffai_sdpa_multi_tree_mask_bf16(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                mask: mask.buffer, maskOffset: mask.offset,
+                out: result.buffer, outOffset: result.offset,
+                head_dim: UInt32(headDim), n_q_heads: UInt32(nQHeads),
+                base_kv: UInt32(baseKV), n_query: UInt32(nQuery),
+                kv_stride: UInt32(kvStride), heads_per_group: UInt32(headsPerGroup),
+                scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.sdpaMultiTreeMask: unsupported dtype \(q.dtype)")
+        }
+        return result
+    }
+
     // MARK: - AURA (Phase 5d)
 
     /// AURA fused encode for `rows` flat vectors of length `dim`.
