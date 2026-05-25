@@ -30,6 +30,7 @@ HuggingFace checkpoints across every shipped family.
 | **One-line model loading** | `Model.load("org/repo")` and you're generating. Download, cache, tokenizer, prewarm — one async call. | ✅ |
 | **HuggingFace native** | Pull any compatible model straight from the Hub. Same cache as Python. | ✅ |
 | **3 / 4 / 5 / 6 / 8-bit quantization** | Run beefy models on lean machines. The `mlx-community` quants you're already using. | ✅ |
+| **Native MLX 4-bit conversion** | `ffai convert <repo>` quantizes any FFAI-loadable checkpoint to MLX 4-bit using our own GPU kernel — no Python, no `mlx-lm`, no `mlx-vlm`. Optional one-flag HF upload. | ✅ |
 | **Single-buffer-per-token dispatch** | Forward + sample on one Metal command buffer per token. Just 4 bytes cross CPU↔GPU. | ✅ |
 | **Capability-driven hot loading/unloading** | Only load what you'll use. Add and remove vision and audio encoders as you need them. | ✅ |
 | **Async lifecycle stream** | Real progress for your UI — download, load, ready — as an `AsyncStream`. | ✅ |
@@ -88,6 +89,26 @@ streaming, chat templates, capability gating, and lower-level
 forward APIs. Using a non-default cache directory (external SSD,
 shared cache between Python tools, etc.)? See
 [Custom model cache path](documentation/quickstart.md#custom-model-cache-path).
+
+### Quantize your own checkpoints
+
+`ffai convert` quantizes any bf16/fp16 HuggingFace checkpoint to MLX
+4-bit affine format using FFAI's own GPU kernels — no Python deps,
+no `mlx-lm` / `mlx-vlm` install, and it works on architectures
+`mlx-lm` rejects (custom-modeling-code families like Soprano,
+Nemotron-H, FastVLM):
+
+```bash
+# Pull, quantize, and write to ~/.cache/ffai/converts/.
+ffai convert HuggingFaceTB/SmolLM2-360M-Instruct
+
+# Also upload to a HF repo you control (uses your `hf` CLI auth).
+ffai convert HuggingFaceTB/SmolLM2-360M-Instruct \
+    --upload-repo ekryski/SmolLM2-360M-Instruct-4bit
+```
+
+Full flag list + recipes:
+[`using-the-cli.md` § `convert`](documentation/using-the-cli.md#convert--quantize-a-checkpoint-to-mlx-4-bit).
 
 ## Models Supported
 

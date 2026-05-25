@@ -1512,11 +1512,74 @@ same Model API.
 
 ## Phase 10 — Polish
 
+- **`ffai convert` v1** ✅ SHIPPED — Swift-native MLX 4-bit affine
+  quantizer (`Sources/FFAI/{SafeTensorsWriter,ConvertDriver}.swift` +
+  `Sources/FFAICLI/ConvertCommand.swift`, commit
+  `d3b67c5`). Accepts HF repo id or local path, reads source
+  safetensors, dispatches `QuantizedOps.quantizeAffine` per Linear-
+  shaped 2D weight, writes the `.weight` / `.scales` / `.biases`
+  triplet to a fresh safetensors file, patches `config.json` with
+  the `quantization` + `quantization_config` blocks, copies
+  tokenizer + aux files (symlink-resolved), and optionally uploads
+  via the `hf` CLI. Closes the gap that blocked Soprano-1.1,
+  Nemotron-H, and FastVLM — `mlx-lm` / `mlx-vlm` fail those because
+  they import the model's custom `modeling_*.py` chain;
+  `ffai convert` reads raw safetensors only.
+
+- **`ffai convert` v2 — format + precision coverage**
+  - **Mixed-precision recipes.** The FFAI loader already supports
+    per-tensor bit-width via the `affineBits` map (see Phase 5c).
+    Expose this through `ffai convert`:
+      - `--bits-embed 8 --bits-linear 4 --bits-lm-head 8` —
+        per-role overrides for the three common cases.
+      - `--recipe {mixed_2_6, mixed_3_4, mixed_3_6, mixed_4_6}` —
+        mlx-lm-compatible recipes that bucket tensors by
+        sensitivity (attention vs MLP, first/last layers, etc.).
+      - Custom recipe file (`--recipe-file <path>`) — JSON map
+        from tensor-name glob to bit-width.
+  - **GGUF read.** Add `Sources/FFAI/GGUFReader.swift` — parse the
+    GGUF v3 header + the K-quant blocks (Q4_K_M, Q5_K_M, Q6_K, Q8_0,
+    Q4_0, Q5_0). For each K-quant block, dequantize to bf16 in a
+    scratch buffer, then re-quantize through
+    `QuantizedOps.quantizeAffine` to the FFAI mlx-4bit layout. Pairs
+    with the existing **gguf format support** row below — Phase 10
+    "load GGUF directly" lands as `ffai convert <gguf-file> -o
+    <mlx-4bit-dir>` first, then a direct GGUF→model loader once we
+    confirm there's user demand for skipping the conversion.
+  - **GGUF write.** Inverse of the read path — emit a single-file
+    `model.gguf` with the FFAI affine weights → Q4_K_M /
+    Q5_K_M / Q8_0 conversion. Lets FFAI act as a bridge to
+    llama.cpp consumers.
+  - **Streaming convert.** Today `SafeTensorsWriter` buffers every
+    quantized tensor in RAM before flushing. For 30B+ models this
+    overflows. Add a streaming mode that opens the output file
+    once, writes a placeholder header, appends each tensor's bytes
+    as soon as the quantize kernel returns, and back-patches the
+    header at the end. Optionally shard into `model-00001-of-N.safetensors`
+    when the total exceeds a configurable size (5 GB default —
+    matches HF's chunking convention).
+  - **Source coverage.** Today `ffai convert` accepts local paths
+    and HF repo ids. v2 adds: (a) a `--source-url <url>` path that
+    pulls a raw safetensors URL (S3, GitHub Releases, etc.) without
+    a repo wrapper, useful for un-published fine-tunes; (b) a
+    direct path to a single `.safetensors` file (not a directory)
+    that auto-discovers the matching `config.json` / tokenizer
+    files from the same directory.
+  - **VLM-aware skip lists.** Several VLM checkpoints (Qwen 2.5-VL,
+    LFM2-VL, etc.) ship a `skip_vision: true` quantization hint —
+    the vision tower stays bf16 while only the text backbone gets
+    quantized. Honor that flag in `ConvertDriver` and add
+    `--skip-vision` / `--quantize-vision` overrides.
+
 - **gguf format support** — per-architecture name mapper. Single-file
   format from llama.cpp, embeds quantization (Q4_K_M, Q5_K_M, Q8_0,
   etc.) and tokenizer. Worth doing if community gguf quants are
   valuable to users; skip if all target checkpoints are mlx-format
-  or safetensors.
+  or safetensors. The `ffai convert` v2 GGUF read/write paths above
+  give us the per-block dequant arithmetic; loading GGUF directly
+  is just wiring that into the `Model.load` dispatch instead of
+  routing through a convert step.
+
 - **Distribution** — Homebrew formula for the `tile` binary, SPM
   consumer instructions.
 - **Benchmarks** — full sweep vs MLX baseline across the model zoo.

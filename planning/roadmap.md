@@ -82,9 +82,13 @@ recurrent kernels. Attention sinks + sliding-window mask. MoE router
 + per-expert dispatch. SDPA decode at head_dim {64, 128, 256, 512}.
 Patch-embed, conv2d, audio conv1d, mel spectrogram.
 
-**Tooling.** `ffai inspect` (architecture + tokens + logits), the
-`tile` metaltile CLI, a GPU-correctness test layer (naive-CPU
-oracle), `insta` MSL snapshots.
+**Tooling.** `ffai inspect` (architecture + tokens + logits),
+`ffai convert` (Swift-native MLX 4-bit quantizer — uses FFAI's
+`QuantizedOps.quantizeAffine` GPU kernel; no Python / `mlx-lm` /
+`mlx-vlm` dependency; succeeds where mlx-lm rejects custom-modeling
+architectures like Soprano, Nemotron-H, FastVLM), the `tile` metaltile
+CLI, a GPU-correctness test layer (naive-CPU oracle), `insta` MSL
+snapshots.
 
 ## Planned
 
@@ -102,6 +106,7 @@ and tests live in [`plan.md`](plan.md).
 | Speculative decoding + cache + serving (specs 013–043) | 8 | ngram / MTP / EAGLE speculative decode, prefix KV cache (in-mem + disk), batched / continuous decode, tree attention, sparse prefill, DFlash, KV-cache write fusion, flash-quantized SDPA, AURAFlash uplift. Sub-phases 8.0–8.23 — see `plan.md`. |
 | Argument-buffer / ICB dispatch modes + autotuner | 9 | Dispatch Mode 2 / 3 (`architecture.md §4a`); metaltile grid-search autotuner persisting to `tuning_cache.json`. |
 | GGUF support, Homebrew formula, full bench sweep, docs-site polish | 10 | |
+| `ffai convert` v2 — format + precision + source coverage | 10 | First-light `ffai convert` ships mlx-4bit-affine + local-or-HF source. v2 adds: (a) **mixed-precision recipes** — per-layer / per-tensor bit-width (already supported by the loader's `affineBits` map) so e.g. `embed_tokens`/`lm_head` quantize to 8-bit while linears stay at 4-bit, plus mlx-style `mixed_2_6` / `mixed_3_4` / `mixed_3_6` / `mixed_4_6` per-tensor recipes; (b) **GGUF read path** — load existing GGUF Q4/Q5/Q6/Q8 K-quant blocks, convert to the FFAI affine layout, write as mlx-4bit; (c) **GGUF write path** — emit GGUF directly so the convert can target llama.cpp consumers; (d) **streaming convert** — chunked safetensors read/write so 30B+ models don't need full RAM residency. Pairs with the existing GGUF support row above. |
 | `ffai bench --mactop` thermal-aware bench harness | 10 | Spawn `mactop` alongside `ffai bench`; capture CPU / GPU / memory / power / temperature samples to a sidecar; `--mactop-pin-fans` pins fans high for the bench window (requires sudo) so steady-state numbers aren't measured under thermal throttle. Design: [`bench-mactop-integration-design.md`](bench-mactop-integration-design.md). |
 
 ## Open performance & testing debt (flagged 2026-05-23)
