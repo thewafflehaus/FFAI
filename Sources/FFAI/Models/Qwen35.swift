@@ -2409,6 +2409,40 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
     }
 }
 
+// ─── ITER 76 (Bagel 2): finalNorm + lmHead fused dispatch helper ────
+//
+// Replaces the 2-dispatch chain `finalNorm(h)` + `lmHead(normed)` with
+// a single `Ops.rmsNormQgemvInt4Fast` dispatch when the lmHead's
+// underlying linear is a 4-bit `QuantizedLinear` that satisfies the
+// fast kernel's constraints (in_dim multiple of 512, out_dim multiple
+// of 8, group_size = 64). Falls back to the separate-chain form
+// otherwise (dense lmHead, int8/int3 quant, smaller vocab, etc.).
+//
+// One dispatch per token saved at the model output. The lmHead qmm
+// itself is the dominant cost (vocab × hidden), so this is modest as
+// a standalone fusion; the real value is establishing the wiring
+// pattern that future per-layer fusions (attn pre-norm + qkv proj)
+// will use.
+private func qwen35FinalNormLmHead(h: Tensor, finalNorm: RMSNorm,
+                                    lmHead: AnyLinear,
+                                    on cmd: MTLCommandBuffer) -> Tensor {
+    if let qLm = lmHead.inner as? QuantizedLinear, qLm.bits == 4,
+       qLm.groupSize == 64,
+       h.elementCount % 512 == 0,
+       qLm.weight.shape[0] % 8 == 0 {
+        let outDim = qLm.weight.shape[0]
+        let logits = Tensor.empty(shape: [outDim], dtype: h.dtype)
+        Ops.rmsNormQgemvInt4Fast(
+            x: h, normWeight: finalNorm.weight, eps: finalNorm.eps,
+            qWeight: qLm.weight, qScales: qLm.scales, qBiases: qLm.biases,
+            on: cmd, into: logits)
+        return logits
+    }
+    // Fallback: separate dispatches (legacy two-step).
+    let normed = finalNorm(h, on: cmd)
+    return lmHead(normed, on: cmd)
+}
+
 // ─── Shared FFN helpers ──────────────────────────────────────────────
 
 /// Collect the `(name, tensor)` parameters of a layer's FFN half.
@@ -2660,8 +2694,8 @@ public final class Qwen35Model: LanguageModel {
         }
 
         // Final norm + lm_head queue onto the caller's pristine `cmd`.
-        let normed = finalNorm(h, on: cmd)
-        return lmHead(normed, on: cmd)
+        return qwen35FinalNormLmHead(h: h, finalNorm: finalNorm,
+                                      lmHead: lmHead, on: cmd)
     }
 
     /// Like `forward(...)` but also returns hidden states. Used by the
