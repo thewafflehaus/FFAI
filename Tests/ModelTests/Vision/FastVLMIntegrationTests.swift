@@ -18,6 +18,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("FastVLM Vision Integration", .serialized)
 struct FastVLMIntegrationTests {
@@ -63,7 +64,7 @@ struct FastVLMIntegrationTests {
                                  count: vlm.imageTokenCount) + questionTokens
 
         // A real photograph — the golden-retriever fixture.
-        let image = try VLMTestSupport.dogImage()
+        let image = try VisionTestHelpers.dogImage()
 
         let generated = try vlm.generate(
             promptTokens: promptTokens, image: image,
@@ -74,6 +75,6 @@ struct FastVLMIntegrationTests {
                              label: "FastVLM image+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("FastVLM generated: \(text)")
-        VLMTestSupport.expectMentionsDog(text, label: "FastVLM")
+        VisionTestHelpers.expectMentionsDog(text, label: "FastVLM")
     }
 }

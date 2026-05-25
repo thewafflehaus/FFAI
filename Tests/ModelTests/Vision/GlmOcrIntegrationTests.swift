@@ -23,6 +23,7 @@ import CoreImage
 import CoreGraphics
 #endif
 @testable import FFAI
+import TestHelpers
 
 @Suite("GlmOcr Vision Integration", .serialized)
 struct GlmOcrIntegrationTests {

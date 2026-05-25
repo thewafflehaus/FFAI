@@ -20,6 +20,7 @@ import CoreImage
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("SmolVLM2 Vision Video Integration", .serialized)
 struct SmolVLM2VideoIntegrationTests {
@@ -85,7 +86,7 @@ struct SmolVLM2VideoIntegrationTests {
         let vc = smol.cfg.visionConfig
 
         // Decode `frameCount` evenly-spaced frames from cat.mp4.
-        let rawFrames = try VLMTestSupport.catVideoFrames(maxFrames: Self.frameCount)
+        let rawFrames = try VisionTestHelpers.catVideoFrames(maxFrames: Self.frameCount)
 
         // Convert each RGBImage → SmolVLM2 HWC Float32 (normalized).
         let pixelFrames: [[Float]] = rawFrames.map {
@@ -152,6 +153,6 @@ struct SmolVLM2VideoIntegrationTests {
                                        skipSpecialTokens: true)
         print("SmolVLM2 video generated: \(text)")
         #expect(!text.isEmpty, "generated text should be non-empty")
-        VLMTestSupport.expectMentionsCat(text, label: "SmolVLM2 video")
+        VisionTestHelpers.expectMentionsCat(text, label: "SmolVLM2 video")
     }
 }

@@ -14,6 +14,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Qwen3ASR Integration", .serialized)
 struct Qwen3ASRIntegrationTests {
@@ -21,7 +22,7 @@ struct Qwen3ASRIntegrationTests {
     /// Resolve the Qwen3-ASR checkpoint directory from the mlx-audio cache
     /// or the HF hub. Prefers the 0.6B-4bit variant for speed.
     private func loadModel() async throws -> Qwen3ASRModel {
-        let dir = try await AudioFixtures.resolveCheckpoint(
+        let dir = try await AudioTestHelpers.resolveCheckpoint(
             mlxAudioSlugs: [
                 "mlx-community_Qwen3-ASR-0.6B-4bit",
                 "mlx-community_Qwen3-ASR-0.6B-bf16",
@@ -97,12 +98,12 @@ struct Qwen3ASRIntegrationTests {
 
         // Load the bundled conversational speech fixture
         // (~13 s, 24 kHz source resampled to 16 kHz).
-        let wave = try AudioFixtures.conversationalAWaveform()
+        let wave = try AudioTestHelpers.conversationalAWaveform()
         #expect(!wave.isEmpty, "audio fixture failed to load")
 
         // We need a tokenizer — for Qwen3ASR checkpoints it lives in the
         // same directory as the weights. Resolve it from the same cache.
-        let dir = try await AudioFixtures.resolveCheckpoint(
+        let dir = try await AudioTestHelpers.resolveCheckpoint(
             mlxAudioSlugs: [
                 "mlx-community_Qwen3-ASR-0.6B-4bit",
                 "mlx-community_Qwen3-ASR-0.6B-bf16",

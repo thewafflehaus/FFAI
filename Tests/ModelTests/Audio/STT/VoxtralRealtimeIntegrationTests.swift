@@ -22,6 +22,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("VoxtralRealtime Integration", .serialized)
 struct VoxtralRealtimeIntegrationTests {
@@ -29,7 +30,7 @@ struct VoxtralRealtimeIntegrationTests {
     /// Resolve the Voxtral-Mini-4B checkpoint. Prefers the 4-bit variant
     /// for speed; falls back to 6-bit and fp16.
     private func loadModel() async throws -> VoxtralRealtimeModel {
-        let dir = try await AudioFixtures.resolveCheckpoint(
+        let dir = try await AudioTestHelpers.resolveCheckpoint(
             mlxAudioSlugs: [
                 "mlx-community_Voxtral-Mini-4B-Realtime-2602-4bit",
                 "mlx-community_Voxtral-Mini-4B-Realtime-6bit",
@@ -117,7 +118,7 @@ struct VoxtralRealtimeIntegrationTests {
         let model = try await loadModel()
 
         // Load the bundled conversational speech fixture (~13 s, 24 kHz resampled to 16 kHz).
-        let wave = try AudioFixtures.conversationalAWaveform()
+        let wave = try AudioTestHelpers.conversationalAWaveform()
         #expect(!wave.isEmpty, "audio fixture failed to load")
 
         let transcript = model.transcribe(waveform: wave, maxTokens: 256)

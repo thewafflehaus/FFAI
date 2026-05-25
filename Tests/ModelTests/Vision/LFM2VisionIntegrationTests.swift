@@ -17,6 +17,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("LFM2 Vision Integration", .serialized)
 struct LFM2VisionIntegrationTests {
@@ -59,7 +60,7 @@ struct LFM2VisionIntegrationTests {
                                  count: vlm.imageTokenCount) + questionTokens
 
         // The shared golden-retriever fixture.
-        let image = try VLMTestSupport.dogImage()
+        let image = try VisionTestHelpers.dogImage()
 
         let generated = try vlm.generate(
             promptTokens: promptTokens, image: image,
@@ -71,6 +72,6 @@ struct LFM2VisionIntegrationTests {
                              label: "LFM2-VL image+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("LFM2-VL generated: \(text)")
-        VLMTestSupport.expectMentionsDog(text, label: "LFM2-VL")
+        VisionTestHelpers.expectMentionsDog(text, label: "LFM2-VL")
     }
 }

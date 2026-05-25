@@ -12,6 +12,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("FFAI Inspect Smoke", .serialized)
 struct InspectSmokeTests {

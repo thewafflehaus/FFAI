@@ -14,6 +14,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("LlamaTTS Integration", .serialized)
 struct LlamaTTSIntegrationTests {
@@ -21,7 +22,7 @@ struct LlamaTTSIntegrationTests {
     /// Load LlamaTTS from the HF cache / network. Throws on failure so a
     /// missing checkpoint fails the test instead of skipping it.
     private func loadLlamaTTS() async throws -> LlamaTTSModel {
-        let dir = try await AudioFixtures.resolveCheckpoint(
+        let dir = try await AudioTestHelpers.resolveCheckpoint(
             repoIds: ["mlx-community/orpheus-3b-0.1-ft-4bit"])
         return try await ModelLoadLock.shared.loadSerially {
             try await LlamaTTSModel.load(directory: dir)

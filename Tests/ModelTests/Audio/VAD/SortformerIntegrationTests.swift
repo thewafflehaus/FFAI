@@ -22,6 +22,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Sortformer Integration", .serialized)
 struct SortformerIntegrationTests {
@@ -35,7 +36,7 @@ struct SortformerIntegrationTests {
     /// Load the Sortformer model, holding the global model-load lock.
     /// A load failure throws — it is NOT caught and skipped.
     private func loadSortformer() async throws -> SortformerModel {
-        let dir = try await AudioFixtures.resolveCheckpoint(
+        let dir = try await AudioTestHelpers.resolveCheckpoint(
             mlxAudioSlugs: [Self.mlxAudioSlug],
             repoIds: [Self.repoId])
         return try await ModelLoadLock.shared.loadSerially {
@@ -66,7 +67,7 @@ struct SortformerIntegrationTests {
         #expect(model.frameStride == expectedStride)
 
         // Run diarization on the bundled speech clip.
-        let audio = try AudioFixtures.clean001Waveform()
+        let audio = try AudioTestHelpers.clean001Waveform()
         #expect(!audio.isEmpty)
 
         let output = model.detect(audio: audio, sampleRate: 16_000)
@@ -124,7 +125,7 @@ struct SortformerIntegrationTests {
     @Test("diarization output wraps probsToSegments correctly")
     func segmentsRoundTrip() async throws {
         let model = try await loadSortformer()
-        let audio = try AudioFixtures.clean001Waveform()
+        let audio = try AudioTestHelpers.clean001Waveform()
         let output = model.detect(audio: audio, sampleRate: 16_000)
 
         // Every segment must reference a valid speaker index and have

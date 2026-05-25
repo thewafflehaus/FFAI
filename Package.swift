@@ -75,6 +75,19 @@ let package = Package(
             path: "Sources/FFAICLI"
         ),
 
+        // Shared test helpers (model-load lock, image / audio /
+        // checkpoint resolution, coherent-output + content-recognition
+        // assertions). Lives in its own target so both FFAITests and
+        // ModelTests can depend on it without source duplication.
+        // Uses only FFAI's public API — no `@testable` import.
+        // Fixtures live at `Tests/Resources/` and are resolved by the
+        // helpers via `#filePath`-relative paths (not SwiftPM bundles).
+        .target(
+            name: "TestHelpers",
+            dependencies: ["FFAI"],
+            path: "Tests/Helpers"
+        ),
+
         // Tests
         .testTarget(
             name: "MetalTileSwiftTests",
@@ -83,18 +96,13 @@ let package = Package(
         ),
         .testTarget(
             name: "FFAITests",
-            dependencies: ["FFAI"],
+            dependencies: ["FFAI", "TestHelpers"],
             path: "Tests/FFAITests"
         ),
         .testTarget(
             name: "ModelTests",
-            dependencies: ["FFAI"],
-            path: "Tests/ModelTests",
-            // `Resources/` holds test fixtures (the VLM dog image, audio
-            // clips) that the suites resolve by a `#filePath`-relative
-            // path — not through a SwiftPM resource bundle. Exclude the
-            // directory so the build does not warn about unhandled files.
-            exclude: ["Resources"]
+            dependencies: ["FFAI", "TestHelpers"],
+            path: "Tests/ModelTests"
         ),
     ]
 )

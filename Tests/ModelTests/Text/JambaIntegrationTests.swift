@@ -26,6 +26,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Jamba Integration", .serialized)
 struct JambaIntegrationTests {

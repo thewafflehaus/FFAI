@@ -23,6 +23,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("NemotronH Vision Integration", .serialized)
 struct NemotronHVisionIntegrationTests {
@@ -103,7 +104,7 @@ struct NemotronHVisionIntegrationTests {
                                  count: vlm.imageTokenCount) + questionTokens
 
         // A real photograph — the golden-retriever fixture.
-        let image = try VLMTestSupport.dogImage()
+        let image = try VisionTestHelpers.dogImage()
 
         let generated = try vlm.generate(
             promptTokens: promptTokens, image: image,
@@ -115,6 +116,6 @@ struct NemotronHVisionIntegrationTests {
                              label: "Nemotron-VLM image+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("Nemotron-VLM generated: \(text)")
-        VLMTestSupport.expectMentionsDog(text, label: "Nemotron-VLM")
+        VisionTestHelpers.expectMentionsDog(text, label: "Nemotron-VLM")
     }
 }

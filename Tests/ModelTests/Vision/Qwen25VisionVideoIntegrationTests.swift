@@ -15,6 +15,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Qwen25 Vision Video Integration", .serialized)
 struct Qwen25VisionVideoIntegrationTests {
@@ -55,7 +56,7 @@ struct Qwen25VisionVideoIntegrationTests {
         let videoTokenId = try #require(vlm.videoTokenId)
 
         // Pull `frameCount` evenly-spaced frames from cat.mp4.
-        let frames = try VLMTestSupport.catVideoFrames(maxFrames: Self.frameCount)
+        let frames = try VisionTestHelpers.catVideoFrames(maxFrames: Self.frameCount)
 
         // The merged-token-per-temporal-patch count is the same as one
         // image's merged token count — the vision tower repeats the
@@ -92,6 +93,6 @@ struct Qwen25VisionVideoIntegrationTests {
                              label: "Qwen 2.5-VL video+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("Qwen 2.5-VL video generated: \(text)")
-        VLMTestSupport.expectMentionsCat(text, label: "Qwen 2.5-VL video")
+        VisionTestHelpers.expectMentionsCat(text, label: "Qwen 2.5-VL video")
     }
 }

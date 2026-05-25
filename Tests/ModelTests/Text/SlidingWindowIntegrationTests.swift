@@ -17,6 +17,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Sliding Window KV Cache Integration", .serialized)
 struct SlidingWindowIntegrationTests {

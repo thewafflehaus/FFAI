@@ -16,6 +16,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Qwen35 Vision Integration", .serialized)
 struct Qwen35VisionIntegrationTests {
@@ -68,7 +69,7 @@ struct Qwen35VisionIntegrationTests {
                                  count: vlm.imageTokenCount) + questionTokens
 
         // A real photograph — the golden-retriever fixture.
-        let image = try VLMTestSupport.dogImage()
+        let image = try VisionTestHelpers.dogImage()
 
         let generated = try vlm.generate(
             promptTokens: promptTokens, image: image,
@@ -80,6 +81,6 @@ struct Qwen35VisionIntegrationTests {
                              label: "Qwen 3-VL-MoE image+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("Qwen 3-VL-MoE generated: \(text)")
-        VLMTestSupport.expectMentionsDog(text, label: "Qwen 3-VL-MoE")
+        VisionTestHelpers.expectMentionsDog(text, label: "Qwen 3-VL-MoE")
     }
 }

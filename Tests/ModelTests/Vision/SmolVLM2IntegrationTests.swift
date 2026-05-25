@@ -15,6 +15,7 @@ import CoreImage
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("SmolVLM2 Vision Integration", .serialized)
 struct SmolVLM2IntegrationTests {

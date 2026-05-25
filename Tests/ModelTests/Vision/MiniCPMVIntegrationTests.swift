@@ -15,6 +15,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("MiniCPMV Vision Integration", .serialized)
 struct MiniCPMVIntegrationTests {

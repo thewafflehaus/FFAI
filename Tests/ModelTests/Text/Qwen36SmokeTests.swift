@@ -10,6 +10,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 private let qwen36LocalPath = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
 private let qwen36CheckpointAvailable =

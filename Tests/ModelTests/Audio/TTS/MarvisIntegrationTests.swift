@@ -20,6 +20,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Marvis Integration", .serialized)
 struct MarvisIntegrationTests {
@@ -27,7 +28,7 @@ struct MarvisIntegrationTests {
     /// Load Marvis from the HF cache. Throws on failure so a missing
     /// checkpoint fails the test instead of skipping it.
     private func loadMarvis() async throws -> MarvisModel {
-        let dir = try await AudioFixtures.resolveCheckpoint(
+        let dir = try await AudioTestHelpers.resolveCheckpoint(
             mlxAudioSlugs: ["Marvis-AI_marvis-tts-250m-v0.2-MLX",
                             "Marvis-AI_marvis-tts-250m-v0.2-MLX-8bit"],
             repoIds: ["Marvis-AI/marvis-tts-250m-v0.2-MLX-4bit"])

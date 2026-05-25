@@ -16,6 +16,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("LFMAudio Integration", .serialized)
 struct LFMAudioIntegrationTests {
@@ -25,7 +26,7 @@ struct LFMAudioIntegrationTests {
     /// Load the LFMAudio model from the HF cache / network. Throws on failure
     /// so a missing checkpoint surfaces as a test failure, not a silent pass.
     private func loadLFMAudio() async throws -> LFMAudioModel {
-        let dir = try await AudioFixtures.resolveCheckpoint(
+        let dir = try await AudioTestHelpers.resolveCheckpoint(
             mlxAudioSlugs: [
                 "mlx-community_LFM2.5-Audio-1.5B-6bit",
                 "mlx-community_LFM2.5-Audio-1.5B-bf16"
@@ -110,8 +111,8 @@ struct LFMAudioIntegrationTests {
     func encodeAudio_realSpeech() async throws {
         let model = try await loadLFMAudio()
         // Bundled conversational speech fixture (~13 s, 24 kHz → 16 kHz).
-        let wave = try AudioFixtures.conversationalAWaveform()
-        #expect(!wave.isEmpty, "AudioFixtures.conversationalAWaveform() returned an empty array")
+        let wave = try AudioTestHelpers.conversationalAWaveform()
+        #expect(!wave.isEmpty, "AudioTestHelpers.conversationalAWaveform() returned an empty array")
 
         let features = model.encodeAudio(waveform: wave)
 
@@ -163,7 +164,7 @@ struct LFMAudioIntegrationTests {
 
     @Test("AudioModelRegistry.load — returns .lfmAudio case for LFMAudio checkpoint")
     func registryLoad_returnsLFMAudioCase() async throws {
-        let dir = try await AudioFixtures.resolveCheckpoint(
+        let dir = try await AudioTestHelpers.resolveCheckpoint(
             mlxAudioSlugs: [
                 "mlx-community_LFM2.5-Audio-1.5B-6bit",
                 "mlx-community_LFM2.5-Audio-1.5B-bf16"

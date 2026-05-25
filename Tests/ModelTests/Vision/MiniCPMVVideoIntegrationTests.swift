@@ -20,6 +20,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("MiniCPMV Vision Video Integration", .serialized)
 struct MiniCPMVVideoIntegrationTests {
@@ -65,7 +66,7 @@ struct MiniCPMVVideoIntegrationTests {
                                         "video_token_id must be set for video generation")
 
         // Decode `frameCount` evenly-spaced frames from cat.mp4.
-        let frames = try VLMTestSupport.catVideoFrames(maxFrames: Self.frameCount)
+        let frames = try VisionTestHelpers.catVideoFrames(maxFrames: Self.frameCount)
 
         // MiniCPM-V 4.6 video token count: frameCount × outputTokenCount
         // (no temporal folding — each frame maps 1:1 to a token run).
@@ -101,6 +102,6 @@ struct MiniCPMVVideoIntegrationTests {
                              label: "MiniCPM-V 4.6 video+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("MiniCPM-V 4.6 video generated: \(text)")
-        VLMTestSupport.expectMentionsCat(text, label: "MiniCPM-V 4.6 video")
+        VisionTestHelpers.expectMentionsCat(text, label: "MiniCPM-V 4.6 video")
     }
 }

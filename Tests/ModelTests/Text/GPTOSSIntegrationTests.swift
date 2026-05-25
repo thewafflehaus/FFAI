@@ -32,6 +32,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite(
     "GPTOSS Integration", .serialized,

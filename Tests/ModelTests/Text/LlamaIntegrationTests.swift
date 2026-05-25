@@ -9,6 +9,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Llama Integration", .serialized)
 struct LlamaIntegrationTests {

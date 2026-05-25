@@ -10,6 +10,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Qwen2 Text Integration", .serialized)
 struct Qwen2TextIntegrationTests {

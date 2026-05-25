@@ -8,7 +8,7 @@
 // image-token position, swaps the text embedding for the corresponding
 // vision feature. The integration path therefore:
 //   1. Load Model → engine downcasts to PaligemmaModel.
-//   2. Compute resize+CHW pixels via VLMTestSupport.dogImageCHW(targetSize:)
+//   2. Compute resize+CHW pixels via VisionTestHelpers.dogImageCHW(targetSize:)
 //      using SigLIP-style mean 0.5 / std 0.5 (PaliGemma normalization).
 //   3. Call pg.setImagePixels(pixels) once.
 //   4. Build promptTokens = [imageTokenId × 1024] + textTokens.
@@ -20,6 +20,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Paligemma Vision Integration", .serialized)
 struct PaligemmaIntegrationTests {
@@ -48,7 +49,7 @@ struct PaligemmaIntegrationTests {
 
         // Load + preprocess the dog fixture at PaliGemma's 448 resolution
         // with SigLIP normalization (mean 0.5 / std 0.5 per channel).
-        let pixels = try VLMTestSupport.dogImageCHWNormalized(
+        let pixels = try VisionTestHelpers.dogImageCHWNormalized(
             targetSize: 448, normalization: .siglip)
         #expect(pixels.count == 3 * 448 * 448)
         pg.setImagePixels(pixels)
@@ -107,7 +108,7 @@ struct PaligemmaIntegrationTests {
 
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("PaliGemma generated (\(generated.count) tokens): \(text)")
-        VLMTestSupport.expectMentionsDog(text, label: "PaliGemma")
+        VisionTestHelpers.expectMentionsDog(text, label: "PaliGemma")
     }
 }
 

@@ -33,6 +33,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("LlamaCompatibles Integration", .serialized)
 struct LlamaCompatiblesIntegrationTests {

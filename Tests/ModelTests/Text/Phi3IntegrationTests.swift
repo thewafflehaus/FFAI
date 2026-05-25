@@ -10,6 +10,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Phi Integration", .serialized)
 struct Phi3IntegrationTests {

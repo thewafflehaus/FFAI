@@ -17,6 +17,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Gemma4 Vision Integration", .serialized)
 struct Gemma4VisionIntegrationTests {
@@ -69,7 +70,7 @@ struct Gemma4VisionIntegrationTests {
                                  count: vlm.imageTokenCount) + questionTokens
 
         // A real photograph — the golden-retriever fixture.
-        let image = try VLMTestSupport.dogImage()
+        let image = try VisionTestHelpers.dogImage()
 
         let generated = try vlm.generate(
             promptTokens: promptTokens, image: image,
@@ -81,6 +82,6 @@ struct Gemma4VisionIntegrationTests {
                              label: "Gemma 4 VL image+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("Gemma 4 VL generated: \(text)")
-        VLMTestSupport.expectMentionsDog(text, label: "Gemma 4 VL")
+        VisionTestHelpers.expectMentionsDog(text, label: "Gemma 4 VL")
     }
 }

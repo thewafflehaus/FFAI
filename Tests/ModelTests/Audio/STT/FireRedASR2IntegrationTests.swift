@@ -18,6 +18,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("FireRedASR2 Integration", .serialized)
 struct FireRedASR2IntegrationTests {
@@ -27,7 +28,7 @@ struct FireRedASR2IntegrationTests {
     /// Load the FireRedASR2 model, resolving the checkpoint from the
     /// mlx-audio flat cache or HF hub.
     private func loadModel() async throws -> FireRedASR2Model {
-        let dir = try await AudioFixtures.resolveCheckpoint(
+        let dir = try await AudioTestHelpers.resolveCheckpoint(
             mlxAudioSlugs: [
                 "mlx-community_FireRedASR2-AED-mlx",
             ],
@@ -140,7 +141,7 @@ struct FireRedASR2IntegrationTests {
         let model = try await loadModel()
 
         // Bundled fixture: conversational_a.wav (~13 s, 24 kHz source resampled to 16 kHz).
-        let wave = try AudioFixtures.conversationalAWaveform()
+        let wave = try AudioTestHelpers.conversationalAWaveform()
         #expect(!wave.isEmpty, "audio fixture waveform is empty")
 
         // Use the model's bundled tokenizer (loaded from dict.txt).
@@ -184,7 +185,7 @@ struct FireRedASR2IntegrationTests {
 
     @Test("registry — AudioModelRegistry routes to .fireRedASR2")
     func registryRoutes() async throws {
-        let dir = try await AudioFixtures.resolveCheckpoint(
+        let dir = try await AudioTestHelpers.resolveCheckpoint(
             mlxAudioSlugs: ["mlx-community_FireRedASR2-AED-mlx"],
             repoIds: ["mlx-community/FireRedASR2-AED-mlx"]
         )

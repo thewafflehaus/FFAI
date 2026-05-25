@@ -11,6 +11,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("FFAI Determinism Smoke", .serialized)
 struct DeterminismSmokeTests {

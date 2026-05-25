@@ -17,6 +17,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Kokoro Integration", .serialized)
 struct KokoroIntegrationTests {
@@ -24,7 +25,7 @@ struct KokoroIntegrationTests {
     /// Load Kokoro from the HF cache. Throws on failure so a missing
     /// checkpoint fails the test instead of skipping it.
     private func loadKokoro() async throws -> KokoroModel {
-        let dir = try await AudioFixtures.resolveCheckpoint(
+        let dir = try await AudioTestHelpers.resolveCheckpoint(
             mlxAudioSlugs: ["mlx-community_Kokoro-82M-bf16"],
             repoIds: ["mlx-community/Kokoro-82M-4bit", "hexgrad/Kokoro-82M"])
         return try KokoroModel.load(directory: dir)

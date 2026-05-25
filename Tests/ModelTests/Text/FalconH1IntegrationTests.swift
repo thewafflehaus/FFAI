@@ -17,6 +17,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("FalconH1 Integration", .serialized)
 struct FalconH1IntegrationTests {

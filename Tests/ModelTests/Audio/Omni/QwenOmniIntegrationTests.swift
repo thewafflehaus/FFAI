@@ -13,6 +13,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("QwenOmni Integration", .serialized)
 struct QwenOmniIntegrationTests {
@@ -20,7 +21,7 @@ struct QwenOmniIntegrationTests {
     /// Load Qwen-Omni from the HF cache / network. Throws on failure so
     /// a missing checkpoint fails the test instead of skipping it.
     private func loadQwenOmni() async throws -> QwenOmniModel {
-        let dir = try await AudioFixtures.resolveCheckpoint(
+        let dir = try await AudioTestHelpers.resolveCheckpoint(
             repoIds: ["Qwen/Qwen2.5-Omni-3B"])
         return try await ModelLoadLock.shared.loadSerially {
             try QwenOmniModel.load(directory: dir)
@@ -64,7 +65,7 @@ struct QwenOmniIntegrationTests {
     func encodeAudio_realSpeech() async throws {
         let model = try await loadQwenOmni()
         // The bundled conversational speech fixture (~13 s, 24 kHz resampled to 16 kHz).
-        let wave = try AudioFixtures.conversationalAWaveform()
+        let wave = try AudioTestHelpers.conversationalAWaveform()
         #expect(!wave.isEmpty, "fixture waveform failed to load")
 
         let features = model.encodeAudio(waveform: wave)

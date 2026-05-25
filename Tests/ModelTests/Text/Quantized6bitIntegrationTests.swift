@@ -7,6 +7,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Qwen3 6-bit Integration", .serialized)
 struct Quantized6bitIntegrationTests {

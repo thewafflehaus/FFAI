@@ -11,6 +11,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Gemma3 Text Integration", .serialized)
 struct Gemma3TextIntegrationTests {

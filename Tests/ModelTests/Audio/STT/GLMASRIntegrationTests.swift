@@ -20,6 +20,7 @@ import Foundation
 import Testing
 import Tokenizers
 @testable import FFAI
+import TestHelpers
 
 @Suite("GLMASR Integration", .serialized)
 struct GLMASRIntegrationTests {
@@ -29,7 +30,7 @@ struct GLMASRIntegrationTests {
     /// Resolve the GLM-ASR-Nano checkpoint directory from the mlx-audio
     /// flat cache or HF hub.
     private func resolveDir() async throws -> URL {
-        try await AudioFixtures.resolveCheckpoint(
+        try await AudioTestHelpers.resolveCheckpoint(
             mlxAudioSlugs: [
                 "mlx-community_GLM-ASR-Nano-2512-4bit",
             ],
@@ -128,7 +129,7 @@ struct GLMASRIntegrationTests {
         let tokenizer = try await TokenizerLoader().load(from: dir)
 
         // Bundled fixture: conversational_a.wav (~13 s, 24 kHz source resampled to 16 kHz).
-        let wave = try AudioFixtures.conversationalAWaveform()
+        let wave = try AudioTestHelpers.conversationalAWaveform()
         #expect(!wave.isEmpty, "audio fixture waveform is empty")
 
         let transcript = model.transcribe(

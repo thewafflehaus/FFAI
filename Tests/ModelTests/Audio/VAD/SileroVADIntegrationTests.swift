@@ -13,6 +13,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("SileroVAD Integration", .serialized)
 struct SileroVADIntegrationTests {

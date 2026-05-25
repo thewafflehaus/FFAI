@@ -22,6 +22,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("NemotronH Text Integration", .serialized)
 struct NemotronHTextIntegrationTests {

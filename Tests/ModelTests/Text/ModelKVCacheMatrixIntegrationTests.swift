@@ -73,6 +73,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 // ─── Matrix axes ──────────────────────────────────────────────────────
 

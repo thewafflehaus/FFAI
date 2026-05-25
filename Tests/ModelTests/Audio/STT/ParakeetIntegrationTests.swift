@@ -15,6 +15,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Parakeet Integration", .serialized)
 struct ParakeetIntegrationTests {
@@ -94,7 +95,7 @@ struct ParakeetIntegrationTests {
     /// through `AudioPreprocessing.loadWaveform` so the 24 kHz source
     /// is resampled to 16 kHz for Parakeet's front-end.
     private func speechFixtureWaveform() -> [Float] {
-        if let wave = try? AudioFixtures.conversationalAWaveform(),
+        if let wave = try? AudioTestHelpers.conversationalAWaveform(),
            !wave.isEmpty {
             return wave
         }

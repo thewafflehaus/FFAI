@@ -1,28 +1,26 @@
-// Shared helper for ModelTests/*IntegrationTests.swift — asserts that
-// FFAI's greedy decode produced *coherent* output, independent of any
-// other implementation.
+// Text-side test helpers — coherent-output assertion shared by every
+// text / VLM / audio integration suite (any model that produces a
+// decoded token stream).
 //
-// Why not compare to mlx-lm / mlx-vlm goldens any more:
+// Why a "coherent" check and not a golden-fixture comparison:
 //
-//   The earlier `GoldenFixture` + `expectGoldenMatch` flow compared
-//   FFAI's token stream against mlx-lm's stream for the same prompt
-//   at temperature=0. That signal degraded as FFAI added kernels and
-//   features mlx-lm doesn't have (AURA, GDN, Mamba 2 hybrid layers,
-//   sinks-fused SDPA, …) — token-by-token parity vs another
-//   implementation became more a measure of how aligned our rounding
-//   modes happened to be with theirs (RoPE precision, RMSNorm epsilon,
-//   SDPA accumulator dtype) than a real correctness signal. The
-//   4-bit Qwen3 case hit 15/32 token match against mlx-lm; Llama 3.2
-//   1B fp16 hit 1/32. Neither indicates a bug in FFAI — they indicate
-//   that two reasonable implementations made different choices.
+//   An earlier `expectGoldenMatch` flow compared FFAI's token stream
+//   against mlx-lm's stream for the same prompt at temperature=0.
+//   That signal degraded as FFAI added kernels and features mlx-lm
+//   doesn't have (AURA, GDN, Mamba 2 hybrid layers, sinks-fused SDPA,
+//   …) — token-by-token parity vs another implementation became more
+//   a measure of how aligned our rounding modes happened to be (RoPE
+//   precision, RMSNorm epsilon, SDPA accumulator dtype) than a real
+//   correctness signal. Neither implementation has a bug — they made
+//   different reasonable choices.
 //
-//   Per-kernel correctness now comes from the metaltile-side GPU
-//   correctness tests under `crates/metaltile-std/tests/` (compared
-//   against a naive CPU oracle, much tighter than cross-impl
-//   comparison). The job of these integration tests is just to
-//   verify that the model pipeline — load, prefill, KV cache,
-//   sampling — produces coherent text on a real model. That's a
-//   meaningful signal that survives diverging from mlx-lm.
+//   Per-kernel correctness now comes from metaltile's GPU
+//   correctness tests (compared against a naive CPU oracle, much
+//   tighter than cross-impl comparison). The job of these
+//   integration tests is just to verify that the pipeline — load,
+//   prefill, KV cache, sampling — produces coherent text on a real
+//   model. That's a meaningful signal that survives diverging from
+//   mlx-lm.
 
 import Foundation
 import Testing
@@ -47,7 +45,7 @@ import Testing
 /// punctuation) should still pass.
 ///
 /// `label` is just for diagnostic messages; pass the model name.
-func expectCoherentOutput(
+public func expectCoherentOutput(
     _ tokens: [Int],
     minTokens: Int = 50,
     maxConsecutiveRepeat: Int = 5,
@@ -67,8 +65,6 @@ func expectCoherentOutput(
     }
 
     // No run of identical tokens longer than `maxConsecutiveRepeat`.
-    // Empty kernel / NaN logits / stuck argmax usually manifests as
-    // the same token repeated forever.
     var run = 1
     var prev = tokens[0]
     for (i, tok) in tokens.enumerated().dropFirst() {
@@ -83,8 +79,7 @@ func expectCoherentOutput(
         }
     }
 
-    // Token-diversity floor — catches alternating-cycle degenerate output
-    // (the empty-kernel-but-not-stuck-on-one-token failure mode).
+    // Token-diversity floor — catches alternating-cycle degenerate output.
     let unique = Set(tokens).count
     let ratio = Double(unique) / Double(tokens.count)
     guard ratio >= minUniqueRatio else {
@@ -100,4 +95,40 @@ func expectCoherentOutput(
     // produced (and spot quality regressions even when the floor passes).
     let pct = String(format: "%.0f%%", ratio * 100)
     print("COHERENT \(tag)tokens=\(tokens.count) unique=\(unique) (\(pct))")
+}
+
+/// Assert a decoded text contains every substring in `phrases` (case-
+/// and punctuation-insensitive). Useful for "the output should mention
+/// dog and golden" style assertions where exact wording varies by model.
+public func expectTextContains(
+    _ text: String,
+    _ phrases: [String],
+    label: String,
+    sourceLocation: SourceLocation = #_sourceLocation
+) {
+    let normalized = normalizeForMatch(text)
+    for phrase in phrases {
+        let needle = normalizeForMatch(phrase)
+        let comment = Comment(
+            rawValue: "\(label): expected to find \"\(phrase)\" in output: \(text)"
+        )
+        #expect(
+            normalized.contains(needle),
+            comment,
+            sourceLocation: sourceLocation
+        )
+    }
+}
+
+/// Normalise a string for loose phrase matching: lowercase, strip
+/// punctuation, collapse whitespace. Used by `expectTextContains` and
+/// the STT phrase-match assertion in AudioTestHelpers.
+public func normalizeForMatch(_ text: String) -> String {
+    let lowered = text.lowercased()
+    let punct: Set<Character> = [".", ",", "!", "?", ";", ":", "\"", "'", "`",
+                                 "—", "–", "(", ")", "[", "]", "{", "}"]
+    let stripped = lowered.filter { !punct.contains($0) }
+    // Collapse all whitespace runs to a single space.
+    let parts = stripped.split(whereSeparator: { $0.isWhitespace })
+    return parts.joined(separator: " ")
 }

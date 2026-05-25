@@ -15,6 +15,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Mistral3 Vision Integration", .serialized)
 struct Mistral3IntegrationTests {
@@ -71,7 +72,7 @@ struct Mistral3IntegrationTests {
                                  count: vlm.imageTokenCount) + questionTokens
 
         // The golden-retriever fixture shared by all VLM tests.
-        let image = try VLMTestSupport.dogImage()
+        let image = try VisionTestHelpers.dogImage()
 
         let generated = try vlm.generate(
             promptTokens: promptTokens, image: image,
@@ -84,6 +85,6 @@ struct Mistral3IntegrationTests {
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("Mistral3 generated: \(text)")
         // Content gate: the caption should mention a dog.
-        VLMTestSupport.expectMentionsDog(text, label: "Mistral3")
+        VisionTestHelpers.expectMentionsDog(text, label: "Mistral3")
     }
 }

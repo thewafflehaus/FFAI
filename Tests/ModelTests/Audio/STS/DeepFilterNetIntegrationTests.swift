@@ -11,9 +11,10 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 /// Synthetic clean audio fixture for offline 48 kHz path — separate
-/// from the shared `AudioFixtures` in `Tests/ModelTests/AudioFixtures.swift`
+/// from the shared `AudioFixtures` in `Tests/ModelTests/AudioTestHelpers.swift`
 /// (which loads the 16 kHz `clean_001.wav` for STT). DeepFilterNet
 /// operates at 48 kHz, so it uses this synthetic sine instead.
 enum DeepFilterNetFixtures {

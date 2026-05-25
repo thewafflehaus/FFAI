@@ -23,6 +23,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Gemma4 Text Integration", .serialized)
 struct Gemma4TextIntegrationTests {

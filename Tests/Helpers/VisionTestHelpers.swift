@@ -1,53 +1,38 @@
-// Shared helpers for the vision-language model integration tests.
+// Vision-side test helpers — image / video fixtures + content-recognition
+// assertions shared by every VLM integration suite.
 //
 // Every VLM family's "image + text" test feeds the same real photograph
-// — `Resources/dog.jpeg`, a golden retriever — and asserts the decoded
-// caption mentions a dog. Centralizing the image load here keeps the six
-// family test files in lock-step and gives a single, precise failure
-// message if the fixture goes missing.
+// (`Tests/Resources/dog.jpeg`, a golden retriever) and asserts the decoded
+// caption mentions a dog. Centralising the image load here keeps every
+// family test in lock-step and gives a single precise failure message
+// if the fixture goes missing.
 //
-// The video helpers below decode `Resources/cat.mp4` to ordered RGB
-// frames via AVFoundation. They're consumed by:
-//   • single-frame VLM tests today (`catVideoFirstFrame()`) — exercises
-//     the AVFoundation extraction path on every VLM run
-//   • the future multi-frame `encode(frames:)` integration tests
-//     (`catVideoFrames(maxFrames:)`) — tracked under #142 (the video-
-//     inference port across Qwen2VL/Qwen25VL/Qwen3VL/Qwen3VLMoe/
-//     MiniCPMV/SmolVLM2/QwenOmni; FFAI's vision towers currently take
-//     one image and replicate it `temporal_patch_size` times)
+// The video helpers below decode `Tests/Resources/cat.mp4` to ordered
+// RGB frames via AVFoundation — `catVideoFirstFrame()` for single-frame
+// VLM tests (the AVFoundation extraction path runs on every VLM run);
+// `catVideoFrames(maxFrames:)` for multi-frame `encode(frames:)`
+// integration tests.
 
 import AVFoundation
 import CoreGraphics
 import Foundation
 import Testing
-@testable import FFAI
+import FFAI
 
-enum VLMTestSupport {
+public enum VisionTestHelpers {
 
-    /// Absolute path to a file under `Tests/ModelTests/Resources/`.
-    ///
-    /// `Tests/ModelTests/` has no SwiftPM resource bundle, so the fixture
-    /// is resolved relative to this source file's location at compile
-    /// time via `#filePath` — robust to the working directory the test
-    /// runner happens to use.
-    static func resourceURL(_ name: String,
-                            file: StaticString = #filePath) -> URL {
-        URL(fileURLWithPath: "\(file)")
-            .deletingLastPathComponent()
-            .appendingPathComponent("Resources")
-            .appendingPathComponent(name)
-    }
+    // MARK: - Image fixtures (dog.jpeg)
 
     /// Load the shared golden-retriever test photo as an `RGBImage`.
     /// Fails the calling test (rather than skipping) if the fixture is
     /// missing or undecodable — the image is checked into the repo, so a
     /// miss is a real breakage.
-    static func dogImage() throws -> RGBImage {
+    public static func dogImage() throws -> RGBImage {
         let url = resourceURL("dog.jpeg")
         do {
             return try RGBImage.load(contentsOf: url)
         } catch {
-            let message = "VLM tests: failed to load dog.jpeg fixture: \(error)"
+            let message = "VisionTestHelpers: failed to load dog.jpeg fixture: \(error)"
             Issue.record(Comment(rawValue: message))
             throw error
         }
@@ -55,13 +40,13 @@ enum VLMTestSupport {
 
     /// Load the dog fixture, resize to `targetSize × targetSize`, and
     /// return a planar **CHW** float array — the layout PaliGemma /
-    /// SigLIP-style towers consume directly. No mean/std normalization is
-    /// applied here (each caller picks its own); pixels are in `[0,1]`.
+    /// SigLIP-style towers consume directly. No mean/std normalisation
+    /// is applied here (each caller picks its own); pixels are in `[0,1]`.
     ///
-    /// `count = 3 * targetSize * targetSize`. CPU-only — the dog image is
-    /// small, this helper is dwarfed by the rest of the vision encoder
-    /// cost, so a simple bilinear resize is fine.
-    static func dogImageCHW(targetSize: Int) throws -> [Float] {
+    /// `count = 3 * targetSize * targetSize`. CPU-only — the dog image
+    /// is small, this helper is dwarfed by the rest of the vision
+    /// encoder cost, so a simple bilinear resize is fine.
+    public static func dogImageCHW(targetSize: Int) throws -> [Float] {
         let img = try dogImage()
         let resized = ImagePreprocessing.resize(
             img, targetW: targetSize, targetH: targetSize)
@@ -80,11 +65,11 @@ enum VLMTestSupport {
     }
 
     /// Same as `dogImageCHW(targetSize:)` but applies per-channel
-    /// normalization in the same pass. Use this when the family expects
+    /// normalisation in the same pass. Use this when the family expects
     /// CLIP-mean (`[0.48145466, 0.4578275, 0.40821073]`) /
     /// CLIP-std (`[0.26862954, 0.26130258, 0.27577711]`) or its own
-    /// ImageNormalization preset.
-    static func dogImageCHWNormalized(
+    /// `ImageNormalization` preset.
+    public static func dogImageCHWNormalized(
         targetSize: Int, normalization: ImageNormalization
     ) throws -> [Float] {
         var pixels = try dogImageCHW(targetSize: targetSize)
@@ -102,37 +87,35 @@ enum VLMTestSupport {
 
     // MARK: - Video fixtures (cat.mp4)
 
-    /// Decode the first frame of `Resources/cat.mp4` as an `RGBImage`.
-    /// Used by every VLM today (one frame fed through the existing
-    /// single-image `encode(image:)` path); will be superseded by
-    /// `catVideoFrames(...)` once the multi-frame video-inference port
-    /// (task #142) lands per-model.
-    static func catVideoFirstFrame() throws -> RGBImage {
+    /// Decode the first frame of `cat.mp4` as an `RGBImage`. Used by
+    /// every VLM today (one frame fed through the existing single-image
+    /// `encode(image:)` path); multi-frame callers use
+    /// `catVideoFrames(maxFrames:)` instead.
+    public static func catVideoFirstFrame() throws -> RGBImage {
         let frames = try catVideoFrames(maxFrames: 1)
         guard let first = frames.first else {
-            throw VLMTestSupportError.videoDecodeFailed(
+            throw VisionTestHelpersError.videoDecodeFailed(
                 "cat.mp4 decoded to zero frames")
         }
         return first
     }
 
-    /// Decode up to `maxFrames` evenly-spaced frames from
-    /// `Resources/cat.mp4` as `[RGBImage]` in display order. AVFoundation
-    /// reads cleanly from h.264 / HEVC / ProRes mp4s on Apple Silicon
-    /// without any extra framework dependency. Asks for `maxFrames`
-    /// timestamps spaced over the asset's duration; clips to actual
-    /// frame count if the clip is shorter than requested.
+    /// Decode up to `maxFrames` evenly-spaced frames from `cat.mp4` as
+    /// `[RGBImage]` in display order. AVFoundation reads cleanly from
+    /// h.264 / HEVC / ProRes mp4s on Apple Silicon without any extra
+    /// framework dependency. Asks for `maxFrames` timestamps spaced
+    /// over the asset's duration; clips to actual frame count if the
+    /// clip is shorter than requested.
     ///
     /// Fails the calling test if AVFoundation can't decode the asset —
-    /// the file is checked in, so a miss is a real breakage (e.g. the
-    /// fixture got truncated / replaced).
-    static func catVideoFrames(maxFrames: Int) throws -> [RGBImage] {
+    /// the file is checked in, so a miss is a real breakage.
+    public static func catVideoFrames(maxFrames: Int) throws -> [RGBImage] {
         precondition(maxFrames > 0, "maxFrames must be positive")
         let url = resourceURL("cat.mp4")
         let asset = AVURLAsset(url: url)
         let durationSecs = CMTimeGetSeconds(asset.duration)
         guard durationSecs.isFinite, durationSecs > 0 else {
-            throw VLMTestSupportError.videoDecodeFailed(
+            throw VisionTestHelpersError.videoDecodeFailed(
                 "cat.mp4 has invalid duration \(durationSecs)")
         }
 
@@ -140,7 +123,7 @@ enum VLMTestSupport {
         generator.appliesPreferredTrackTransform = true
         // Tight tolerance so the timestamps land on real frames, not
         // interpolated approximations — relevant for the multi-frame
-        // path once the video-inference port (#142) ships.
+        // `encode(frames:)` path.
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
 
@@ -167,7 +150,7 @@ enum VLMTestSupport {
             }
         }
         guard !frames.isEmpty else {
-            throw VLMTestSupportError.videoDecodeFailed(
+            throw VisionTestHelpersError.videoDecodeFailed(
                 "cat.mp4 — AVAssetImageGenerator returned no frames")
         }
         return frames
@@ -190,7 +173,7 @@ enum VLMTestSupport {
                       bytesPerRow: bytesPerRow,
                       space: colorSpace, bitmapInfo: bitmapInfo)
         }) else {
-            throw VLMTestSupportError.videoDecodeFailed(
+            throw VisionTestHelpersError.videoDecodeFailed(
                 "CGContext init failed for \(w)x\(h)")
         }
         ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
@@ -209,37 +192,46 @@ enum VLMTestSupport {
         return RGBImage(width: w, height: h, pixels: pixels)
     }
 
+    // MARK: - Content-recognition assertions
+
     /// Assert a decoded VLM caption actually describes the dog photo.
-    /// Mirrors the mlx-swift-lm VLM benchmark check: a lowercased
-    /// substring match on "dog" — wide enough to accept "dog", "Golden
-    /// Retriever" → no, but "puppy"/"canine" callers add their own — the
-    /// single-word "dog" anchor is the agreed contract.
-    static func expectMentionsDog(_ text: String, label: String,
-                                  sourceLocation: SourceLocation = #_sourceLocation) {
+    /// Lowercased substring match on "dog" — wide enough to accept
+    /// "dog", "Golden Retriever" (no) but "puppy"/"canine" callers add
+    /// their own; the single-word "dog" anchor is the agreed contract.
+    public static func expectMentionsDog(
+        _ text: String, label: String,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
         let lowered = text.lowercased()
+        let comment = Comment(
+            rawValue: "\(label): caption should mention a dog — got: \(text)")
         #expect(lowered.contains("dog"),
-                "\(label): caption should mention a dog — got: \(text)",
+                comment,
                 sourceLocation: sourceLocation)
     }
 
     /// Assert a decoded VLM caption describes the cat video frame.
     /// Accepts either "cat" or "kitten" — model verbosity varies.
-    static func expectMentionsCat(_ text: String, label: String,
-                                  sourceLocation: SourceLocation = #_sourceLocation) {
+    public static func expectMentionsCat(
+        _ text: String, label: String,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
         let lowered = text.lowercased()
+        let comment = Comment(
+            rawValue: "\(label): caption should mention a cat — got: \(text)")
         #expect(lowered.contains("cat") || lowered.contains("kitten"),
-                "\(label): caption should mention a cat — got: \(text)",
+                comment,
                 sourceLocation: sourceLocation)
     }
 }
 
-enum VLMTestSupportError: Error, CustomStringConvertible {
+public enum VisionTestHelpersError: Error, CustomStringConvertible {
     case videoDecodeFailed(String)
 
-    var description: String {
+    public var description: String {
         switch self {
         case .videoDecodeFailed(let msg):
-            return "VLMTestSupport video decode failed: \(msg)"
+            return "VisionTestHelpers video decode failed: \(msg)"
         }
     }
 }

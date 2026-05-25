@@ -12,6 +12,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("SenseVoice Integration", .serialized)
 struct SenseVoiceIntegrationTests {
@@ -19,7 +20,7 @@ struct SenseVoiceIntegrationTests {
     /// Load SenseVoiceSmall from the HF cache / network. Throws on
     /// failure so a missing checkpoint fails the test.
     private func loadSenseVoice() async throws -> SenseVoiceModel {
-        let dir = try await AudioFixtures.resolveCheckpoint(
+        let dir = try await AudioTestHelpers.resolveCheckpoint(
             repoIds: ["mlx-community/SenseVoiceSmall"])
         return try SenseVoiceModel.load(directory: dir)
     }
@@ -81,7 +82,7 @@ struct SenseVoiceIntegrationTests {
     func transcribe_realSpeech() async throws {
         let model = try await loadSenseVoice()
         // The bundled conversational speech fixture (~13 s, 24 kHz resampled to 16 kHz).
-        let wave = try AudioFixtures.conversationalAWaveform()
+        let wave = try AudioTestHelpers.conversationalAWaveform()
         #expect(!wave.isEmpty, "fixture waveform failed to load")
 
         let tokens = model.transcribeTokens(waveform: wave)
@@ -104,7 +105,7 @@ struct SenseVoiceIntegrationTests {
 
     @Test("registry — SenseVoice routes through the audio registry")
     func registry_routesSenseVoice() async throws {
-        let dir = try await AudioFixtures.resolveCheckpoint(
+        let dir = try await AudioTestHelpers.resolveCheckpoint(
             repoIds: ["mlx-community/SenseVoiceSmall"])
         let loaded = try await AudioModelRegistry.load(directory: dir)
         guard case .senseVoice = loaded else {

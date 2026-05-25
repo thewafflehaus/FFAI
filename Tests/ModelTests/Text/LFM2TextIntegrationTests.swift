@@ -20,6 +20,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("LFM2 Text Integration", .serialized)
 struct LFM2TextIntegrationTests {

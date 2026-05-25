@@ -14,11 +14,12 @@
 // DO NOT RUN — this suite requires multi-GB checkpoint files.
 // Run via `make test-integration`.
 //
-// A missing checkpoint FAILS the suite (throws AudioFixtureError).
+// A missing checkpoint FAILS the suite (throws AudioTestHelpersError).
 
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("CohereTranscribe Integration", .serialized)
 struct CohereTranscribeIntegrationTests {
@@ -39,7 +40,7 @@ struct CohereTranscribeIntegrationTests {
         // root. After ModelLocator resolves the snapshot dir, descend
         // into that subdir so `CohereTranscribeModel.load(directory:)`
         // sees the standard `<dir>/config.json` layout it expects.
-        let snapshot = try await AudioFixtures.resolveCheckpoint(
+        let snapshot = try await AudioTestHelpers.resolveCheckpoint(
             mlxAudioSlugs: [
                 "mlx-community_cohere-transcribe-03-2026-mlx-8bit",
                 "mlx-community_c4ai-aya-expanse-transcribe-mlx",
@@ -138,7 +139,7 @@ struct CohereTranscribeIntegrationTests {
         let model = try await loadModel()
 
         // Bundled fixture: conversational_a.wav (~13 s, 24 kHz source resampled to 16 kHz).
-        let wave = try AudioFixtures.conversationalAWaveform()
+        let wave = try AudioTestHelpers.conversationalAWaveform()
         #expect(!wave.isEmpty, "audio fixture waveform is empty")
 
         guard let tok = model.tokenizer else {

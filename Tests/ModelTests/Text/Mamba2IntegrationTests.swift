@@ -10,6 +10,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Mamba2 Integration", .serialized)
 struct Mamba2IntegrationTests {

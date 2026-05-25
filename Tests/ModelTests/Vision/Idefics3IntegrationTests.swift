@@ -15,6 +15,7 @@ import CoreImage
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Idefics3 Vision Integration", .serialized)
 struct Idefics3IntegrationTests {

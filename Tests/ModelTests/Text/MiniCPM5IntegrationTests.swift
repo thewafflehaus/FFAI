@@ -17,6 +17,7 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("MiniCPM5 Integration", .serialized)
 struct MiniCPM5IntegrationTests {
