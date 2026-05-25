@@ -43,7 +43,23 @@ public enum MiniCPMV4_6 {
 
     /// `image_token_id` default for MiniCPM-V-4.6 checkpoints — the
     /// placeholder the chat template emits for each image.
+    /// Source: `openbmb/MiniCPM-V-4.6` config.json `image_token_id`.
     public static let defaultImageTokenId = 248056
+
+    /// `video_token_id` default for MiniCPM-V-4.6 checkpoints — the
+    /// placeholder the chat template emits for each video frame token.
+    /// Source: `openbmb/MiniCPM-V-4.6` config.json `video_token_id`
+    /// (value 248057; declared separately from image_token_id).
+    public static let defaultVideoTokenId = 248057
+
+    /// Capabilities a MiniCPM-V-4.6 checkpoint exposes. Text + image +
+    /// video — MiniCPM-V-4.6 encodes each video frame as an independent
+    /// image through the same SigLIP2 vision tower, producing
+    /// `outputTokenCount` merged tokens per frame. The video splice
+    /// concatenates the per-frame token runs and substitutes them at the
+    /// `video_token_id` placeholder positions.
+    public static let availableCapabilities: Set<Capability> =
+        Capability.textOnly.union([.visionIn, .videoIn])
 
     /// Runtime tile resolution for the v1 path. 448 = 32×32 patches at
     /// `patch_size: 14`; `vit_merger` (2,2) → 16×16; `merger` (2,2) →
@@ -95,9 +111,12 @@ public enum MiniCPMV4_6 {
             device: device)
 
         let imageTokenId = config.int("image_token_id") ?? defaultImageTokenId
+        let videoTokenId = config.int("video_token_id") ?? defaultVideoTokenId
         return try VLModel(
             visionEncoder: composed, engine: textEngine,
-            imageTokenId: imageTokenId, normalization: .siglip,
+            imageTokenId: imageTokenId,
+            videoTokenId: videoTokenId,
+            normalization: .siglip,
             imageTokenCount: composed.outputTokenCount)
     }
 }
@@ -668,6 +687,61 @@ final class MiniCPMVComposedEncoder: VisionEncoder {
             vitMerger: vitMerger, merger: merger,
             insertLayerId: insertLayerId, initialGridSide: runtimeGridSide,
             outputTokenCount: outputTokens, dtype: patchW.dtype)
+    }
+
+    /// Number of text-stream tokens a batch of `frameCount` video frames
+    /// produces. Each frame is encoded independently through the same
+    /// SigLIP2 + vit_merger + merger stack as a single image, yielding
+    /// `outputTokenCount` merged tokens. The video splice concatenates
+    /// all per-frame runs, so the total is `frameCount × outputTokenCount`.
+    func mergedTokenCount(frameCount: Int) -> Int {
+        frameCount * outputTokenCount
+    }
+
+    /// Encode a sequence of video frames into a single
+    /// `[frameCount × outputTokenCount, textHidden]` token tensor.
+    ///
+    /// MiniCPM-V-4.6 processes each frame independently through the same
+    /// SigLIP2 + vit_merger + merger path as a single image (unlike Qwen
+    /// 2/2.5/3 VL which folds frames into a temporal-patch axis at the
+    /// conv stem). The per-frame `[outputTokenCount, textHidden]` slices
+    /// are concatenated along dim 0 to form the video token stream.
+    ///
+    /// Precondition: every frame must be `[1, 3, imageSize, imageSize]`
+    /// — the caller should preprocess with `ImagePreprocessing.preprocess`
+    /// at `config.imageSize` before calling this method.
+    override func encode(frames: [Tensor], device: Device = .shared) throws -> Tensor {
+        precondition(!frames.isEmpty,
+                     "MiniCPMVComposedEncoder.encode(frames:): expected at least one frame")
+        let expectedShape = [1, config.inChannels, config.imageSize, config.imageSize]
+        for (i, frame) in frames.enumerated() {
+            precondition(frame.shape == expectedShape,
+                         "MiniCPMVComposedEncoder.encode(frames:): frame[\(i)] shape "
+                         + "\(frame.shape) ≠ \(expectedShape)")
+        }
+
+        // Encode each frame independently — reuse the single-image path.
+        // Each call returns [outputTokenCount, textHidden].
+        let perFrameTokens = frames.map { encode(image: $0, device: device) }
+
+        // Concatenate along the token axis (dim 0).
+        // The result is [frames.count × outputTokenCount, textHidden].
+        let textHidden = config.textHidden
+        let rowsPerFrame = outputTokenCount
+        let totalRows = frames.count * rowsPerFrame
+        let out = Tensor.empty(shape: [totalRows, textHidden],
+                               dtype: perFrameTokens[0].dtype, device: device)
+        let rowBytes = textHidden * perFrameTokens[0].dtype.byteSize
+        for (fi, ft) in perFrameTokens.enumerated() {
+            // Blit each [outputTokenCount, textHidden] slice into the
+            // output tensor at the correct row offset.
+            let srcPtr = ft.buffer.contents()
+                .advanced(by: ft.offset)
+            let dstPtr = out.buffer.contents()
+                .advanced(by: out.offset + fi * rowsPerFrame * rowBytes)
+            dstPtr.copyMemory(from: srcPtr, byteCount: rowsPerFrame * rowBytes)
+        }
+        return out
     }
 
     /// Override `VisionEncoder.encode` to inject `vit_merger` mid-stack

@@ -849,7 +849,18 @@ public final class SmolVLM2Connector: Module {
 // ─── Dense variant ───────────────────────────────────────────────────────────
 
 public struct SmolVLM2Dense {
-    public static let availableCapabilities: Set<Capability> = [.textIn, .textOut, .visionIn]
+    /// Capabilities a SmolVLM2 checkpoint exposes. Text + image + video.
+    ///
+    /// SmolVLM2 does not declare a separate `video_token_id` in its
+    /// config — the HF checkpoint (SmolVLM2-500M-Video-Instruct) reuses
+    /// the same `<image>` placeholder (id 49190) for both image and video
+    /// frames. Each video frame is encoded as an independent image through
+    /// the SigLIP ViT + pixel-shuffle connector, producing
+    /// `nPatches / scaleFactor²` tokens per frame. The caller should build
+    /// a prompt with `frameCount × imageTokensPerFrame` image-token
+    /// placeholders, then pass the concatenated per-frame embeddings to
+    /// `SmolVLM2Model.prefillWithImage`.
+    public static let availableCapabilities: Set<Capability> = [.textIn, .textOut, .visionIn, .videoIn]
     public static let defaultGenerationParameters = GenerationParameters(
         maxTokens: 256,
         prefillStepSize: 1024,
@@ -1065,6 +1076,50 @@ public final class SmolVLM2Model: LanguageModel {
         precondition(imageEmbeds.count == nImageTokens * cfg.textConfig.hiddenSize,
                      "SmolVLM2: image embeds shape mismatch")
         return imageEmbeds
+    }
+
+    /// Number of text-stream tokens one video frame contributes to the
+    /// prompt. Equals `nPatches / scaleFactor²` where
+    /// `nPatches = (imageSize / patchSize)²`.
+    ///
+    /// SmolVLM2 does not use a separate video token id — each frame is
+    /// encoded as an independent image using the same `<image>` placeholder
+    /// (cfg.imageTokenId). The caller should place
+    /// `frameCount × imageTokensPerFrame` consecutive image-token
+    /// placeholders in the prompt before calling `encodeVideoFrames`.
+    public var imageTokensPerFrame: Int {
+        let vc = cfg.visionConfig
+        let nPatches = (vc.imageSize / vc.patchSize) * (vc.imageSize / vc.patchSize)
+        return nPatches / (cfg.scaleFactor * cfg.scaleFactor)
+    }
+
+    /// Encode a sequence of video frames and return the concatenated
+    /// visual-feature embeddings ready for `prefillWithImage`.
+    ///
+    /// Each `pixels` element is a `[height * width * 3]` Float32 array
+    /// (HWC, values in [-1, 1] after SmolVLM2 normalization). Returns a
+    /// flat `[frameCount × imageTokensPerFrame × textHidden]` Float32
+    /// array suitable for direct use with `prefillWithImage`.
+    ///
+    /// SmolVLM2 encodes each frame independently through the same SigLIP
+    /// ViT + pixel-shuffle connector as a single image (unlike Qwen
+    /// 2/2.5/3 VL which folds frames into a temporal-patch axis). The
+    /// per-frame `[imageTokensPerFrame × textHidden]` embedding slices
+    /// are concatenated in display order.
+    public func encodeVideoFrames(
+        frames: [[Float]],
+        height: Int, width: Int
+    ) -> [Float] {
+        precondition(!frames.isEmpty,
+                     "SmolVLM2Model.encodeVideoFrames: expected at least one frame")
+        // Encode each frame independently — reuse the single-image path.
+        var allEmbeds: [Float] = []
+        allEmbeds.reserveCapacity(frames.count * imageTokensPerFrame * cfg.textConfig.hiddenSize)
+        for pixels in frames {
+            let frameEmbeds = encodeImage(pixels: pixels, height: height, width: width)
+            allEmbeds.append(contentsOf: frameEmbeds)
+        }
+        return allEmbeds
     }
 
     /// Prefill the KV cache with a mixed sequence of text tokens and image embeddings.
