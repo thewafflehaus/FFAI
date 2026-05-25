@@ -26,7 +26,12 @@ For porting a new architecture, see
 | Family | File | `model_type` | `architectures` | Variants |
 |---|---|---|---|---|
 | **Llama 3.x** | [`Models/Text/Llama.swift`](../Sources/FFAI/Models/Text/Llama.swift) | `llama` | `LlamaForCausalLM` | `LlamaDense` |
-| **Llama-compatible zoo** | [`Models/Text/LlamaCompatibles.swift`](../Sources/FFAI/Models/Text/LlamaCompatibles.swift) | `smollm`, `olmo2`, `starcoder2`, `internlm2`, … | (various — all Llama-shaped) | reuses the Llama loader |
+| **SmolLM 1/2/3** | [`Models/SmolLM.swift`](../Sources/FFAI/Models/SmolLM.swift) | `smollm`, `smollm2`, `smollm3` | `SmolLM{,2,3}ForCausalLM` | reuses the Llama loader |
+| **OLMo 1/2** | [`Models/OLMo.swift`](../Sources/FFAI/Models/OLMo.swift) | `olmo`, `olmo2` | `Olmo{,2}ForCausalLM` | reuses the Llama loader |
+| **Granite 3** | [`Models/Granite3.swift`](../Sources/FFAI/Models/Granite3.swift) | `granite` | `GraniteForCausalLM` | IBM Granite v3 dense; reuses the Llama loader |
+| **Yi** | [`Models/Yi.swift`](../Sources/FFAI/Models/Yi.swift) | `yi` | `YiForCausalLM` | reuses the Llama loader |
+| **InternLM 2** | [`Models/InternLM2.swift`](../Sources/FFAI/Models/InternLM2.swift) | `internlm2` | `InternLM2ForCausalLM` | reuses the Llama loader |
+| **Starcoder 2** | [`Models/Starcoder2.swift`](../Sources/FFAI/Models/Starcoder2.swift) | `starcoder2` | `Starcoder2ForCausalLM` | reuses the Llama loader |
 | **Qwen 2** | [`Models/Text/Qwen2Text.swift`](../Sources/FFAI/Models/Text/Qwen2Text.swift) | `qwen2` | `Qwen2ForCausalLM` | reuses the Llama loader |
 | **Qwen 3** | [`Models/Text/Qwen3Text.swift`](../Sources/FFAI/Models/Text/Qwen3Text.swift) | `qwen3` | `Qwen3ForCausalLM` | `Qwen3Dense` |
 | **Mistral** | [`Models/Text/Mistral.swift`](../Sources/FFAI/Models/Text/Mistral.swift) | `mistral` | `MistralForCausalLM` | reuses the Llama loader |

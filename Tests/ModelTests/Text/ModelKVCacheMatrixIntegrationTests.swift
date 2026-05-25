@@ -144,7 +144,8 @@ enum MatrixCatalog {
     /// Families whose engine honors the full scheme set. Everything
     /// else gets `[.raw]`.
     private static let fullSchemeFamilies: Set<String> = [
-        "Llama", "Qwen2", "Mistral", "Phi", "LlamaCompatibles",
+        "Llama", "Qwen2", "Mistral", "Phi", "SmolLM", "OLMo",
+        "Granite3", "Starcoder2", "InternLM2", "Yi",
         "DeepSeekR1Distill", "Qwen3", "NemotronDiffusion",
     ]
 
@@ -189,20 +190,21 @@ enum MatrixCatalog {
         MatrixModel(family: "Phi", id: "mlx-community/Phi-3-mini-4k-instruct-4bit",
                     weightBits: 4, alwaysRun: true),
 
-        // Llama-compatible zoo — all flow through the Llama loader.
-        MatrixModel(family: "LlamaCompatibles", id: "mlx-community/SmolLM2-360M-Instruct-bf16",
+        // Llama-compatible zoo — each family has its own root file but
+        // they all flow through the Llama loader.
+        MatrixModel(family: "SmolLM", id: "mlx-community/SmolLM2-360M-Instruct-bf16",
                     weightBits: 16, alwaysRun: true),
-        MatrixModel(family: "LlamaCompatibles", id: "mlx-community/SmolLM-360M-Instruct-bf16",
+        MatrixModel(family: "SmolLM", id: "mlx-community/SmolLM-360M-Instruct-bf16",
                     weightBits: 16, alwaysRun: false),
-        MatrixModel(family: "LlamaCompatibles", id: "mlx-community/SmolLM3-3B-bf16",
+        MatrixModel(family: "SmolLM", id: "mlx-community/SmolLM3-3B-bf16",
                     weightBits: 16, alwaysRun: false),
-        MatrixModel(family: "LlamaCompatibles", id: "mlx-community/OLMo-2-0425-1B-Instruct-bf16",
+        MatrixModel(family: "OLMo", id: "mlx-community/OLMo-2-0425-1B-Instruct-bf16",
                     weightBits: 16, alwaysRun: false),
-        MatrixModel(family: "LlamaCompatibles", id: "mlx-community/Starcoder2-3B-bf16",
+        MatrixModel(family: "Starcoder2", id: "mlx-community/Starcoder2-3B-bf16",
                     weightBits: 16, alwaysRun: false),
-        MatrixModel(family: "LlamaCompatibles", id: "mlx-community/granite-3.0-2b-instruct-bf16",
+        MatrixModel(family: "Granite3", id: "mlx-community/granite-3.0-2b-instruct-bf16",
                     weightBits: 16, alwaysRun: false),
-        MatrixModel(family: "LlamaCompatibles", id: "mlx-community/internlm2-chat-1_8b-bf16",
+        MatrixModel(family: "InternLM2", id: "mlx-community/internlm2-chat-1_8b-bf16",
                     weightBits: 16, alwaysRun: false),
 
         // DeepSeek-R1 distills — Qwen2 / Llama architectures.
