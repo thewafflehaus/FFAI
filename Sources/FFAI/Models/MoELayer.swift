@@ -642,45 +642,66 @@ public final class MoELayer: Module, DecoderLayer {
                 inputs: ins, expertIndices: idxs, outputs: outs0,
                 groupSize: stacked.groupSize, on: cmd)
 
-            // Phase 1b: batched 8-slot SwiGLU on shared encoder.
+            // ITER 94 (Bagel 2): fuse phase 1b (swigluMany), phase 2
+            // (8 down indexed-gemvs), and phase 3 (scalarFMAChain8) into
+            // ONE dispatch via `ffai_moe_down_swiglu_accum_int4_chain8`.
+            // Per-slot `inner` is staged in 3 KiB threadgroup memory
+            // inside the kernel, never spilling to global memory.
+            //
+            // Kernel constraint: `moeIntermediate <= 768`. Qwen3.6-A3B has
+            // exactly 768 so this matches; fall back to the 3-dispatch
+            // chain for any larger MoE configs.
             let gs = Array(expertGScratches.prefix(router.topK))
             let us = Array(expertUScratches.prefix(router.topK))
-            let inners = Array(expertInnerScratches.prefix(router.topK))
-            Ops.swigluMany(gates: gs, ups: us, outs: inners, on: cmd)
-
-            // Phase 2: 8 down calls on second encoder.
-            var dws: [Tensor] = [], dss: [Tensor] = [], dbs: [Tensor] = []
-            var dins: [Tensor] = [], didxs: [Tensor] = [], douts: [Tensor] = []
-            dws.reserveCapacity(router.topK)
-            dss.reserveCapacity(router.topK)
-            dbs.reserveCapacity(router.topK)
-            dins.reserveCapacity(router.topK)
-            didxs.reserveCapacity(router.topK)
-            douts.reserveCapacity(router.topK)
-            for slot in 0..<router.topK {
-                dws.append(stacked.downWeight); dss.append(stacked.downScales); dbs.append(stacked.downBiases)
-                dins.append(expertInnerScratches[slot])
-                didxs.append(expertIdxScratches[slot])
-                douts.append(expertOutScratches[slot])
-            }
-            Ops.dequantGemvInt4ExpertIndexedMany(
-                weightsStacked: dws, scalesStacked: dss, biasesStacked: dbs,
-                inputs: dins, expertIndices: didxs, outputs: douts,
-                groupSize: stacked.groupSize, on: cmd)
-
-            // Phase 3 chain8 — fused 8-way weighted accumulator reading
-            // per-slot scalar from router's GPU weights buffer. Writes
-            // acc directly (no read), so no zero-pass needed.
-            var scalars: [Tensor] = []
-            scalars.reserveCapacity(router.topK)
-            for slot in 0..<router.topK {
-                scalars.append(Tensor(buffer: routerWeightsScratch!.buffer,
-                                       offset: routerWeightsScratch!.offset + slot * h.dtype.byteSize,
-                                       shape: [1], dtype: h.dtype))
-            }
-            let outs = Array(expertOutScratches.prefix(router.topK))
             let acc = accumulatorScratch!
-            Ops.scalarFMAChain8(scalars: scalars, values: outs, out: acc, on: cmd)
+            if router.topK == 8
+                && stacked.moeIntermediate <= 768
+                && stacked.groupSize == 64 {
+                Ops.moeDownSwigluAccumInt4Chain8(
+                    gates: gs, ups: us,
+                    expertIndices: routerIndicesScratch!,
+                    slotWeights: routerWeightsScratch!,
+                    weightsStacked: stacked.downWeight,
+                    scalesStacked: stacked.downScales,
+                    biasesStacked: stacked.downBiases,
+                    output: acc,
+                    inDim: stacked.moeIntermediate,
+                    outDim: hidden,
+                    groupSize: stacked.groupSize,
+                    on: cmd)
+            } else {
+                // Legacy 3-dispatch chain (Phase 1b + 2 + 3) for configs
+                // outside the fused kernel envelope.
+                let inners = Array(expertInnerScratches.prefix(router.topK))
+                Ops.swigluMany(gates: gs, ups: us, outs: inners, on: cmd)
+                var dws: [Tensor] = [], dss: [Tensor] = [], dbs: [Tensor] = []
+                var dins: [Tensor] = [], didxs: [Tensor] = [], douts: [Tensor] = []
+                dws.reserveCapacity(router.topK)
+                dss.reserveCapacity(router.topK)
+                dbs.reserveCapacity(router.topK)
+                dins.reserveCapacity(router.topK)
+                didxs.reserveCapacity(router.topK)
+                douts.reserveCapacity(router.topK)
+                for slot in 0..<router.topK {
+                    dws.append(stacked.downWeight); dss.append(stacked.downScales); dbs.append(stacked.downBiases)
+                    dins.append(expertInnerScratches[slot])
+                    didxs.append(expertIdxScratches[slot])
+                    douts.append(expertOutScratches[slot])
+                }
+                Ops.dequantGemvInt4ExpertIndexedMany(
+                    weightsStacked: dws, scalesStacked: dss, biasesStacked: dbs,
+                    inputs: dins, expertIndices: didxs, outputs: douts,
+                    groupSize: stacked.groupSize, on: cmd)
+                var scalars: [Tensor] = []
+                scalars.reserveCapacity(router.topK)
+                for slot in 0..<router.topK {
+                    scalars.append(Tensor(buffer: routerWeightsScratch!.buffer,
+                                           offset: routerWeightsScratch!.offset + slot * h.dtype.byteSize,
+                                           shape: [1], dtype: h.dtype))
+                }
+                let outs = Array(expertOutScratches.prefix(router.topK))
+                Ops.scalarFMAChain8(scalars: scalars, values: outs, out: acc, on: cmd)
+            }
 
             // Commit cmd without wait — preserves the caller contract
             // (caller starts a fresh cmd for residual-add / shared

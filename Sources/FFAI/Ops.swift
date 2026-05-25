@@ -1681,6 +1681,153 @@ public enum Ops {
     }
 
     /// Backwards-compatible 4-bit alias.
+    /// ITER 94 (Bagel 2): fused MoE phase 1b + phase 2 + phase 3 in ONE
+    /// kernel launch.
+    ///
+    /// Today's GPU-router path (`MoELayer.decode`, `FFAI_MOE_GPU_ROUTER=1`,
+    /// default-on as of ITER 80) runs three back-to-back dispatches per
+    /// MoE layer:
+    /// 1. `swigluMany`               — `inner[k][i] = silu(gate[k][i]) * up[k][i]`
+    /// 2. `dequantGemvInt4ExpertIndexedMany` (down)
+    ///                                — `out[k]    = W_down[expert_idx[k]] · inner[k]`
+    /// 3. `scalarFMAChain8`          — `acc[i]    = Σ_k slot_weight[k] · out[k][i]`
+    ///
+    /// `ffai_moe_down_swiglu_accum_int4_chain8` collapses all three into
+    /// one dispatch. Each threadgroup owns one output row of `[hidden]`,
+    /// iterates the 8 slots sequentially: stages `inner` in 3 KiB
+    /// threadgroup memory, runs the dequant-gemv inner-product against
+    /// `W_down[expert_idx[k]]` for that slot, accumulates into a
+    /// per-thread `acc` with the slot scalar baked in, then reduce-sums
+    /// across threads at the end.
+    ///
+    /// Constraints:
+    /// - `in_dim` (moeIntermediate) MUST be ≤ 768. Kernel TG-memory
+    ///   alloc is hardcoded at 768 floats (3 KiB). Caller validates.
+    /// - `group_size` MUST be 64.
+    /// - TPG = 128. Grid = `[out_dim · TPG, 1, 1]` (one TG per output
+    ///   row).
+    /// - Each of `gate_k` / `up_k` is `[in_dim]` in the model dtype.
+    /// - `expert_indices` is `[8] u32`. `slot_weights` is `[8] T`.
+    /// - `weights_stacked` is `[n_experts, out_dim, in_dim/8]` u32-packed.
+    /// - `scales_stacked` / `biases_stacked` are
+    ///   `[n_experts, out_dim, in_dim/group_size]` T.
+    /// - `output` is `[out_dim]` T.
+    public static func moeDownSwigluAccumInt4Chain8(
+        gates: [Tensor],          // 8 tensors, each [moeIntermediate]
+        ups: [Tensor],            // 8 tensors, each [moeIntermediate]
+        expertIndices: Tensor,    // [8] u32
+        slotWeights: Tensor,      // [8] T
+        weightsStacked: Tensor,   // [nExperts, hidden, moeIntermediate/8] u32
+        scalesStacked: Tensor,    // [nExperts, hidden, moeIntermediate/groupSize] T
+        biasesStacked: Tensor,    // [nExperts, hidden, moeIntermediate/groupSize] T
+        output: Tensor,           // [hidden] T
+        inDim: Int,               // moeIntermediate
+        outDim: Int,              // hidden
+        groupSize: Int = 64,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(gates.count == 8 && ups.count == 8,
+                     "moeDownSwigluAccumInt4Chain8: k must be 8 (got \(gates.count) gates, \(ups.count) ups)")
+        precondition(inDim <= 768,
+                     "moeDownSwigluAccumInt4Chain8: in_dim must be ≤ 768 (kernel TG-mem alloc), got \(inDim)")
+        precondition(groupSize == 64,
+                     "moeDownSwigluAccumInt4Chain8: group_size must be 64, got \(groupSize)")
+        precondition(expertIndices.dtype == .u32 && expertIndices.elementCount == 8,
+                     "moeDownSwigluAccumInt4Chain8: expert_indices must be [8] u32")
+        precondition(slotWeights.dtype == output.dtype && slotWeights.elementCount == 8,
+                     "moeDownSwigluAccumInt4Chain8: slot_weights must be [8] matching output dtype")
+        precondition(output.elementCount == outDim,
+                     "moeDownSwigluAccumInt4Chain8: output must be [out_dim]")
+        let tpg = 128
+        let grid = MTLSize(width: outDim * tpg, height: 1, depth: 1)
+        let tg = MTLSize(width: tpg, height: 1, depth: 1)
+        switch output.dtype {
+        case .f32:
+            MetalTileKernels.ffai_moe_down_swiglu_accum_int4_chain8_f32(
+                gate_0: gates[0].buffer, gate_0Offset: gates[0].offset,
+                up_0: ups[0].buffer, up_0Offset: ups[0].offset,
+                gate_1: gates[1].buffer, gate_1Offset: gates[1].offset,
+                up_1: ups[1].buffer, up_1Offset: ups[1].offset,
+                gate_2: gates[2].buffer, gate_2Offset: gates[2].offset,
+                up_2: ups[2].buffer, up_2Offset: ups[2].offset,
+                gate_3: gates[3].buffer, gate_3Offset: gates[3].offset,
+                up_3: ups[3].buffer, up_3Offset: ups[3].offset,
+                gate_4: gates[4].buffer, gate_4Offset: gates[4].offset,
+                up_4: ups[4].buffer, up_4Offset: ups[4].offset,
+                gate_5: gates[5].buffer, gate_5Offset: gates[5].offset,
+                up_5: ups[5].buffer, up_5Offset: ups[5].offset,
+                gate_6: gates[6].buffer, gate_6Offset: gates[6].offset,
+                up_6: ups[6].buffer, up_6Offset: ups[6].offset,
+                gate_7: gates[7].buffer, gate_7Offset: gates[7].offset,
+                up_7: ups[7].buffer, up_7Offset: ups[7].offset,
+                expert_indices: expertIndices.buffer, expert_indicesOffset: expertIndices.offset,
+                slot_weights: slotWeights.buffer, slot_weightsOffset: slotWeights.offset,
+                weights_stacked: weightsStacked.buffer, weights_stackedOffset: weightsStacked.offset,
+                scales_stacked: scalesStacked.buffer, scales_stackedOffset: scalesStacked.offset,
+                biases_stacked: biasesStacked.buffer, biases_stackedOffset: biasesStacked.offset,
+                output: output.buffer, outputOffset: output.offset,
+                in_dim: UInt32(inDim), out_dim: UInt32(outDim),
+                group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.ffai_moe_down_swiglu_accum_int4_chain8_f16(
+                gate_0: gates[0].buffer, gate_0Offset: gates[0].offset,
+                up_0: ups[0].buffer, up_0Offset: ups[0].offset,
+                gate_1: gates[1].buffer, gate_1Offset: gates[1].offset,
+                up_1: ups[1].buffer, up_1Offset: ups[1].offset,
+                gate_2: gates[2].buffer, gate_2Offset: gates[2].offset,
+                up_2: ups[2].buffer, up_2Offset: ups[2].offset,
+                gate_3: gates[3].buffer, gate_3Offset: gates[3].offset,
+                up_3: ups[3].buffer, up_3Offset: ups[3].offset,
+                gate_4: gates[4].buffer, gate_4Offset: gates[4].offset,
+                up_4: ups[4].buffer, up_4Offset: ups[4].offset,
+                gate_5: gates[5].buffer, gate_5Offset: gates[5].offset,
+                up_5: ups[5].buffer, up_5Offset: ups[5].offset,
+                gate_6: gates[6].buffer, gate_6Offset: gates[6].offset,
+                up_6: ups[6].buffer, up_6Offset: ups[6].offset,
+                gate_7: gates[7].buffer, gate_7Offset: gates[7].offset,
+                up_7: ups[7].buffer, up_7Offset: ups[7].offset,
+                expert_indices: expertIndices.buffer, expert_indicesOffset: expertIndices.offset,
+                slot_weights: slotWeights.buffer, slot_weightsOffset: slotWeights.offset,
+                weights_stacked: weightsStacked.buffer, weights_stackedOffset: weightsStacked.offset,
+                scales_stacked: scalesStacked.buffer, scales_stackedOffset: scalesStacked.offset,
+                biases_stacked: biasesStacked.buffer, biases_stackedOffset: biasesStacked.offset,
+                output: output.buffer, outputOffset: output.offset,
+                in_dim: UInt32(inDim), out_dim: UInt32(outDim),
+                group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.ffai_moe_down_swiglu_accum_int4_chain8_bf16(
+                gate_0: gates[0].buffer, gate_0Offset: gates[0].offset,
+                up_0: ups[0].buffer, up_0Offset: ups[0].offset,
+                gate_1: gates[1].buffer, gate_1Offset: gates[1].offset,
+                up_1: ups[1].buffer, up_1Offset: ups[1].offset,
+                gate_2: gates[2].buffer, gate_2Offset: gates[2].offset,
+                up_2: ups[2].buffer, up_2Offset: ups[2].offset,
+                gate_3: gates[3].buffer, gate_3Offset: gates[3].offset,
+                up_3: ups[3].buffer, up_3Offset: ups[3].offset,
+                gate_4: gates[4].buffer, gate_4Offset: gates[4].offset,
+                up_4: ups[4].buffer, up_4Offset: ups[4].offset,
+                gate_5: gates[5].buffer, gate_5Offset: gates[5].offset,
+                up_5: ups[5].buffer, up_5Offset: ups[5].offset,
+                gate_6: gates[6].buffer, gate_6Offset: gates[6].offset,
+                up_6: ups[6].buffer, up_6Offset: ups[6].offset,
+                gate_7: gates[7].buffer, gate_7Offset: gates[7].offset,
+                up_7: ups[7].buffer, up_7Offset: ups[7].offset,
+                expert_indices: expertIndices.buffer, expert_indicesOffset: expertIndices.offset,
+                slot_weights: slotWeights.buffer, slot_weightsOffset: slotWeights.offset,
+                weights_stacked: weightsStacked.buffer, weights_stackedOffset: weightsStacked.offset,
+                scales_stacked: scalesStacked.buffer, scales_stackedOffset: scalesStacked.offset,
+                biases_stacked: biasesStacked.buffer, biases_stackedOffset: biasesStacked.offset,
+                output: output.buffer, outputOffset: output.offset,
+                in_dim: UInt32(inDim), out_dim: UInt32(outDim),
+                group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.moeDownSwigluAccumInt4Chain8: unsupported dtype \(output.dtype)")
+        }
+    }
+
     /// ITER 86 / 88 (Bagel 2): fused Q/K/V int4 dequant-QMM in ONE
     /// dispatch for M > 1 (batched prefill). M=1 sibling:
     /// `Ops.batchedQkvQgemvInt4Fast` (ITER 78). Same kernel family —
