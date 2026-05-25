@@ -1,9 +1,9 @@
-// Qwen3 family — Qwen3 dense (Phase 2.5). Future variants land here:
+// Qwen3 family — Qwen3 dense. Future variants land here:
 //
-//   Qwen3.5 hybrid (GDN + attention)   — Phase 4 alongside the GDN kernels
-//   Qwen3.5 MoE                        — Phase 4
-//   Qwen3.5-VL (vision)                — Phase 6
-//   Qwen3.5-Omni (vision + audio)      — Phase 7+
+//   Qwen3.5 hybrid (GDN + attention)   — alongside the GDN kernels
+//   Qwen3.5 MoE                        — 
+//   Qwen3.5-VL (vision)                — 
+//   Qwen3.5-Omni (vision + audio)      — planned
 //
 // The protocol + per-variant struct convention is established now even
 // with a single dense variant, so adding 3.5 hybrid/MoE later is a
@@ -29,7 +29,7 @@ public protocol Qwen3Variant {
     /// Generation defaults for this variant. The user can override any
     /// field; absent overrides fall back to the values declared here.
     /// See planning/roadmap.md for which fields are honored today vs
-    /// staged for Phase 5+ (sampling kernels).
+    /// staged for planned (sampling kernels).
     static var defaultGenerationParameters: GenerationParameters { get }
     static func loadModel(
         config: ModelConfig,
@@ -57,7 +57,7 @@ public struct Qwen3Dense: Qwen3Variant {
     /// values (temp 0.6, top-p 0.95, top-k 20, min-p 0.0,
     /// rep-penalty 1.0) and a 1024-token prefill chunk for dense
     /// attention. Qwen 3.5 hybrid / MoE will declare their own when
-    /// those variants land in Phase 5.
+    /// those variants land in planned.
     public static let defaultGenerationParameters = GenerationParameters(
         maxTokens: 256,
         prefillStepSize: 1024,
@@ -354,7 +354,7 @@ public final class Qwen3Layer: Module {
 
     /// Apply RMSNorm independently to each head's [head_dim] slice of a
     /// flat [nHeads * headDim] tensor via a single multi-row dispatch
-    /// (Ops.rmsNormRows). Phase 4 collapse from one-launch-per-head.
+    /// (Ops.rmsNormRows). collapse from one-launch-per-head.
     private func applyPerHeadRMSNorm(
         _ x: Tensor, weight: Tensor, eps: Float,
         nHeads: Int, headDim: Int,
@@ -646,7 +646,7 @@ public final class Qwen3Model: LanguageModel {
         return logits
     }
 
-    /// Chunked multi-token forward — Phase 6.6 prefill fast path. See
+    /// Chunked multi-token forward — prefill fast path. See
     /// `LlamaModel.forwardMulti` for the design notes; Qwen3's layer
     /// fast path differs only in the per-head q_norm / k_norm step.
     public func forwardMulti(tokenIds: [Int], startingAt position: Int,

@@ -6,7 +6,7 @@
 // either uses it as-is, mutates fields on it, or constructs their own.
 //
 // The shipped greedy decode path consumes `maxTokens`, `stopOnEOS`, and
-// (in Phase 5+) `prefillStepSize`. Sampling fields (`temperature`, `topP`,
+// (in planned) `prefillStepSize`. Sampling fields (`temperature`, `topP`,
 // `topK`, `minP`, `repetitionPenalty`, `presencePenalty`) are wired through
 // the API surface today but only take effect once GPU sampling kernels land
 // — see planning/roadmap.md. Declaring them now keeps `GenerationParameters`
@@ -36,10 +36,10 @@ public struct GenerationParameters: Sendable, Equatable {
     /// generic, 2048 GPT-OSS, 4096 Gemma 4 / Qwen 3.5 MoE — the values
     /// `mlx-swift-lm` benched). Explicit non-nil value overrides the
     /// engine default. Used as the chunk size in
-    /// `Generate.driveGeneration` (the Phase 6.6 chunked-prefill path).
+    /// `Generate.driveGeneration` (the chunked-prefill path).
     public var prefillStepSize: Int?
 
-    // ─── Sampling (Phase 5; no-op today on the greedy path) ──────────
+    // ─── Sampling (planned; no-op today on the greedy path) ──────────
 
     /// Softmax temperature. `0` = greedy argmax. Wired through but only
     /// honored once GPU sampling kernels ship; the current decode path

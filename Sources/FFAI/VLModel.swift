@@ -9,7 +9,7 @@
 //
 // This file is the family-agnostic core: the splice + a self-contained
 // greedy generate. Each VL family file (Gemma3VL, Qwen25VL, …) builds a
-// `VLModel` from its checkpoint — a `VisionEncoder` (Phase 6.5
+// `VLModel` from its checkpoint — a `VisionEncoder` (.5
 // `VisionEncoder.swift`) plus the already-shipped text engine — and
 // declares its image-placeholder token id.
 //
@@ -246,7 +246,7 @@ public final class VLModel: @unchecked Sendable {
     /// positions), then decodes `maxTokens` tokens greedily.
     ///
     /// Returns the generated token ids. Coherence-first: this is the
-    /// minimal path the Phase 6.5 integration tests exercise; sampling
+    /// minimal path the integration tests exercise; sampling
     /// filters / streaming are a later pass — the text-only `Generate`
     /// already has them and `VLModel` will route through it once the
     /// engine grows a public embedding-prefill entry point.

@@ -1,6 +1,6 @@
 // Mamba 2 family — selective-SSM / hybrid backbone.
 //
-// Phase 5e ships the dense decode path:
+// ships the dense decode path:
 //   - one MTLCommandBuffer per token (same single-commit shape as Llama)
 //   - constant-memory recurrent state via `Mamba2LayerCache`
 //   - n_groups=1 only (B / C tensors shared across heads). Grouped B/C

@@ -1,4 +1,4 @@
-// GraniteMoeHybrid family — a Phase 5e *stack-interleaved hybrid* model
+// GraniteMoeHybrid family — a *stack-interleaved hybrid* model
 // with a mixture-of-experts feed-forward block.
 //
 // GraniteMoeHybrid (IBM's Granite 4.0 "-H" series — H-350M / H-1B /
@@ -1009,7 +1009,7 @@ public final class GraniteMoeHybridModel: LanguageModel {
         return logits
     }
 
-    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
+    /// Multi-token forward — prefill fast path. Loops
     /// `forward(tokenId:)` per row on the supplied `cmd`.
     ///
     /// GraniteMoeHybrid interleaves Mamba 2 + MoE-FFN + attention

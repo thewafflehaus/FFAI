@@ -83,7 +83,7 @@ public protocol LanguageModel: Module {
     /// files override it with a chunked path that batches the QKV
     /// projection + a single `Ops.sdpaMulti(causal: true)` dispatch +
     /// batched MLP, eliminating the per-token kernel-launch and
-    /// command-buffer overhead. That override is the Phase 6.6 TTFT
+    /// command-buffer overhead. That override is the TTFT
     /// win on long prompts; the default loop is correct-but-slow.
     ///
     /// `tokenIds.isEmpty == false` is a precondition (an empty chunk

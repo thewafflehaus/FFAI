@@ -6,7 +6,7 @@
 // with the checkpoint's per-channel mean/std, and laid out NCHW. This
 // file does that on the CPU — the cost is negligible next to the
 // transformer forward, and keeping it CPU-side avoids a Metal round-trip
-// for what is fundamentally a one-shot setup step (Phase 6.5 spec:
+// for what is fundamentally a one-shot setup step (spec:
 // "CPU initially; Metal later if it shows up in profiles").
 //
 // The output is a `Tensor` in the model's activation dtype, ready to

@@ -1054,7 +1054,7 @@ public final class SmolVLM2Model: LanguageModel {
 
     /// Multi-token forward — delegates to LlamaModel's optimised
     /// chunked path. SmolVLM2's text backbone is a LlamaModel, so the
-    /// text-only AR prefill picks up the full Phase 6.6 TTFT win
+    /// text-only AR prefill picks up the full TTFT win
     /// (batched Ops.gemm projections + one Ops.sdpaMulti per layer)
     /// for free. The vision-prefill image-substitution path stays as
     /// its own per-token routine.

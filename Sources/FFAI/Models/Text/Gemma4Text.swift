@@ -1,4 +1,4 @@
-// Gemma 4 family — Google's Gemma 4 text decoder. A Phase 6 dense /
+// Gemma 4 family — Google's Gemma 4 text decoder. A dense /
 // PLE / MoE attention family. Three checkpoint shapes ship under the
 // single `gemma4` / `gemma4_text` model_type, distinguished by config:
 //
@@ -1690,7 +1690,7 @@ public final class Gemma4Model: LanguageModel {
         return lmHead(normed, on: cmd)
     }
 
-    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
+    /// Multi-token forward — prefill fast path. Loops
     /// `forward(tokenId:)` per row on the supplied `cmd`.
     ///
     /// Gemma 4 mixes sliding-window vs full attention (every-other-

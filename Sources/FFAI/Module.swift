@@ -1,6 +1,6 @@
 // Module protocol — minimal interface every model layer implements.
 //
-// Phase 2: just parameter discovery + weight loading. No autograd, no
+// Initial cut: just parameter discovery + weight loading. No autograd, no
 // state-dict serialization. Adding more later as needs arise.
 
 import Foundation

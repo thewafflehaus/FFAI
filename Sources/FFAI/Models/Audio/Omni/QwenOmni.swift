@@ -7,11 +7,11 @@
 //   image   ──vision encoder──▶ image tokens ─┼─▶ text backbone ──▶ text
 //   text    ──token embed──────▶ text tokens ─┘
 //
-// ## Scope (Phase 7)
+// ## Scope
 //
 // This file wires the **audio-in path**: a Whisper-style `AudioEncoder`
 // turns a waveform into audio feature tokens in the backbone's hidden
-// dim. The vision path is Phase 6.5 infrastructure (`VisionEncoder`)
+// dim. The vision path is infrastructure (`VisionEncoder`)
 // and is scaffolded but not spliced here — Qwen-VL's dynamic-resolution
 // tower is a separate port. The text backbone is the existing Qwen3
 // engine; QwenOmni composes it rather than reimplementing it.
@@ -20,7 +20,7 @@
 // `[nAudioTokens, textHidden]` features a caller splices into a Qwen3
 // prompt's embedding stream.
 //
-// ## TODO — Phase F.10 follow-up: video inference
+// ## TODO — follow-up: video inference
 //
 // Qwen-Omni supports video input upstream (it composes Qwen 2.5-VL's
 // dynamic-resolution vision tower with the omni text backbone). FFAI's
@@ -147,7 +147,7 @@ public enum QwenOmniError: Error, CustomStringConvertible {
 }
 
 /// A loaded QwenOmni model. Owns the audio encoder (always available —
-/// the FFAI Phase 7 contribution) and, when wired, the text backbone +
+/// the FFAI contribution) and, when wired, the text backbone +
 /// vision tower.
 public final class QwenOmniModel: @unchecked Sendable {
     public let config: QwenOmniAudioConfig

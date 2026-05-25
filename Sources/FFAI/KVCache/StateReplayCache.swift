@@ -1,5 +1,5 @@
 // StateReplayCache — protocol shared by every "recurrent + replay"
-// per-layer cache. Speculative decoding (Phase 8) commits N tokens
+// per-layer cache. Speculative decoding commits N tokens
 // optimistically, then rolls back to the longest accepted prefix if
 // any failed. For attention layers, rollback is trivial (drop K/V
 // rows past the accepted index). For recurrent layers (Mamba 2,
@@ -19,7 +19,7 @@
 // Mamba 2 (which keeps state in a fixed [nHeads, stateDim, headDim]
 // tensor and just zeroes on rollback). The full delta-tape
 // implementation lands with the gated_delta / ssm_replay kernel ports
-// in Phase 5e.
+// in plannede.
 
 import Foundation
 import Metal
@@ -69,7 +69,7 @@ extension SSMStateCache: StateReplayCache {
     public var bytesInUse: Int { bytesAllocated }
 
     public func beginRecord(on cmd: MTLCommandBuffer) {
-        // No-op until the tape is wired in Phase 5e (state_replay
+        // No-op until the tape is wired in (state_replay
         // kernel port).
     }
     public func commit(on cmd: MTLCommandBuffer) {

@@ -92,11 +92,11 @@ public struct GenerationStats: Sendable {
     // Kept here so the formatted() printer + bench writer schema only
     // grow additively when those land.
     //
-    // Batch decoding (Phase 8+):
+    // Batch decoding:
     //   public let batchSize: Int
     //   public let perSequenceDecodeTokensPerSecond: Double?
     //
-    // Speculative decoding (Phase 8+):
+    // Speculative decoding:
     //   public let acceptanceRate: Double?
     //   public let draftTokensPerSecond: Double?
     //   public let draftAcceptedTokens: Int?

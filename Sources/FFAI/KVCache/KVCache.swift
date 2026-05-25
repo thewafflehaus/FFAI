@@ -2,8 +2,8 @@
 // capacity; `length` tracks how many positions are currently filled.
 //
 // Two implementations conform to `KVCacheProtocol`:
-//   - `KVCache`                  : raw fp16/bf16 K/V (default, Phase 2)
-//   - `AffineQuantizedKVCache`   : int8 group-quantized K/V (Phase 5c).
+//   - `KVCache`                  : raw fp16/bf16 K/V (default)
+//   - `AffineQuantizedKVCache`   : int8 group-quantized K/V.
 //     int4 + int6 land as later commits — kernels exist for those
 //     bit widths but the cache is int8-only today.
 //
@@ -133,7 +133,7 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
     public let vBuffer: Tensor   // [nKVHeads, maxSeq, headDim]
 
     /// Lock-protected fill state. Safe today even without the lock —
-    /// single-threaded decode — but Phase 8's batched / speculative
+    /// single-threaded decode — but planned's batched / speculative
     /// decode coordinates multiple Tasks against one cache. The lock
     /// makes the `(reserve slot, queue dispatch, increment)` sequence
     /// in `appendOnGPU` atomic so concurrent appenders don't write to
@@ -291,7 +291,7 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
     }
 }
 
-// MARK: - AffineQuantizedKVCache (Phase 5c)
+// MARK: - AffineQuantizedKVCache
 
 /// Affine group-quantized KV cache. Stores K and V in packed int8
 /// form (one byte per element) plus per-group fp16/bf16 scales +
@@ -361,7 +361,7 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
                 eviction: KVEviction,
                 device: Device = .shared) {
         precondition(bits == 4 || bits == 8,
-                     "AffineQuantizedKVCache: bits must be 4 or 8 today (int6 is a Phase 5c follow-up)")
+                     "AffineQuantizedKVCache: bits must be 4 or 8 today (int6 is a follow-up)")
         let valuesPerWord = 32 / bits   // int8 → 4, int4 → 8
         precondition(headDim % valuesPerWord == 0,
                      "headDim must be divisible by \(valuesPerWord) for int\(bits) packing")

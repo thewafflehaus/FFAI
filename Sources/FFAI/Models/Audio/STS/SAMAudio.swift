@@ -543,7 +543,7 @@ public final class SAMAudioModel: @unchecked Sendable {
     /// - Returns: `SAMAudioSegmentResult` with target and residual waveforms.
     ///
     /// Full GPU implementation is gated behind FFAI's Ops growing conv1d +
-    /// 2D SDPA support (Phase 7+). Until then this method performs
+    /// 2D SDPA support. Until then this method performs
     /// numerically-correct inference on CPU using the loaded weights and
     /// the precomputed timestep frequencies.
     public func segment(
@@ -625,7 +625,7 @@ public final class SAMAudioModel: @unchecked Sendable {
 
                 // Euler / midpoint: x_{t+dt} = x_t + dt * v_theta(x_t, t).
                 // Full velocity network call (proj → DiT → output) omitted
-                // pending Phase 7 conv1d / SDPA kernels; placeholder keeps
+                // pending conv1d / SDPA kernels; placeholder keeps
                 // noisyFeatures unchanged (zero-velocity approximation).
                 let _ = (noisyFeatures, dt, ode.method)
             }

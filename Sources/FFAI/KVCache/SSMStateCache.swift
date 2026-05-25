@@ -10,7 +10,7 @@
 // few dozen steps. mlx-swift-lm makes the same call.
 //
 // This class ships the storage + reset/step plumbing. The Mamba 2
-// family file (Phase 5e+) calls `Ops.ssmStep(...)` between
+// family file calls `Ops.ssmStep(...)` between
 // `appendOnGPU(...)`-equivalent invocations; the conv-state buffer
 // that hybrid models need (Mamba 2 has a 1D depthwise conv on
 // the input projection) is a follow-up.

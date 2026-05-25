@@ -59,7 +59,7 @@ public final class Profile: @unchecked Sendable {
     /// Process-wide default sink. `Model.generate(..., profile:)` and
     /// the `Generate.swift` entry points default to this; pass a fresh
     /// `Profile()` to accumulate telemetry independently (per-sequence
-    /// telemetry under Phase 8 batched decode, isolated test state).
+    /// telemetry under batched decode, isolated test state).
     public static let shared = Profile()
 
     /// Atomically-set level. CLI sets this once at startup; callers
@@ -101,7 +101,7 @@ public final class Profile: @unchecked Sendable {
 
 // MARK: - Instance helpers (injectable profiling)
 
-// Phase 8's batched / speculative decode needs per-sequence telemetry —
+// planned's batched / speculative decode needs per-sequence telemetry —
 // several `Profile` instances accumulating independently rather than one
 // process-wide singleton. These instance methods are the injectable
 // surface: `Model.generate(..., profile:)` and `Generate.swift`'s

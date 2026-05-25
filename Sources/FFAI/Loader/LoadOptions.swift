@@ -25,7 +25,7 @@ public enum KVCacheKind: Sendable, Equatable {
     /// 64` fine.
     case affineQuantized(bits: Int = 8, groupSize: Int = 64)
 
-    /// AURA-compressed K/V (Phase 5d). Rotated + Lloyd-Max scalar
+    /// AURA-compressed K/V. Rotated + Lloyd-Max scalar
     /// quantized + bit-packed, with optional asymmetric K/V
     /// bit-widths. See `AURAScheme` for the recipe surface and
     /// `papers/aura-compression-algorithm.md` for the codec design.
@@ -35,8 +35,8 @@ public enum KVCacheKind: Sendable, Equatable {
 
 public enum DispatchMode: Sendable {
     case eager
-    // .argumentBuffers — Phase 5
-    // .icb             — Phase 5+
+    // .argumentBuffers — planned
+    // .icb             — planned
 }
 
 /// How an AURA-quantized KV cache services attention at decode time.

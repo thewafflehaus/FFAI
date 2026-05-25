@@ -432,7 +432,7 @@ public enum ModelRegistry {
         // Yi, InternLM 2, Starcoder 2. Same weight layout + forward
         // shape as Llama 3; optional QKV biases auto-detected by
         // loadLinear. Each gets a six-line registry entry in
-        // Models/LlamaCompatibles.swift instead of its own family file
+        // Models/Text/LlamaCompatibles.swift instead of its own family file
         // (until / unless it diverges from the Llama-3 shape).
         if let arch = config.architecture, LlamaCompatibles.architectures.contains(arch) {
             return try loadLlama(config: config, weights: weights,
@@ -510,7 +510,7 @@ public enum ModelRegistry {
             return try loadMamba2(config: config, weights: weights,
                                   options: options, device: device)
         }
-        // FalconH1 — the first Phase 5e hybrid (Mamba 2 + attention in
+        // FalconH1 — the first hybrid (Mamba 2 + attention in
         // every layer). Routes through its own family file + engine.
         if let arch = config.architecture, FalconH1.architectures.contains(arch) {
             return try loadFalconH1(config: config, weights: weights,
@@ -520,7 +520,7 @@ public enum ModelRegistry {
             return try loadFalconH1(config: config, weights: weights,
                                     options: options, device: device)
         }
-        // NemotronH — a Phase 5e stack-interleaved hybrid (Mamba 2 /
+        // NemotronH — a stack-interleaved hybrid (Mamba 2 /
         // attention / dense-MLP layers selected per-layer by a
         // hybrid_override_pattern). Routes through its own family file.
         if let arch = config.architecture, NemotronH.architectures.contains(arch) {
@@ -531,7 +531,7 @@ public enum ModelRegistry {
             return try loadNemotronH(config: config, weights: weights,
                                      options: options, device: device)
         }
-        // GraniteMoeHybrid — a Phase 5e stack-interleaved hybrid (Mamba 2
+        // GraniteMoeHybrid — a stack-interleaved hybrid (Mamba 2
         // / attention layers selected by `layer_types`) with an MoE +
         // shared-expert feed-forward. Routes through its own family file.
         if let arch = config.architecture, GraniteMoeHybrid.architectures.contains(arch) {
@@ -542,7 +542,7 @@ public enum ModelRegistry {
             return try loadGraniteMoeHybrid(config: config, weights: weights,
                                             options: options, device: device)
         }
-        // Jamba — a Phase 5e stack-interleaved hybrid (Mamba 1 / attention
+        // Jamba — a stack-interleaved hybrid (Mamba 1 / attention
         // layers selected by `layers_block_type`) with a dense SwiGLU or
         // MoE feed-forward. Routes through its own family file.
         if let arch = config.architecture, Jamba.architectures.contains(arch) {
@@ -554,7 +554,7 @@ public enum ModelRegistry {
                                  options: options, device: device)
         }
 
-        // Qwen3.5 — a Phase 5e stack-interleaved hybrid (Gated Delta Net /
+        // Qwen3.5 — a stack-interleaved hybrid (Gated Delta Net /
         // full-attention layers alternating every `full_attention_interval`)
         // with a dense SwiGLU or MoE feed-forward. Routes through its own
         // family file.

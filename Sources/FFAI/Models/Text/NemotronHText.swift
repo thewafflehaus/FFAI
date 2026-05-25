@@ -1,4 +1,4 @@
-// NemotronH family — a Phase 5e *stack-interleaved hybrid* model.
+// NemotronH family — a *stack-interleaved hybrid* model.
 //
 // Unlike FalconH1 (a *parallel* hybrid where every layer runs Mamba
 // AND attention together), NemotronH is a **stack-interleaved** hybrid:
@@ -708,7 +708,7 @@ public final class NemotronHModel: LanguageModel {
         return lmHead(normed, on: cmd)
     }
 
-    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
+    /// Multi-token forward — prefill fast path. Loops
     /// `forward(tokenId:)` per row on the supplied `cmd`.
     ///
     /// NemotronH is a layer-type-string hybrid (`M`/`*`/`E`/`-`

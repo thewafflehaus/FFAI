@@ -1,7 +1,7 @@
 // VisionEncoder — the vision-transformer (ViT) stack a VLM runs an image
 // through before splicing the resulting tokens into the text stream.
 //
-// Declared in Phase 2 for the capability API; lit up here in Phase 6.5.
+// Declared in for the capability API; lit up here initially.
 // The architecture is the SigLIP / CLIP ViT shape every shipped VLM
 // vision tower uses:
 //

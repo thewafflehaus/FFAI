@@ -29,7 +29,7 @@
 // RoPE scaling: Phi-3-mini-4k-instruct ships with no rope_scaling.
 // Phi-3-mini-128k-instruct uses `rope_scaling.type = "longrope"` /
 // "su" — per-dimension RoPE frequency vectors. SuScaledRoPE is queued
-// as a Phase 6.x follow-up; the 4k variant is the first integration
+// as a follow-up; the 4k variant is the first integration
 // target.
 
 import Foundation
@@ -62,7 +62,7 @@ public enum PhiError: Error, CustomStringConvertible {
         switch self {
         case .missingConfig: return "Phi: required config field missing"
         case .unsupportedRopeScaling(let t):
-            return "Phi: rope_scaling type '\(t)' not supported yet (SuScaledRoPE is a Phase 6.x follow-up); use Phi-3-mini-4k-instruct or wait"
+            return "Phi: rope_scaling type '\(t)' not supported yet (SuScaledRoPE is a follow-up); use Phi-3-mini-4k-instruct or wait"
         case .quantizedFusedNotSupported:
             return "Phi: quantized fused qkv_proj / gate_up_proj not supported yet; load the raw bf16 / f16 checkpoint or convert with split projections"
         }

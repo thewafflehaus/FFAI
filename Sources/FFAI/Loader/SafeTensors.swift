@@ -16,7 +16,7 @@
 //     "__metadata__": { ... optional ... }
 //   }
 //
-// Phase 2: full file load via mmap. Wraps the mmap'd region in an
+// full file load via mmap. Wraps the mmap'd region in an
 // MTLBuffer using `device.makeBuffer(bytesNoCopy:)` so Metal sees the
 // exact same pages without an extra copy.
 
@@ -77,7 +77,7 @@ public final class SafeTensorsFile: @unchecked Sendable {
     private var mappedLength: Int = 0
 
     /// Test-visible: `true` if init finished without munmap'ing the
-    /// region (a bug — see `Phase C #3` post-mortem). Production
+    /// region (a bug — see `SafeTensors mmap-drop` post-mortem). Production
     /// expects this to be `false` after a successful `init`.
     internal var isMmapRetained: Bool { mappedBase != nil }
 
@@ -220,7 +220,7 @@ public final class SafeTensorsFile: @unchecked Sendable {
 }
 
 /// One or more safetensors files presented as a single tensor namespace.
-/// Phase 2 LLM checkpoints are usually a single .safetensors file; sharded
+/// LLM checkpoints are usually a single .safetensors file; sharded
 /// checkpoints are also supported via multiple files + the optional
 /// `model.safetensors.index.json` map.
 public final class SafeTensorsBundle: @unchecked Sendable {

@@ -245,7 +245,7 @@ public final class GlmOcrModel: LanguageModel {
         return logits
     }
 
-    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
+    /// Multi-token forward — prefill fast path. Loops
     /// `forward(tokenId:)` per row on the supplied `cmd`.
     ///
     /// GLM-OCR's text decoder uses a 4-norm sandwich layout

@@ -1,5 +1,5 @@
 // BufferPool — simple reusable MTLBuffer allocator for activation
-// tensors. Phase 2 implementation: per-byte-size LIFO. No fancy
+// tensors. implementation: per-byte-size LIFO. No fancy
 // fragmentation handling, no sub-allocation. Activations are small and
 // short-lived; this is good enough until profiles say otherwise.
 
@@ -49,7 +49,7 @@ public final class BufferPool: @unchecked Sendable {
         return Tensor(buffer: buf, offset: 0, shape: shape, dtype: dtype)
     }
 
-    /// Drop everything. For Phase 2 we just reallocate freely; caller
+    /// Drop everything. For we just reallocate freely; caller
     /// invokes this between forward passes if memory is a concern.
     public func releaseAll() {
         lock.lock()

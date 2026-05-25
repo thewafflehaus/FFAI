@@ -955,7 +955,7 @@ public final class LFM2Model: LanguageModel {
         return embed
     }
 
-    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
+    /// Multi-token forward — prefill fast path. Loops
     /// `forward(tokenId:)` per row on the supplied `cmd`.
     ///
     /// LFM2 / LFM2.5 alternates short-conv blocks with GQA attention

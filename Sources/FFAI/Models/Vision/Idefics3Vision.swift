@@ -935,7 +935,7 @@ public final class Idefics3Model: LanguageModel {
     /// Multi-token forward — delegates to LlamaModel's optimised
     /// chunked path (Ops.gemm batched projections + one
     /// Ops.sdpaMulti(causal: true) per layer). Idefics3 gets the full
-    /// Phase 6.6 TTFT win for the text-only AR prefill path for free,
+    /// TTFT win for the text-only AR prefill path for free,
     /// since its text backbone IS a LlamaModel. Image-prefill
     /// (vision-substitution) still routes through `prefillWithImage`
     /// which is its own block path.

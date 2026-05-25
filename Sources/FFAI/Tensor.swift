@@ -1,6 +1,6 @@
 // Tensor — handle to a region of GPU memory + shape + dtype.
 //
-// Phase 2: contiguous row-major only (no strides). Slicing returns a
+// Initial cut: contiguous row-major only (no strides). Slicing returns a
 // Tensor that points at the same MTLBuffer with an updated byte offset.
 
 import Foundation

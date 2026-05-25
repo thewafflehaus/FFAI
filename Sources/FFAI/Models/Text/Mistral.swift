@@ -14,7 +14,7 @@
 // Mistral 3 (Mistral Small / Devstral) ships with a slightly richer
 // config (vision encoders, etc.) — those variants surface as
 // `Mistral3ForCausalLM` and route through their own family file when
-// we add VL coverage in Phase 6.5.
+// we add VL coverage initially.
 
 import Foundation
 

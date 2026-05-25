@@ -4,7 +4,7 @@
 // grid/threadgroup sizing, encodes on the supplied command buffer, and
 // returns a fresh output Tensor (or writes into a caller-supplied one).
 //
-// Phase 2: only the kernels Llama needs. Adding more in later phases.
+// Initial cut: only the kernels Llama needs. Adding more in follow-ups.
 
 import Foundation
 import Metal
@@ -1309,7 +1309,7 @@ public enum Ops {
     /// thread per `(head, channel)` — total `nHeads * headDim` threads.
     ///
     /// See `SSMStateCache` for the storage class that wraps the per-layer
-    /// `h` buffer; Mamba 2 family files (Phase 5e+) call this through
+    /// `h` buffer; Mamba 2 family files call this through
     /// that cache.
     public static func ssmStep(
         x: Tensor, a: Tensor, b: Tensor, c: Tensor, dt: Tensor,
@@ -1805,7 +1805,7 @@ public enum Ops {
     /// [nKVHeads, headDim] (rotated K or V for the current token);
     /// `cache` is the full [nKVHeads, maxSeq, headDim] buffer.
     /// `position` is the slot to write into. Replaces the CPU-side
-    /// memcpy + mid-layer commit/wait pattern from Phase 2.
+    /// memcpy + mid-layer commit/wait pattern from the initial cut.
     public static func kvCacheUpdate(
         src: Tensor, into cache: Tensor,
         nKVHeads: Int, headDim: Int, maxSeq: Int, position: Int,
@@ -2310,7 +2310,7 @@ public enum Ops {
         return result
     }
 
-    // MARK: - AURA (Phase 5d)
+    // MARK: - AURA
 
     /// AURA fused encode for `rows` flat vectors of length `dim`.
     /// Computes per-row L2 norm, rotates by `rotation` (`[dim×dim]`

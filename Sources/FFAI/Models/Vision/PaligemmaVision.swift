@@ -806,7 +806,7 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
         return logits
     }
 
-    /// Multi-token forward — Phase 6.6 prefill fast path. Loops the
+    /// Multi-token forward — prefill fast path. Loops the
     /// per-token forward so the image-token vs text-token branch picks
     /// the right embedding source for each row. PaliGemma's
     /// position-based image-token check is intrinsic to the

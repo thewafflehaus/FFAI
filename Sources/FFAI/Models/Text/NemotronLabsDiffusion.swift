@@ -668,7 +668,7 @@ public final class NemotronLabsDiffusionModel: LanguageModel {
         return logits
     }
 
-    /// Multi-token forward (LanguageModel protocol) — Phase 6.6 prefill
+    /// Multi-token forward (LanguageModel protocol) — prefill
     /// fast path. NemotronLabsDiffusion already ships a block-batched
     /// forward (`forwardBlock`) used by the diffusion + self-spec
     /// modes; this is the thin LanguageModel-protocol adapter that

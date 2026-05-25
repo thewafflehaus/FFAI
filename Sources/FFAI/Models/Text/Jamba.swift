@@ -1,4 +1,4 @@
-// Jamba family — a Phase 5e *stack-interleaved hybrid* model.
+// Jamba family — a *stack-interleaved hybrid* model.
 //
 // Jamba (AI21's Jamba v0.1 / Jamba-Reasoning-3B) is a stack-interleaved
 // hybrid like NemotronH / GraniteMoeHybrid: a `layers_block_type` array
@@ -1062,7 +1062,7 @@ public final class JambaModel: LanguageModel {
         return lmHead(normed, on: cmd)
     }
 
-    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
+    /// Multi-token forward — prefill fast path. Loops
     /// `forward(tokenId:)` per row on the supplied `cmd`.
     ///
     /// Jamba interleaves Mamba 2 selective scan + attention + MoE FFN

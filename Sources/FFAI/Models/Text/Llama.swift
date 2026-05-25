@@ -1,4 +1,4 @@
-// Llama family — Llama 3.x architecture. Phase 2 ships the dense
+// Llama family — Llama 3.x architecture. ships the dense
 // variant only (1B / 3B / 8B / 70B; 405B with quant). The protocol +
 // per-variant struct pattern is established here even with a single
 // variant so the family scales when 4 / 4.x / future variants land.
@@ -12,7 +12,7 @@ public enum Llama {
     public static let modelTypes: Set<String> = ["llama"]
     public static let architectures: Set<String> = ["LlamaForCausalLM"]
 
-    /// Pick the variant struct for a config. Phase 2 only knows about
+    /// Pick the variant struct for a config. only knows about
     /// LlamaDense; future variants (e.g. LlamaMoE if Llama 4 ships one)
     /// would dispatch here.
     public static func variant(for config: ModelConfig) throws -> any LlamaVariant.Type {
@@ -26,7 +26,7 @@ public protocol LlamaVariant {
     /// Generation defaults for this variant. The user can override any
     /// field; absent overrides fall back to the values declared here.
     /// See planning/roadmap.md for which fields are honored today vs
-    /// staged for Phase 5+ (sampling kernels).
+    /// staged for planned (sampling kernels).
     static var defaultGenerationParameters: GenerationParameters { get }
     static func loadModel(
         config: ModelConfig,
@@ -76,7 +76,7 @@ public struct LlamaDense: LlamaVariant {
         let tieEmbed = config.tieWordEmbeddings
 
         // Llama 3 RoPE scaling (rope_type: "llama3"). For other rope_types
-        // (yarn, dynamic) we'd dispatch differently — for Phase 2 we only
+        // (yarn, dynamic) we'd dispatch differently — for we only
         // handle the explicit llama3 case + plain rope.
         var ropeScaling = Ops.RoPEScaling.none
         if let rs = config.nested("rope_scaling"),
@@ -330,7 +330,7 @@ public final class LlamaLayer: Module {
     /// `position + 1`, `+2`, …). Returns the `[nRows, hidden]`
     /// updated residual stream.
     ///
-    /// Hot path for Phase 6.6 chunked prefill. The collapse vs the
+    /// Hot path for chunked prefill. The collapse vs the
     /// per-token loop:
     /// - inputNorm / postAttnNorm: `Ops.rmsNormRows` instead of `nRows`
     ///   single-row RMSNorms.
@@ -639,7 +639,7 @@ public final class LlamaModel: LanguageModel {
     // `forward(...on cmd:)` above with the appropriate output kernel on
     // the same command buffer. No family-specific override needed.
 
-    /// Chunked multi-token forward — Phase 6.6 prefill fast path.
+    /// Chunked multi-token forward — prefill fast path.
     /// Embeds `tokenIds.count` tokens, runs the layer stack with
     /// `LlamaLayer.forwardMulti` (one `Ops.sdpaMulti(causal: true)`
     /// per layer + batched projections), and returns the

@@ -874,7 +874,7 @@ public final class GPTOSSModel: LanguageModel {
         return lmHead(normed, on: cmd)
     }
 
-    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
+    /// Multi-token forward — prefill fast path. Loops
     /// `forward(tokenId:)` per row on the supplied `cmd`.
     ///
     /// GPT-OSS's per-token forward already commits the command buffer

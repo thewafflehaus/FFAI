@@ -6,11 +6,11 @@
 // is a thin collector over the same stream so there's one source of truth
 // for the prefill + decode loop.
 //
-// Phase 4 strategy: simple slow prefill (decode each prompt token
+// strategy: simple slow prefill (decode each prompt token
 // sequentially through the same forward path used at decode time), then
 // greedy GPU argmax decode. Sampling parameters on `GenerationParameters`
 // (temperature, topP, …) are no-ops on the greedy fast path until GPU
-// sampling kernels land in Phase 5. `prefillStepSize` is honored once
+// sampling kernels land in planned. `prefillStepSize` is honored once
 // chunked prefill ships; today's per-token prefill ignores it.
 //
 // Stats: a `PhaseMemoryTracker` samples GPU memory at each token boundary
@@ -76,7 +76,7 @@ public extension Model {
     /// - Parameter profile: telemetry sink for this generation. Defaults
     ///   to the process-wide `Profile.shared`; pass a dedicated instance
     ///   to accumulate phase timings + signposts independently (the
-    ///   prerequisite for per-sequence telemetry under Phase 8's batched
+    ///   prerequisite for per-sequence telemetry under planned's batched
     ///   decode, where one shared singleton would conflate sequences).
     func generate(prompt: String,
                   parameters: GenerationParameters? = nil,
@@ -253,7 +253,7 @@ public extension Model {
 
         // ─── Prefill ─────────────────────────────────────────────────
         //
-        // Phase 6.6: chunked prefill. Pre-warm the KV cache for all but
+        // .6: chunked prefill. Pre-warm the KV cache for all but
         // the last prompt position by calling `engine.forwardMulti(...)`
         // in `prefillStepSize`-sized chunks (default 1024). Then sample
         // the final position via the existing fused-kernel `sampleNext`

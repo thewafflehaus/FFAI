@@ -50,7 +50,7 @@ public protocol DecoderLayer: Module {
     /// supplied `cmd` (correct-but-slow; commit-count win only).
     /// Attention-style layers override this to collapse the N SDPA
     /// dispatches into one `Ops.sdpaMulti(causal: true)` + batched
-    /// `Ops.gemm` projections (the Phase 6.6 TTFT win). Recurrent
+    /// `Ops.gemm` projections (the TTFT win). Recurrent
     /// layers (Mamba 2 selective scan, GDN delta) keep the default
     /// because their recurrence is inherently sequential — they can't
     /// batch state updates without giving up correctness.

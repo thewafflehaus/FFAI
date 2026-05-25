@@ -67,11 +67,11 @@ public enum BenchMethod: String, Sendable, CaseIterable {
         case .multiTurn:
             return "ChatSession-style multi-turn cache reuse helper"
         case .toolCalling:
-            return "tool-spec rendering in ChatTemplate (Phase 8+)"
+            return "tool-spec rendering in ChatTemplate"
         case .ngramSpot, .ngramSweep, .ngramSweepSummary:
-            return "n-gram speculative-decoding lookup (Phase 8+)"
+            return "n-gram speculative-decoding lookup"
         case .vision:
-            return "vision encoder + multi-modal generate path (Phase 6)"
+            return "vision encoder + multi-modal generate path"
         }
     }
 }

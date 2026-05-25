@@ -56,7 +56,7 @@
 //   2. Layout change to `[maxSeq, nKVHeads, packedWidth]` + matching
 //      dequant kernel rewrite.
 //
-// Both queued for the Phase 5d.E perf pass.
+// Both queued for the perf pass.
 
 import Foundation
 import Metal

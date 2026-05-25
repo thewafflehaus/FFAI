@@ -369,7 +369,7 @@ private func floatToBf16Bits(_ f: Float) -> UInt16 {
 //
 // Keep these strictly testing-related — they're not part of the
 // library's exported API and may move when the proper f16 / bf16
-// dtype helpers consolidate (Phase 6.x).
+// dtype helpers consolidate.
 
 public func bf16BitsToFloatForTest(_ bits: UInt16) -> Float {
     bf16BitsToFloat(bits)
@@ -715,7 +715,7 @@ public final class Gemma3Model: LanguageModel {
         return logits
     }
 
-    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
+    /// Multi-token forward — prefill fast path. Loops
     /// `forward(tokenId:)` per row on the supplied `cmd`.
     ///
     /// Gemma 3's chunked SDPA-collapse follow-up is more involved than

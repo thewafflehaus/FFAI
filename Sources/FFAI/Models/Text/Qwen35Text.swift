@@ -1,6 +1,6 @@
-// Qwen3.5 family — a Phase 5e *stack-interleaved hybrid* model that
+// Qwen3.5 family — a *stack-interleaved hybrid* model that
 // alternates a Gated Delta Net (GDN) recurrent mixer with full
-// multi-head attention. It is the most-coupled of the Phase 5e hybrid
+// multi-head attention. It is the most-coupled of the hybrid
 // families: the first FFAI consumer of the GDN kernel + `GDNStateCache`,
 // and the first to combine a host-assisted recurrent mixer with an MoE
 // feed-forward half.
@@ -1252,7 +1252,7 @@ public final class Qwen35GDNMixer: Module {
             yT = yLegacy
         }
 
-        // ── Phase 2: gated mixer RMSNorm — GPU (fused) or host (legacy) ─
+        // ── gated mixer RMSNorm — GPU (fused) or host (legacy) ─
         //
         // Fused: `Ops.gatedMixerNorm` computes `out = rms_norm(y, w) · silu(z)`
         // per `[Hv, Dv]` row in a single dispatch on the SAME command
@@ -2185,7 +2185,7 @@ public final class Qwen35Model: LanguageModel {
     /// preceding token's logits is consumed only by its KV/GDN cache
     /// write. Mirrors mlx-lm's chunked-prefill driver.
     ///
-    /// ─── Current state (Phase 0 — API + per-token loop) ─────────────────
+    /// ─── Current state (— API + per-token loop) ─────────────────
     ///
     /// This is the entry point for batched prefill in Qwen3.5/3.6. The
     /// per-token-state architecture (single-token decode kernels for

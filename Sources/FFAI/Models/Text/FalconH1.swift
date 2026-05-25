@@ -1,4 +1,4 @@
-// FalconH1 family — the first Phase 5e *hybrid* model and the proving
+// FalconH1 family — an early *hybrid* model and the proving
 // ground for the `DecoderLayer` scaffolding.
 //
 // FalconH1 (TII's Falcon-H1 series — Tiny-90M / 0.5B / 1.5B / 3B / 7B)
@@ -684,7 +684,7 @@ public final class FalconH1Model: LanguageModel {
         return lmHead(normed, on: cmd)
     }
 
-    /// Multi-token forward — Phase 6.6 prefill fast path. Loops
+    /// Multi-token forward — prefill fast path. Loops
     /// `forward(tokenId:)` per row on the supplied `cmd`.
     ///
     /// FalconH1 interleaves Mamba 2 + attention + MLP layers with

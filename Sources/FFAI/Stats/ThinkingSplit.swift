@@ -19,7 +19,7 @@
 //
 // Today only the ChatML scanner is implemented end-to-end. Harmony
 // and Gemma scanners ship alongside the GPT-OSS / Gemma family files
-// (Phase 8+ / Phase 5+). The data model is in place so the bench
+// (planned / planned). The data model is in place so the bench
 // writer + GenerationStats schema don't churn when those land.
 
 import Foundation
@@ -119,7 +119,7 @@ public enum ThinkingSplit {
                      format: .chatML)
     }
 
-    // MARK: - Harmony scanner (GPT-OSS) — TODO Phase 8+
+    // MARK: - Harmony scanner (GPT-OSS) — TODO planned
 
     private static func splitHarmony(tokens: [Int],
                                      tokenizer: any Tokenizer) -> Split? {
@@ -136,7 +136,7 @@ public enum ThinkingSplit {
         return nil
     }
 
-    // MARK: - Gemma channel scanner — TODO Phase 5+
+    // MARK: - Gemma channel scanner — TODO planned
 
     private static func splitGemmaChannel(tokens: [Int],
                                           tokenizer: any Tokenizer) -> Split? {

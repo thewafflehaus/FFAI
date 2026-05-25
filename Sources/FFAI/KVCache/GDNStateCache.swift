@@ -21,10 +21,10 @@
 // `state_base = n·Dv·Dk + dv_idx·Dk + s_idx` indexing (n = batch·Hv +
 // hv; decode is single-batch so n = hv).
 //
-// Forward-only. This is Phase 5e.C scope: there are deliberately NO
+// Forward-only. This is scope: there are deliberately NO
 // `record()` / `rollback()` hooks. Partial-accept replay (rewinding
 // GDN state when speculative tokens are rejected) is deferred to
-// Phase 8 — adding replay support now would mean snapshotting the
+// — adding replay support now would mean snapshotting the
 // per-head matrix on every step with no consumer for it.
 //
 // Conforms to `LayerCacheProtocol` (not `KVCacheProtocol`) — GDN has

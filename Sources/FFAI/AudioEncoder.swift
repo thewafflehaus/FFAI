@@ -2,7 +2,7 @@
 // waveform through before the text decoder (Whisper STT) or the
 // cross-modal splice (Qwen-Omni audio-in).
 //
-// Declared in Phase 2 for the capability API; lit up here in Phase 7.
+// Declared in for the capability API; lit up here in .
 // The architecture is the Whisper-style audio encoder every shipped
 // STT / audio-in tower builds on:
 //
