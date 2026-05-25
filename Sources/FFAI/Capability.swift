@@ -10,6 +10,15 @@ public enum Capability: String, Sendable, Hashable, CaseIterable, Codable {
     case textIn
     case textOut
     case visionIn
+    /// A model that can consume video — i.e. a temporally-ordered
+    /// sequence of frames. Distinct from `visionIn` because not every
+    /// vision-language model wires the multi-frame temporal-patch
+    /// path: a `videoIn` model accepts `[Tensor]` (one frame each) via
+    /// `VisionEncoder.encode(frames:device:)` and folds them into the
+    /// vision-token stream in temporal-patch chunks, while a
+    /// `visionIn`-only model takes a single image and treats the
+    /// temporal axis as a degenerate repeat.
+    case videoIn
     case audioIn
     case audioOut
     case toolCalling
