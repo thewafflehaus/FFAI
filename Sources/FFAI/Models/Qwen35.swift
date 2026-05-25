@@ -1291,7 +1291,8 @@ public final class Qwen35GDNMixer: Module {
             // Output goes DIRECTLY into the f32 scratch — fused kernel
             // reads bf16/f16, computes silu at f32 precision, writes f32.
             convAct = convOutScratch  // unused later in fused branch
-            Ops.siluCastToF32(convOutScratch, into: convActF32Scratch, on: cmd)
+            // ITER 81 (Bagel 2): defer to the combined siluCast+cast2
+            // shared encoder a few lines below; do nothing here.
         } else {
             convAct = Ops.silu(convOutScratch, on: cmd)   // [conv_dim]
         }
@@ -1316,14 +1317,12 @@ public final class Qwen35GDNMixer: Module {
         // tracked on the roadmap.
         let yT: Tensor
         if fused {
-            // GPU casts: bf16 activations → fp32 scratch, all on the
-            // same command buffer as phase 1. No host round-trip; the
-            // fused step runs the recurrence in fp32 against the
-            // existing fp32 state slots, matching the canonical
-            // precision of the legacy path.
-            // convAct → convActF32Scratch was already done above via
-            // siluCastToF32. Just batch the remaining 2 casts.
-            Ops.castToF32Two(
+            // ITER 81 (Bagel 2): collapse silu+cast (convOut → f32) AND
+            // the two plain casts (aRaw, bRaw → f32) onto ONE shared
+            // encoder. Saves 1 encoder begin/end per GDN layer × 30 ≈
+            // 30 pairs per decode token vs the prior 2-encoder split.
+            Ops.siluCastF32PlusCastF32Two(
+                siluIn: convOutScratch, into: convActF32Scratch,
                 aRaw, into: aRawF32Scratch,
                 bRaw, into: bRawF32Scratch,
                 on: cmd)

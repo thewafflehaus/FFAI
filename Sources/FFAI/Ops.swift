@@ -4319,6 +4319,64 @@ public enum Ops {
         }
     }
 
+    /// ITER 81 (Bagel 2): fused silu+cast + two plain casts on ONE
+    /// shared encoder. Collapses the GDN inner loop's 2 separate
+    /// dispatches (`siluCastToF32` + `castToF32Two`) into a single
+    /// encoder with 3 dispatches sharing PSO setup overhead. Saves
+    /// 1 encoder begin/end pair per GDN layer × 30 layers ≈ 30
+    /// pairs/decode token.
+    ///
+    /// Input dtype must be bf16 or f16 (matches the underlying PSOs).
+    /// All three outputs must be f32.
+    public static func siluCastF32PlusCastF32Two(
+        siluIn: Tensor, into siluOut: Tensor,
+        _ a: Tensor, into outA: Tensor,
+        _ b: Tensor, into outB: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(siluIn.dtype == a.dtype && a.dtype == b.dtype,
+                     "Ops.siluCastF32PlusCastF32Two: all inputs must share dtype")
+        precondition(siluOut.dtype == .f32 && outA.dtype == .f32 && outB.dtype == .f32,
+                     "Ops.siluCastF32PlusCastF32Two: outputs must be f32")
+        precondition(siluIn.elementCount == siluOut.elementCount,
+                     "Ops.siluCastF32PlusCastF32Two: silu in/out count mismatch")
+        precondition(a.elementCount == outA.elementCount,
+                     "Ops.siluCastF32PlusCastF32Two: a/outA count mismatch")
+        precondition(b.elementCount == outB.elementCount,
+                     "Ops.siluCastF32PlusCastF32Two: b/outB count mismatch")
+        let siluPso: String
+        let castPso: String
+        switch siluIn.dtype {
+        case .f16:
+            siluPso = "mt_silu_cast_to_f32_f16"
+            castPso = "mt_cast_to_f32_f16"
+        case .bf16:
+            siluPso = "mt_silu_cast_to_f32_bf16"
+            castPso = "mt_cast_to_f32_bf16"
+        default:
+            fatalError("Ops.siluCastF32PlusCastF32Two: unsupported dtype \(siluIn.dtype)")
+        }
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        // Silu+cast first.
+        enc.setComputePipelineState(PSOCache.shared.pipelineState(for: siluPso))
+        @inline(__always)
+        func dispatch(_ input: Tensor, _ out: Tensor) {
+            enc.setBuffer(input.buffer, offset: input.offset, index: 0)
+            enc.setBuffer(out.buffer, offset: out.offset, index: 1)
+            let n = input.elementCount
+            let tgWidth = min(n, 256)
+            enc.dispatchThreads(
+                MTLSize(width: n, height: 1, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: tgWidth, height: 1, depth: 1))
+        }
+        dispatch(siluIn, siluOut)
+        // Plain casts share the same encoder; switch PSO and continue.
+        enc.setComputePipelineState(PSOCache.shared.pipelineState(for: castPso))
+        dispatch(a, outA)
+        dispatch(b, outB)
+        enc.endEncoding()
+    }
+
     /// Cast two same-dtype tensors to f32 in ONE encoder. Saves one
     /// encoder begin/end pair per call vs two separate `castToF32`
     /// calls. Used when the third cast in the GDN inner loop is folded
