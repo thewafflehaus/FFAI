@@ -1682,13 +1682,17 @@ public final class Qwen35GDNMixer: Module {
         let bRawAll = inProjB.callMany(xNormFlat, t: t, on: cmd, device: device)
         let aRawAll = inProjA.callMany(xNormFlat, t: t, on: cmd, device: device)
 
-        // a_raw / b_raw → f32 once (instead of per-row).
+        // a_raw / b_raw → f32 once (instead of per-row). ITER 87 (Bagel 2):
+        // run both casts on ONE shared encoder via `castToF32Two` — saves
+        // one encoder begin/end pair per GDN layer × 30 = 30 pairs/prefill.
         let aRawF32All = Tensor.empty(shape: [t * numValueHeads],
                                        dtype: .f32, device: device)
         let bRawF32All = Tensor.empty(shape: [t * numValueHeads],
                                        dtype: .f32, device: device)
-        Ops.castToF32(aRawAll, into: aRawF32All, on: cmd)
-        Ops.castToF32(bRawAll, into: bRawF32All, on: cmd)
+        Ops.castToF32Two(
+            aRawAll, into: aRawF32All,
+            bRawAll, into: bRawF32All,
+            on: cmd)
 
         // ── Conv1d + silu+cast → `[T, convDim]` f32 staging buffer ──────
         //
