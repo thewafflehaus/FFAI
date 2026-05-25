@@ -528,6 +528,17 @@ public class VisionEncoder: Module {
         return projected
     }
 
+    /// Encode a sequence of frames as a temporally-batched token stream.
+    /// Default implementation throws `VisionEncoderError.videoUnsupported`
+    /// — towers that wire real video patches (Qwen 2/2.5/3 VL,
+    /// MiniCPM-V, SmolVLM2, QwenOmni) override this with the temporal-
+    /// patch unfold path. Per-model overrides decide how frames map to
+    /// the temporal axis (typically `temporal_patch_size`-wide groups).
+    public func encode(frames: [Tensor], device: Device = .shared) throws -> Tensor {
+        throw VisionEncoderError.videoUnsupported(
+            family: String(describing: type(of: self)))
+    }
+
     /// Reinterpret a conv2d `[1, hidden, P, P]` channel-major output as
     /// `[numPatches, hidden]` token-major patch tokens. CPU transpose —
     /// patch counts are at most a few thousand.
@@ -568,6 +579,21 @@ extension ImagePreprocessing {
             })
         default:
             fatalError("copyFloats: unsupported dtype \(tensor.dtype)")
+        }
+    }
+}
+
+public enum VisionEncoderError: Error, CustomStringConvertible {
+    /// The base `VisionEncoder.encode(frames:)` default throws this.
+    /// Override on towers that wire the multi-frame temporal-patch path.
+    case videoUnsupported(family: String)
+
+    public var description: String {
+        switch self {
+        case .videoUnsupported(let family):
+            return "VisionEncoder: \(family) does not implement video encode(frames:)."
+                + " The single-image encode(image:) path is fine; video requires the"
+                + " multi-frame temporal-patch unfold to be wired per-family."
         }
     }
 }
