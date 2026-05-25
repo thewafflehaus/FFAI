@@ -2110,10 +2110,40 @@ public final class Qwen35AttentionMixer: Module {
         let qDim = nHeads * headDim
         let kvDim = nKVHeads * headDim
 
-        // ── Projections — one gemm/qmm each, T-batched ───────────────────
-        let qOut = qProj.callMany(xNormFlat, t: t, on: cmd, device: device)
-        let kOut = kProj.callMany(xNormFlat, t: t, on: cmd, device: device)
-        let vOut = vProj.callMany(xNormFlat, t: t, on: cmd, device: device)
+        // ── Projections — fused QKV qmm when constraints match ──────────
+        // ITER 88 (Bagel 2): `Ops.batchedQkvQmmFast` produces all three
+        // Q/K/V projections in ONE dispatch when the three QuantizedLinear
+        // projections share `bits=4`, `groupSize=64`, and `in_dim%512==0`
+        // / `out_*%8==0` constraints. Replaces 3 `callMany` qmm encoders
+        // with 1 fused encoder. Constraints predicate is the same
+        // `fusedQKVEligible` flag the single-token path uses (ITER 78).
+        let qOut: Tensor
+        let kOut: Tensor
+        let vOut: Tensor
+        if fusedQKVEligible, let bq = batchedQKV {
+            let qDim = bq.qW.shape[0]
+            let kDim = bq.kW.shape[0]
+            let vDim = bq.vW.shape[0]
+            let inDim = bq.qW.shape[1] * 8
+            let qBuf = Tensor.empty(shape: [t, qDim], dtype: dt, device: device)
+            let kBuf = Tensor.empty(shape: [t, kDim], dtype: dt, device: device)
+            let vBuf = Tensor.empty(shape: [t, vDim], dtype: dt, device: device)
+            Ops.batchedQkvQmmFast(
+                x: xNormFlat.reshaped(to: [t, inDim]),
+                wQ: bq.qW, scalesQ: bq.qS, biasesQ: bq.qB,
+                wK: bq.kW, scalesK: bq.kS, biasesK: bq.kB,
+                wV: bq.vW, scalesV: bq.vS, biasesV: bq.vB,
+                m: t, outQ: qDim, outK: kDim, outV: vDim,
+                on: cmd,
+                qBuf: qBuf, kBuf: kBuf, vBuf: vBuf)
+            qOut = qBuf
+            kOut = kBuf
+            vOut = vBuf
+        } else {
+            qOut = qProj.callMany(xNormFlat, t: t, on: cmd, device: device)
+            kOut = kProj.callMany(xNormFlat, t: t, on: cmd, device: device)
+            vOut = vProj.callMany(xNormFlat, t: t, on: cmd, device: device)
+        }
 
         // ── Gate split — one gather (vs T) when attnOutputGate ───────────
         let queriesFlat: Tensor   // `[T, nHeads, headDim]` flat

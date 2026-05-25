@@ -88,8 +88,10 @@ struct BatchedQkvQmmFastTests {
         }
         cmdRef.commit(); cmdRef.waitUntilCompleted()
 
-        // Fused M>1 single dispatch.
-        let fusedOut = Tensor.empty(shape: [m, outQ + outK + outV], dtype: dtype)
+        // Fused M>1 single dispatch into 3 separate output buffers.
+        let fusedQ = Tensor.empty(shape: [m, outQ], dtype: dtype)
+        let fusedK = Tensor.empty(shape: [m, outK], dtype: dtype)
+        let fusedV = Tensor.empty(shape: [m, outV], dtype: dtype)
         let cmdFused = Device.shared.makeCommandBuffer()
         Ops.batchedQkvQmmFast(
             x: x,
@@ -97,12 +99,24 @@ struct BatchedQkvQmmFastTests {
             wK: wK, scalesK: sK, biasesK: bK,
             wV: wV, scalesV: sV, biasesV: bV,
             m: m, outQ: outQ, outK: outK, outV: outV,
-            on: cmdFused, into: fusedOut)
+            on: cmdFused,
+            qBuf: fusedQ, kBuf: fusedK, vBuf: fusedV)
         cmdFused.commit(); cmdFused.waitUntilCompleted()
         Self.flushQueue()
 
+        // Reassemble fused into row-major `[M, q|k|v]` to match the
+        // oracle's layout.
+        let fQ = fusedQ.toFloatArray()
+        let fK = fusedK.toFloatArray()
+        let fV = fusedV.toFloatArray()
+        var fusedArr: [Float] = []
+        fusedArr.reserveCapacity(m * (outQ + outK + outV))
+        for row in 0..<m {
+            fusedArr.append(contentsOf: fQ[row * outQ..<(row + 1) * outQ])
+            fusedArr.append(contentsOf: fK[row * outK..<(row + 1) * outK])
+            fusedArr.append(contentsOf: fV[row * outV..<(row + 1) * outV])
+        }
         let oracleArr = oracleOut.toFloatArray()
-        let fusedArr = fusedOut.toFloatArray()
         var maxDiff: Float = 0
         var maxAbs: Float = 0
         for i in 0..<oracleArr.count {
