@@ -2273,19 +2273,19 @@ public final class Qwen35AttentionMixer: Module {
             headDim: headDim, rotaryDim: rotaryDim,
             thetaBase: ropeTheta, on: cmd)
 
-        var kRows: [Tensor] = []; kRows.reserveCapacity(t)
-        var vRows: [Tensor] = []; vRows.reserveCapacity(t)
-        for r in 0..<t {
-            let kRow = Tensor(buffer: kNormed.buffer,
-                              offset: kNormed.offset + r * kvDim * dtBytes,
-                              shape: [kvDim], dtype: dt)
-            let vRow = Tensor(buffer: vOut.buffer,
-                              offset: vOut.offset + r * kvDim * dtBytes,
-                              shape: [kvDim], dtype: dt)
-            kRows.append(kRow.reshaped(to: [nKVHeads, headDim]))
-            vRows.append(vRow.reshaped(to: [nKVHeads, headDim]))
-        }
-        kv.appendRangeOnGPU(kRows: kRows, vRows: vRows, on: cmd)
+        // ITER 98 (Bagel 2): batched K+V cache append. Reserves T
+        // sequential physical slots on the host, then writes K/V for
+        // all T tokens via ONE shared encoder + 2 dispatches (vs the
+        // T-loop of `kvCacheUpdateKV` paired-encoder calls). Same
+        // dispatch-saving pattern as ITER 97 (RoPE many). Saves
+        // T encoder begin/end pairs per attn layer × 10 = ~5100 fewer
+        // dispatches at T=512.
+        let appendPositions = Tensor.empty(shape: [t], dtype: .u32,
+                                            device: device)
+        kv.reserveSlotsManyOnHost(t: t, into: appendPositions)
+        kv.appendRangeOnGPUMany(
+            kFlat: kNormed, vFlat: vOut, t: t,
+            positions: appendPositions, on: cmd)
 
         // ── SDPA — ITER 90 / 93 (Bagel 2): fuse the T-token causal
         // attention into ONE `Ops.sdpaMulti` dispatch. d=128 wraps

@@ -3069,6 +3069,54 @@ public enum Ops {
         enc.endEncoding()
     }
 
+    /// Batched K+V cache append: writes T tokens' K rows AND V rows
+    /// into their respective caches in ONE shared encoder (2 dispatches).
+    /// Replaces the T-loop of `kvCacheUpdateKV` calls at decodeMany /
+    /// forwardMany prefill — at T=512 × 10 attn layers ≈ 5100 fewer
+    /// dispatches per prefill call.
+    ///
+    /// `kSrc` / `vSrc` are `[T, nKVHeads, headDim]` flat. `positions`
+    /// is a `[T]` u32 buffer of physical slot indices in the caches.
+    public static func kvCacheUpdateKVMany(
+        kSrc: Tensor, kCache: Tensor,
+        vSrc: Tensor, vCache: Tensor,
+        positions: Tensor, t: Int,
+        nKVHeads: Int, headDim: Int, maxSeq: Int,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(kSrc.dtype == kCache.dtype && vSrc.dtype == vCache.dtype && kSrc.dtype == vSrc.dtype,
+                     "Ops.kvCacheUpdateKVMany: dtype mismatch")
+        precondition(positions.dtype == .u32, "Ops.kvCacheUpdateKVMany: positions must be .u32")
+        precondition(positions.elementCount == t, "Ops.kvCacheUpdateKVMany: positions count must equal T")
+        let elementsPerRow = nKVHeads * headDim
+        let total = t * elementsPerRow
+        let (grid, tg) = elementwiseGrid(total)
+        let psoName: String
+        switch kSrc.dtype {
+        case .f32:  psoName = "kv_cache_update_many_f32"
+        case .f16:  psoName = "kv_cache_update_many_f16"
+        case .bf16: psoName = "kv_cache_update_many_bf16"
+        default: fatalError("Ops.kvCacheUpdateKVMany: unsupported dtype \(kSrc.dtype)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        enc.setBuffer(positions.buffer, offset: positions.offset, index: 1)
+        var hd = UInt32(headDim), ms = UInt32(maxSeq), nhd = UInt32(elementsPerRow)
+        enc.setBytes(&hd, length: 4, index: 3)
+        enc.setBytes(&ms, length: 4, index: 4)
+        enc.setBytes(&nhd, length: 4, index: 5)
+        @inline(__always)
+        func dispatch(_ src: Tensor, _ cache: Tensor) {
+            enc.setBuffer(src.buffer, offset: src.offset, index: 0)
+            enc.setBuffer(cache.buffer, offset: cache.offset, index: 2)
+            enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        }
+        dispatch(kSrc, kCache)
+        dispatch(vSrc, vCache)
+        enc.endEncoding()
+    }
+
     public static func kvCacheUpdate(
         src: Tensor, into cache: Tensor,
         nKVHeads: Int, headDim: Int, maxSeq: Int, position: Int,
