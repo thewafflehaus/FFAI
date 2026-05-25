@@ -3,7 +3,7 @@
 // This file holds the dynamic-resolution ViT that powers the Qwen 2.5-VL
 // family — the patch-embed, the windowed-attention + M-RoPE block stack,
 // and the patch-merger that projects merged tokens into the text hidden
-// dim. The family orchestrator (`Models/Qwen25VL.swift`) wires this
+// dim. The family orchestrator (`Models/Qwen25.swift`) wires this
 // tower into a `VLModel` together with the Qwen 2.x text backbone.
 //
 // Image vs video:

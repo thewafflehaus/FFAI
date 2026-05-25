@@ -4,6 +4,52 @@ How to port a new architecture into FFAI. Both in-tree families
 (`Llama`, `Qwen3`) were added with this flow; copy whichever is
 structurally closest to your target.
 
+## File layout
+
+`Sources/FFAI/Models/` mirrors the user-facing modality grouping:
+
+```text
+Models/
+├── <Family>.swift            ← family root (VL/multi-modal orchestrators only)
+├── Text/<F>Text.swift        ← text inference (or <F>.swift for text-only families)
+├── Vision/<F>Vision.swift    ← image + video tower (one per VL family)
+├── Audio/STT/<F>.swift       ← speech-to-text
+├── Audio/TTS/<F>.swift       ← text-to-speech
+├── Audio/STS/<F>.swift       ← speech-to-speech (denoise/enhance)
+├── Audio/VAD/<F>.swift       ← voice-activity detection
+├── Audio/Omni/<F>.swift      ← cross-modal (text + vision + audio)
+├── DecoderLayer.swift        ← shared per-layer mixer protocol
+└── MoELayer.swift            ← shared MoE routing + dispatch
+```
+
+- **Text-only family.** One file: `Text/<F>.swift` (e.g. `Text/Llama.swift`,
+  `Text/Mistral.swift`, `Text/Phi.swift`). Holds the family enum + variant
+  protocol + impl class.
+- **Paired family** (text + VLM, e.g. Qwen3 / Gemma3 / Gemma4 / LFM2 / NemotronH).
+  Three files:
+  - `Models/<F>.swift` — VL orchestrator (load entry-point for the VLM
+    checkpoint, image-token id, splice into `VLModel`).
+  - `Text/<F>Text.swift` — text family enum + impl (the `Text` suffix
+    disambiguates the SwiftPM basename from `<F>.swift`).
+  - `Vision/<F>Vision.swift` — vision tower internals (patch-embed,
+    encoder blocks, projector).
+- **VL-only family** (Pixtral, FastVLM, Idefics3, MiniCPMV, SmolVLM2,
+  GlmOcr, Mistral3, Paligemma). Two files:
+  - `Models/<F>.swift` — family root + load orchestration.
+  - `Vision/<F>Vision.swift` — vision tower. Text inference is
+    delegated to a backbone in `Text/` (e.g. `LlamaDense`).
+
+The `Vision` / `Text` / `<Sub>` suffix on per-modality files is a
+SwiftPM constraint: object files are named by basename only, so
+`Text/<F>.swift` and `Vision/<F>.swift` would collide on `.o` output.
+
+For shared building blocks: cross-family helpers (e.g. the GEMM
+K-tile padding, patch-embed reshape) live in
+[`Vision/VisionTowerOps.swift`](../../Sources/FFAI/Models/Vision/VisionTowerOps.swift)
+as module-internal top-level functions. MoE routing + per-expert
+dispatch live in [`MoELayer.swift`](../../Sources/FFAI/Models/MoELayer.swift)
+so optimisations (expert co-location, SSD streaming) land in one place.
+
 ## Decide if it's a new family or a new variant
 
 A **family** is a major architectural lineage. A **variant** is a
@@ -11,15 +57,16 @@ shape inside a family.
 
 - **New family.** A different family file. Examples: Mistral, Phi,
   Gemma, Mamba, GPT-OSS — none of these share Llama's exact
-  attention shape. New file in `Sources/FFAI/Models/`, registered in
-  `ModelRegistry.dispatchAndLoad`.
+  attention shape. New file under the appropriate folder
+  (`Text/`, `Vision/`, `Audio/<sub>/`, or `Models/` root for a VL
+  orchestrator), registered in `ModelRegistry.dispatchAndLoad`.
 - **New variant.** Same family file, new struct conforming to the
   family's `Variant` protocol. Examples: `Qwen35Dense` alongside
   `Qwen3Dense`, `Qwen35MoE`, `Qwen35VL` — they go in
-  `Models/Qwen3.swift` and dispatch in `Qwen3.variant(for:)`.
+  `Models/Text/Qwen35Text.swift` and dispatch in `Qwen35.variant(for:)`.
 
-The convention is **one file per family, not per variant**. A
-family file with five variant structs is fine; five files for one
+The convention is **one file per family per folder, not per variant**.
+A family file with five variant structs is fine; five files for one
 family is not.
 
 ## Step 1 — read the reference
@@ -62,7 +109,7 @@ kernel](developing.md#writing-a-new-kernel).
 
 ## Step 3 — write the family file
 
-Copy `Sources/FFAI/Models/Llama.swift` as a template. Structure:
+Copy `Sources/FFAI/Models/Text/Llama.swift` as a template. Structure:
 
 ```swift
 public enum <Family> {
@@ -220,7 +267,7 @@ at layer boundaries inside `<Family>Model.forward(...)` so the
 `--layer-trace` diagnostic surface works uniformly across families.
 
 The pattern, lifted from `LlamaModel.forward` (the canonical
-reference — `Sources/FFAI/Models/Llama.swift`):
+reference — `Sources/FFAI/Models/Text/Llama.swift`):
 
 ```swift
 public func forward(tokenId: Int, position: Int,

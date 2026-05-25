@@ -7,7 +7,7 @@
 // with per-projection q/k/v RMSNorms, GemmaRMSNorm zero-shift norms,
 // SwiGLU MLP, attention pooling, multi-modal embedder). The family
 // orchestrator (load entry-point + `<image_soft_token>` token id) lives
-// in `Models/Gemma4VL.swift`.
+// in `Models/Gemma4.swift`.
 
 import Foundation
 import Metal

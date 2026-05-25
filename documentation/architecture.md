@@ -63,9 +63,17 @@ The user-facing layer:
 - **`Module`** — protocol with named-parameter discovery.
 - **Layers** — `Linear`, `Embedding`, `RMSNorm`, `RoPE`, attention
   blocks. Each is a thin call to `MetalTileSwift` kernels.
-- **Models** — one Swift file per family (`Models/Llama.swift`,
-  `Models/Qwen3.swift`). Family files use a protocol + per-variant
-  struct pattern so adding `Qwen35MoE` etc. doesn't bloat a switch.
+- **Models** — one Swift file per family per folder. Text-only
+  families live at `Models/Text/<F>.swift` (`Models/Text/Llama.swift`,
+  `Models/Text/Mistral.swift`). VL families add a `Models/<F>.swift`
+  orchestrator + `Models/Vision/<F>Vision.swift` tower; the paired
+  text impl lives at `Models/Text/<F>Text.swift` (e.g.
+  `Models/Text/Qwen3Text.swift`). Audio families live under
+  `Models/Audio/{STT,TTS,STS,VAD,Omni}/<F>.swift`. Family files use
+  a protocol + per-variant struct pattern so adding `Qwen35MoE` etc.
+  doesn't bloat a switch. See
+  [developing/adding-a-model.md](developing/adding-a-model.md) for
+  the full layout rule.
 - **Loader** — `Model.load(...)` resolves an HF id (or local path),
   downloads via `swift-huggingface`, parses `config.json`, mmap-loads
   weights into per-tensor MTLBuffers, dispatches to the right family,

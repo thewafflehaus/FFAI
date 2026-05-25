@@ -24,7 +24,7 @@
 // the projected vision tokens.
 //
 // Vision tower internals (projector, composed encoder, helper types)
-// live in `Models/Vision/NemotronVLVision.swift`. This file is the
+// live in `Models/Vision/NemotronHVision.swift`. This file is the
 // family orchestrator (load entrypoint + public constants).
 
 import Foundation

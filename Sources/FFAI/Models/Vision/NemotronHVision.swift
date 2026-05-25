@@ -3,7 +3,7 @@
 // The multi-modal projector, composed encoder, and helper types for
 // Nemotron Nano VL live here. The family orchestrator (load entrypoint,
 // `NemotronVLError`, `NemotronVL` with constants and `load()`) lives in
-// `Models/NemotronVL.swift`.
+// `Models/NemotronH.swift`.
 //
 // Coherence-first port: the vision tower's bidirectional attention runs
 // on the CPU (the shared `VisionEncoder` already does this — vision

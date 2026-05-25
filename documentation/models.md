@@ -25,23 +25,24 @@ For porting a new architecture, see
 
 | Family | File | `model_type` | `architectures` | Variants |
 |---|---|---|---|---|
-| **Llama 3.x** | [`Models/Llama.swift`](../Sources/FFAI/Models/Llama.swift) | `llama` | `LlamaForCausalLM` | `LlamaDense` |
-| **Llama-compatible zoo** | [`Models/LlamaCompatibles.swift`](../Sources/FFAI/Models/LlamaCompatibles.swift) | `smollm`, `olmo2`, `starcoder2`, `internlm2`, … | (various — all Llama-shaped) | reuses the Llama loader |
-| **Qwen 2** | [`Models/Qwen2.swift`](../Sources/FFAI/Models/Qwen2.swift) | `qwen2` | `Qwen2ForCausalLM` | reuses the Llama loader |
-| **Qwen 3** | [`Models/Qwen3.swift`](../Sources/FFAI/Models/Qwen3.swift) | `qwen3` | `Qwen3ForCausalLM` | `Qwen3Dense` |
-| **Mistral** | [`Models/Mistral.swift`](../Sources/FFAI/Models/Mistral.swift) | `mistral` | `MistralForCausalLM` | reuses the Llama loader |
-| **Phi 3** | [`Models/Phi.swift`](../Sources/FFAI/Models/Phi.swift) | `phi3` | `Phi3ForCausalLM` | `Phi3Dense` |
-| **Gemma 3** | [`Models/Gemma3.swift`](../Sources/FFAI/Models/Gemma3.swift) | `gemma3`, `gemma3_text` | `Gemma3ForCausalLM` | `Gemma3Dense` |
-| **Mamba 2** | [`Models/Mamba2.swift`](../Sources/FFAI/Models/Mamba2.swift) | `mamba2` | `Mamba2ForCausalLM` | `Mamba2Dense` |
-| **FalconH1** | [`Models/FalconH1.swift`](../Sources/FFAI/Models/FalconH1.swift) | `falcon_h1` | `FalconH1ForCausalLM` | `FalconH1Hybrid` |
-| **NemotronH** | [`Models/NemotronH.swift`](../Sources/FFAI/Models/NemotronH.swift) | `nemotron_h` | `NemotronHForCausalLM` | `NemotronHHybrid` |
-| **Nemotron-Labs-Diffusion** | [`Models/NemotronLabsDiffusion.swift`](../Sources/FFAI/Models/NemotronLabsDiffusion.swift) | `nemotron_labs_diffusion` | `NemotronLabsDiffusionModel` | `NemotronLabsDiffusionDense` |
-| **GraniteMoeHybrid** | [`Models/GraniteMoeHybrid.swift`](../Sources/FFAI/Models/GraniteMoeHybrid.swift) | `granitemoehybrid` | `GraniteMoeHybridForCausalLM` | `GraniteMoeHybridHybrid` |
-| **Jamba** | [`Models/Jamba.swift`](../Sources/FFAI/Models/Jamba.swift) | `jamba` | `JambaForCausalLM` | `JambaHybrid` |
-| **LFM2 / LFM2.5** | [`Models/LFM2.swift`](../Sources/FFAI/Models/LFM2.swift) | `lfm2`, `lfm2_moe` | `Lfm2ForCausalLM`, `Lfm2MoeForCausalLM` | `LFM2Dense`, `LFM2MoE` |
-| **Qwen 3.5** | [`Models/Qwen35.swift`](../Sources/FFAI/Models/Qwen35.swift) | `qwen3_5`, `qwen3_5_moe` | `Qwen3_5ForConditionalGeneration`, `Qwen3_5MoeForConditionalGeneration` | `Qwen35Hybrid` |
-| **Gemma 4** | [`Models/Gemma4.swift`](../Sources/FFAI/Models/Gemma4.swift) | `gemma4`, `gemma4_text` | `Gemma4ForCausalLM`, `Gemma4ForConditionalGeneration` | `Gemma4Dense`, `Gemma4E`, `Gemma4MoE` |
-| **GPT-OSS** | [`Models/GPTOSS.swift`](../Sources/FFAI/Models/GPTOSS.swift) | `gpt_oss` | `GptOssForCausalLM` | `GPTOSSMoEVariant` |
+| **Llama 3.x** | [`Models/Text/Llama.swift`](../Sources/FFAI/Models/Text/Llama.swift) | `llama` | `LlamaForCausalLM` | `LlamaDense` |
+| **Llama-compatible zoo** | [`Models/Text/LlamaCompatibles.swift`](../Sources/FFAI/Models/Text/LlamaCompatibles.swift) | `smollm`, `olmo2`, `starcoder2`, `internlm2`, … | (various — all Llama-shaped) | reuses the Llama loader |
+| **Qwen 2** | [`Models/Text/Qwen2Text.swift`](../Sources/FFAI/Models/Text/Qwen2Text.swift) | `qwen2` | `Qwen2ForCausalLM` | reuses the Llama loader |
+| **Qwen 3** | [`Models/Text/Qwen3Text.swift`](../Sources/FFAI/Models/Text/Qwen3Text.swift) | `qwen3` | `Qwen3ForCausalLM` | `Qwen3Dense` |
+| **Mistral** | [`Models/Text/Mistral.swift`](../Sources/FFAI/Models/Text/Mistral.swift) | `mistral` | `MistralForCausalLM` | reuses the Llama loader |
+| **Phi 3** | [`Models/Text/Phi.swift`](../Sources/FFAI/Models/Text/Phi.swift) | `phi3` | `Phi3ForCausalLM` | `Phi3Dense` |
+| **Gemma 2** | [`Models/Text/Gemma2.swift`](../Sources/FFAI/Models/Text/Gemma2.swift) | `gemma2` | `Gemma2ForCausalLM` | `Gemma2Dense` |
+| **Gemma 3** | [`Models/Text/Gemma3Text.swift`](../Sources/FFAI/Models/Text/Gemma3Text.swift) | `gemma3`, `gemma3_text` | `Gemma3ForCausalLM` | `Gemma3Dense` |
+| **Mamba 2** | [`Models/Text/Mamba2.swift`](../Sources/FFAI/Models/Text/Mamba2.swift) | `mamba2` | `Mamba2ForCausalLM` | `Mamba2Dense` |
+| **FalconH1** | [`Models/Text/FalconH1.swift`](../Sources/FFAI/Models/Text/FalconH1.swift) | `falcon_h1` | `FalconH1ForCausalLM` | `FalconH1Hybrid` |
+| **NemotronH** | [`Models/Text/NemotronHText.swift`](../Sources/FFAI/Models/Text/NemotronHText.swift) | `nemotron_h` | `NemotronHForCausalLM` | `NemotronHHybrid` |
+| **Nemotron-Labs-Diffusion** | [`Models/Text/NemotronLabsDiffusion.swift`](../Sources/FFAI/Models/Text/NemotronLabsDiffusion.swift) | `nemotron_labs_diffusion` | `NemotronLabsDiffusionModel` | `NemotronLabsDiffusionDense` |
+| **GraniteMoeHybrid** | [`Models/Text/GraniteMoeHybrid.swift`](../Sources/FFAI/Models/Text/GraniteMoeHybrid.swift) | `granitemoehybrid` | `GraniteMoeHybridForCausalLM` | `GraniteMoeHybridHybrid` |
+| **Jamba** | [`Models/Text/Jamba.swift`](../Sources/FFAI/Models/Text/Jamba.swift) | `jamba` | `JambaForCausalLM` | `JambaHybrid` |
+| **LFM2 / LFM2.5** | [`Models/Text/LFM2Text.swift`](../Sources/FFAI/Models/Text/LFM2Text.swift) | `lfm2`, `lfm2_moe` | `Lfm2ForCausalLM`, `Lfm2MoeForCausalLM` | `LFM2Dense`, `LFM2MoE` |
+| **Qwen 3.5** | [`Models/Text/Qwen35Text.swift`](../Sources/FFAI/Models/Text/Qwen35Text.swift) | `qwen3_5`, `qwen3_5_moe` | `Qwen3_5ForConditionalGeneration`, `Qwen3_5MoeForConditionalGeneration` | `Qwen35Hybrid` |
+| **Gemma 4** | [`Models/Text/Gemma4Text.swift`](../Sources/FFAI/Models/Text/Gemma4Text.swift) | `gemma4`, `gemma4_text` | `Gemma4ForCausalLM`, `Gemma4ForConditionalGeneration` | `Gemma4Dense`, `Gemma4E`, `Gemma4MoE` |
+| **GPT-OSS** | [`Models/Text/GPTOSS.swift`](../Sources/FFAI/Models/Text/GPTOSS.swift) | `gpt_oss` | `GptOssForCausalLM` | `GPTOSSMoEVariant` |
 
 ### Audio families (Phase 7)
 
@@ -103,12 +104,12 @@ splices the projected image tokens into the text stream.
 
 | Family | File | `architectures` | Notes |
 |---|---|---|---|
-| **Gemma 3 VL** | [`Models/Gemma3VL.swift`](../Sources/FFAI/Models/Gemma3VL.swift) | `Gemma3ForConditionalGeneration` | SigLIP ViT tower + multi-modal projector (patch-grid pool) + Gemma 3 text backbone. |
-| **Qwen 2.5-VL** | [`Models/Qwen25VL.swift`](../Sources/FFAI/Models/Qwen25VL.swift) | `Qwen2_5_VLForConditionalGeneration` | Dynamic-resolution windowed-attention ViT tower + the Qwen 2.x text backbone routed through the Llama dense engine (embedding-input forward). |
-| **Qwen 3-VL** | [`Models/Qwen3VL.swift`](../Sources/FFAI/Models/Qwen3VL.swift) | `Qwen3VLForConditionalGeneration` | Dynamic-resolution full-attention ViT tower (LayerNorm pre-norms, GELU MLP, learned position table) + the Qwen 3 dense text backbone (embedding-input forward). |
-| **Qwen 3-VL-MoE** | [`Models/Qwen3VLMoe.swift`](../Sources/FFAI/Models/Qwen3VLMoe.swift) | `Qwen3VLMoeForConditionalGeneration` | The Qwen3-VL ViT tower + the Qwen 3.5 mixture-of-experts hybrid text backbone (Gated Delta Net ↔ attention, block-sparse MoE FFN), embedding-input forward. |
-| **Gemma 4 VL** | [`Models/Gemma4VL.swift`](../Sources/FFAI/Models/Gemma4VL.swift) | `Gemma4ForConditionalGeneration` (+ `vision_config`) | Bespoke Gemma 4 ViT tower (RoPE attention with multi-dimensional positions, q/k/v RMSNorms, four per-block GemmaRMSNorms, attention-pooling head) + multi-modal embedder + Gemma 4 text backbone (embedding-input forward). |
-| **Nemotron-VLM** | [`Models/NemotronVL.swift`](../Sources/FFAI/Models/NemotronVL.swift) | VL checkpoint whose `text_config.model_type` is `nemotron_h` | ViT tower (shared SigLIP-shaped `VisionEncoder`) + two-layer GELU-MLP projector + the NemotronH stack-interleaved hybrid text backbone (Mamba 2 / attention / dense-MLP, embedding-input forward). |
+| **Gemma 3 VL** | [`Models/Gemma3.swift`](../Sources/FFAI/Models/Gemma3.swift) | `Gemma3ForConditionalGeneration` | SigLIP ViT tower + multi-modal projector (patch-grid pool) + Gemma 3 text backbone. |
+| **Qwen 2.5-VL** | [`Models/Qwen25.swift`](../Sources/FFAI/Models/Qwen25.swift) | `Qwen2_5_VLForConditionalGeneration` | Dynamic-resolution windowed-attention ViT tower + the Qwen 2.x text backbone routed through the Llama dense engine (embedding-input forward). |
+| **Qwen 3-VL** | [`Models/Qwen3.swift`](../Sources/FFAI/Models/Qwen3.swift) | `Qwen3VLForConditionalGeneration` | Dynamic-resolution full-attention ViT tower (LayerNorm pre-norms, GELU MLP, learned position table) + the Qwen 3 dense text backbone (embedding-input forward). |
+| **Qwen 3-VL-MoE** | [`Models/Qwen35.swift`](../Sources/FFAI/Models/Qwen35.swift) | `Qwen3VLMoeForConditionalGeneration` | The Qwen3-VL ViT tower + the Qwen 3.5 mixture-of-experts hybrid text backbone (Gated Delta Net ↔ attention, block-sparse MoE FFN), embedding-input forward. |
+| **Gemma 4 VL** | [`Models/Gemma4.swift`](../Sources/FFAI/Models/Gemma4.swift) | `Gemma4ForConditionalGeneration` (+ `vision_config`) | Bespoke Gemma 4 ViT tower (RoPE attention with multi-dimensional positions, q/k/v RMSNorms, four per-block GemmaRMSNorms, attention-pooling head) + multi-modal embedder + Gemma 4 text backbone (embedding-input forward). |
+| **Nemotron-VLM** | [`Models/NemotronH.swift`](../Sources/FFAI/Models/NemotronH.swift) | VL checkpoint whose `text_config.model_type` is `nemotron_h` | ViT tower (shared SigLIP-shaped `VisionEncoder`) + two-layer GELU-MLP projector + the NemotronH stack-interleaved hybrid text backbone (Mamba 2 / attention / dense-MLP, embedding-input forward). |
 
 All VL families recognized by `ModelRegistry` are now wired to a
 checkpoint loader.

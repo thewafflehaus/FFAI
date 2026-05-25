@@ -5,7 +5,7 @@
 // CPU / GPU helpers for the dynamic-resolution ViT (Conv3d patch embed,
 // LayerNorm pre-norms, M-RoPE, full bidirectional attention, patch merger).
 // The family orchestrator (load entry-point + token ids) lives in
-// `Models/Qwen2VL.swift`.
+// `Models/Qwen2.swift`.
 
 import Foundation
 import Metal

@@ -23,7 +23,7 @@
 //
 // This file is the family orchestrator (load entry-point + the
 // `image_token_index` token id). Vision tower internals live in
-// `Models/Vision/LFM2VLVision.swift`.
+// `Models/Vision/LFM2Vision.swift`.
 
 import Foundation
 import Metal

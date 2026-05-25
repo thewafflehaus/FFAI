@@ -36,7 +36,7 @@
 // The text M-RoPE is approximated by VLModel's sequential scalar positions;
 // the splice itself is exact.
 //
-// The vision tower internals live in `Models/Vision/Qwen2VLVision.swift` —
+// The vision tower internals live in `Models/Vision/Qwen2Vision.swift` —
 // this file is the family orchestrator (load entrypoint + the
 // `<|image_pad|>` / `<|video_pad|>` token ids the splice needs).
 

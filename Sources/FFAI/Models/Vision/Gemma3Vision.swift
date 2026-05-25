@@ -3,7 +3,7 @@
 // This file holds the SigLIP ViT encoder loader, the multi-modal
 // projector, and the composed encoder facade for the Gemma 3 VL family.
 // The family orchestrator (load entry-point + `<image>` token id) lives
-// in `Models/Gemma3VL.swift`.
+// in `Models/Gemma3.swift`.
 
 import Foundation
 import Metal

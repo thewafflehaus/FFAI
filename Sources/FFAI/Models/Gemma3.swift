@@ -18,7 +18,7 @@
 //
 // This file is the family orchestrator (load entry-point + the
 // `<image>` token id). Vision tower internals live in
-// `Models/Vision/Gemma3VLVision.swift`.
+// `Models/Vision/Gemma3Vision.swift`.
 
 import Foundation
 import Metal

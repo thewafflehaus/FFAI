@@ -37,7 +37,7 @@
 // head-dim-agnostic GPU vision SDPA, true text M-RoPE, and deepstack are
 // later performance / fidelity passes.
 //
-// The vision tower internals live in `Models/Vision/Qwen3VLVision.swift` —
+// The vision tower internals live in `Models/Vision/Qwen3Vision.swift` —
 // this file is the family orchestrator (load entrypoint + the
 // `<|image_pad|>` / `<|video_pad|>` token ids the splice needs).
 

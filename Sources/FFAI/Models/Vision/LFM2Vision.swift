@@ -14,7 +14,7 @@
 //   multi_modal_projector.linear_2.{weight,bias}   (quantized in 4bit)
 //
 // The family orchestrator (load entry-point + `image_token_index` default)
-// lives in `Models/LFM2VL.swift`.
+// lives in `Models/LFM2.swift`.
 
 import Foundation
 import Metal
