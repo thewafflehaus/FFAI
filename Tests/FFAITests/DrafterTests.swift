@@ -143,6 +143,79 @@ struct NGramTreeDrafterTests {
         #expect(tree.size <= 4)
     }
 
+    @Test("flatten + treeCausalMask: linear chain produces lower-triangular mask")
+    func flattenLinearChain() {
+        // chain 1 → 2 → 3 → 4 (depth 4, branching 1)
+        let leaf = DraftTreeNode(token: 4)
+        let n3 = DraftTreeNode(token: 3, children: [leaf])
+        let n2 = DraftTreeNode(token: 2, children: [n3])
+        let root = DraftTreeNode(token: 1, children: [n2])
+        let (tokens, parent, paths) = root.flatten()
+        #expect(tokens == [1, 2, 3, 4])
+        #expect(parent == [-1, 0, 1, 2])
+        // Path from root to each node (root-inclusive).
+        #expect(paths[0] == [0])
+        #expect(paths[1] == [0, 1])
+        #expect(paths[2] == [0, 1, 2])
+        #expect(paths[3] == [0, 1, 2, 3])
+        // Linear chain mask = lower triangular (each token attends to
+        // every prior).
+        let (mask, t) = root.treeCausalMask()
+        #expect(t == 4)
+        for i in 0..<t {
+            for j in 0..<t {
+                let m = mask[i * t + j]
+                let expected: Float = (j <= i) ? 0.0 : -Float.infinity
+                #expect(m == expected)
+            }
+        }
+    }
+
+    @Test("flatten + treeCausalMask: branching tree masks cousins/siblings")
+    func flattenBranchingTreeMasksCousins() {
+        //         0 (root)
+        //        / \
+        //       1   2
+        //      /|   |
+        //     3 4   5
+        // DFS order: 0, 1, 3, 4, 2, 5
+        let n3 = DraftTreeNode(token: 30)
+        let n4 = DraftTreeNode(token: 40)
+        let n5 = DraftTreeNode(token: 50)
+        let n1 = DraftTreeNode(token: 10, children: [n3, n4])
+        let n2 = DraftTreeNode(token: 20, children: [n5])
+        let root = DraftTreeNode(token: 0, children: [n1, n2])
+        let (tokens, parent, _) = root.flatten()
+        // DFS order: root, n1, n3, n4, n2, n5
+        #expect(tokens == [0, 10, 30, 40, 20, 50])
+        #expect(parent == [-1, 0, 1, 1, 0, 4])
+
+        let (mask, t) = root.treeCausalMask()
+        #expect(t == 6)
+        // Helper: which flat-indices is each node allowed to attend?
+        // root (0): only self
+        let allow0: Set<Int> = [0]
+        // n1 (1): self + root
+        let allow1: Set<Int> = [0, 1]
+        // n3 (2): self + n1 + root
+        let allow2: Set<Int> = [0, 1, 2]
+        // n4 (3): self + n1 + root  — NOT n3 (sibling)
+        let allow3: Set<Int> = [0, 1, 3]
+        // n2 (4): self + root  — NOT n1 / n3 / n4 (sibling-branch + cousins)
+        let allow4: Set<Int> = [0, 4]
+        // n5 (5): self + n2 + root  — NOT n1 / n3 / n4
+        let allow5: Set<Int> = [0, 4, 5]
+        let allowed: [Set<Int>] = [allow0, allow1, allow2, allow3, allow4, allow5]
+
+        for i in 0..<t {
+            for j in 0..<t {
+                let m = mask[i * t + j]
+                let expected: Float = allowed[i].contains(j) ? 0.0 : -Float.infinity
+                #expect(m == expected)
+            }
+        }
+    }
+
     @Test("frequency-tie deterministic order")
     func frequencyTieDeterministicOrder() {
         // Bigram "a b" → "c" once, → "d" once (tie). Top-2 returns both;

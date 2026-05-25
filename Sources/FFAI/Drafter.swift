@@ -151,6 +151,70 @@ public struct DraftTreeNode: Sendable {
     public var depth: Int {
         return 1 + (children.map(\.depth).max() ?? 0)
     }
+
+    // ─── ITER 69 (Bagel 2): tree-flatten + tree-causal mask synthesis ──
+    //
+    // The verify forward needs (a) a linear sequence of tokens to feed
+    // the model and (b) a [T, T] attention mask over those tokens
+    // describing the tree structure. These pure-Swift helpers produce
+    // both; the future tree-causal SDPA kernel consumes them.
+
+    /// Depth-first flatten of the tree. Returns:
+    /// - `tokens[i]`: the token at flat position `i` (root at 0).
+    /// - `parentIndex[i]`: the flat-index of node `i`'s parent, or
+    ///   `-1` for the root (`i == 0`).
+    /// - `pathFromRoot[i]`: indices of node `i`'s ancestors INCLUDING
+    ///   `i` itself, root-first (length = node `i`'s depth in the
+    ///   tree). Used by the verify driver to walk the accepted prefix.
+    public func flatten() -> (tokens: [Int],
+                               parentIndex: [Int],
+                               pathFromRoot: [[Int]]) {
+        var tokens: [Int] = []
+        var parent: [Int] = []
+        var paths: [[Int]] = []
+        var indexStack: [Int] = []  // current DFS path-to-this-node, by flat-index
+        func recurse(_ node: DraftTreeNode, parentIdx: Int) {
+            let myIdx = tokens.count
+            tokens.append(node.token)
+            parent.append(parentIdx)
+            indexStack.append(myIdx)
+            paths.append(indexStack)
+            for child in node.children {
+                recurse(child, parentIdx: myIdx)
+            }
+            indexStack.removeLast()
+        }
+        recurse(self, parentIdx: -1)
+        return (tokens, parent, paths)
+    }
+
+    /// Tree-causal additive attention mask for the in-tree positions.
+    /// Returns a flat `[T*T]` array where `mask[i*T + j]` is:
+    ///   - `0.0` if flat-index `j` is an ancestor of `i` in the tree,
+    ///     or `j == i` itself (the diagonal — every token attends to
+    ///     itself).
+    ///   - `-Float.infinity` otherwise (siblings / cousins / disjoint
+    ///     branches — must NOT attend across alternative paths).
+    ///
+    /// Caller adds this mask onto the attention scores BEFORE softmax.
+    /// The cached-prefix portion of attention (positions < `base_kv`)
+    /// is always-attended (full causal-to-cache) and is NOT included
+    /// here — wrap this mask into the kernel's mask param only for the
+    /// in-block region.
+    public func treeCausalMask() -> (mask: [Float], t: Int) {
+        let (_, parent, _) = flatten()
+        let t = parent.count
+        var mask = [Float](repeating: -Float.infinity, count: t * t)
+        for i in 0..<t {
+            // Walk i's ancestor chain and set mask[i, ancestor] = 0.
+            var node = i
+            while node != -1 {
+                mask[i * t + node] = 0.0
+                node = parent[node]
+            }
+        }
+        return (mask, t)
+    }
 }
 
 /// A drafter that proposes a tree of candidate continuations. The
