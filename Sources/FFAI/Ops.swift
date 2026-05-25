@@ -1681,6 +1681,103 @@ public enum Ops {
     }
 
     /// Backwards-compatible 4-bit alias.
+    /// ITER 86 (Bagel 2): fused Q/K/V int4 dequant-QMM in ONE dispatch
+    /// for M > 1 (batched prefill). The M=1 variant is
+    /// `Ops.batchedQkvQgemvInt4Fast` (ITER 78). Same kernel family —
+    /// `program_id<2>()` selects matrix, the new `program_id<1>()` axis
+    /// selects the row. Output layout: `[M, out_q+out_k+out_v]`
+    /// concatenated per row.
+    ///
+    /// Constraints (mirror `ffai_batched_qkv_qgemv_fast`):
+    /// - `in_dim` MUST be a multiple of 512.
+    /// - Each of `out_q`, `out_k`, `out_v` MUST be a multiple of 8.
+    /// - `group_size` MUST be 64. TPG = 64.
+    /// - `out` MUST be pre-zeroed (kernel only writes valid tiles).
+    public static func batchedQkvQmmFast(
+        x: Tensor,          // [M, in_dim]
+        wQ: Tensor, scalesQ: Tensor, biasesQ: Tensor,
+        wK: Tensor, scalesK: Tensor, biasesK: Tensor,
+        wV: Tensor, scalesV: Tensor, biasesV: Tensor,
+        m: Int, outQ: Int, outK: Int, outV: Int,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor    // [M, out_q+out_k+out_v]
+    ) {
+        precondition(wQ.dtype == .u32 && wK.dtype == .u32 && wV.dtype == .u32,
+                     "batchedQkvQmmFast: w_* must be u32-packed")
+        let packedPerRow = wQ.shape[1]
+        let inDim = packedPerRow * 8
+        precondition(x.elementCount == m * inDim,
+                     "batchedQkvQmmFast: x.elementCount \(x.elementCount) ≠ M·inDim \(m * inDim)")
+        precondition(out.elementCount == m * (outQ + outK + outV),
+                     "batchedQkvQmmFast: out.elementCount must be M·(q+k+v)")
+        precondition(inDim % 512 == 0, "batchedQkvQmmFast: in_dim must be a multiple of 512")
+        precondition(outQ % 8 == 0 && outK % 8 == 0 && outV % 8 == 0,
+                     "batchedQkvQmmFast: out_q/k/v must each be a multiple of 8")
+        // Pre-zero `out` so untouched tiles (out_dim != max(out_*)) don't
+        // carry stale bytes. The single-token path's `qkvFusedScratch` is
+        // fully covered by one row of writes, so it skips this; for M > 1
+        // the safe play is a zero pass.
+        out.zero()
+        let groupSize = 64
+        let tpg = 64
+        let maxOut = max(outQ, max(outK, outV))
+        let nTiles = maxOut / 8
+        let grid = MTLSize(width: nTiles * tpg, height: m, depth: 3)
+        let tg = MTLSize(width: tpg, height: 1, depth: 1)
+        switch x.dtype {
+        case .f32:
+            MetalTileKernels.ffai_batched_qkv_qmm_fast_f32(
+                x: x.buffer, xOffset: x.offset,
+                w_q: wQ.buffer, w_qOffset: wQ.offset,
+                scales_q: scalesQ.buffer, scales_qOffset: scalesQ.offset,
+                biases_q: biasesQ.buffer, biases_qOffset: biasesQ.offset,
+                w_k: wK.buffer, w_kOffset: wK.offset,
+                scales_k: scalesK.buffer, scales_kOffset: scalesK.offset,
+                biases_k: biasesK.buffer, biases_kOffset: biasesK.offset,
+                w_v: wV.buffer, w_vOffset: wV.offset,
+                scales_v: scalesV.buffer, scales_vOffset: scalesV.offset,
+                biases_v: biasesV.buffer, biases_vOffset: biasesV.offset,
+                out: out.buffer, outOffset: out.offset,
+                out_q: UInt32(outQ), out_k: UInt32(outK), out_v: UInt32(outV),
+                in_dim: UInt32(inDim), group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.ffai_batched_qkv_qmm_fast_f16(
+                x: x.buffer, xOffset: x.offset,
+                w_q: wQ.buffer, w_qOffset: wQ.offset,
+                scales_q: scalesQ.buffer, scales_qOffset: scalesQ.offset,
+                biases_q: biasesQ.buffer, biases_qOffset: biasesQ.offset,
+                w_k: wK.buffer, w_kOffset: wK.offset,
+                scales_k: scalesK.buffer, scales_kOffset: scalesK.offset,
+                biases_k: biasesK.buffer, biases_kOffset: biasesK.offset,
+                w_v: wV.buffer, w_vOffset: wV.offset,
+                scales_v: scalesV.buffer, scales_vOffset: scalesV.offset,
+                biases_v: biasesV.buffer, biases_vOffset: biasesV.offset,
+                out: out.buffer, outOffset: out.offset,
+                out_q: UInt32(outQ), out_k: UInt32(outK), out_v: UInt32(outV),
+                in_dim: UInt32(inDim), group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.ffai_batched_qkv_qmm_fast_bf16(
+                x: x.buffer, xOffset: x.offset,
+                w_q: wQ.buffer, w_qOffset: wQ.offset,
+                scales_q: scalesQ.buffer, scales_qOffset: scalesQ.offset,
+                biases_q: biasesQ.buffer, biases_qOffset: biasesQ.offset,
+                w_k: wK.buffer, w_kOffset: wK.offset,
+                scales_k: scalesK.buffer, scales_kOffset: scalesK.offset,
+                biases_k: biasesK.buffer, biases_kOffset: biasesK.offset,
+                w_v: wV.buffer, w_vOffset: wV.offset,
+                scales_v: scalesV.buffer, scales_vOffset: scalesV.offset,
+                biases_v: biasesV.buffer, biases_vOffset: biasesV.offset,
+                out: out.buffer, outOffset: out.offset,
+                out_q: UInt32(outQ), out_k: UInt32(outK), out_v: UInt32(outV),
+                in_dim: UInt32(inDim), group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.batchedQkvQmmFast: unsupported dtype \(x.dtype)")
+        }
+    }
+
     /// ITER 78 (Bagel 2): fused Q/K/V int4 dequant-GEMV in ONE dispatch
     /// via `ffai_batched_qkv_qgemv_fast`. Replaces the 3-dispatch
     /// `dequantGemvInt4Three` shared-encoder form with a single
