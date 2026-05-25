@@ -1,10 +1,15 @@
-// GlmOcr vision tower internals — ViT + text engine + CPU primitives.
+// GlmOcr vision tower internals — ViT + text engine + GPU-dispatching helpers.
 //
 // This file contains GlmOcrTextLayer, GlmOcrModel (the full engine which
 // implements LanguageModel), GlmOcrVisionTower, GlmOcrVisionBlock, and all
-// supporting CPU helpers (RMSNorm, GEMM, patch unfold, dtype conversion) and
-// bundle adapter types (SafeTensorsBundlePrefixView, loadLinear / loadEmbedding
-// overloads for the prefix view).
+// supporting helpers — CpuLinear (Ops.gemm / Ops.dequantGemv wrapper),
+// cpuRMSNorm (host-side small-element scaling that feeds Ops.gemm), patch
+// unfold (load-time prep), and dtype conversion (also load-time) — plus
+// bundle adapter types (SafeTensorsBundlePrefixView, loadLinear /
+// loadEmbedding overloads for the prefix view). The "Cpu" prefix on
+// CpuLinear / cpuRMSNorm is historical — the projection and matmul work
+// dispatches to the GPU; only the per-row scale / small-element setup
+// stays host-side where Metal launch overhead would dominate.
 //
 // Per the GLM-OCR design: the engine itself is a LanguageModel (not a
 // VLModel splice), so GlmOcrModel owns both the ViT and the text decoder —

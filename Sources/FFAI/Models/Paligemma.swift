@@ -12,20 +12,25 @@
 //   (no lm_head — tied to embed_tokens)
 //
 // Reference: mlx-swift-lm/Libraries/MLXVLM/Models/Paligemma.swift
-// Port strategy:
-//   • Vision encoder projections (Q/K/V/O, fc1/fc2) dispatch on the GPU
-//     via `Ops.gemm` (plain) / `Ops.dequantGemv` (quantized). LayerNorm
-//     and the SDPA core were migrated in earlier passes; only the
-//     patch-embedding conv still runs CPU-side.
-//   • Projector also dispatches via `CpuLinear.forwardBatch` on the GPU,
-//     with bias broadcast through `Ops.add` over a tiled bias tensor.
-//   • Gemma text backbone runs on GPU via the same Ops.* kernels as Llama.
-//   • setImagePixels(_:) is called before generation; it computes the vision
-//     features and stores them as a GPU Tensor. forward() substitutes the
-//     stored image embedding at image-token positions.
 //
-// Vision tower internals (CPU helpers, SigLIP layer, CpuEmbedding,
-// CpuLinear, PaligemmaModel) live in `Models/Vision/PaligemmaVision.swift`.
+// All inference dispatches to GPU via Ops.* kernels:
+//   • Vision encoder projections (Q/K/V/O, fc1/fc2) — Ops.gemm (plain)
+//     or Ops.dequantGemv (quantized).
+//   • SigLIP attention core — Ops.sdpaBidirectional(headDim: 72).
+//   • LayerNorms — GPU rms_norm / layer_norm kernels.
+//   • Patch-embedding conv — load-time weight reshape (CPU); the
+//     per-image projection itself is a GPU GEMM.
+//   • Projector — CpuLinear.forwardBatch dispatches GPU GEMM; bias
+//     broadcast via Ops.add over a tiled bias tensor.
+//   • Gemma text backbone — same Ops.* kernels as Llama.
+//   • setImagePixels(_:) is called before generation; it computes the
+//     vision features and stores them as a GPU Tensor. forward()
+//     substitutes the stored image embedding at image-token positions.
+//
+// Vision tower internals (SigLIP layer, CpuEmbedding, CpuLinear,
+// PaligemmaModel — the "Cpu" prefix on those types is historical;
+// projections dispatch to the GPU) live in
+// `Models/Vision/PaligemmaVision.swift`.
 
 import Foundation
 import Metal

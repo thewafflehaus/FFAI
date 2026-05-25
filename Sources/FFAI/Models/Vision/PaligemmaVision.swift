@@ -1,15 +1,24 @@
-// Paligemma vision internals — CPU helpers, SigLIP encoder, and PaligemmaModel.
+// Paligemma vision internals — SigLIP encoder + projector + PaligemmaModel.
 //
 // The family orchestrator (`enum Paligemma`, `enum PaligemmaError`,
 // `protocol PaligemmaVariant`, `struct PaligemmaStandard`) lives in
 // `Models/Paligemma.swift`. This file contains the implementation types:
-//   • readF32 / float16ToFloat / paligemmaBfloat16ToFloat — dtype converters.
-//   • dequantRow — per-row int4/int8 dequantization for quantized embeddings.
-//   • CpuEmbedding — CPU-side position embedding table (plain or quantized).
-//   • CpuLinear — GPU-resident linear (Ops.gemm / Ops.dequantGemv dispatch).
-//   • layerNorm / geluFast — CPU primitives for the SigLIP encoder.
-//   • cpuSDPA — GPU SDPA dispatch (Ops.sdpaBidirectional) for SigLIP attention.
-//   • SigLIPLayer — one SigLIP transformer block.
+//   • readF32 / float16ToFloat / paligemmaBfloat16ToFloat — load-time
+//     dtype converters (run once during weight prep).
+//   • dequantRow — per-row int4/int8 dequantization for quantized
+//     embeddings (load-time).
+//   • CpuEmbedding — position-embedding lookup table held host-side
+//     (table is tiny; the per-token gather happens at prompt-prep time).
+//   • CpuLinear — Linear wrapper that dispatches Ops.gemm /
+//     Ops.dequantGemv on the GPU. (The "Cpu" prefix is historical —
+//     the projection itself is GPU-resident.)
+//   • layerNorm / geluFast — small host-side helpers for tile-local
+//     ops where Metal launch overhead would dominate.
+//   • cpuSDPA — GPU SDPA dispatch via Ops.sdpaBidirectional(headDim: 72)
+//     for the SigLIP attention core. (Name is historical; the compute
+//     is GPU-resident — see Vision/VisionEncoder.swift's dispatch.)
+//   • SigLIPLayer — one SigLIP transformer block (GPU projections +
+//     GPU SDPA + per-row LayerNorm).
 //   • PaligemmaModel — the assembled VLM: SigLIP ViT + Gemma 2 decoder.
 //   • Numeric helpers: floatToFloat16 / floatToBFloat16 / fillScale.
 
