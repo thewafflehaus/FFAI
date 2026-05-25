@@ -117,7 +117,7 @@ struct Qwen3ASRIntegrationTests {
         let transcript = model.transcribe(
             waveform: wave,
             tokenizer: tokenizer,
-            maxTokens: 128
+            maxTokens: 200
         )
 
         print("[Qwen3ASR integration] transcript: \(transcript.debugDescription)")

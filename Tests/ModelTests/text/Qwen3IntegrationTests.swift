@@ -15,7 +15,7 @@ struct Qwen3IntegrationTests {
     func loadAndGenerate() async throws {
         let modelId = "mlx-community/Qwen3-1.7B-bf16"
         let prompt = "Once upon a time, in a quiet village"
-        let maxTokens = 64
+        let maxTokens = 200
 
         let m: Model
         do {

@@ -91,7 +91,7 @@ struct LFM2IntegrationTests {
         // ── End-to-end greedy generation ──────────────────────────────
         let result = try await m.generate(
             prompt: prompt,
-            parameters: GenerationParameters(maxTokens: 64, temperature: 0)
+            parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
         #expect(result.tokensPerSecond > 0)
 
@@ -146,7 +146,7 @@ struct LFM2IntegrationTests {
 
         let result = try await m.generate(
             prompt: prompt,
-            parameters: GenerationParameters(maxTokens: 64, temperature: 0)
+            parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
         let decoded = m.tokenizer.decode(tokens: result.generatedTokens)
         print("LFM2-8B-A1B decoded output: \(decoded)")

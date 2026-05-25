@@ -19,7 +19,7 @@ struct Gemma2IntegrationTests {
     func loadAndGenerate() async throws {
         let modelId = "mlx-community/gemma-2-2b-it"
         let prompt = "Once upon a time, in a quiet village"
-        let maxTokens = 64
+        let maxTokens = 200
 
         let m: Model
         do {

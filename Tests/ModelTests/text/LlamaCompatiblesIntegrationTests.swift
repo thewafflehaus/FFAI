@@ -35,7 +35,7 @@ struct LlamaCompatiblesIntegrationTests {
         #expect(m.engine.headDim == 64)
         let result = try await m.generate(
             prompt: "Once upon a time, in a quiet village",
-            parameters: GenerationParameters(maxTokens: 64, temperature: 0)
+            parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
         expectCoherentOutput(result.generatedTokens, label: "SmolLM2 360M bf16")
     }
@@ -59,7 +59,7 @@ struct LlamaCompatiblesIntegrationTests {
         #expect(m.engine.headDim == 128)
         let result = try await m.generate(
             prompt: "def fibonacci(n):\n",
-            parameters: GenerationParameters(maxTokens: 32, temperature: 0)
+            parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
         expectCoherentOutput(result.generatedTokens, label: "Starcoder2 3B bf16")
     }
@@ -81,7 +81,7 @@ struct LlamaCompatiblesIntegrationTests {
         #expect(m.engine.headDim == 128)
         let result = try await m.generate(
             prompt: "Once upon a time, in a quiet village",
-            parameters: GenerationParameters(maxTokens: 64, temperature: 0)
+            parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
         expectCoherentOutput(result.generatedTokens, label: "OLMo 2 1B bf16")
     }
@@ -101,7 +101,7 @@ struct LlamaCompatiblesIntegrationTests {
         #expect(m.engine.hidden == 2048)
         let result = try await m.generate(
             prompt: "Once upon a time, in a quiet village",
-            parameters: GenerationParameters(maxTokens: 64, temperature: 0)
+            parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
         expectCoherentOutput(result.generatedTokens, label: "SmolLM3 3B bf16")
     }
@@ -122,7 +122,7 @@ struct LlamaCompatiblesIntegrationTests {
         #expect(m.engine.hidden == 2048)
         let result = try await m.generate(
             prompt: "Once upon a time, in a quiet village",
-            parameters: GenerationParameters(maxTokens: 64, temperature: 0)
+            parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
         expectCoherentOutput(result.generatedTokens, label: "Granite 3 2B bf16")
     }
@@ -143,7 +143,7 @@ struct LlamaCompatiblesIntegrationTests {
         #expect(m.engine.hidden == 2048)
         let result = try await m.generate(
             prompt: "Once upon a time, in a quiet village",
-            parameters: GenerationParameters(maxTokens: 64, temperature: 0)
+            parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
         expectCoherentOutput(result.generatedTokens, label: "InternLM2 1.8B bf16")
     }
@@ -163,7 +163,7 @@ struct LlamaCompatiblesIntegrationTests {
         // nKVHeads=5, headDim=64.
         let result = try await m.generate(
             prompt: "Once upon a time, in a quiet village",
-            parameters: GenerationParameters(maxTokens: 64, temperature: 0)
+            parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
         expectCoherentOutput(result.generatedTokens, label: "SmolLM 360M bf16")
     }

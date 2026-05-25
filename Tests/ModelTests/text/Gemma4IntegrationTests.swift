@@ -37,7 +37,7 @@ struct Gemma4IntegrationTests {
         // sustained prose across every architectural path (sliding +
         // global attention, PLE, KV sharing, soft-capping).
         let prompt = "Once upon a time, in a quiet village"
-        let maxTokens = 24
+        let maxTokens = 200
 
         let m: Model
         do {
@@ -138,7 +138,7 @@ struct Gemma4IntegrationTests {
         }
         let result = try await m.generate(
             prompt: prompt,
-            parameters: GenerationParameters(maxTokens: 48, temperature: 0)
+            parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
         expectCoherentOutput(result.generatedTokens, minTokens: 48,
                              label: "Gemma 4 31B-it 4bit")
@@ -177,7 +177,7 @@ struct Gemma4IntegrationTests {
         }
         let result = try await m.generate(
             prompt: prompt,
-            parameters: GenerationParameters(maxTokens: 24, temperature: 0)
+            parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
         #expect(result.tokensPerSecond > 0)
         expectCoherentOutput(result.generatedTokens, minTokens: 24,
