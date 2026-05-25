@@ -336,9 +336,10 @@ struct MoEBgemmBm64MppTests {
 
         // Live-compile from the .metal source on disk. Resolve the
         // kernels dir relative to this test file (#filePath →
-        // <repo>/Tests/FFAITests/…) instead of a hardcoded absolute
-        // path, so the test is machine-independent.
+        // <repo>/Tests/FFAITests/Benchmark/…) instead of a hardcoded
+        // absolute path, so the test is machine-independent.
         let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // Benchmark/
             .deletingLastPathComponent()  // FFAITests/
             .deletingLastPathComponent()  // Tests/
             .deletingLastPathComponent()  // <repo>/
