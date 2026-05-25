@@ -20,7 +20,8 @@ struct FFAIRoot: AsyncParsableCommand {
         // documentation/developing/publishing.md).
         version: FFAI.version,
         subcommands: [GenerateCommand.self, BenchCommand.self,
-                      InspectCommand.self, ModelsCommand.self],
+                      InspectCommand.self, ModelsCommand.self,
+                      ConvertCommand.self],
         defaultSubcommand: GenerateCommand.self
     )
 }
