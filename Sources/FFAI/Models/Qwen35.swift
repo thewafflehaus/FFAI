@@ -2035,12 +2035,12 @@ public final class Qwen35AttentionMixer: Module {
         let gateFlat: Tensor?     // `[T, nHeads, headDim]` flat
         if attnOutputGate {
             let q2T = qOut.reshaped(to: [t, nHeads, 2 * headDim])
-            queriesFlat = sliceHeadHalvesMany35(
-                q2T, t: t, nHeads: nHeads, headDim: headDim, takeFirst: true,
+            // ITER 74: both gathers on a shared encoder.
+            let (q, g) = sliceHeadHalvesManyBoth35(
+                q2T, t: t, nHeads: nHeads, headDim: headDim,
                 on: cmd, device: device)
-            gateFlat = sliceHeadHalvesMany35(
-                q2T, t: t, nHeads: nHeads, headDim: headDim, takeFirst: false,
-                on: cmd, device: device)
+            queriesFlat = q
+            gateFlat = g
         } else {
             queriesFlat = qOut
             gateFlat = nil
@@ -3165,6 +3165,51 @@ private func sliceHeadHalves35(_ q2: Tensor, nHeads: Int, headDim: Int,
     let idx = Tensor(buffer: idxBuf, offset: 0, shape: [nHeads], dtype: .u32)
     let gathered = Ops.gather(table: table, tokenIds: idx, on: cmd)
     return gathered.reshaped(to: [nHeads * headDim])
+}
+
+/// ITER 74 (Bagel 2): T-batched variant that gathers BOTH halves
+/// (queries + gate) in ONE shared encoder via `Ops.gatherTwo`. Saves
+/// 1 encoder begin/end pair per attn layer per prefill chunk × 10 attn
+/// layers = ~170 µs/chunk. Pattern matches ITER 65 (the decode-time
+/// gatherTwo for the same Q/gate split).
+///
+/// Returns (queriesFlat, gateFlat) where both are `[T·nHeads·headDim]`
+/// flat — same shape contract as two `sliceHeadHalvesMany35` calls
+/// with `takeFirst: true` and `false`.
+private func sliceHeadHalvesManyBoth35(_ q2T: Tensor, t: Int,
+                                        nHeads: Int, headDim: Int,
+                                        on cmd: MTLCommandBuffer,
+                                        device: Device) -> (Tensor, Tensor) {
+    precondition(q2T.elementCount == t * nHeads * 2 * headDim,
+                 "sliceHeadHalvesManyBoth35: q2T must be [T, nHeads, 2·headDim]")
+    let table = q2T.reshaped(to: [t * nHeads * 2, headDim])
+    let nIdx = t * nHeads
+    // Build both index tables — same layout as sliceHeadHalvesMany35
+    // for takeFirst=true and takeFirst=false respectively.
+    var rowsFirst = [UInt32](repeating: 0, count: nIdx)
+    var rowsSecond = [UInt32](repeating: 0, count: nIdx)
+    for r in 0..<t {
+        let base = UInt32(r * 2 * nHeads)
+        let rowBase = r * nHeads
+        for h in 0..<nHeads {
+            rowsFirst[rowBase + h]  = base + UInt32(2 * h)
+            rowsSecond[rowBase + h] = base + UInt32(2 * h) + 1
+        }
+    }
+    let firstBuf = device.makeBuffer(length: nIdx * 4)
+    rowsFirst.withUnsafeBytes { _ = memcpy(firstBuf.contents(), $0.baseAddress!, nIdx * 4) }
+    let secondBuf = device.makeBuffer(length: nIdx * 4)
+    rowsSecond.withUnsafeBytes { _ = memcpy(secondBuf.contents(), $0.baseAddress!, nIdx * 4) }
+    let idxFirst = Tensor(buffer: firstBuf, offset: 0, shape: [nIdx], dtype: .u32)
+    let idxSecond = Tensor(buffer: secondBuf, offset: 0, shape: [nIdx], dtype: .u32)
+    let out1 = Tensor.empty(shape: [nIdx, headDim], dtype: q2T.dtype)
+    let out2 = Tensor.empty(shape: [nIdx, headDim], dtype: q2T.dtype)
+    Ops.gatherTwo(table: table,
+                   ids1: idxFirst, into: out1,
+                   ids2: idxSecond, into: out2,
+                   on: cmd)
+    return (out1.reshaped(to: [nIdx * headDim]),
+            out2.reshaped(to: [nIdx * headDim]))
 }
 
 /// T-batched variant of `sliceHeadHalves35`. Input `q2T` is
