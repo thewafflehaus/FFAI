@@ -40,7 +40,7 @@ struct LlamaCompatiblesIntegrationTests {
     @Test("SmolLM2-360M-Instruct (LlamaForCausalLM, no biases) decodes coherently")
     func smolLM2() async throws {
         let m = try await ModelLoadLock.shared.loadSerially {
-            try await Model.load("mlx-community/SmolLM2-360M-Instruct-bf16-mlx")
+            try await Model.load("ekryski/SmolLM2-360M-Instruct-4bit")
         }
         // SmolLM2 360M canonical: hidden=960, nLayers=32, nHeads=15,
         // nKVHeads=5, headDim=64. Verifies the head_dim=64 SDPA path
