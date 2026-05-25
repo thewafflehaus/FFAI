@@ -1,156 +1,81 @@
-// Gemma 3 VL — Google's Gemma 3 vision-language model (the 4B / 12B /
-// 27B `Gemma3ForConditionalGeneration` checkpoints).
+// Gemma 3 VL — vision tower internals.
 //
-// Composition:
-//   • SigLIP vision tower — a standard ViT, loaded straight into the
-//     shared `VisionEncoder` (its `vision_tower.vision_model.*` weight
-//     keys match `VisionEncoder.parameters()` exactly).
-//   • Multi-modal projector — `4×4` average-pool of the `64×64` patch
-//     grid down to `16×16 = 256` tokens (`mm_tokens_per_image`), a
-//     GemmaRMSNorm, then a linear projection into the text hidden dim.
-//   • Gemma 3 text backbone — the existing `Gemma3Model`, loaded from
-//     the `language_model.`-prefixed sub-tree with the checkpoint's
-//     `text_config`.
-//
-// The three are joined by `VLModel`'s cross-modal token splice: each
-// `<image>` placeholder (`image_token_index`) in the prompt takes one
-// of the 256 projected vision tokens.
+// This file holds the SigLIP ViT encoder loader, the multi-modal
+// projector, and the composed encoder facade for the Gemma 3 VL family.
+// The family orchestrator (load entry-point + `<image>` token id) lives
+// in `Models/Gemma3VL.swift`.
 
 import Foundation
 import Metal
 
-public enum Gemma3VL {
-    /// `image_token_index` default for Gemma 3 VL checkpoints.
-    public static let defaultImageTokenId = 262_144
-
-    /// Build a `VLModel` from a `Gemma3ForConditionalGeneration`
-    /// checkpoint: SigLIP `VisionEncoder` + projector + Gemma 3 text
-    /// backbone, joined by the cross-modal splice.
-    public static func load(
-        config: ModelConfig, weights: SafeTensorsBundle,
-        options: LoadOptions, device: Device
-    ) throws -> VLModel {
-        guard let visionConfig = config.subConfig("vision_config"),
-              let textConfigRaw = config.nested("text_config")
-        else {
-            throw Gemma3Error.missingConfig
-        }
-
-        // ── Text backbone — load from the language_model. sub-tree ──
-        // A VLM `text_config` is sparse: HF omits every field that
-        // matches the Gemma 3 text-model class default. Merge those
-        // defaults in so the standalone `Gemma3Dense` loader — which
-        // needs explicit `num_attention_heads`, `rms_norm_eps`,
-        // `vocab_size`, etc. — sees a complete config.
-        let textConfig = ModelConfig(
-            architecture: "Gemma3TextForCausalLM",
-            modelType: "gemma3_text",
-            raw: gemma3TextConfigWithDefaults(textConfigRaw,
-                                              vocabFallback: config.int("vocab_size")))
-        let textWeights = weights.prefixed("language_model.")
-        let textEngine = try Gemma3Dense.loadModel(
-            config: textConfig, weights: textWeights,
-            options: options, device: device)
-
-        // ── SigLIP vision tower ──
-        let visionWeights = weights.prefixed("vision_tower.vision_model.")
-        let visionEncoder = try loadVisionEncoder(
-            config: visionConfig, textHidden: textEngine.hidden,
-            weights: visionWeights, device: device)
-
-        // ── Multi-modal projector ──
-        let mmTokensPerImage = config.int("mm_tokens_per_image") ?? 256
-        let projector = try Gemma3VLProjector.load(
-            visionConfig: visionConfig, textHidden: textEngine.hidden,
-            mmTokensPerImage: mmTokensPerImage, weights: weights,
-            device: device)
-
-        // The projector pools the encoder grid down to mmTokensPerImage
-        // tokens, so the VLModel's image-token count is the pooled
-        // count — wrap the encoder + projector behind a composed
-        // `VisionEncoder`-shaped tower.
-        let composedTower = Gemma3VLVisionTower(
-            encoder: visionEncoder, projector: projector,
-            tokensPerImage: mmTokensPerImage, textHidden: textEngine.hidden,
-            dtype: textEngine.dtype)
-
-        let imageTokenId = config.int("image_token_index") ?? defaultImageTokenId
-        return try VLModel(
-            visionEncoder: composedTower.asVisionEncoder(),
-            engine: textEngine, imageTokenId: imageTokenId,
-            normalization: .siglip,
-            imageTokenCount: mmTokensPerImage)
+/// Load the SigLIP ViT into a `VisionEncoder`. The checkpoint's
+/// `vision_tower.vision_model.*` keys map 1:1 onto
+/// `VisionEncoder.parameters()`; the encoder hidden differs from the
+/// text hidden, but the projection into text-hidden is done by the
+/// separate `Gemma3VLProjector`, so the `VisionEncoder` itself has
+/// no projection (`textHidden == hidden`).
+func gemma3vlLoadVisionEncoder(
+    config: ModelConfig, textHidden: Int,
+    weights: SafeTensorsBundle, device: Device
+) throws -> VisionEncoder {
+    guard let hidden = config.int("hidden_size"),
+          let imageSize = config.int("image_size"),
+          let patchSize = config.int("patch_size"),
+          let intermediate = config.int("intermediate_size"),
+          let nLayers = config.int("num_hidden_layers"),
+          let nHeads = config.int("num_attention_heads")
+    else {
+        throw Gemma3Error.missingConfig
     }
+    let eps = Float(config.float("layer_norm_eps") ?? 1e-6)
+    let encConfig = VisionEncoderConfig(
+        imageSize: imageSize, patchSize: patchSize, hidden: hidden,
+        intermediate: intermediate, nLayers: nLayers, nHeads: nHeads,
+        layerNormEps: eps, textHidden: hidden)
 
-    /// Load the SigLIP ViT into a `VisionEncoder`. The checkpoint's
-    /// `vision_tower.vision_model.*` keys map 1:1 onto
-    /// `VisionEncoder.parameters()`; the encoder hidden differs from the
-    /// text hidden, but the projection into text-hidden is done by the
-    /// separate `Gemma3VLProjector`, so the `VisionEncoder` itself has
-    /// no projection (`textHidden == hidden`).
-    static func loadVisionEncoder(
-        config: ModelConfig, textHidden: Int,
-        weights: SafeTensorsBundle, device: Device
-    ) throws -> VisionEncoder {
-        guard let hidden = config.int("hidden_size"),
-              let imageSize = config.int("image_size"),
-              let patchSize = config.int("patch_size"),
-              let intermediate = config.int("intermediate_size"),
-              let nLayers = config.int("num_hidden_layers"),
-              let nHeads = config.int("num_attention_heads")
-        else {
-            throw Gemma3Error.missingConfig
+    // The mlx-converted checkpoint stores the patch-embed conv
+    // weight in MLX's OHWI layout `[out_ch, kH, kW, in_ch]`;
+    // `Ops.conv2d` expects PyTorch OIHW `[out_ch, in_ch, kH, kW]`.
+    // Transpose if the trailing dim is the channel count (3).
+    let patchWRaw = try weights.tensor(named: "embeddings.patch_embedding.weight")
+    let patchW = patchWRaw.shape.count == 4 && patchWRaw.shape[3] == 3
+        ? transposeOHWItoOIHW(patchWRaw)
+        : patchWRaw
+    let patchB = try weights.tensor(named: "embeddings.patch_embedding.bias")
+    let posEmb = try weights.tensor(named: "embeddings.position_embedding.weight")
+
+    var layers: [VisionEncoderLayer] = []
+    layers.reserveCapacity(nLayers)
+    for i in 0..<nLayers {
+        let p = "encoder.layers.\(i)"
+        let ln1 = LayerNorm(
+            weight: try weights.tensor(named: "\(p).layer_norm1.weight"),
+            bias: try weights.tensor(named: "\(p).layer_norm1.bias"), eps: eps)
+        let ln2 = LayerNorm(
+            weight: try weights.tensor(named: "\(p).layer_norm2.weight"),
+            bias: try weights.tensor(named: "\(p).layer_norm2.bias"), eps: eps)
+        func lin(_ name: String) throws -> Linear {
+            Linear(weight: try weights.tensor(named: "\(p).\(name).weight"),
+                   bias: try weights.tensor(named: "\(p).\(name).bias"))
         }
-        let eps = Float(config.float("layer_norm_eps") ?? 1e-6)
-        let encConfig = VisionEncoderConfig(
-            imageSize: imageSize, patchSize: patchSize, hidden: hidden,
-            intermediate: intermediate, nLayers: nLayers, nHeads: nHeads,
-            layerNormEps: eps, textHidden: hidden)
-
-        // The mlx-converted checkpoint stores the patch-embed conv
-        // weight in MLX's OHWI layout `[out_ch, kH, kW, in_ch]`;
-        // `Ops.conv2d` expects PyTorch OIHW `[out_ch, in_ch, kH, kW]`.
-        // Transpose if the trailing dim is the channel count (3).
-        let patchWRaw = try weights.tensor(named: "embeddings.patch_embedding.weight")
-        let patchW = patchWRaw.shape.count == 4 && patchWRaw.shape[3] == 3
-            ? transposeOHWItoOIHW(patchWRaw)
-            : patchWRaw
-        let patchB = try weights.tensor(named: "embeddings.patch_embedding.bias")
-        let posEmb = try weights.tensor(named: "embeddings.position_embedding.weight")
-
-        var layers: [VisionEncoderLayer] = []
-        layers.reserveCapacity(nLayers)
-        for i in 0..<nLayers {
-            let p = "encoder.layers.\(i)"
-            let ln1 = LayerNorm(
-                weight: try weights.tensor(named: "\(p).layer_norm1.weight"),
-                bias: try weights.tensor(named: "\(p).layer_norm1.bias"), eps: eps)
-            let ln2 = LayerNorm(
-                weight: try weights.tensor(named: "\(p).layer_norm2.weight"),
-                bias: try weights.tensor(named: "\(p).layer_norm2.bias"), eps: eps)
-            func lin(_ name: String) throws -> Linear {
-                Linear(weight: try weights.tensor(named: "\(p).\(name).weight"),
-                       bias: try weights.tensor(named: "\(p).\(name).bias"))
-            }
-            layers.append(VisionEncoderLayer(
-                layerNorm1: ln1,
-                qProj: try lin("self_attn.q_proj"),
-                kProj: try lin("self_attn.k_proj"),
-                vProj: try lin("self_attn.v_proj"),
-                oProj: try lin("self_attn.out_proj"),
-                layerNorm2: ln2,
-                fc1: try lin("mlp.fc1"), fc2: try lin("mlp.fc2"),
-                hidden: hidden, nHeads: nHeads, intermediate: intermediate))
-        }
-        let postLN = LayerNorm(
-            weight: try weights.tensor(named: "post_layernorm.weight"),
-            bias: try weights.tensor(named: "post_layernorm.bias"), eps: eps)
-
-        return VisionEncoder(
-            config: encConfig, patchEmbedWeight: patchW, patchEmbedBias: patchB,
-            positionEmbedding: posEmb, layers: layers,
-            postLayerNorm: postLN, projection: nil, dtype: patchW.dtype)
+        layers.append(VisionEncoderLayer(
+            layerNorm1: ln1,
+            qProj: try lin("self_attn.q_proj"),
+            kProj: try lin("self_attn.k_proj"),
+            vProj: try lin("self_attn.v_proj"),
+            oProj: try lin("self_attn.out_proj"),
+            layerNorm2: ln2,
+            fc1: try lin("mlp.fc1"), fc2: try lin("mlp.fc2"),
+            hidden: hidden, nHeads: nHeads, intermediate: intermediate))
     }
+    let postLN = LayerNorm(
+        weight: try weights.tensor(named: "post_layernorm.weight"),
+        bias: try weights.tensor(named: "post_layernorm.bias"), eps: eps)
+
+    return VisionEncoder(
+        config: encConfig, patchEmbedWeight: patchW, patchEmbedBias: patchB,
+        positionEmbedding: posEmb, layers: layers,
+        postLayerNorm: postLN, projection: nil, dtype: patchW.dtype)
 }
 
 /// Merge Gemma 3 text-model defaults into a VLM's sparse `text_config`.
