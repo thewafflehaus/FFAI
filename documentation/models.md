@@ -45,7 +45,7 @@ For porting a new architecture, see
 | **Granite4** | [`Models/Text/Granite4Text.swift`](../Sources/FFAI/Models/Text/Granite4Text.swift) | `granitemoehybrid` | `Granite4ForCausalLM` | `Granite4Hybrid` |
 | **Jamba** | [`Models/Text/Jamba.swift`](../Sources/FFAI/Models/Text/Jamba.swift) | `jamba` | `JambaForCausalLM` | `JambaHybrid` |
 | **LFM2 / LFM2.5** | [`Models/Text/LFM2Text.swift`](../Sources/FFAI/Models/Text/LFM2Text.swift) | `lfm2`, `lfm2_moe` | `Lfm2ForCausalLM`, `Lfm2MoeForCausalLM` | `LFM2Dense`, `LFM2MoE` |
-| **Qwen 3.5** | [`Models/Text/Qwen35Text.swift`](../Sources/FFAI/Models/Text/Qwen35Text.swift) | `qwen3_5`, `qwen3_5_moe` | `Qwen3_5ForConditionalGeneration`, `Qwen3_5MoeForConditionalGeneration` | `Qwen35Hybrid` |
+| **Qwen 3.5 / 3.6** | [`Models/Text/Qwen3xText.swift`](../Sources/FFAI/Models/Text/Qwen3xText.swift) | `qwen3_5`, `qwen3_5_moe` | `Qwen3_5ForConditionalGeneration`, `Qwen3_5MoeForConditionalGeneration` | `Qwen35Hybrid` |
 | **Gemma 4** | [`Models/Text/Gemma4Text.swift`](../Sources/FFAI/Models/Text/Gemma4Text.swift) | `gemma4`, `gemma4_text` | `Gemma4ForCausalLM`, `Gemma4ForConditionalGeneration` | `Gemma4Dense`, `Gemma4E`, `Gemma4MoE` |
 | **GPT-OSS** | [`Models/Text/GPTOSS.swift`](../Sources/FFAI/Models/Text/GPTOSS.swift) | `gpt_oss` | `GptOssForCausalLM` | `GPTOSSMoEVariant` |
 

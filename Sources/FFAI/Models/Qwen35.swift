@@ -1,3 +1,13 @@
+// Qwen 3.5 family root — Qwen 3-VL-MoE orchestrator.
+//
+// The Qwen 3.5 *text* backbone (and its Qwen 3.6 sibling) lives in
+// `Models/Text/Qwen3xText.swift` (covers Qwen 3.5 AND Qwen 3.6 since
+// both releases share the same stack-interleaved GDN + attention
+// hybrid architecture and the same `qwen3_5*` model_type strings).
+// This file orchestrates the *VL* wrapper: the Qwen3-VL vision tower
+// plus the Qwen 3.5 MoE text backbone. See `Models/Qwen36.swift` for
+// the Qwen 3.6 root anchor; the underlying types are the same.
+//
 // Qwen 3-VL-MoE — Alibaba's mixture-of-experts Qwen3-VL vision-language
 // model (the `Qwen3VLMoeForConditionalGeneration` checkpoints).
 //

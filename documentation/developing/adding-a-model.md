@@ -63,7 +63,7 @@ shape inside a family.
 - **New variant.** Same family file, new struct conforming to the
   family's `Variant` protocol. Examples: `Qwen35Dense` alongside
   `Qwen3Dense`, `Qwen35MoE`, `Qwen35VL` — they go in
-  `Models/Text/Qwen35Text.swift` and dispatch in `Qwen35.variant(for:)`.
+  `Models/Text/Qwen3xText.swift` and dispatch in `Qwen35.variant(for:)`.
 
 The convention is **one file per family per folder, not per variant**.
 A family file with five variant structs is fine; five files for one

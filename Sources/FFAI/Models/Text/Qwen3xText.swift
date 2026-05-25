@@ -1,9 +1,22 @@
-// Qwen3.5 family — a *stack-interleaved hybrid* model that
-// alternates a Gated Delta Net (GDN) recurrent mixer with full
-// multi-head attention. It is the most-coupled of the hybrid
-// families: the first FFAI consumer of the GDN kernel + `GDNStateCache`,
-// and the first to combine a host-assisted recurrent mixer with an MoE
-// feed-forward half.
+// Qwen 3.5 / Qwen 3.6 family — the "Qwen3x" hybrid architecture.
+//
+// This file is named `Qwen3xText.swift` rather than `Qwen35Text.swift`
+// because the same architecture covers both the Qwen 3.5 line (where
+// the design was introduced) and the Qwen 3.6 line (which kept the
+// `qwen3_5*` model_type strings and adds quantized embeddings + larger
+// MoE checkpoints). Both `Models/Qwen35.swift` (the Qwen3-VL-MoE
+// orchestrator) and `Models/Qwen36.swift` (the Qwen 3.6 root anchor)
+// reference the types defined here. The type names retain the
+// `Qwen35*` prefix because the architecture WAS introduced in Qwen
+// 3.5; renaming to `Qwen3X*` would churn every loader, test, and model
+// accessor for purely cosmetic gain.
+//
+// The architecture is a *stack-interleaved hybrid* that alternates a
+// Gated Delta Net (GDN) recurrent mixer with full multi-head attention.
+// It is the most-coupled of the hybrid families: the first FFAI
+// consumer of the GDN kernel + `GDNStateCache`, and the first to
+// combine a host-assisted recurrent mixer with an MoE feed-forward
+// half.
 //
 // ─── Three variants, one layer pattern ───────────────────────────────
 //

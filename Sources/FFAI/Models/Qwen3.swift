@@ -1,5 +1,22 @@
-// Qwen 3-VL — Alibaba's Qwen3-VL vision-language model (the
-// `Qwen3VLForConditionalGeneration` checkpoints).
+// Qwen 3 family root — covers Qwen 3 dense text + Qwen 3-VL.
+//
+// Sibling files for later lineage:
+//   - Models/Qwen35.swift     — Qwen 3.5 root (Qwen3-VL-MoE orchestrator
+//                                + the Qwen3x hybrid backbone reference).
+//   - Models/Qwen36.swift     — Qwen 3.6 root (same Qwen3x backbone as
+//                                Qwen 3.5; thin doc anchor for now).
+//   - Models/Text/Qwen3Text.swift   — Qwen 3 dense text decoder.
+//   - Models/Text/Qwen3xText.swift  — Qwen 3.5 / 3.6 stack-interleaved
+//                                      GDN + attention hybrid; one set
+//                                      of types covers both releases.
+//   - Models/Vision/Qwen3Vision.swift — shared ViT tower used by both
+//                                        the Qwen3-VL dense wrapper
+//                                        below AND the Qwen3-VL-MoE
+//                                        wrapper in Models/Qwen35.swift.
+//
+// This file orchestrates **Qwen 3-VL** — Alibaba's Qwen3-VL
+// vision-language model (the `Qwen3VLForConditionalGeneration`
+// checkpoints).
 //
 // Composition:
 //   • Qwen 3-VL vision tower — a dynamic-resolution ViT that, unlike the
