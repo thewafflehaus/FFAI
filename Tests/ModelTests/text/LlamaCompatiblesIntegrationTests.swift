@@ -91,7 +91,7 @@ struct LlamaCompatiblesIntegrationTests {
     @Test("SmolLM3-3B (SmolLM3ForCausalLM, every-Nth attention layer) decodes coherently")
     func smolLM3() async throws {
         let m = try await ModelLoadLock.shared.loadSerially {
-            try await Model.load("mlx-community/SmolLM3-3B-bf16")
+            try await Model.load("mlx-community/SmolLM3-3B-4bit")
         }
         // SmolLM3 3B: hidden=2048, nLayers=36, nHeads=16, nKVHeads=4.
         #expect(m.engine.hidden == 2048)
@@ -135,7 +135,7 @@ struct LlamaCompatiblesIntegrationTests {
     @Test("SmolLM-360M (SmolLMForCausalLM, original family) decodes coherently")
     func smolLM1() async throws {
         let m = try await ModelLoadLock.shared.loadSerially {
-            try await Model.load("mlx-community/SmolLM-360M-Instruct-fp16")
+            try await Model.load("mlx-community/SmolLM-360M-Instruct-4bit")
         }
         // SmolLM 1 360M canonical: hidden=960, nLayers=32, nHeads=15,
         // nKVHeads=5, headDim=64.

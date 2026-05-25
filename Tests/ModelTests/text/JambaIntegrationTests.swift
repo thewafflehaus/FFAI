@@ -15,7 +15,7 @@
 // kernel cannot express Mamba 1's per-(channel, state) decay — see
 // Jamba.swift), the 2-D `A_log` handling, and no-RoPE attention.
 //
-// mlx-community/AI21-Jamba-Reasoning-3B-bf16 (~3B params, bf16) is the
+// mlx-community/AI21-Jamba-Reasoning-3B-4bit (~3B params, bf16) is the
 // smallest published Jamba checkpoint that runs end-to-end without
 // quantized-MoE expert slicing: 28 layers (26 Mamba + 2 attention),
 // num_experts = 1 → a dense SwiGLU FFN on every layer. The 4bit / 6bit
@@ -32,7 +32,7 @@ struct JambaIntegrationTests {
 
     @Test("load + greedy generate produces coherent hybrid output")
     func loadAndGenerate() async throws {
-        let modelId = "mlx-community/AI21-Jamba-Reasoning-3B-bf16"
+        let modelId = "mlx-community/AI21-Jamba-Reasoning-3B-4bit"
         let prompt = "The history of the printing press began when"
 
         let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }

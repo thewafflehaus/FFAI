@@ -29,7 +29,7 @@ struct Gemma4IntegrationTests {
 
     @Test("Gemma4E (E2B): load + greedy generate produces coherent output")
     func loadAndGenerateE2B() async throws {
-        let modelId = "mlx-community/gemma-4-e2b-it-bf16"
+        let modelId = "mlx-community/gemma-4-e2b-it-4bit"
         // Open-ended prompt: a short factual question ("The capital of
         // France is") elicits a 2-token answer ("Paris.") and the model
         // correctly stops, which can't exercise the coherence checker's
@@ -141,7 +141,7 @@ struct Gemma4IntegrationTests {
         // mixes 4-/8-bit per layer, now handled by the per-tensor
         // `deriveAffineQuantBits` bit-width derivation. Build-machine
         // only: the 8-bit checkpoint is ~28 GB and slow to greedy-decode.
-        let modelId = "mlx-community/gemma-4-26b-a4b-it-8bit"
+        let modelId = "mlx-community/gemma-4-26b-a4b-it-4bit"
         let prompt = "The capital of France is"
 
         let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }

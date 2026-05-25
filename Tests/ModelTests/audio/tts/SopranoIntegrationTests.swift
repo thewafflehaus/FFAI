@@ -41,7 +41,7 @@ struct SopranoIntegrationTests {
 
     /// Resolve a Soprano-80M checkpoint from the HF cache.
     ///
-    /// Tries `mlx-community/Soprano-80M-bf16` from the local cache first,
+    /// Tries `mlx-community/Soprano-80M-4bit` from the local cache first,
     /// then falls back to a HF download.
     private func resolveSoprano80MCheckpoint() async throws -> URL {
         let root = Self.hfCacheRoot
@@ -60,7 +60,7 @@ struct SopranoIntegrationTests {
             }
         }
         let locator = ModelLocator(downloader: ModelDownloader())
-        return try await locator.resolve(idOrPath: "mlx-community/Soprano-80M-bf16")
+        return try await locator.resolve(idOrPath: "mlx-community/Soprano-80M-4bit")
     }
 
     /// Resolve a Soprano-1.1 (LLM-only) checkpoint from the HF cache.

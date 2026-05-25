@@ -16,7 +16,7 @@ struct Qwen2IntegrationTests {
 
     @Test("load + greedy generate produces coherent output")
     func loadAndGenerate() async throws {
-        let modelId = "Qwen/Qwen2.5-0.5B-Instruct"
+        let modelId = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
         let prompt = "Once upon a time, in a quiet village"
         let maxTokens = 200
 

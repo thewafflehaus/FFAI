@@ -30,7 +30,7 @@ struct MarvisIntegrationTests {
         let dir = try await AudioFixtures.resolveCheckpoint(
             mlxAudioSlugs: ["Marvis-AI_marvis-tts-250m-v0.2-MLX",
                             "Marvis-AI_marvis-tts-250m-v0.2-MLX-8bit"],
-            repoIds: ["Marvis-AI/marvis-tts-250m-v0.2-MLX"])
+            repoIds: ["Marvis-AI/marvis-tts-250m-v0.2-MLX-4bit"])
         return try await ModelLoadLock.shared.loadSerially {
             try await MarvisModel.load(directory: dir)
         }

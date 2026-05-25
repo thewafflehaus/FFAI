@@ -1,5 +1,5 @@
 // Slow integration test for MiniCPM-V 4.6's *video* path
-// (`MiniCPMV4_6ForConditionalGeneration` checkpoint, openbmb/MiniCPM-V-4.6).
+// (`MiniCPMV4_6ForConditionalGeneration` checkpoint, mlx-community/MiniCPM-V-4.6-4bit).
 //
 // Architecture: each video frame is encoded independently through the
 // same SigLIP2-400M + vit_merger + merger stack as a single image,
@@ -26,7 +26,7 @@ struct MiniCPMVVideoIntegrationTests {
 
     /// The base openbmb checkpoint (non-quantized bf16). A future pass can
     /// add an mlx-community 4-bit conversion entry here once one ships.
-    static let modelId = "openbmb/MiniCPM-V-4.6"
+    static let modelId = "mlx-community/MiniCPM-V-4.6-4bit"
 
     /// Number of evenly-spaced frames to pull from cat.mp4.  MiniCPM-V 4.6
     /// has no temporal-patch requirement (no folding step), so any positive

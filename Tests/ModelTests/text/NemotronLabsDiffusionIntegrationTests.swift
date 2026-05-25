@@ -15,7 +15,7 @@ struct NemotronLabsDiffusionIntegrationTests {
 
     @Test("load + tri-mode generation produces coherent output")
     func loadAndGenerate() async throws {
-        let modelId = "nvidia/Nemotron-Labs-Diffusion-3B"
+        let modelId = "mlx-community/Nemotron-Labs-Diffusion-3B-4bit"
         let prompt = "Once upon a time, in a quiet village"
 
         // 4096-token context is plenty for the test prompts and keeps

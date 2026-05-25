@@ -26,7 +26,7 @@ struct LFM2IntegrationTests {
 
     @Test("load + greedy generate produces coherent hybrid output")
     func loadAndGenerate() async throws {
-        let modelId = "LiquidAI/LFM2-350M"
+        let modelId = "mlx-community/LFM2-350M-4bit"
         let prompt = "The history of the printing press began when"
 
         let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
@@ -106,7 +106,7 @@ struct LFM2IntegrationTests {
     // skips unless it is already cached locally.
     @Test("LFM2-MoE load + greedy generate produces coherent output")
     func loadAndGenerateMoE() async throws {
-        let modelId = "LiquidAI/LFM2-8B-A1B"
+        let modelId = "mlx-community/LFM2-8B-A1B-4bit"
         let prompt = "The history of the printing press began when"
 
         let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }

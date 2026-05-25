@@ -15,7 +15,7 @@ struct LlamaIntegrationTests {
 
     @Test("load + greedy generate produces coherent output")
     func loadAndGenerate() async throws {
-        let modelId = "unsloth/Llama-3.2-1B"
+        let modelId = "mlx-community/Llama-3.2-1B-Instruct-4bit"
         let prompt = "Once upon a time, in a quiet village"
         let maxTokens = 200
         let bosTokenId = 128_000

@@ -12,7 +12,7 @@
 // no-RoPE attention path, and the four Granite scalar multipliers
 // (embedding / residual / attention / logits scaling).
 //
-// mlx-community/granite-4.0-h-350m-bf16 (~350M params, bf16) is the
+// mlx-community/granite-4.0-h-350m-4bit (~350M params, bf16) is the
 // smallest published GraniteMoeHybrid checkpoint: 32 layers, 28 Mamba +
 // 4 attention, num_local_experts = 0 (a dense SwiGLU FFN). It exercises
 // the full hybrid stack end-to-end. The 64-expert MoE checkpoints
@@ -30,7 +30,7 @@ struct GraniteMoeHybridIntegrationTests {
 
     @Test("load + greedy generate produces coherent hybrid output")
     func loadAndGenerate() async throws {
-        let modelId = "mlx-community/granite-4.0-h-350m-bf16"
+        let modelId = "mlx-community/granite-4.0-h-350m-4bit"
         let prompt = "The history of the printing press began when"
 
         let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }

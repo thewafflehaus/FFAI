@@ -1,5 +1,5 @@
 // PaliGemma 2 integration test: loads the
-// mlx-community/paligemma2-3b-mix-448-8bit checkpoint (PaliGemma 2 =
+// mlx-community/paligemma2-3b-mix-448-4bit checkpoint (PaliGemma 2 =
 // SigLIP-So400m + Gemma 2 2B text backbone) and runs end-to-end image
 // captioning over the dog fixture.
 //
@@ -29,7 +29,7 @@ struct PaligemmaIntegrationTests {
         // PaliGemma 2 — the 2024 refresh using the Gemma 2 text backbone.
         // The original PaliGemma 1 (mlx-community/paligemma-3b-mix-448-8bit)
         // is 2 years old and the test moves with the supported lineage.
-        let modelId = "mlx-community/paligemma2-3b-mix-448-8bit"
+        let modelId = "mlx-community/paligemma2-3b-mix-448-4bit"
 
         let m = try await Model.load(modelId)
 

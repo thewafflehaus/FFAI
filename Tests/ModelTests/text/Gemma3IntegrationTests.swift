@@ -17,7 +17,7 @@ struct Gemma3IntegrationTests {
 
     @Test("load + greedy generate produces coherent output")
     func loadAndGenerate() async throws {
-        let modelId = "mlx-community/gemma-3-1b-it-bf16"
+        let modelId = "mlx-community/gemma-3-1b-it-4bit"
         let prompt = "Once upon a time, in a quiet village"
         let maxTokens = 200
 

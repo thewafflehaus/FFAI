@@ -23,7 +23,7 @@ struct FalconH1IntegrationTests {
 
     @Test("load + greedy generate produces coherent hybrid output")
     func loadAndGenerate() async throws {
-        let modelId = "mlx-community/Falcon-H1-Tiny-90M-Instruct-bf16"
+        let modelId = "mlx-community/Falcon-H1-Tiny-90M-Instruct-4bit"
         let prompt = "Once upon a time, in a quiet village"
 
         let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }

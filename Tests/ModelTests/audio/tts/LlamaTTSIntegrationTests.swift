@@ -22,7 +22,7 @@ struct LlamaTTSIntegrationTests {
     /// missing checkpoint fails the test instead of skipping it.
     private func loadLlamaTTS() async throws -> LlamaTTSModel {
         let dir = try await AudioFixtures.resolveCheckpoint(
-            repoIds: ["mlx-community/orpheus-3b-0.1-ft-bf16"])
+            repoIds: ["mlx-community/orpheus-3b-0.1-ft-4bit"])
         return try await ModelLoadLock.shared.loadSerially {
             try await LlamaTTSModel.load(directory: dir)
         }

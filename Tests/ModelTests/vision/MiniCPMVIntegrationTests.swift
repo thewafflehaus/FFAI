@@ -1,7 +1,7 @@
 // Slow integration test for MiniCPM-V 4.6 (the SigLIP2-400M + Qwen3.5
 // `MiniCPMV4_6ForConditionalGeneration` checkpoint).
 //
-// Verifies the v1 vision path end-to-end on the real `openbmb/MiniCPM-V-4.6`
+// Verifies the v1 vision path end-to-end on the real `mlx-community/MiniCPM-V-4.6-4bit`
 // checkpoint: SigLIP2 vision tower loads, position embedding is
 // bilinearly resampled to the 32×32 runtime grid, `vit_merger` runs
 // after encoder layer 6 (16× mode), the final `merger` projects into
@@ -21,7 +21,7 @@ struct MiniCPMVIntegrationTests {
 
     @Test("load — MiniCPM-V 4.6 loads with vision capability")
     func loadVLCheckpoint() async throws {
-        let modelId = "openbmb/MiniCPM-V-4.6"
+        let modelId = "mlx-community/MiniCPM-V-4.6-4bit"
         let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // The checkpoint is a VLM — vlModel is present, .visionIn is
@@ -46,7 +46,7 @@ struct MiniCPMVIntegrationTests {
 
     @Test("image + text prompt — coherent multi-modal generation")
     func imageTextGeneration() async throws {
-        let modelId = "openbmb/MiniCPM-V-4.6"
+        let modelId = "mlx-community/MiniCPM-V-4.6-4bit"
         let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
         let vlm = try #require(m.vlModel, "MiniCPM-V 4.6 checkpoint is not a VLM")
 

@@ -17,7 +17,7 @@
 // the standard (non-fused) `gatedDeltaStep` kernel, gated attention
 // output (`attn_output_gate`), and partial RoPE.
 //
-// mlx-community/Qwen3.5-0.8B-MLX-bf16 (~0.8B params, bf16) is the
+// mlx-community/Qwen3.5-0.8B-4bit (~0.8B params, bf16) is the
 // smallest published Qwen3.5 checkpoint that runs end-to-end without
 // quantized-expert slicing: 24 layers (18 GDN + 6 attention),
 // num_experts = 0 → a dense SwiGLU FFN on every layer. GDN dims are
@@ -39,7 +39,7 @@ struct Qwen35IntegrationTests {
 
     @Test("dense GDN hybrid: load + greedy generate produces coherent output")
     func loadAndGenerateDense() async throws {
-        let modelId = "mlx-community/Qwen3.5-0.8B-MLX-bf16"
+        let modelId = "mlx-community/Qwen3.5-0.8B-4bit"
         let prompt = "The history of the printing press began when"
 
         let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }

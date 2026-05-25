@@ -18,7 +18,7 @@ struct InspectSmokeTests {
 
     @Test("inspect path runs end-to-end on Llama 3.2 1B")
     func inspectLlama() async throws {
-        let modelId = "unsloth/Llama-3.2-1B"
+        let modelId = "mlx-community/Llama-3.2-1B-Instruct-4bit"
         let prompt = "Once upon a time, in a quiet"
 
         let m = try await ModelLoadLock.shared.loadSerially {

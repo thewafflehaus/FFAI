@@ -23,7 +23,7 @@ struct SlidingWindowIntegrationTests {
 
     @Test("Llama 3.2 1B with .window(maxSize: 64) produces coherent output beyond window")
     func windowedDecode() async throws {
-        let modelId = "unsloth/Llama-3.2-1B"
+        let modelId = "mlx-community/Llama-3.2-1B-Instruct-4bit"
         // Prompt is short; we just want the *generation* to push the
         // cache past maxSize so we exercise the rotation path. The
         // window is intentionally small (64) so 64 generated tokens

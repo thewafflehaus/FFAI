@@ -26,7 +26,7 @@ struct KokoroIntegrationTests {
     private func loadKokoro() async throws -> KokoroModel {
         let dir = try await AudioFixtures.resolveCheckpoint(
             mlxAudioSlugs: ["mlx-community_Kokoro-82M-bf16"],
-            repoIds: ["mlx-community/Kokoro-82M-bf16", "hexgrad/Kokoro-82M"])
+            repoIds: ["mlx-community/Kokoro-82M-4bit", "hexgrad/Kokoro-82M"])
         return try KokoroModel.load(directory: dir)
     }
 

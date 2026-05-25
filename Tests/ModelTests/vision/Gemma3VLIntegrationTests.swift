@@ -17,7 +17,7 @@ import Testing
 @Suite("Gemma 3 VL integration", .serialized)
 struct Gemma3VLIntegrationTests {
 
-    static let modelId = "mlx-community/gemma-3-4b-it-bf16"
+    static let modelId = "mlx-community/gemma-3-4b-it-4bit"
 
     @Test("load — Gemma 3 VL checkpoint loads with vision capability")
     func loadVLCheckpoint() async throws {

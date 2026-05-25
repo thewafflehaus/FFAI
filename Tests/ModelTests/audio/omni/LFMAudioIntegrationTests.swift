@@ -5,7 +5,7 @@
 // Checkpoint resolution order (first complete snapshot wins):
 //   1. mlx-audio flat cache:  mlx-community_LFM2.5-Audio-1.5B-6bit
 //   2. mlx-audio flat cache:  mlx-community_LFM2.5-Audio-1.5B-bf16
-//   3. HF hub (download):     mlx-community/LFM2.5-Audio-1.5B-6bit
+//   3. HF hub (download):     mlx-community/LFM2.5-Audio-1.5B-4bit
 //
 // A missing checkpoint FAILS the test — there is no "skip if absent" logic.
 // The integration suite is serialized to avoid pinning the GPU with multiple
@@ -31,7 +31,7 @@ struct LFMAudioIntegrationTests {
                 "mlx-community_LFM2.5-Audio-1.5B-bf16"
             ],
             repoIds: [
-                "mlx-community/LFM2.5-Audio-1.5B-6bit"
+                "mlx-community/LFM2.5-Audio-1.5B-4bit"
             ])
         return try await ModelLoadLock.shared.loadSerially {
             try LFMAudioModel.load(directory: dir)
@@ -169,7 +169,7 @@ struct LFMAudioIntegrationTests {
                 "mlx-community_LFM2.5-Audio-1.5B-bf16"
             ],
             repoIds: [
-                "mlx-community/LFM2.5-Audio-1.5B-6bit"
+                "mlx-community/LFM2.5-Audio-1.5B-4bit"
             ])
         let loaded = try await ModelLoadLock.shared.loadSerially {
             try await AudioModelRegistry.load(directory: dir)
