@@ -1428,31 +1428,71 @@ extension FireRedASR2Model {
             return Linear(weight: flat, bias: nil)
         }
 
-        // Transpose a Conv2d weight from OHWI → OIHW.
-        // MLX checkpoints store [outCh, kH, kW, inCh]; Ops.conv2d wants [outCh, inCh, kH, kW].
+        // Load a Conv2d weight, ensuring OIHW layout as required by Ops.conv2d.
+        //
+        // The mlx-community FireRedASR2 checkpoint is exported in PyTorch-native
+        // OIHW order [outCh, inCh, kH, kW] — NOT the MLX OHWI order that some
+        // other families use.  We detect the layout by checking which axis is
+        // the singleton for conv1 (inCh=1): if shape[1]==1 it is already OIHW;
+        // if shape[3]==1 it would be OHWI and needs a transpose.
+        // For conv2 (inCh==32) we cannot distinguish by a singleton, but it
+        // shares the same checkpoint convention as conv1, so we apply the same
+        // rule: treat shape[1] as inCh (OIHW already).
         func loadConv2dWeight(_ key: String) throws -> Tensor {
-            let raw  = try t(key)
+            let raw   = try t(key)
+            precondition(raw.shape.count == 4,
+                "FireRedASR2: conv2d weight \(key) expected 4-D, got \(raw.shape)")
             let outCh = raw.shape[0]
-            let kH    = raw.shape[1]
-            let kW    = raw.shape[2]
-            let inCh  = raw.shape[3]
-            let src   = raw.toFloatArray()
-            var transposed = [Float](repeating: 0, count: outCh * inCh * kH * kW)
-            for o in 0..<outCh {
-                for h in 0..<kH {
-                    for w in 0..<kW {
-                        for i in 0..<inCh {
-                            let srcIdx = o * kH * kW * inCh + h * kW * inCh + w * inCh + i
-                            let dstIdx = o * inCh * kH * kW + i * kH * kW + h * kW + w
-                            transposed[dstIdx] = src[srcIdx]
+            let dim1  = raw.shape[1]
+            let dim2  = raw.shape[2]
+            let dim3  = raw.shape[3]
+
+            // Determine layout: OIHW [outCh, inCh, kH, kW] vs OHWI [outCh, kH, kW, inCh].
+            // The conv1 weight has inCh=1 and kH=kW=3.  In OIHW: shape=[32,1,3,3].
+            // In OHWI: shape=[32,3,3,1].  We use the fact that the kernel dims
+            // are always ≥ 1 and identical; if shape[1] < shape[2] or shape[1] == 1
+            // while shape[3] > 1 it is OHWI (MLX).  For this checkpoint shape[1]
+            // is always the smaller inCh axis, so OIHW — no transpose needed.
+            let isOIHW: Bool
+            if dim3 == 1 {
+                // Last dim is 1 → likely OHWI with inCh=1 (MLX export style).
+                isOIHW = false
+            } else if dim1 == 1 || (dim1 < dim2 && dim1 < dim3) {
+                // Second dim is inCh (small) → OIHW (PyTorch native).
+                isOIHW = true
+            } else {
+                // Ambiguous: assume OIHW (PyTorch) for this checkpoint.
+                isOIHW = true
+            }
+
+            let src = raw.toFloatArray()
+            if isOIHW {
+                // Already OIHW — just retag shape and copy.
+                let (inCh, kH, kW) = (dim1, dim2, dim3)
+                let out = Tensor.empty(shape: [outCh, inCh, kH, kW], dtype: dtype,
+                                       device: device)
+                AudioPreprocessing.copyFloats(src, into: out)
+                return out
+            } else {
+                // OHWI → OIHW transpose.
+                let (kH, kW, inCh) = (dim1, dim2, dim3)
+                var transposed = [Float](repeating: 0, count: outCh * inCh * kH * kW)
+                for o in 0..<outCh {
+                    for h in 0..<kH {
+                        for w in 0..<kW {
+                            for i in 0..<inCh {
+                                let srcIdx = o * kH * kW * inCh + h * kW * inCh + w * inCh + i
+                                let dstIdx = o * inCh * kH * kW + i * kH * kW + h * kW + w
+                                transposed[dstIdx] = src[srcIdx]
+                            }
                         }
                     }
                 }
+                let out = Tensor.empty(shape: [outCh, inCh, kH, kW], dtype: dtype,
+                                       device: device)
+                AudioPreprocessing.copyFloats(transposed, into: out)
+                return out
             }
-            let out = Tensor.empty(shape: [outCh, inCh, kH, kW], dtype: dtype,
-                                   device: device)
-            AudioPreprocessing.copyFloats(transposed, into: out)
-            return out
         }
 
         // Transpose a Conv1d depthwise weight from OWI → OW (strip trivial dim).

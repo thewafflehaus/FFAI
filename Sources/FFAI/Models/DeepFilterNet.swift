@@ -690,7 +690,10 @@ extension DeepFilterNetModel {
         // Embedding.
         // cemb: flatten c1 from [1, c1C, nT, c1F] → [1, nT, c1C*c1F], then groupedLinear.
         var cemb = bchwTobtf(c1, B: B, C: c1C, T: nT, F: c1F)  // [nT, c1C*c1F]
-        cemb = try groupedLinearRelu(cemb, T: nT, prefix: "enc.df_fc_emb.0")
+        // The checkpoint stores this weight as "enc.df_fc_emb.0.weight" (shape [8, 384, 64]).
+        // groupedLinear with prefix="enc.df_fc_emb.0" would append ".0.weight" giving the
+        // wrong key "enc.df_fc_emb.0.0.weight", so we pass the full key directly.
+        cemb = try groupedLinearRelu(cemb, T: nT, weightKey: "enc.df_fc_emb.0.weight")
 
         // emb: flatten e3 from [1, e3C, nT, e3F] → [1, nT, e3C*e3F].
         var emb = bchwTobtf(e3, B: B, C: e3C, T: nT, F: e3F)   // [nT, e3C*e3F]
@@ -1238,6 +1241,15 @@ extension DeepFilterNetModel {
 
     func groupedLinearRelu(_ x: [Float], T: Int, prefix: String) throws -> [Float] {
         var y = try groupedLinear(x, T: T, prefix: prefix, weightKey: nil)
+        for i in y.indices { y[i] = max(0, y[i]) }
+        return y
+    }
+
+    /// Grouped linear + ReLU, addressed by an explicit weight key.
+    /// Use this when the caller already has the full key (avoids the ".0.weight" suffix
+    /// that the prefix-based variant appends automatically).
+    func groupedLinearRelu(_ x: [Float], T: Int, weightKey: String) throws -> [Float] {
+        var y = try groupedLinear(x, T: T, prefix: nil, weightKey: weightKey)
         for i in y.indices { y[i] = max(0, y[i]) }
         return y
     }
