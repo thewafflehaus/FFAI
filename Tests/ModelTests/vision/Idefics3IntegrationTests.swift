@@ -19,32 +19,6 @@ import Testing
 @Suite("Idefics3 8B integration", .serialized)
 struct Idefics3IntegrationTests {
 
-    /// Resolve the HF cache snapshot directory for Idefics3-8B.
-    /// Returns nil if not found locally (test will be skipped).
-    static func snapshotDir() -> URL? {
-        // Primary: mlx-community BF16 conversion
-        let primary = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".cache/huggingface/hub")
-            .appendingPathComponent("models--mlx-community--Idefics3-8B-Llama3-bf16")
-            .appendingPathComponent("snapshots")
-        if let snap = (try? FileManager.default.contentsOfDirectory(
-            at: primary, includingPropertiesForKeys: nil
-        ))?.first {
-            return snap
-        }
-        // Fallback: original HF checkpoint
-        let fallback = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".cache/huggingface/hub")
-            .appendingPathComponent("models--HuggingFaceM4--Idefics3-8B-Llama3")
-            .appendingPathComponent("snapshots")
-        if let snap = (try? FileManager.default.contentsOfDirectory(
-            at: fallback, includingPropertiesForKeys: nil
-        ))?.first {
-            return snap
-        }
-        return nil
-    }
-
     /// Load dog.jpeg from the test Fixtures directory.
     /// Returns nil if the file cannot be found or decoded.
     /// Output format: [height, width, channels] Float32, normalized with
@@ -110,11 +84,16 @@ struct Idefics3IntegrationTests {
 
     @Test("load Idefics3-8B + shape check + image encode + generate")
     func loadAndGenerate() async throws {
-        let dir = try #require(Self.snapshotDir(),
-                               "Idefics3 checkpoint not found in HF cache")
-
-        // ─── Load model ──────────────────────────────────────────────────────
-        let m = try await Model.load(dir.path)
+        // Match the rest of the VLM test suite: load by HF id so the
+        // test auto-resolves the snapshot via HF (download on miss).
+        // The previous `snapshotDir() / #require` pattern recorded a
+        // failure when the local cache lacked the snapshot — but the
+        // integration runner can pull it on demand. Falling back to
+        // the local path resolver only when the HF load itself fails
+        // would mask real load bugs; just use the id directly.
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load("mlx-community/Idefics3-8B-Llama3-bf16")
+        }
 
         // Verify the engine is an Idefics3Model
         let idefics3 = try #require(m.engine as? Idefics3Model,
