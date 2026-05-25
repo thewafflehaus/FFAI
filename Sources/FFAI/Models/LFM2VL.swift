@@ -774,18 +774,35 @@ func lfm2LoadModelQuantized(
         eps: eps)
 
     // LFM2 ties lm_head to embed_tokens when no standalone lm_head is stored.
+    // For quantized checkpoints (e.g. mlx-community/LFM2-VL-1.6B-4bit) there
+    // is no lm_head.weight in the bundle, so we fall back to the tied path.
+    // When the embedding is quantized, embedTokens.weight is the PACKED uint32
+    // table with shape [vocab, hidden/pack_factor]. Wrapping it in a plain
+    // Linear and calling Ops.gemv crashes immediately at prewarm because
+    // weight.shape[1] = hidden/8 (=256 for 2048-dim hidden) but the input
+    // vector is [hidden] (=2048) — an 8× mismatch.
+    //
+    // Fix: when the embedding is a QuantizedEmbedding, reuse its
+    // weight/scales/biases/bits/groupSize to build a QuantizedLinear. The
+    // linear-to-logit projection uses the same dequant arithmetic as the
+    // embedding gather (both are mlx affine-quantized rows), so this is
+    // numerically correct in addition to being shape-correct.
     let lmHead: AnyLinear
     if weights.has("lm_head.weight") {
         lmHead = AnyLinear(Linear(
             weight: try weights.tensor(named: "lm_head.weight")))
+    } else if let qe = embedTokens.inner as? QuantizedEmbedding {
+        // Tied quantized lm_head: project via dequant gemv using the same
+        // packed triplet as the embedding lookup. This avoids the gemv
+        // in_dim mismatch that occurs when the packed uint32 weight
+        // (shape [vocab, hidden/pack_factor]) is mistakenly treated as a
+        // plain float weight of shape [vocab, hidden/pack_factor].
+        lmHead = AnyLinear(QuantizedLinear(
+            weight: qe.weight, scales: qe.scales, biases: qe.biases,
+            bits: qe.bits, groupSize: qe.groupSize))
     } else {
-        // Use the embedding weight (dequantized / raw). For QuantizedEmbedding
-        // `weight` holds the packed uint32 table; for regular Embedding it is
-        // the full float table. `AnyLinear(Linear(weight:))` treats it as a
-        // weight matrix — correct for tied weights only when it is the full
-        // float table. For quantized models the lm_head is typically included
-        // as a separate non-quantized weight; fall back to the embedded table
-        // with a dequant wrapper if we must.
+        // Plain (unquantized) embedding — weight is already the full float
+        // table with shape [vocab, hidden], safe to use as a Linear weight.
         lmHead = AnyLinear(Linear(weight: embedTokens.weight))
     }
 
