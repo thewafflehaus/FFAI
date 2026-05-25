@@ -1681,6 +1681,109 @@ public enum Ops {
     }
 
     /// Backwards-compatible 4-bit alias.
+    /// ITER 96 (Bagel 2): fused gated-RMSNorm + int4 dequant-GEMV in ONE
+    /// dispatch. Collapses the Qwen3.5 GDN tail (`gatedMixerNorm` +
+    /// `outProj` qmm) into a single launch.
+    ///
+    /// Math (per `mt_gated_rmsnorm` + `dequantGemvInt4`):
+    /// ```
+    ///   inner[h, d] = w[d] · y[h, d] · rsqrt(mean(y[h]²) + eps) · silu(z[h, d])
+    ///   out[r]      = Σ_k W_down[r, k] · inner[k]
+    /// ```
+    /// where `y: [Hv, Dv] fp32` (from gatedDeltaPrepStep),
+    /// `z: [Hv*Dv]` model dtype, `weight: [Dv]` model dtype, output
+    /// `[out_dim]` model dtype.
+    ///
+    /// Saves 1 dispatch per GDN layer × 30 layers = 30 dispatches per
+    /// decode token. Plus eliminates the ~4 KiB DRAM round-trip for the
+    /// intermediate `yGated` activation per layer.
+    ///
+    /// Constraints:
+    /// - `Hv * Dv` (the gated-norm output) MUST be a multiple of 512.
+    /// - `Hv * Dv ≤ 8192` (kernel TG-memory cap on `inner`).
+    /// - `out_dim` MUST be a multiple of 8.
+    /// - `group_size` MUST be 64.
+    /// - TPG = 64. Grid: `[ceil(out_dim / 8) · TPG, 1, 1]` (one TG per
+    ///   8-row output tile).
+    public static func gatedRmsNormQgemvInt4Fast(
+        y: Tensor,                // [Hv, Dv] f32
+        z: Tensor,                // [Hv*Dv] T
+        normWeight: Tensor,       // [Dv] T
+        eps: Float,
+        qWeight: Tensor,          // [out_dim, in_dim/8] u32
+        qScales: Tensor,          // [out_dim, in_dim/group_size] T
+        qBiases: Tensor,
+        hv: Int, dv: Int, outDim: Int, groupSize: Int = 64,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor          // [out_dim] T
+    ) {
+        precondition(y.dtype == .f32, "gatedRmsNormQgemvInt4Fast: y must be f32")
+        precondition(z.dtype == normWeight.dtype && normWeight.dtype == out.dtype,
+                     "gatedRmsNormQgemvInt4Fast: z/weight/out dtype mismatch")
+        precondition(qWeight.dtype == .u32,
+                     "gatedRmsNormQgemvInt4Fast: q_weight must be u32-packed")
+        let inDim = hv * dv
+        precondition(inDim % 512 == 0,
+                     "gatedRmsNormQgemvInt4Fast: Hv·Dv (\(inDim)) must be multiple of 512")
+        precondition(inDim <= 8192,
+                     "gatedRmsNormQgemvInt4Fast: Hv·Dv (\(inDim)) must be ≤ 8192 (kernel TG-mem cap)")
+        precondition(outDim % 8 == 0,
+                     "gatedRmsNormQgemvInt4Fast: out_dim must be multiple of 8")
+        precondition(groupSize == 64,
+                     "gatedRmsNormQgemvInt4Fast: group_size must be 64")
+        precondition(out.elementCount == outDim,
+                     "gatedRmsNormQgemvInt4Fast: out element count mismatch")
+        let tpg = 64
+        let nTiles = outDim / 8
+        let grid = MTLSize(width: nTiles * tpg, height: 1, depth: 1)
+        let tg = MTLSize(width: tpg, height: 1, depth: 1)
+        let epsBuf = epsBuffer(eps)
+        let epsTensor = Tensor(buffer: epsBuf, offset: 0, shape: [1], dtype: .f32)
+        switch out.dtype {
+        case .f32:
+            MetalTileKernels.ffai_gated_rms_norm_qgemv_int4_fast_f32(
+                y: y.buffer, yOffset: y.offset,
+                z: z.buffer, zOffset: z.offset,
+                norm_weight: normWeight.buffer, norm_weightOffset: normWeight.offset,
+                eps_buf: epsTensor.buffer, eps_bufOffset: epsTensor.offset,
+                q_weight: qWeight.buffer, q_weightOffset: qWeight.offset,
+                q_scales: qScales.buffer, q_scalesOffset: qScales.offset,
+                q_biases: qBiases.buffer, q_biasesOffset: qBiases.offset,
+                out: out.buffer, outOffset: out.offset,
+                hv: UInt32(hv), dv: UInt32(dv),
+                out_dim: UInt32(outDim), group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.ffai_gated_rms_norm_qgemv_int4_fast_f16(
+                y: y.buffer, yOffset: y.offset,
+                z: z.buffer, zOffset: z.offset,
+                norm_weight: normWeight.buffer, norm_weightOffset: normWeight.offset,
+                eps_buf: epsTensor.buffer, eps_bufOffset: epsTensor.offset,
+                q_weight: qWeight.buffer, q_weightOffset: qWeight.offset,
+                q_scales: qScales.buffer, q_scalesOffset: qScales.offset,
+                q_biases: qBiases.buffer, q_biasesOffset: qBiases.offset,
+                out: out.buffer, outOffset: out.offset,
+                hv: UInt32(hv), dv: UInt32(dv),
+                out_dim: UInt32(outDim), group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.ffai_gated_rms_norm_qgemv_int4_fast_bf16(
+                y: y.buffer, yOffset: y.offset,
+                z: z.buffer, zOffset: z.offset,
+                norm_weight: normWeight.buffer, norm_weightOffset: normWeight.offset,
+                eps_buf: epsTensor.buffer, eps_bufOffset: epsTensor.offset,
+                q_weight: qWeight.buffer, q_weightOffset: qWeight.offset,
+                q_scales: qScales.buffer, q_scalesOffset: qScales.offset,
+                q_biases: qBiases.buffer, q_biasesOffset: qBiases.offset,
+                out: out.buffer, outOffset: out.offset,
+                hv: UInt32(hv), dv: UInt32(dv),
+                out_dim: UInt32(outDim), group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.gatedRmsNormQgemvInt4Fast: unsupported dtype \(out.dtype)")
+        }
+    }
+
     /// ITER 95 (Bagel 2): fused 4-output int4 GEMV in ONE dispatch.
     /// Extends the ITER 78 QKV (3-output) pattern to 4 projections
     /// sharing the same input. Used by the Qwen3.5 GDN mixer where the
