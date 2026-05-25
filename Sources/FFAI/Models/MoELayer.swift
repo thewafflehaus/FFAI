@@ -483,7 +483,11 @@ public final class MoELayer: Module, DecoderLayer {
         self.useBm8Env = env["FFAI_MOE_BGEMM_BM8"] != nil
         self.useM1Env = env["FFAI_MOE_M1"] != nil
         self.noDequantGate = env["FFAI_MOE_NO_DEQUANT_GATE"] != nil
-        self.gpuRouterEnabled = env["FFAI_MOE_GPU_ROUTER"] == "1"
+        // ITER 80 (Bagel 2): default GPU router ON now that ITER 72's
+        // end-to-end correctness test pins identity vs the CPU-sync path
+        // across bf16/f16/f32. Opt out with `FFAI_MOE_GPU_ROUTER=0`.
+        // The win: 40 × `waitUntilCompleted` per decode token → 0.
+        self.gpuRouterEnabled = env["FFAI_MOE_GPU_ROUTER"] != "0"
         self.forceBGEMMAtT1 = env["FFAI_MOE_BGEMM_FORCE_T1"] != nil
         self.noBGEMMBm64 = env["FFAI_MOE_BGEMM_NO_BM64"] != nil
     }
