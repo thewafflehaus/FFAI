@@ -9,7 +9,7 @@
 // assert the output mentions "dog" (using dog.jpeg from the test Fixtures dir).
 //
 // The checkpoint path used is the mlx-community conversion:
-//   mlx-community/Idefics3-8B-Llama3-bf16
+//   mlx-community/Idefics3-8B-Llama3-4bit
 
 import CoreImage
 import Foundation
@@ -92,7 +92,7 @@ struct Idefics3IntegrationTests {
         // the local path resolver only when the HF load itself fails
         // would mask real load bugs; just use the id directly.
         let m = try await ModelLoadLock.shared.loadSerially {
-            try await Model.load("mlx-community/Idefics3-8B-Llama3-bf16")
+            try await Model.load("mlx-community/Idefics3-8B-Llama3-4bit")
         }
 
         // Verify the engine is an Idefics3Model
