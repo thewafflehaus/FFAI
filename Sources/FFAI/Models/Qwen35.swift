@@ -2244,27 +2244,41 @@ public final class Qwen35AttentionMixer: Module {
         }
         kv.appendRangeOnGPU(kRows: kRows, vRows: vRows, on: cmd)
 
-        // ── SDPA — per-token loop over `sdpaDecode`. `Ops.sdpaMulti`
-        // would consolidate the T calls into one but it's head_dim-128
-        // only today; Qwen3.6 attention is head_dim-256. The per-token
-        // sdpaDecode loop preserves correctness; the projection and
-        // norm wins above still amortise. A future head_dim-256
-        // `sdpaMulti` variant (or transpose-to-prefill_mma) collapses
-        // these T launches into one.
+        // ── SDPA — ITER 90 (Bagel 2): when head_dim == 128, fuse the
+        // T-token causal attention into ONE `Ops.sdpaMulti` dispatch.
+        // For other head_dims (e.g. 256 on some Qwen variants), keep
+        // the T-loop `sdpaDecode` fallback. sdpaMulti's per-query
+        // causal mask attends `[0, baseKV + r + 1)` for query r —
+        // exactly what the per-token loop computes.
         let (cacheK, cacheV) = kv.prepareForAttention(on: cmd)
-        let attnAll = Tensor.empty(shape: [t * qDim], dtype: dt, device: device)
-        for r in 0..<t {
-            let qRow = Tensor(buffer: qNormed.buffer,
-                              offset: qNormed.offset + r * qDim * dtBytes,
-                              shape: [nHeads, headDim], dtype: dt)
-            let outRow = Tensor(buffer: attnAll.buffer,
-                                offset: attnAll.offset + r * qDim * dtBytes,
-                                shape: [nHeads, headDim], dtype: dt)
-            _ = Ops.sdpaDecode(
-                q: qRow, k: cacheK, v: cacheV,
+        let attnAll: Tensor
+        if headDim == 128 {
+            // qNormed is `[T, nHeads, headDim]` flat. Reshape into the
+            // shape sdpaMulti expects (same buffer, no copy).
+            let qBlock = qNormed.reshaped(to: [t, nHeads, headDim])
+            attnAll = Ops.sdpaMulti(
+                q: qBlock, k: cacheK, v: cacheV,
                 nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-                nKV: startPosition + r + 1, kvStride: kv.maxSeq,
-                scale: scale, on: cmd, into: outRow)
+                baseKV: startPosition, nQuery: t, kvStride: kv.maxSeq,
+                causal: true, scale: scale, on: cmd
+            ).reshaped(to: [t * qDim])
+        } else {
+            let attnAllScratch = Tensor.empty(shape: [t * qDim], dtype: dt,
+                                              device: device)
+            for r in 0..<t {
+                let qRow = Tensor(buffer: qNormed.buffer,
+                                  offset: qNormed.offset + r * qDim * dtBytes,
+                                  shape: [nHeads, headDim], dtype: dt)
+                let outRow = Tensor(buffer: attnAllScratch.buffer,
+                                    offset: attnAllScratch.offset + r * qDim * dtBytes,
+                                    shape: [nHeads, headDim], dtype: dt)
+                _ = Ops.sdpaDecode(
+                    q: qRow, k: cacheK, v: cacheV,
+                    nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
+                    nKV: startPosition + r + 1, kvStride: kv.maxSeq,
+                    scale: scale, on: cmd, into: outRow)
+            }
+            attnAll = attnAllScratch
         }
 
         // ── Gated output * o_proj ────────────────────────────────────────
