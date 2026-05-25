@@ -122,35 +122,59 @@ struct InspectCommand: AsyncParsableCommand {
         let loadSecs = Date().timeIntervalSince(loadStart)
         print("loaded in \(String(format: "%.2f", loadSecs))s")
 
-        // ─── Architecture ────────────────────────────────────────
+        // ─── Architecture (via the programmatic ModelInfo probe) ─
+        // The struct exposes the same fields the CLI used to read off
+        // the engine + config directly, so this rendering and the
+        // programmatic API stay in lockstep.
+        let info = m.info
         print("")
         print("┌─ Architecture ─────────────────────────────────────────")
-        let family = familyTag(for: m)
-        print("│ family             \(family)")
-        print("│ model_type         \(m.config.modelType ?? "—")")
-        print("│ architecture       \(m.config.architecture ?? "—")")
-        print("│ activation dtype   \(m.engine.dtype)")
-        print("│ hidden_size        \(m.engine.hidden)")
-        print("│ num_layers         \(m.engine.nLayers)")
-        print("│ num_heads          \(m.engine.nHeads)")
-        print("│ num_kv_heads       \(m.engine.nKVHeads) (GQA fan-out \(m.engine.nHeads / max(m.engine.nKVHeads, 1)))")
-        print("│ head_dim           \(m.engine.headDim)")
-        print("│ vocab_size         \(m.engine.vocab)")
-        print("│ max_position_emb   \(m.engine.maxSeq)")
-        if let q = m.config.quantization {
+        print("│ family             \(info.family) (\(info.architecture ?? info.modelType ?? "?"))")
+        print("│ model_type         \(info.modelType ?? "—")")
+        print("│ architecture       \(info.architecture ?? "—")")
+        print("│ activation dtype   \(info.dtype)")
+        print("│ hidden_size        \(info.hidden)")
+        print("│ num_layers         \(info.nLayers)")
+        print("│ num_heads          \(info.nHeads)")
+        print("│ num_kv_heads       \(info.nKVHeads) (GQA fan-out \(info.gqaFanOut))")
+        print("│ head_dim           \(info.headDim)")
+        print("│ vocab_size         \(info.vocab)")
+        print("│ max_position_emb   \(info.maxSeq)")
+        print("│ parameters         \(formatCount(info.parameterCount)) (\(formatBytes(info.parameterBytes)))")
+        if let q = info.quantization {
             print("│ weight quant       int\(q.bits) group_size=\(q.groupSize)")
         } else {
             print("│ weight quant       (none — full precision)")
+        }
+        print("│ tied lm_head       \(info.tieWordEmbeddings)")
+        print("│ supports embed in  \(info.supportsEmbeddingInput)")
+        if info.isVLM, let n = info.imageTokenCount {
+            print("│ image_token_count  \(n)")
         }
         print("└────────────────────────────────────────────────────────")
 
         // ─── Capabilities ────────────────────────────────────────
         print("")
         print("┌─ Capabilities ─────────────────────────────────────────")
-        let availableSorted = m.availableCapabilities.map { "\($0)" }.sorted()
-        let enabledSorted = m.enabledCapabilities.map { "\($0)" }.sorted()
+        let availableSorted = info.availableCapabilities.map { "\($0)" }.sorted()
+        let enabledSorted = info.enabledCapabilities.map { "\($0)" }.sorted()
         print("│ available  \(availableSorted.joined(separator: ", "))")
         print("│ enabled    \(enabledSorted.joined(separator: ", "))")
+        print("└────────────────────────────────────────────────────────")
+
+        // ─── Default generation parameters ──────────────────────────
+        // Family-tuned baselines the CLI / library exposes as
+        // `m.defaultGenerationParameters`.
+        let p = info.defaultGenerationParameters
+        print("")
+        print("┌─ Default generation parameters ────────────────────────")
+        print("│ maxTokens          \(p.maxTokens)")
+        print("│ temperature        \(p.temperature)")
+        print("│ topP               \(p.topP)")
+        print("│ topK               \(p.topK)")
+        print("│ minP               \(p.minP)")
+        print("│ repetitionPenalty  \(p.repetitionPenalty)")
+        print("│ prefillStepSize    \(p.prefillStepSize.map(String.init) ?? "(engine default)")")
         print("└────────────────────────────────────────────────────────")
 
         // ─── Tokenizer ───────────────────────────────────────────
@@ -303,16 +327,13 @@ struct InspectCommand: AsyncParsableCommand {
         return "\(b) B"
     }
 
-    // Best-effort family tag derived from the engine's concrete type.
-    // Used purely for the inspect printout — production code should
-    // dispatch via `Model.engine` casts, not string matching.
-    private func familyTag(for m: Model) -> String {
-        let typeName = String(describing: type(of: m.engine))
-        // LlamaModel covers everything that routes through the Llama
-        // loader (Llama, Mistral, Qwen 2.x, SmolLM, OLMo, Granite,
-        // Yi, InternLM 2, Starcoder 2, DeepSeek R1 Distill). The
-        // config's architectures[0] / model_type discriminates.
-        let arch = m.config.architecture ?? m.config.modelType ?? "?"
-        return "\(typeName) (\(arch))"
+    // Pretty-print "1.23B" / "456M" / "12.3M" / "789k" / "42" for
+    // parameter counts (B = billions, M = millions, k = thousands).
+    private func formatCount(_ n: Int) -> String {
+        let v = Double(n)
+        if v >= 1e9 { return String(format: "%.2fB", v / 1e9) }
+        if v >= 1e6 { return String(format: "%.1fM", v / 1e6) }
+        if v >= 1e3 { return String(format: "%.0fk", v / 1e3) }
+        return "\(n)"
     }
 }
