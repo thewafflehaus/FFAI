@@ -20,10 +20,11 @@ struct CapabilityTests {
         #expect(s.contains(.textIn))
         #expect(s.contains(.textOut))
         #expect(s.contains(.visionIn))
+        #expect(s.contains(.videoIn))
         #expect(s.contains(.audioIn))
         #expect(s.contains(.audioOut))
         #expect(s.contains(.toolCalling))
-        #expect(s.count == 6)
+        #expect(s.count == 7)
     }
 
     @Test("Codable round-trip via raw value")

@@ -171,7 +171,7 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: vlm.engine,
                     defaultGenerationParameters: LlamaDense.defaultGenerationParameters,
-                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    availableCapabilities: Qwen25VL.availableCapabilities,
                     vlModel: vlm)
             }
             // Qwen 2-VL — dynamic-resolution full-attention ViT tower
