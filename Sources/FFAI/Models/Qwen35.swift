@@ -2255,21 +2255,33 @@ public final class Qwen35AttentionMixer: Module {
         // `ropePartial` encoders. Saves T encoder begin/end pairs per
         // attn-layer prefill call (T at T=512 ≈ 512 encoders/layer = a
         // real chunk of host-side dispatch overhead).
+        // ITER 97 (Bagel 2): batched per-row RoPE. Replaces the T-loop
+        // of `Ops.ropePartialTwo` calls with ONE `Ops.ropePartialManyTwo`
+        // dispatch (Q + K on shared encoder) over all T tokens. Saves
+        // T-1 encoder begin/end pairs per attn layer × 10 = ~5100 fewer
+        // dispatches at T=512.
+        let positions = device.makeBuffer(length: t * 4)
+        let positionsPtr = positions.contents().bindMemory(to: UInt32.self,
+                                                            capacity: t)
+        for r in 0..<t { positionsPtr[r] = UInt32(startPosition + r) }
+        let positionsT = Tensor(buffer: positions, offset: 0,
+                                 shape: [t], dtype: .u32)
+        Ops.ropePartialManyTwo(
+            q: qNormed, qNHeads: nHeads, qRowStride: qDim,
+            k: kNormed, kNHeads: nKVHeads, kRowStride: kvDim,
+            positions: positionsT, t: t,
+            headDim: headDim, rotaryDim: rotaryDim,
+            thetaBase: ropeTheta, on: cmd)
+
         var kRows: [Tensor] = []; kRows.reserveCapacity(t)
         var vRows: [Tensor] = []; vRows.reserveCapacity(t)
         for r in 0..<t {
-            let qRow = Tensor(buffer: qNormed.buffer,
-                              offset: qNormed.offset + r * qDim * dtBytes,
-                              shape: [qDim], dtype: dt)
             let kRow = Tensor(buffer: kNormed.buffer,
                               offset: kNormed.offset + r * kvDim * dtBytes,
                               shape: [kvDim], dtype: dt)
             let vRow = Tensor(buffer: vOut.buffer,
                               offset: vOut.offset + r * kvDim * dtBytes,
                               shape: [kvDim], dtype: dt)
-            Ops.ropePartialTwo(qRow, kRow, position: startPosition + r,
-                                headDim: headDim, rotaryDim: rotaryDim,
-                                thetaBase: ropeTheta, on: cmd)
             kRows.append(kRow.reshaped(to: [nKVHeads, headDim]))
             vRows.append(vRow.reshaped(to: [nKVHeads, headDim]))
         }

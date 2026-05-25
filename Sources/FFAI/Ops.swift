@@ -937,6 +937,114 @@ public enum Ops {
         enc.endEncoding()
     }
 
+    /// Batched per-row RoPE: applies position-dependent rotation to T
+    /// rows of `qk` in ONE dispatch. `positions` is a `[T]` u32 buffer.
+    /// `rowStride` selects the row layout (`nHeads * headDim` for Q,
+    /// `nKVHeads * headDim` for K). In-place rotation. Grid: `[T,
+    /// nHeads, halfRotary]`.
+    ///
+    /// Saves T-1 encoder begin/end pairs vs the per-row `ropePartial`
+    /// T-loop. At T=512 × 10 attn layers ≈ 5100 fewer dispatches per
+    /// prefill call.
+    public static func ropePartialMany(
+        _ qk: Tensor, positions: Tensor,
+        t: Int, nHeads: Int,
+        headDim: Int, rotaryDim: Int,
+        rowStride: Int,
+        thetaBase: Float,
+        scaling: RoPEScaling = .none,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(positions.dtype == .u32, "Ops.ropePartialMany: positions must be .u32")
+        precondition(positions.elementCount == t, "Ops.ropePartialMany: positions count must equal T")
+        precondition(qk.elementCount == t * rowStride,
+                     "Ops.ropePartialMany: qk size \(qk.elementCount) ≠ T·rowStride = \(t * rowStride)")
+        let halfRotary = rotaryDim / 2
+        let psoName: String
+        switch qk.dtype {
+        case .f32:  psoName = "ffai_rope_llama_many_f32"
+        case .f16:  psoName = "ffai_rope_llama_many_f16"
+        case .bf16: psoName = "ffai_rope_llama_many_bf16"
+        default: fatalError("Ops.ropePartialMany: unsupported dtype \(qk.dtype)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        enc.setBuffer(qk.buffer, offset: qk.offset, index: 0)
+        enc.setBuffer(positions.buffer, offset: positions.offset, index: 1)
+        enc.setBuffer(qk.buffer, offset: qk.offset, index: 2)
+        var hd = UInt32(headDim), half = UInt32(halfRotary)
+        var stride = UInt32(rowStride)
+        var theta = thetaBase
+        var sf = scaling.scaleFactor, lf = scaling.lowFreqFactor
+        var hf = scaling.highFreqFactor, om = scaling.originalMaxPosition
+        enc.setBytes(&hd, length: 4, index: 3)
+        enc.setBytes(&half, length: 4, index: 4)
+        enc.setBytes(&stride, length: 4, index: 5)
+        enc.setBytes(&theta, length: 4, index: 6)
+        enc.setBytes(&sf, length: 4, index: 7)
+        enc.setBytes(&lf, length: 4, index: 8)
+        enc.setBytes(&hf, length: 4, index: 9)
+        enc.setBytes(&om, length: 4, index: 10)
+        let grid = MTLSize(width: t, height: nHeads, depth: halfRotary)
+        let tg = MTLSize(width: 1, height: 1, depth: 1)
+        enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        enc.endEncoding()
+    }
+
+    /// Pair of `ropePartialMany` calls (Q + K) on ONE shared encoder.
+    /// Both share `positions`, `headDim`, `rotaryDim`, `thetaBase`,
+    /// `scaling`; row strides differ.
+    public static func ropePartialManyTwo(
+        q: Tensor, qNHeads: Int, qRowStride: Int,
+        k: Tensor, kNHeads: Int, kRowStride: Int,
+        positions: Tensor, t: Int,
+        headDim: Int, rotaryDim: Int,
+        thetaBase: Float,
+        scaling: RoPEScaling = .none,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(q.dtype == k.dtype, "Ops.ropePartialManyTwo: dtype mismatch")
+        precondition(positions.dtype == .u32, "Ops.ropePartialManyTwo: positions must be .u32")
+        precondition(positions.elementCount == t, "Ops.ropePartialManyTwo: positions count must equal T")
+        let halfRotary = rotaryDim / 2
+        let psoName: String
+        switch q.dtype {
+        case .f32:  psoName = "ffai_rope_llama_many_f32"
+        case .f16:  psoName = "ffai_rope_llama_many_f16"
+        case .bf16: psoName = "ffai_rope_llama_many_bf16"
+        default: fatalError("Ops.ropePartialManyTwo: unsupported dtype \(q.dtype)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        enc.setBuffer(positions.buffer, offset: positions.offset, index: 1)
+        var hd = UInt32(headDim), half = UInt32(halfRotary)
+        var theta = thetaBase
+        var sf = scaling.scaleFactor, lf = scaling.lowFreqFactor
+        var hf = scaling.highFreqFactor, om = scaling.originalMaxPosition
+        enc.setBytes(&hd, length: 4, index: 3)
+        enc.setBytes(&half, length: 4, index: 4)
+        enc.setBytes(&theta, length: 4, index: 6)
+        enc.setBytes(&sf, length: 4, index: 7)
+        enc.setBytes(&lf, length: 4, index: 8)
+        enc.setBytes(&hf, length: 4, index: 9)
+        enc.setBytes(&om, length: 4, index: 10)
+        let tg = MTLSize(width: 1, height: 1, depth: 1)
+        @inline(__always)
+        func dispatch(_ buf: Tensor, _ nHeads: Int, _ rowStride: Int) {
+            var stride = UInt32(rowStride)
+            enc.setBuffer(buf.buffer, offset: buf.offset, index: 0)
+            enc.setBuffer(buf.buffer, offset: buf.offset, index: 2)
+            enc.setBytes(&stride, length: 4, index: 5)
+            let grid = MTLSize(width: t, height: nHeads, depth: halfRotary)
+            enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        }
+        dispatch(q, qNHeads, qRowStride)
+        dispatch(k, kNHeads, kRowStride)
+        enc.endEncoding()
+    }
+
     /// Two rmsNormRows calls in ONE encoder. Used by the attention
     /// layer's q_norm + k_norm pair (different shapes, same kernel).
     /// Saves one encoder begin/end pair per attn layer × 10 = ~170 µs
