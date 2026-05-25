@@ -109,7 +109,11 @@ public struct PaligemmaStandard: PaligemmaVariant {
             throw PaligemmaError.missingConfig("text_config fields")
         }
         let textKVHeads  = textInt("num_key_value_heads") ?? textNHeads
-        let textHeadDim  = textHidden / textNHeads
+        // head_dim is explicit in Gemma 2+ configs (e.g. Gemma 2 2B:
+        // hidden=2304, nHeads=8, head_dim=256 — q_proj output is 8×256
+        // = 2048, NOT 2304). Fall back to hidden / nHeads only for
+        // checkpoints (PaliGemma 1's Gemma 1 backbone) that omit it.
+        let textHeadDim  = textInt("head_dim") ?? (textHidden / textNHeads)
         let textEps      = Float(textDouble("rms_norm_eps") ?? 1e-6)
         let textTheta    = Float(textDouble("rope_theta") ?? 10_000)
         let maxSeq       = config.int("max_position_embeddings") ?? 4096
