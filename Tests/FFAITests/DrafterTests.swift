@@ -78,6 +78,91 @@ struct TreeDrafterScaffoldTests {
     }
 }
 
+@Suite("NGramTreeDrafter — branching tree from n-gram history (ITER 68)")
+struct NGramTreeDrafterTests {
+
+    @Test("proposeTree branches on multiple continuations of the same n-gram")
+    func branchesOnMultipleContinuations() {
+        // History where trigram "the cat sat" appears 3 times with
+        // different continuations: ["on", "on", "down"]. Top-2 should be
+        // "on" (count=2) then "down" (count=1).
+        let the = 1, cat = 2, sat = 3, on = 4, down = 5
+        let pad = 99 // filler tokens that don't interfere
+        // [the,cat,sat, on, pad, the,cat,sat, on, pad, the,cat,sat, down, pad, the,cat,sat]
+        let history = [the, cat, sat, on, pad,
+                       the, cat, sat, on, pad,
+                       the, cat, sat, down, pad,
+                       the, cat, sat]
+        let drafter = NGramTreeDrafter(maxNMatch: 3, minNMatch: 3,
+                                        branchingFactor: 2)
+        guard let tree = drafter.proposeTree(history: history,
+                                              maxDepth: 1, maxNodes: 16) else {
+            Issue.record("expected a non-nil tree")
+            return
+        }
+        // Root token = top-1 = "on" (count=2)
+        #expect(tree.token == on)
+        // depth=1, branching=2 → root has 2 children: "on" and "down".
+        #expect(tree.children.count == 2)
+        #expect(tree.children.map(\.token).sorted() == [on, down].sorted())
+    }
+
+    @Test("proposeTree returns nil when n-gram never repeats")
+    func nilOnNoMatch() {
+        let history = [1, 2, 3, 4, 5]
+        let drafter = NGramTreeDrafter(maxNMatch: 3, minNMatch: 2,
+                                        branchingFactor: 2)
+        let tree = drafter.proposeTree(history: history,
+                                        maxDepth: 2, maxNodes: 16)
+        #expect(tree == nil)
+    }
+
+    @Test("propose (linear) falls back to top-1 chain")
+    func linearFallbackProposeChain() {
+        // Bigram "a b" → "c" appears 3×, then once more.
+        let a = 10, b = 11, c = 12
+        let history = [a, b, c, 99, a, b, c, 99, a, b, c, 99, a, b]
+        let drafter = NGramTreeDrafter(maxNMatch: 2, minNMatch: 2,
+                                        branchingFactor: 3)
+        let linear = drafter.propose(history: history, gamma: 1)
+        #expect(linear == [c])
+    }
+
+    @Test("nodeBudget caps tree growth")
+    func nodeBudgetCap() {
+        // Construct a history with lots of trigram repeats.
+        let t = [1, 2, 3, 4, 5, 1, 2, 3, 4, 6, 1, 2, 3, 4, 7, 1, 2, 3, 4]
+        let drafter = NGramTreeDrafter(maxNMatch: 3, minNMatch: 2,
+                                        branchingFactor: 3)
+        guard let tree = drafter.proposeTree(history: t,
+                                              maxDepth: 4, maxNodes: 4) else {
+            Issue.record("expected non-nil")
+            return
+        }
+        // Tree size must respect the maxNodes cap.
+        #expect(tree.size <= 4)
+    }
+
+    @Test("frequency-tie deterministic order")
+    func frequencyTieDeterministicOrder() {
+        // Bigram "a b" → "c" once, → "d" once (tie). Top-2 returns both;
+        // tie-break is by token id ascending, so order is [c, d] when c < d.
+        let a = 1, b = 2, c = 3, d = 4
+        let history = [a, b, c, 99, a, b, d, 99, a, b]
+        let drafter = NGramTreeDrafter(maxNMatch: 2, minNMatch: 2,
+                                        branchingFactor: 2)
+        guard let tree = drafter.proposeTree(history: history,
+                                              maxDepth: 1, maxNodes: 8) else {
+            Issue.record("expected non-nil")
+            return
+        }
+        // Both c and d have count=1; deterministic tie-break = ascending id.
+        // Root token is the top-1 (= c on ties).
+        #expect(tree.token == c)
+        #expect(tree.children.map(\.token) == [c, d])
+    }
+}
+
 @Suite("Drafter — n-gram prompt-lookup")
 struct DrafterTests {
 
