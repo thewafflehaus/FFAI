@@ -1655,7 +1655,13 @@ public enum CohereTranscribeError: Error, CustomStringConvertible {
 // ─── Registry detection + loader ─────────────────────────────────────
 
 extension CohereTranscribeModel {
-    public static let modelTypes: Set<String> = ["cohere_transcribe"]
+    /// Accepted `model_type` values:
+    /// - `cohere_transcribe` — the original CohereLabs upstream string.
+    /// - `cohere_asr` — the renamed string mlx-community ships in its
+    ///   2026-03 conversion (`mlx-community/cohere-transcribe-03-2026-mlx-8bit`
+    ///   and successors). Same architecture; the rename happened on the
+    ///   conversion side, not in the model code, so both load identically.
+    public static let modelTypes: Set<String> = ["cohere_transcribe", "cohere_asr"]
     public static let architectures: Set<String> = [
         "CohereTranscribeForConditionalGeneration",
     ]
