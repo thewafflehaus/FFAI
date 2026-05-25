@@ -9,11 +9,16 @@
 // thing this file adds is the model-type dispatch entry.
 //
 // Quantized Qwen 2.x (mlx-community 4-bit) is supported transparently:
-// `QuantizedLinear` doesn't carry biases (the int4 / int8 packed-row
-// gemv kernel applies the dequant scale+bias per group, which is a
-// different axis), so the conversion drops the original projection
-// biases for quantized variants. That's consistent with how mlx-lm
-// loads these checkpoints.
+// the mlx-community converter KEEPS the additive output biases on the
+// QKV projections (`q_proj.bias` next to `q_proj.{weight,scales,biases}`)
+// even after 4-bit conversion. `QuantizedLinear` carries an optional
+// `additiveBias` that's folded in after `Ops.dequantGemv` /
+// `Ops.dequantGemmDynamicM`, and `loadLinear` picks it up from the
+// bundle when present. Dropping these biases gave silent degenerate
+// output (DeepSeek-R1-Distill-Qwen-1.5B emitted token-15 "0" forever
+// before this fix). The per-group quant `biases` (plural) are a
+// different axis — the dequant offset applied during the gemv itself —
+// and have always been handled.
 
 import Foundation
 

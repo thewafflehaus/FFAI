@@ -130,13 +130,36 @@ public final class QuantizedLinear: Module {
     public let biases: Tensor
     public let bits: Int
     public let groupSize: Int
+    /// Optional additive output bias `[out_features]`. This is *not* the
+    /// per-group dequant offset (which is `biases` plural) — it's the
+    /// classic Linear additive bias `y = Wx + b`. mlx-community's 4-bit
+    /// Qwen 2.x checkpoints ship this alongside the quantization triplet
+    /// (`q_proj.bias` next to `q_proj.{weight,scales,biases}`); silently
+    /// dropping it makes the model degenerate to one repeated token
+    /// (DeepSeek-R1-Distill-Qwen-1.5B emitted "000000…" before this).
+    public let additiveBias: Tensor?
 
     public init(weight: Tensor, scales: Tensor, biases: Tensor,
-                bits: Int, groupSize: Int) {
+                bits: Int, groupSize: Int,
+                additiveBias: Tensor? = nil) {
         precondition(weight.dtype == .u32, "QuantizedLinear: weight must be u32 packed")
         precondition(weight.shape.count == 2, "QuantizedLinear: weight must be 2D")
         precondition(bits == 3 || bits == 4 || bits == 5 || bits == 6 || bits == 8,
                      "QuantizedLinear: bits must be one of 3, 4, 5, 6, or 8")
+        if let ab = additiveBias {
+            precondition(ab.shape.count == 1,
+                         "QuantizedLinear: additiveBias must be 1D [out_features]")
+            // Cast bias to the activation dtype so the post-dequant add
+            // works without dtype gymnastics. We don't know the
+            // activation dtype here, but the bias dtype recorded on
+            // disk matches the original Linear's weight dtype (bf16/f16
+            // for mlx-community conversions), which is exactly what the
+            // dequantized gemv output uses. If a future caller hits a
+            // dtype mismatch, mirror the Linear.init auto-cast pattern.
+            self.additiveBias = ab
+        } else {
+            self.additiveBias = nil
+        }
         self.weight = weight
         self.scales = scales
         self.biases = biases
@@ -145,14 +168,22 @@ public final class QuantizedLinear: Module {
     }
 
     public func parameters() -> [(String, Tensor)] {
-        [("weight", weight), ("scales", scales), ("biases", biases)]
+        if let ab = additiveBias {
+            return [("weight", weight), ("scales", scales),
+                    ("biases", biases), ("bias", ab)]
+        }
+        return [("weight", weight), ("scales", scales), ("biases", biases)]
     }
 
     public func callAsFunction(_ x: Tensor, on cmd: MTLCommandBuffer) -> Tensor {
-        Ops.dequantGemv(
+        let y = Ops.dequantGemv(
             weight: weight, scales: scales, biases: biases,
             input: x, bits: bits, groupSize: groupSize, on: cmd
         )
+        if let ab = additiveBias {
+            return Ops.add(y, ab, on: cmd)
+        }
+        return y
     }
 
     /// T-batched. `x` is `[T, inDim]` flat row-major, returns
@@ -172,29 +203,57 @@ public final class QuantizedLinear: Module {
         // batched kernel but bit-identical to the per-token path, and
         // the projections that hit this branch are tiny so the per-token
         // launch overhead is in the noise.
+        let out: Tensor
         if bits == 4 {
-            let out = Tensor.empty(shape: [t, outDim], dtype: x.dtype, device: device)
+            out = Tensor.empty(shape: [t, outDim], dtype: x.dtype, device: device)
             Ops.dequantGemmDynamicM(
                 input: x, weight: weight, scales: scales, biases: biases,
                 t: t, nOut: outDim, kIn: inDim, groupSize: groupSize,
                 on: cmd, device: device, into: out)
-            return out
+        } else {
+            let dtBytes = x.dtype.byteSize
+            out = Tensor.empty(shape: [t, outDim], dtype: x.dtype, device: device)
+            for r in 0..<t {
+                let xRow = Tensor(buffer: x.buffer,
+                                  offset: x.offset + r * inDim * dtBytes,
+                                  shape: [inDim], dtype: x.dtype)
+                let rowOut = Ops.dequantGemv(
+                    weight: weight, scales: scales, biases: biases,
+                    input: xRow, bits: bits, groupSize: groupSize, on: cmd)
+                let outRow = Tensor(buffer: out.buffer,
+                                    offset: out.offset + r * outDim * dtBytes,
+                                    shape: [outDim], dtype: x.dtype)
+                Ops.copy(rowOut, into: outRow, on: cmd)
+            }
         }
-        let dtBytes = x.dtype.byteSize
-        let out = Tensor.empty(shape: [t, outDim], dtype: x.dtype, device: device)
+        // Fold the additive bias on top of the [T, outDim] batched output
+        // by tiling the [outDim] bias to [T, outDim] on the host then
+        // adding on the same command buffer. Same pattern as
+        // Linear.callMany. Without this, QuantizedLinear.callMany silently
+        // omitted the bias on the prefill (chunked) path while the
+        // single-token path applied it, producing inconsistent state.
+        guard let ab = additiveBias else { return out }
+        let biasVals = ab.toFloatArray()
+        var tiledFlat = [Float](repeating: 0, count: t * outDim)
         for r in 0..<t {
-            let xRow = Tensor(buffer: x.buffer,
-                              offset: x.offset + r * inDim * dtBytes,
-                              shape: [inDim], dtype: x.dtype)
-            let rowOut = Ops.dequantGemv(
-                weight: weight, scales: scales, biases: biases,
-                input: xRow, bits: bits, groupSize: groupSize, on: cmd)
-            let outRow = Tensor(buffer: out.buffer,
-                                offset: out.offset + r * outDim * dtBytes,
-                                shape: [outDim], dtype: x.dtype)
-            Ops.copy(rowOut, into: outRow, on: cmd)
+            let base = r * outDim
+            for c in 0..<outDim { tiledFlat[base + c] = biasVals[c] }
         }
-        return out
+        let tiled = Tensor.empty(shape: [t, outDim], dtype: out.dtype)
+        switch out.dtype {
+        case .f32:  tiled.copyIn(from: tiledFlat)
+        case .f16:  tiled.copyIn(from: tiledFlat.map { Float16($0) })
+        case .bf16:
+            tiled.copyIn(from: tiledFlat.map { v -> UInt16 in
+                let bits = v.bitPattern
+                let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
+                return UInt16(rounded >> 16)
+            })
+        default:
+            preconditionFailure(
+                "QuantizedLinear.callMany: bias broadcast unsupported for dtype \(out.dtype)")
+        }
+        return Ops.add(out, tiled, on: cmd)
     }
 }
 
@@ -286,9 +345,19 @@ public func loadLinear(
             scaleCols: t.scales.shape[t.scales.shape.count - 1],
             groupSize: q.groupSize)
         if [3, 4, 5, 6, 8].contains(bits) {
+            // Pick up the additive output bias (e.g. Qwen 2.x QKV) if
+            // the checkpoint ships it alongside the quantization triplet.
+            // The mlx-community 4-bit Qwen 2.x conversions DO retain it
+            // — older comments here incorrectly assumed otherwise, which
+            // gave silent degenerate output (DeepSeek-R1-Distill-Qwen-1.5B
+            // emitted token-15 "0" forever).
+            let additiveBias: Tensor? = bundle.has("\(base).bias")
+                ? try bundle.tensor(named: "\(base).bias")
+                : nil
             return AnyLinear(QuantizedLinear(
                 weight: t.weight, scales: t.scales, biases: t.biases,
-                bits: bits, groupSize: q.groupSize
+                bits: bits, groupSize: q.groupSize,
+                additiveBias: additiveBias
             ))
         }
     }
