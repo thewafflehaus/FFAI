@@ -1204,6 +1204,11 @@ public final class Qwen35GDNMixer: Module {
     private var aRawScratch: Tensor?
     /// Cached batched-input-proj decision: true iff all 4 inProj are
     /// QuantizedLinear int4 with same groupSize. Computed once.
+    /// ITER 95 (Bagel 2): fused 4-output qmm fast path eligibility.
+    /// When set, `forward` uses `Ops.batched4QgemvInt4Fast` (1 dispatch)
+    /// instead of `Ops.dequantGemvInt4Four` (4 dispatches on shared
+    /// encoder).
+    private var fused4Eligible: Bool = false
     private var batchedInputProj: (qW: Tensor, qS: Tensor, qB: Tensor,
                                     zW: Tensor, zS: Tensor, zB: Tensor,
                                     bW: Tensor, bS: Tensor, bB: Tensor,
@@ -1279,6 +1284,17 @@ public final class Qwen35GDNMixer: Module {
                                       bW: bQL.weight, bS: bQL.scales, bB: bQL.biases,
                                       aW: aQL.weight, aS: aQL.scales, aB: aQL.biases,
                                       groupSize: qQL.groupSize)
+            // ITER 95 (Bagel 2): single-dispatch 4-output qmm via
+            // `ffai_batched_4_qgemv_fast`. Constraints: in_dim % 512,
+            // each out_dim % 8, group_size = 64.
+            let inDim = qQL.weight.shape[1] * 8
+            if inDim % 512 == 0
+                && convDim % 8 == 0 && valueDim % 8 == 0
+                && numValueHeads % 8 == 0
+                && qQL.groupSize == 64
+                && ProcessInfo.processInfo.environment["FFAI_NO_FUSED_GDN_4"] == nil {
+                self.fused4Eligible = true
+            }
             self.qkvScratch = Tensor.empty(shape: [convDim], dtype: dtype, device: device)
             self.zScratch = Tensor.empty(shape: [valueDim], dtype: dtype, device: device)
             self.bRawScratch = Tensor.empty(shape: [numValueHeads], dtype: dtype, device: device)
@@ -1337,13 +1353,28 @@ public final class Qwen35GDNMixer: Module {
             z = zScratch!
             bRaw = bRawScratch!
             aRaw = aRawScratch!
-            Ops.dequantGemvInt4Four(
-                input: xNorm,
-                w0: bp.qW, s0: bp.qS, b0: bp.qB, out0: qkv,
-                w1: bp.zW, s1: bp.zS, b1: bp.zB, out1: z,
-                w2: bp.bW, s2: bp.bS, b2: bp.bB, out2: bRaw,
-                w3: bp.aW, s3: bp.aS, b3: bp.aB, out3: aRaw,
-                groupSize: bp.groupSize, on: cmd)
+            if fused4Eligible {
+                // ITER 95 (Bagel 2): ONE dispatch instead of 4. Same
+                // shared-input pattern as ITER 78's QKV (3-out) fusion,
+                // extended to GDN's 4-projection input. Constraints
+                // checked at init (`fused4Eligible`).
+                Ops.batched4QgemvInt4Fast(
+                    input: xNorm,
+                    wA: bp.qW, scalesA: bp.qS, biasesA: bp.qB, outA: qkv,
+                    wB: bp.zW, scalesB: bp.zS, biasesB: bp.zB, outB: z,
+                    wC: bp.bW, scalesC: bp.bS, biasesC: bp.bB, outC: bRaw,
+                    wD: bp.aW, scalesD: bp.aS, biasesD: bp.aB, outD: aRaw,
+                    groupSize: bp.groupSize, on: cmd)
+            } else {
+                // Legacy 4-dispatch shared-encoder path (ITER 23).
+                Ops.dequantGemvInt4Four(
+                    input: xNorm,
+                    w0: bp.qW, s0: bp.qS, b0: bp.qB, out0: qkv,
+                    w1: bp.zW, s1: bp.zS, b1: bp.zB, out1: z,
+                    w2: bp.bW, s2: bp.bS, b2: bp.bB, out2: bRaw,
+                    w3: bp.aW, s3: bp.aS, b3: bp.aB, out3: aRaw,
+                    groupSize: bp.groupSize, on: cmd)
+            }
         } else {
             qkv = inProjQKV(xNorm, on: cmd)        // [conv_dim]
             z = inProjZ(xNorm, on: cmd)            // [value_dim]

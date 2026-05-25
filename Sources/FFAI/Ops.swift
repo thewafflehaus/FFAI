@@ -1681,6 +1681,120 @@ public enum Ops {
     }
 
     /// Backwards-compatible 4-bit alias.
+    /// ITER 95 (Bagel 2): fused 4-output int4 GEMV in ONE dispatch.
+    /// Extends the ITER 78 QKV (3-output) pattern to 4 projections
+    /// sharing the same input. Used by the Qwen3.5 GDN mixer where the
+    /// 4 input projections (qkv, z, b, a) all read the same `xNorm` and
+    /// can be fused into a single kernel launch via
+    /// `ffai_batched_4_qgemv_fast`. Replaces the 4-dispatch shared-
+    /// encoder form (`Ops.dequantGemvInt4Four`) with one launch.
+    ///
+    /// Constraints (mirror `ffai_batched_qkv_qgemv_fast`):
+    /// - `in_dim` MUST be a multiple of 512.
+    /// - Each of `out_a / out_b / out_c / out_d` MUST be a multiple of 8.
+    /// - `group_size` MUST be 64.
+    /// - TPG = 64. Grid: `[ceil(max(out_*) / 8) * TPG, 1, 4]`.
+    public static func batched4QgemvInt4Fast(
+        input x: Tensor,
+        wA: Tensor, scalesA: Tensor, biasesA: Tensor, outA: Tensor,
+        wB: Tensor, scalesB: Tensor, biasesB: Tensor, outB: Tensor,
+        wC: Tensor, scalesC: Tensor, biasesC: Tensor, outC: Tensor,
+        wD: Tensor, scalesD: Tensor, biasesD: Tensor, outD: Tensor,
+        groupSize: Int = 64,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(wA.dtype == .u32 && wB.dtype == .u32 && wC.dtype == .u32 && wD.dtype == .u32,
+                     "batched4QgemvInt4Fast: w_* must be u32-packed")
+        let packedPerRow = wA.shape[1]
+        let inDim = packedPerRow * 8
+        precondition(x.elementCount == inDim,
+                     "batched4QgemvInt4Fast: x.elementCount \(x.elementCount) ≠ inDim \(inDim)")
+        let outA_ = outA.elementCount, outB_ = outB.elementCount
+        let outC_ = outC.elementCount, outD_ = outD.elementCount
+        precondition(inDim % 512 == 0,
+                     "batched4QgemvInt4Fast: in_dim must be a multiple of 512")
+        precondition(outA_ % 8 == 0 && outB_ % 8 == 0 && outC_ % 8 == 0 && outD_ % 8 == 0,
+                     "batched4QgemvInt4Fast: each out_* must be a multiple of 8")
+        let tpg = 64
+        let maxOut = max(max(outA_, outB_), max(outC_, outD_))
+        let nTiles = maxOut / 8
+        let grid = MTLSize(width: nTiles * tpg, height: 1, depth: 4)
+        let tg = MTLSize(width: tpg, height: 1, depth: 1)
+        switch x.dtype {
+        case .f32:
+            MetalTileKernels.ffai_batched_4_qgemv_fast_f32(
+                x: x.buffer, xOffset: x.offset,
+                w_a: wA.buffer, w_aOffset: wA.offset,
+                scales_a: scalesA.buffer, scales_aOffset: scalesA.offset,
+                biases_a: biasesA.buffer, biases_aOffset: biasesA.offset,
+                w_b: wB.buffer, w_bOffset: wB.offset,
+                scales_b: scalesB.buffer, scales_bOffset: scalesB.offset,
+                biases_b: biasesB.buffer, biases_bOffset: biasesB.offset,
+                w_c: wC.buffer, w_cOffset: wC.offset,
+                scales_c: scalesC.buffer, scales_cOffset: scalesC.offset,
+                biases_c: biasesC.buffer, biases_cOffset: biasesC.offset,
+                w_d: wD.buffer, w_dOffset: wD.offset,
+                scales_d: scalesD.buffer, scales_dOffset: scalesD.offset,
+                biases_d: biasesD.buffer, biases_dOffset: biasesD.offset,
+                a_out: outA.buffer, a_outOffset: outA.offset,
+                b_out: outB.buffer, b_outOffset: outB.offset,
+                c_out: outC.buffer, c_outOffset: outC.offset,
+                d_out: outD.buffer, d_outOffset: outD.offset,
+                out_a: UInt32(outA_), out_b: UInt32(outB_),
+                out_c: UInt32(outC_), out_d: UInt32(outD_),
+                in_dim: UInt32(inDim), group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.ffai_batched_4_qgemv_fast_f16(
+                x: x.buffer, xOffset: x.offset,
+                w_a: wA.buffer, w_aOffset: wA.offset,
+                scales_a: scalesA.buffer, scales_aOffset: scalesA.offset,
+                biases_a: biasesA.buffer, biases_aOffset: biasesA.offset,
+                w_b: wB.buffer, w_bOffset: wB.offset,
+                scales_b: scalesB.buffer, scales_bOffset: scalesB.offset,
+                biases_b: biasesB.buffer, biases_bOffset: biasesB.offset,
+                w_c: wC.buffer, w_cOffset: wC.offset,
+                scales_c: scalesC.buffer, scales_cOffset: scalesC.offset,
+                biases_c: biasesC.buffer, biases_cOffset: biasesC.offset,
+                w_d: wD.buffer, w_dOffset: wD.offset,
+                scales_d: scalesD.buffer, scales_dOffset: scalesD.offset,
+                biases_d: biasesD.buffer, biases_dOffset: biasesD.offset,
+                a_out: outA.buffer, a_outOffset: outA.offset,
+                b_out: outB.buffer, b_outOffset: outB.offset,
+                c_out: outC.buffer, c_outOffset: outC.offset,
+                d_out: outD.buffer, d_outOffset: outD.offset,
+                out_a: UInt32(outA_), out_b: UInt32(outB_),
+                out_c: UInt32(outC_), out_d: UInt32(outD_),
+                in_dim: UInt32(inDim), group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.ffai_batched_4_qgemv_fast_bf16(
+                x: x.buffer, xOffset: x.offset,
+                w_a: wA.buffer, w_aOffset: wA.offset,
+                scales_a: scalesA.buffer, scales_aOffset: scalesA.offset,
+                biases_a: biasesA.buffer, biases_aOffset: biasesA.offset,
+                w_b: wB.buffer, w_bOffset: wB.offset,
+                scales_b: scalesB.buffer, scales_bOffset: scalesB.offset,
+                biases_b: biasesB.buffer, biases_bOffset: biasesB.offset,
+                w_c: wC.buffer, w_cOffset: wC.offset,
+                scales_c: scalesC.buffer, scales_cOffset: scalesC.offset,
+                biases_c: biasesC.buffer, biases_cOffset: biasesC.offset,
+                w_d: wD.buffer, w_dOffset: wD.offset,
+                scales_d: scalesD.buffer, scales_dOffset: scalesD.offset,
+                biases_d: biasesD.buffer, biases_dOffset: biasesD.offset,
+                a_out: outA.buffer, a_outOffset: outA.offset,
+                b_out: outB.buffer, b_outOffset: outB.offset,
+                c_out: outC.buffer, c_outOffset: outC.offset,
+                d_out: outD.buffer, d_outOffset: outD.offset,
+                out_a: UInt32(outA_), out_b: UInt32(outB_),
+                out_c: UInt32(outC_), out_d: UInt32(outD_),
+                in_dim: UInt32(inDim), group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.batched4QgemvInt4Fast: unsupported dtype \(x.dtype)")
+        }
+    }
+
     /// ITER 94 (Bagel 2): fused MoE phase 1b + phase 2 + phase 3 in ONE
     /// kernel launch.
     ///
