@@ -188,6 +188,64 @@ public struct DraftTreeNode: Sendable {
         return (tokens, parent, paths)
     }
 
+    /// ITER 71 (Bagel 2): result of walking a draft tree against the
+    /// target's argmax predictions.
+    public struct VerifyResult: Equatable, Sendable {
+        /// The accepted-path tokens — root + each child whose token
+        /// matched the target's argmax at the prior depth, inclusive.
+        /// Empty if the root didn't match the target's first prediction.
+        public let acceptedTokens: [Int]
+        /// The "bonus" token from the target's argmax at the deepest
+        /// accepted flat-position (or at the pre-tree position if even
+        /// the root failed). This is the standard spec-decode
+        /// guaranteed-correct-token-for-free.
+        public let bonusToken: Int
+    }
+
+    /// Walk the tree against the target's per-position argmax oracle;
+    /// return the longest accepted path + the bonus token.
+    ///
+    /// Protocol:
+    /// 1. `oracleAtHistoryEnd` is the target's argmax of logits at the
+    ///    position JUST BEFORE the tree (i.e., the last token in
+    ///    history). It's the target's preferred root token. If it does
+    ///    NOT equal `self.token`, the root is rejected — return no
+    ///    accepted tokens + `oracleAtHistoryEnd` as the bonus.
+    /// 2. Otherwise the root is accepted; descend by repeatedly looking
+    ///    up `oracle(currentFlatIndex)` — the target's prediction at
+    ///    the current depth — and accepting whichever child has that
+    ///    token. Stop when no child matches; return accepted path +
+    ///    `oracle(lastAcceptedFlatIdx)` as bonus.
+    ///
+    /// Pure function. No model / cache dependencies. The driver wires
+    /// this up with `oracle = { i in target_logits[i].argmax() }`.
+    public func verify(oracleAtHistoryEnd: Int,
+                       oracle: (Int) -> Int) -> VerifyResult {
+        if self.token != oracleAtHistoryEnd {
+            return VerifyResult(acceptedTokens: [],
+                                 bonusToken: oracleAtHistoryEnd)
+        }
+        let (tokens, parents, _) = flatten()
+        let n = tokens.count
+        var childrenOf: [[Int]] = Array(repeating: [], count: n)
+        for i in 1..<n {
+            childrenOf[parents[i]].append(i)
+        }
+        var acceptedPath: [Int] = [tokens[0]]
+        var currentFlat = 0
+        while true {
+            let predictedNext = oracle(currentFlat)
+            if let nextFlat = childrenOf[currentFlat]
+                .first(where: { tokens[$0] == predictedNext }) {
+                acceptedPath.append(tokens[nextFlat])
+                currentFlat = nextFlat
+                continue
+            }
+            return VerifyResult(acceptedTokens: acceptedPath,
+                                 bonusToken: predictedNext)
+        }
+    }
+
     /// Tree-causal additive attention mask for the in-tree positions.
     /// Returns a flat `[T*T]` array where `mask[i*T + j]` is:
     ///   - `0.0` if flat-index `j` is an ancestor of `i` in the tree,

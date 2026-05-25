@@ -171,6 +171,94 @@ struct NGramTreeDrafterTests {
         }
     }
 
+    // ─── ITER 71: tree-verify acceptance algorithm ───────────────────
+
+    /// Helper to build the branching tree from earlier tests for verify cases.
+    private func cousinsTree() -> DraftTreeNode {
+        //         0 (root, tok=10)
+        //        / \
+        //      1     2     (tok=20, tok=30)
+        //     /|     |
+        //    3 4     5     (tok=40, tok=50, tok=60)
+        let n3 = DraftTreeNode(token: 40)
+        let n4 = DraftTreeNode(token: 50)
+        let n5 = DraftTreeNode(token: 60)
+        let n1 = DraftTreeNode(token: 20, children: [n3, n4])
+        let n2 = DraftTreeNode(token: 30, children: [n5])
+        return DraftTreeNode(token: 10, children: [n1, n2])
+    }
+
+    @Test("verify: root mismatch returns empty accepted + the bonus token")
+    func verifyRootMismatch() {
+        let tree = cousinsTree()
+        // Oracle says the target wants token 99 first (not the root's 10).
+        let oracleHistoryEnd = 99
+        let result = tree.verify(oracleAtHistoryEnd: oracleHistoryEnd,
+                                  oracle: { _ in 0 /* unused — root rejected */ })
+        #expect(result.acceptedTokens.isEmpty)
+        #expect(result.bonusToken == 99)
+    }
+
+    @Test("verify: oracle agrees with path 0→1→3, then diverges")
+    func verifyAcceptsPathToN3() {
+        let tree = cousinsTree()
+        // After history, target wants 10 (root). At root (flat 0),
+        // target wants 20 (descend into n1). At n1 (flat 1), target
+        // wants 40 (descend into n3). At n3 (flat 2), target wants 999
+        // (off-tree) — stop.
+        let oracle: (Int) -> Int = { flat in
+            switch flat {
+            case 0: return 20      // pick n1 (token=20)
+            case 1: return 40      // pick n3 (token=40)
+            case 2: return 999     // off-tree, bonus
+            default: return -1
+            }
+        }
+        let result = tree.verify(oracleAtHistoryEnd: 10, oracle: oracle)
+        #expect(result.acceptedTokens == [10, 20, 40])
+        #expect(result.bonusToken == 999)
+    }
+
+    @Test("verify: oracle picks a sibling at depth 1 → only root accepted")
+    func verifySiblingOnlyRoot() {
+        let tree = cousinsTree()
+        // Target wants 10 (root accepted), then at root wants 30
+        // (descend into n2). At n2 (flat 4 in DFS) wants 60 (n5).
+        // At n5 (flat 5) wants 999 (off-tree).
+        let oracle: (Int) -> Int = { flat in
+            switch flat {
+            case 0: return 30   // pick n2 over n1
+            case 4: return 60   // descend to n5
+            case 5: return 999  // off-tree bonus
+            default: return -1
+            }
+        }
+        let result = tree.verify(oracleAtHistoryEnd: 10, oracle: oracle)
+        #expect(result.acceptedTokens == [10, 30, 60])
+        #expect(result.bonusToken == 999)
+    }
+
+    @Test("verify: full path accept on a linear chain tree")
+    func verifyFullLinearPath() {
+        let leaf = DraftTreeNode(token: 4)
+        let n3 = DraftTreeNode(token: 3, children: [leaf])
+        let n2 = DraftTreeNode(token: 2, children: [n3])
+        let root = DraftTreeNode(token: 1, children: [n2])
+        // Oracle agrees with every step + adds a bonus past the leaf.
+        let oracle: (Int) -> Int = { flat in
+            switch flat {
+            case 0: return 2
+            case 1: return 3
+            case 2: return 4
+            case 3: return 999  // bonus after the leaf
+            default: return -1
+            }
+        }
+        let result = root.verify(oracleAtHistoryEnd: 1, oracle: oracle)
+        #expect(result.acceptedTokens == [1, 2, 3, 4])
+        #expect(result.bonusToken == 999)
+    }
+
     @Test("flatten + treeCausalMask: branching tree masks cousins/siblings")
     func flattenBranchingTreeMasksCousins() {
         //         0 (root)
