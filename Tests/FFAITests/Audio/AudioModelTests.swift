@@ -113,6 +113,57 @@ struct AudioModelTests {
         #expect(model.phonemeIds(for: "hzo") == [5, 8])
     }
 
+    // ─── Voice catalogue + selection ─────────────────────────────────
+
+    @Test("Kokoro — default voice is af_heart")
+    func kokoroDefaultVoice() {
+        let model = KokoroModel.build(
+            config: KokoroConfig(nToken: 178, hidden: 256, nMels: 80))
+        #expect(KokoroModel.defaultVoice == "af_heart")
+        #expect(model.currentVoice == "af_heart")
+    }
+
+    @Test("Kokoro — availableVoices includes the standard v1.0 catalogue")
+    func kokoroAvailableVoices() {
+        // Spot-check a few well-known voices across language buckets.
+        let voices = Set(KokoroModel.availableVoices)
+        #expect(voices.contains("af_heart"))       // default
+        #expect(voices.contains("am_michael"))     // American male
+        #expect(voices.contains("bf_emma"))        // British female
+        #expect(voices.contains("jm_kumo"))        // Japanese male
+        #expect(voices.contains("zf_xiaoxiao"))    // Chinese female
+        // Catalogue is non-trivial — the v1.0 release exposes ~50+ voices.
+        #expect(KokoroModel.availableVoices.count >= 50)
+    }
+
+    @Test("Kokoro — setVoice swaps currentVoice on a valid name")
+    func kokoroSetVoiceValid() throws {
+        let model = KokoroModel.build(
+            config: KokoroConfig(nToken: 178, hidden: 256, nMels: 80))
+        try model.setVoice("am_michael")
+        #expect(model.currentVoice == "am_michael")
+        // "default" resolves back to af_heart.
+        try model.setVoice("default")
+        #expect(model.currentVoice == "af_heart")
+    }
+
+    @Test("Kokoro — setVoice throws voiceNotAvailable for an unknown name")
+    func kokoroSetVoiceInvalid() {
+        let model = KokoroModel.build(
+            config: KokoroConfig(nToken: 178, hidden: 256, nMels: 80))
+        #expect(throws: AudioGenerationError.self) {
+            try model.setVoice("totally-fake-voice-name")
+        }
+    }
+
+    @Test("AudioGenerationParameters — voice defaults to 'default'")
+    func audioGenParamsVoiceDefault() {
+        let p = AudioGenerationParameters()
+        #expect(p.voice == "default")
+        let custom = AudioGenerationParameters(voice: "af_heart")
+        #expect(custom.voice == "af_heart")
+    }
+
     // ─── Registry detection ──────────────────────────────────────────
 
     @Test("AudioModelRegistry — detects Whisper from model_type")

@@ -16,14 +16,36 @@
 //
 // The full StyleTTS2 acoustic stack (the PLBert text encoder, the
 // duration / F0 / N prosody predictors, the AdaIN-residual decoder) is
-// a large port. FFAI's contribution this phase is the GPU vocoder tail
+// a large port. FFAI's contribution today is the GPU vocoder tail
 // and the model-level plumbing: `Kokoro.synthesize` consumes a
 // predicted complex spectrogram and produces a waveform. The acoustic
-// front-end is loaded from the checkpoint when present; when it is not
-// yet wired, `synthesizeFromSpectrogram` is the supported entry point
-// and `synthesize(phonemes:)` reports the front-end as unavailable.
-// Misaki G2P (grapheme→phoneme) is the text-side front-end; FFAI
-// accepts pre-phonemized token ids so an external G2P can drive it.
+// front-end is loaded from the checkpoint when present; when it is
+// not yet wired, `synthesizeFromSpectrogram` is the supported entry
+// point and `synthesize(phonemes:)` reports the front-end as
+// unavailable.
+//
+// ## Voices
+//
+// The default voice is `af_heart` — the standard Kokoro v1.0
+// reference voice. Override per call via
+// `AudioGenerationParameters.voice` or persist a different active
+// voice with `setVoice(_:)`. The full Kokoro v1.0 voice catalogue is
+// exposed via `availableVoices`; each voice is a 256-dim style vector
+// the prosody predictor + decoder consume. Voice vectors are not
+// bundled with FFAI — they're resolved on first use from the
+// HuggingFace cache (the Kokoro repo ships them alongside the model
+// weights) so we don't redistribute weights under a different licence.
+//
+// ## Phonemizer (text-side front-end)
+//
+// Kokoro takes *phonemes*, not raw text. The text-to-phoneme step
+// runs through the `Phonemizer` protocol (`Audio/Phonemizer.swift`);
+// callers register a provider via `PhonemizerRegistry.shared`. Misaki
+// G2P (Apache 2.0) is the upstream Kokoro choice for English; for
+// other languages users typically plug in espeak-ng (GPL — not
+// bundled) or a neural G2P model. FFAI ships the registry surface and
+// the AudioModel-level `voice` plumbing so the acoustic-stack port
+// (when it lands) drops straight in.
 
 import Foundation
 import Metal
@@ -148,6 +170,9 @@ public final class KokoroModel: @unchecked Sendable {
     /// The phoneme→id table from the checkpoint's `config.json` `vocab`.
     public let phonemeVocab: [String: Int]
     let dtype: DType
+    /// Currently-active voice name (mutates via `setVoice(_:)`).
+    /// Defaults to `Kokoro.defaultVoice` at init.
+    public private(set) var currentVoice: String
 
     public init(config: KokoroConfig, vocoder: KokoroVocoder,
                 phonemeVocab: [String: Int], dtype: DType) {
@@ -155,6 +180,60 @@ public final class KokoroModel: @unchecked Sendable {
         self.vocoder = vocoder
         self.phonemeVocab = phonemeVocab
         self.dtype = dtype
+        self.currentVoice = KokoroModel.defaultVoice
+    }
+
+    // ─── Voice catalogue ─────────────────────────────────────────────
+
+    /// Default voice — Kokoro v1.0's reference female "American Heart"
+    /// voice. Picked because it's the most-cited demo voice in the
+    /// Kokoro paper + community samples.
+    public static let defaultVoice = "af_heart"
+
+    /// Kokoro v1.0 voice catalogue. Prefix convention:
+    ///   a* = American English   b* = British English
+    ///   e* = Spanish            f* = French
+    ///   h* = Hindi              i* = Italian
+    ///   j* = Japanese           p* = Portuguese (BR)
+    ///   z* = Mandarin Chinese
+    /// Second letter: f = female, m = male.
+    ///
+    /// Voice vectors (256-dim style vectors per voice) are not
+    /// bundled here — Kokoro resolves them from the HF cache on first
+    /// `setVoice(_:)` once the acoustic stack ships.
+    public static let availableVoices: [String] = [
+        // American English
+        "af_heart", "af_alloy", "af_aoede", "af_bella", "af_jessica",
+        "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
+        "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam",
+        "am_michael", "am_onyx", "am_puck", "am_santa",
+        // British English
+        "bf_alice", "bf_emma", "bf_isabella", "bf_lily",
+        "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
+        // Other languages — abbreviated prefix only; full list grows
+        // with Kokoro upstream voice packs.
+        "ef_dora", "em_alex", "em_santa",
+        "ff_siwis",
+        "hf_alpha", "hf_beta", "hm_omega", "hm_psi",
+        "if_sara", "im_nicola",
+        "jf_alpha", "jf_gongitsune", "jf_nezumi", "jf_tebukuro",
+        "jm_kumo",
+        "pf_dora", "pm_alex", "pm_santa",
+        "zf_xiaobei", "zf_xiaoni", "zf_xiaoxiao", "zf_xiaoyi",
+        "zm_yunjian", "zm_yunxi", "zm_yunxia", "zm_yunyang",
+    ]
+
+    /// Activate `name` as the model's current voice. Validates against
+    /// `availableVoices`; throws `AudioGenerationError.voiceNotAvailable`
+    /// for unknown names. The actual style-vector load (from the HF
+    /// cache) lands with the acoustic stack — this is the API surface.
+    public func setVoice(_ name: String) throws {
+        let resolved = (name == "default") ? KokoroModel.defaultVoice : name
+        guard KokoroModel.availableVoices.contains(resolved) else {
+            throw AudioGenerationError.voiceNotAvailable(
+                requested: name, available: KokoroModel.availableVoices)
+        }
+        currentVoice = resolved
     }
 
     /// Synthesize a waveform from a predicted complex spectrogram.
