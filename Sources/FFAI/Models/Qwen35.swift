@@ -840,8 +840,15 @@ public final class Qwen35MoEFFN: Module {
     /// Run the MoE FFN. `MoELayer.decode` commits the passed `cmd`; the
     /// shared expert + the final add run on fresh private buffers, so
     /// the returned tensor never depends on the now-dead `cmd`.
+    ///
+    /// ITER 66: optional `residual` parameter folds the post-FFN residual
+    /// add into the final `sigmoidScalarFMA` dispatch (becomes
+    /// `sigmoidScalarFMAResidual`). When `residual != nil`, the returned
+    /// tensor already includes `residual + routed + sigmoid(gate)·sharedOut`
+    /// and the caller MUST NOT do its own `Ops.add(residual, ffnOut)`.
     func forward(_ xNorm: Tensor, position: Int,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
+                 cmd: MTLCommandBuffer, device: Device,
+                 residual: Tensor? = nil) -> Tensor {
         // Routed top-K experts — commits `cmd`.
         let routed = moe.decode(xNorm, position: position,
                                 cache: StatelessLayerCache(),
@@ -893,9 +900,18 @@ public final class Qwen35MoEFFN: Module {
                                                 device: device)
         }
         let result = sharedResultScratch!
-        Ops.sigmoidScalarFMA(
-            gate: gateLogit, value: sharedOut, base: routed,
-            into: result, on: fmaCmd)
+        if let residual = residual {
+            // ITER 66: fused 4-input. result = residual + routed +
+            // sigmoid(gateLogit) * sharedOut. Saves 1 dispatch + 1
+            // [hidden] DRAM roundtrip vs sigmoidScalarFMA then Ops.add.
+            Ops.sigmoidScalarFMAResidual(
+                gate: gateLogit, value: sharedOut, base: routed,
+                residual: residual, into: result, on: fmaCmd)
+        } else {
+            Ops.sigmoidScalarFMA(
+                gate: gateLogit, value: sharedOut, base: routed,
+                into: result, on: fmaCmd)
+        }
         fmaCmd.commit()
         return result
     }
@@ -2453,16 +2469,16 @@ private func qwen35ApplyFFN(_ ffn: Qwen35FFN, postMix: Tensor, ffnNorm: Tensor,
         }
         return result
     case .moe(let moe):
-        // Qwen35MoEFFN.forward commits `cmd`; run the residual add on a
-        // fresh buffer. We commit without waiting: the residual add
-        // tensor is the layer's output; the next layer queues onto a
-        // fresh workCmd and Metal hazard-tracks the read.
-        let ffnOut = moe.forward(ffnNorm, position: position,
-                                 cmd: cmd, device: device)
-        let addCmd = device.makeCommandBuffer()
-        let result = Ops.add(postMix, ffnOut, on: addCmd, into: resultScratch)
-        addCmd.commit()
-        return result
+        // Qwen35MoEFFN.forward commits `cmd`. ITER 66: pass `postMix`
+        // as the residual so the FFN's final sigmoidScalarFMA fuses
+        // the residual add directly. Returned tensor already includes
+        // `postMix + routed + sigmoid(gate)·sharedOut` — caller does
+        // NOT need its own `Ops.add(postMix, ffnOut)`. Saves 1
+        // dispatch + 1 fresh cmd-buffer commit per MoE layer per
+        // decode token (×40 layers on Qwen3.6-A3B).
+        return moe.forward(ffnNorm, position: position,
+                           cmd: cmd, device: device,
+                           residual: postMix)
     }
 }
 

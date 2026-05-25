@@ -4368,6 +4368,60 @@ public enum Ops {
         }
     }
 
+    /// ITER 66 (Bagel 2): fused sigmoid-scalar-FMA WITH residual add.
+    /// Computes `out[i] = residual[i] + base[i] + sigmoid(gate[0]) * value[i]`
+    /// in one dispatch. Collapses the Qwen3.6-A3B MoE post-FFN two-step
+    /// chain `sigmoidScalarFMA(gate, sharedOut, routed) -> ffnOut` then
+    /// `Ops.add(postMix, ffnOut)` into a single kernel. Saves 1 dispatch
+    /// and one [hidden] DRAM roundtrip per MoE layer per decode token
+    /// (×40 layers at Qwen3.6 default).
+    public static func sigmoidScalarFMAResidual(
+        gate: Tensor, value: Tensor, base: Tensor, residual: Tensor,
+        into out: Tensor, on cmd: MTLCommandBuffer
+    ) {
+        precondition(gate.dtype == value.dtype && value.dtype == base.dtype
+                      && base.dtype == residual.dtype && residual.dtype == out.dtype,
+                     "Ops.sigmoidScalarFMAResidual: all tensors must share dtype")
+        precondition(gate.elementCount == 1,
+                     "Ops.sigmoidScalarFMAResidual: gate must be [1] (got \(gate.elementCount))")
+        precondition(value.elementCount == base.elementCount
+                      && base.elementCount == residual.elementCount
+                      && residual.elementCount == out.elementCount,
+                     "Ops.sigmoidScalarFMAResidual: value/base/residual/out must match elementCount")
+        let n = value.elementCount
+        let tgWidth = min(n, 256)
+        let grid = MTLSize(width: n, height: 1, depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+        switch out.dtype {
+        case .f32:
+            MetalTileKernels.mt_sigmoid_scalar_fma_residual_f32(
+                gate: gate.buffer, gateOffset: gate.offset,
+                value: value.buffer, valueOffset: value.offset,
+                base: base.buffer, baseOffset: base.offset,
+                residual: residual.buffer, residualOffset: residual.offset,
+                out: out.buffer, outOffset: out.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_sigmoid_scalar_fma_residual_f16(
+                gate: gate.buffer, gateOffset: gate.offset,
+                value: value.buffer, valueOffset: value.offset,
+                base: base.buffer, baseOffset: base.offset,
+                residual: residual.buffer, residualOffset: residual.offset,
+                out: out.buffer, outOffset: out.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_sigmoid_scalar_fma_residual_bf16(
+                gate: gate.buffer, gateOffset: gate.offset,
+                value: value.buffer, valueOffset: value.offset,
+                base: base.buffer, baseOffset: base.offset,
+                residual: residual.buffer, residualOffset: residual.offset,
+                out: out.buffer, outOffset: out.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.sigmoidScalarFMAResidual: unsupported dtype \(out.dtype)")
+        }
+    }
+
     /// Scalar-broadcast FMA: `out[i] = base[i] + scalar[0] * value[i]`.
     /// `scalar` is a 1-element buffer; the kernel broadcasts it across
     /// the [n] output.
