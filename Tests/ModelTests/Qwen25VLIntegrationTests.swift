@@ -73,7 +73,7 @@ struct Qwen25VLIntegrationTests {
 
         let generated = try vlm.generate(
             promptTokens: promptTokens, image: image,
-            maxTokens: 64, eosTokenId: m.config.eosTokenId, eosTokenIds: m.config.eosTokenIds)
+            maxTokens: 200, eosTokenId: m.config.eosTokenId, eosTokenIds: m.config.eosTokenIds)
 
         // Coherence first, then the content check: the caption should
         // mention a dog.

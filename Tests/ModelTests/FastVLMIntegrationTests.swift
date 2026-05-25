@@ -67,7 +67,7 @@ struct FastVLMIntegrationTests {
 
         let generated = try vlm.generate(
             promptTokens: promptTokens, image: image,
-            maxTokens: 64, eosTokenId: m.config.eosTokenId, eosTokenIds: m.config.eosTokenIds)
+            maxTokens: 200, eosTokenId: m.config.eosTokenId, eosTokenIds: m.config.eosTokenIds)
 
         // Coherence first, then the content check.
         expectCoherentOutput(generated, minTokens: 4,

@@ -95,11 +95,11 @@ struct Gemma3VLIntegrationTests {
 
         let generated = try vlm.generate(
             promptTokens: promptTokens, image: image,
-            // 4B-it opens with a preamble — "Here's a description of the
-            // image:" — before it gets to the content. 192 tokens gives
-            // it room to clear the preamble and actually describe the
-            // dog. Lower values cut off mid-preamble.
-            maxTokens: 192, eosTokenId: m.config.eosTokenId, eosTokenIds: m.config.eosTokenIds)
+            // 200-token default across VLM integration tests — chat
+            // models often emit a polite preamble ("Here's a description
+            // of the image:") before the actual caption, and 64-token
+            // tests cut off mid-preamble.
+            maxTokens: 200, eosTokenId: m.config.eosTokenId, eosTokenIds: m.config.eosTokenIds)
 
         // Coherence first, then the content check: the caption should
         // mention a dog.

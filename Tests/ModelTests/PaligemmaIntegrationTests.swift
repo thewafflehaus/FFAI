@@ -1,5 +1,7 @@
-// PaliGemma integration test: loads the cached mlx-community/paligemma-3b-mix-448-8bit
-// checkpoint and runs end-to-end image captioning over the dog fixture.
+// PaliGemma 2 integration test: loads the
+// mlx-community/paligemma2-3b-mix-448-8bit checkpoint (PaliGemma 2 =
+// SigLIP-So400m + Gemma 2 2B text backbone) and runs end-to-end image
+// captioning over the dog fixture.
 //
 // PaliGemma's vision substitution happens INSIDE its `forward(tokenId:...)`:
 // the model precomputes image features via setImagePixels(_:) and, at every
@@ -24,7 +26,10 @@ struct PaligemmaIntegrationTests {
 
     @Test("load + image+text generation mentions dog")
     func loadAndGenerate() async throws {
-        let modelId = "mlx-community/paligemma-3b-mix-448-8bit"
+        // PaliGemma 2 — the 2024 refresh using the Gemma 2 text backbone.
+        // The original PaliGemma 1 (mlx-community/paligemma-3b-mix-448-8bit)
+        // is 2 years old and the test moves with the supported lineage.
+        let modelId = "mlx-community/paligemma2-3b-mix-448-8bit"
 
         let m: Model
         do {
@@ -34,11 +39,13 @@ struct PaligemmaIntegrationTests {
             return
         }
 
-        // Verify basic shapes from the published config.
-        #expect(m.engine.hidden == 2048)
-        #expect(m.engine.nLayers == 18)
+        // Verify basic shapes from the PaliGemma 2 3B (Gemma 2 2B backbone)
+        // published config. Gemma 2 2B = hidden 2304, 26 layers, 8 heads,
+        // 4 KV heads (GQA 2×), head_dim 256.
+        #expect(m.engine.hidden == 2304)
+        #expect(m.engine.nLayers == 26)
         #expect(m.engine.nHeads == 8)
-        #expect(m.engine.nKVHeads == 1)
+        #expect(m.engine.nKVHeads == 4)
         #expect(m.engine.headDim == 256)
         #expect(m.engine.vocab == 257216)
 
@@ -61,8 +68,10 @@ struct PaligemmaIntegrationTests {
         let promptTokens = Array(repeating: imageTokenId, count: numImageTokens)
             + textTokens
 
-        // Greedy decode 32 tokens. PaligemmaModel.forward injects the
-        // precomputed image features at imageTokenIndex positions.
+        // Greedy decode up to 200 tokens (the shared VLM integration
+        // ceiling — covers any polite preamble + a full caption).
+        // PaligemmaModel.forward injects the precomputed image features
+        // at imageTokenIndex positions.
         let caches = m.engine.makeLayerCaches()
         var generated: [Int] = []
         var nextToken = 0
@@ -76,7 +85,7 @@ struct PaligemmaIntegrationTests {
         }
         let stopSet: Set<Int> = Set(m.config.eosTokenIds)
         var pos = promptTokens.count
-        for _ in 0..<32 {
+        for _ in 0..<200 {
             if stopSet.contains(nextToken) { break }
             generated.append(nextToken)
             nextToken = m.engine.forwardSample(

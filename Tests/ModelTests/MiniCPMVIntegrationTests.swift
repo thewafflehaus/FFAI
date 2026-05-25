@@ -90,7 +90,7 @@ struct MiniCPMVIntegrationTests {
 
         let generated = try vlm.generate(
             promptTokens: promptTokens, image: image,
-            maxTokens: 64, eosTokenId: m.config.eosTokenId, eosTokenIds: m.config.eosTokenIds)
+            maxTokens: 200, eosTokenId: m.config.eosTokenId, eosTokenIds: m.config.eosTokenIds)
 
         // Coherence-only contract: a real image+text prompt should
         // decode a non-degenerate run of tokens.
