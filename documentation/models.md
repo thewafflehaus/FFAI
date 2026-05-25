@@ -5,7 +5,7 @@ HuggingFace checkpoints end-to-end through `Model.load("org/repo")`.
 That spans the dense transformer families (Llama + the
 Llama-compatible zoo, Qwen 2 / 3, Mistral, Phi, Gemma 3, Gemma 4),
 the GPT-OSS-20B MoE, the dense SSM family Mamba 2, the SSM/GDN hybrid
-families (FalconH1, NemotronH, GraniteMoeHybrid, Jamba, Qwen 3.5), the
+families (FalconH1, NemotronH, Granite4, Jamba, Qwen 3.5), the
 LFM2 / LFM2.5 conv+attention hybrid family, and
 Nemotron-Labs-Diffusion. Vision-language (VLM) and audio families ship
 too — see the [vision-language](#vision-language-families-phase-65),
@@ -36,8 +36,8 @@ For porting a new architecture, see
 | **Mamba 2** | [`Models/Text/Mamba2.swift`](../Sources/FFAI/Models/Text/Mamba2.swift) | `mamba2` | `Mamba2ForCausalLM` | `Mamba2Dense` |
 | **FalconH1** | [`Models/Text/FalconH1.swift`](../Sources/FFAI/Models/Text/FalconH1.swift) | `falcon_h1` | `FalconH1ForCausalLM` | `FalconH1Hybrid` |
 | **NemotronH** | [`Models/Text/NemotronHText.swift`](../Sources/FFAI/Models/Text/NemotronHText.swift) | `nemotron_h` | `NemotronHForCausalLM` | `NemotronHHybrid` |
-| **Nemotron-Labs-Diffusion** | [`Models/Text/NemotronLabsDiffusion.swift`](../Sources/FFAI/Models/Text/NemotronLabsDiffusion.swift) | `nemotron_labs_diffusion` | `NemotronLabsDiffusionModel` | `NemotronLabsDiffusionDense` |
-| **GraniteMoeHybrid** | [`Models/Text/GraniteMoeHybrid.swift`](../Sources/FFAI/Models/Text/GraniteMoeHybrid.swift) | `granitemoehybrid` | `GraniteMoeHybridForCausalLM` | `GraniteMoeHybridHybrid` |
+| **Nemotron-Labs-Diffusion** | [`Models/Text/NemotronDiffusionText.swift`](../Sources/FFAI/Models/Text/NemotronDiffusionText.swift) | `nemotron_labs_diffusion` | `NemotronDiffusionModel` | `NemotronDiffusionDense` |
+| **Granite4** | [`Models/Text/Granite4Text.swift`](../Sources/FFAI/Models/Text/Granite4Text.swift) | `granitemoehybrid` | `Granite4ForCausalLM` | `Granite4Hybrid` |
 | **Jamba** | [`Models/Text/Jamba.swift`](../Sources/FFAI/Models/Text/Jamba.swift) | `jamba` | `JambaForCausalLM` | `JambaHybrid` |
 | **LFM2 / LFM2.5** | [`Models/Text/LFM2Text.swift`](../Sources/FFAI/Models/Text/LFM2Text.swift) | `lfm2`, `lfm2_moe` | `Lfm2ForCausalLM`, `Lfm2MoeForCausalLM` | `LFM2Dense`, `LFM2MoE` |
 | **Qwen 3.5** | [`Models/Text/Qwen35Text.swift`](../Sources/FFAI/Models/Text/Qwen35Text.swift) | `qwen3_5`, `qwen3_5_moe` | `Qwen3_5ForConditionalGeneration`, `Qwen3_5MoeForConditionalGeneration` | `Qwen35Hybrid` |
@@ -186,7 +186,7 @@ it once per group over a contiguous head sub-slab — no new kernel. The
 NemotronH's MoE diverges from the shipped SwiGLU `MoELayer`, and no
 small published checkpoint exercises it.
 
-**GraniteMoeHybrid** is a *stack-interleaved* hybrid like NemotronH — a
+**Granite4** is a *stack-interleaved* hybrid like NemotronH — a
 `layer_types` array assigns each decoder layer one mixer kind (`mamba`
 or `attention`) — but the feed-forward half of every layer is uniform:
 either a block-sparse **MoE** (top-K SwiGLU experts plus an always-on
@@ -203,11 +203,11 @@ Granite's four scalar multipliers are handled without double-folding:
 the final logits. The MoE feed-forward reuses the shared `MoELayer`
 (`.topKThenSoftmax` gating). It is the first family to exercise the
 MoE command-buffer contract end-to-end: `MoELayer.decode` commits the
-command buffer, so `GraniteMoeHybridModel.forward` allocates a fresh
+command buffer, so `Granite4Model.forward` allocates a fresh
 buffer after every MoE-bearing layer.
 
 **Jamba** is a *stack-interleaved* hybrid like NemotronH /
-GraniteMoeHybrid — a `layers_block_type` schedule (derived from
+Granite4 — a `layers_block_type` schedule (derived from
 `attn_layer_period` / `attn_layer_offset` when not given explicitly)
 assigns each decoder layer one mixer kind (`mamba` or `attention`), and
 every layer carries a feed-forward half: a dense SwiGLU MLP
@@ -226,7 +226,7 @@ negligible); the GPU still owns every projection, attention, and the
 MLP. Because the scan is host-side, every Jamba *mamba* layer commits
 the command buffer mid-`decode`, so `JambaModel.forward` refreshes the
 command buffer after each such layer — the same contract
-GraniteMoeHybrid's MoE layers use. The MoE feed-forward reuses the
+Granite4's MoE layers use. The MoE feed-forward reuses the
 shared `MoELayer` (`.topKThenSoftmax` gating).
 
 **Qwen 3.5** is a *stack-interleaved* hybrid like Jamba — an explicit
@@ -258,7 +258,7 @@ for the routed experts and applies the sigmoid-gated shared expert
 separately.
 
 **LFM2 / LFM2.5** is LiquidAI's Liquid Foundation Models 2 — a
-*stack-interleaved* hybrid like NemotronH / GraniteMoeHybrid / Jamba,
+*stack-interleaved* hybrid like NemotronH / Granite4 / Jamba,
 but the two mixer kinds are **conv** and **attention** (no SSM). A
 `layer_types` array (or the older `full_attn_idxs` index list) assigns
 each decoder layer one mixer: `conv` is LFM2's double-gated short
@@ -284,7 +284,7 @@ through `MoERouter`'s `expertBias` parameter on `.softmaxThenTopK`.
 Both an attention layer (host-side Q/K norm) and a MoE FFN (router CPU
 readback) commit the command buffer mid-layer, so `LFM2Model.forward`
 runs the stack on internal work buffers and refreshes after each
-committing layer — the GraniteMoeHybrid contract. Only raw bf16 / f16
+committing layer — the Granite4 contract. Only raw bf16 / f16
 LFM2 checkpoints are supported; quantized variants are rejected with a
 clear error.
 
@@ -449,7 +449,7 @@ layer whose per-group RMSNorm row size (`d_inner / n_groups`) is not a
 multiple of 128 (e.g. Nemotron-3-Nano-4B's 960) is also rejected — the
 `rmsNormRows` kernel requires a 128-aligned row.
 
-### GraniteMoeHybrid
+### Granite4
 
 | Repo | Size | Quant | Notes |
 |---|---|---|---|
@@ -458,13 +458,13 @@ multiple of 128 (e.g. Nemotron-3-Nano-4B's 960) is also rejected — the
 | `ibm-granite/granite-4.0-h-tiny` | 7B | bf16 | 64-expert MoE FFN + shared expert. |
 
 The integration suite uses granite-4.0-h-350m — the smallest published
-GraniteMoeHybrid checkpoint (32 layers, 28 Mamba + 4 attention,
+Granite4 checkpoint (32 layers, 28 Mamba + 4 attention,
 `num_local_experts = 0` → dense SwiGLU FFN). It exercises the
 heterogeneous `[any DecoderLayer]` decode loop, the per-index cache
 array, no-RoPE attention, the gated mixer RMSNorm, and the four Granite
 scalar multipliers.
 
-**Known gaps.** Only raw bf16 / f16 GraniteMoeHybrid checkpoints are
+**Known gaps.** Only raw bf16 / f16 Granite4 checkpoints are
 supported — quantized variants are rejected with a clear error. The MoE
 feed-forward path (block-sparse experts + shared expert) is implemented
 and unit-covered via `MoELayerTests`, but the published MoE checkpoints
@@ -575,7 +575,7 @@ variant. If the architecture isn't in the registry yet, you get a
 | AURA performance | AURA KV schemes are correct and decode coherently, but still run the dequant-then-`sdpaDecode` path with a working-buffer mirror. Compressed-domain attention is the Phase 6.3 perf pass. |
 | Chunked prefill | Prefill walks the prompt one token per dispatch. Batched (chunked) prefill is Phase 6.6 — a large TTFT win on long prompts. |
 | Cross-request prompt caching | The KV cache lives for one `generate(...)` call. Prefix-cache reuse across requests is Phase 8.2. |
-| Quantized hybrid checkpoints | NemotronH / GraniteMoeHybrid / Jamba / FalconH1 load raw bf16/f16 only; quantized variants are rejected with a clear error. |
+| Quantized hybrid checkpoints | NemotronH / Granite4 / Jamba / FalconH1 load raw bf16/f16 only; quantized variants are rejected with a clear error. |
 
 ## Coming next
 

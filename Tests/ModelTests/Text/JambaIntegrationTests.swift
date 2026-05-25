@@ -39,7 +39,7 @@ struct JambaIntegrationTests {
         let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // Engine should be Jamba (not Llama / FalconH1 / NemotronH /
-        // GraniteMoeHybrid / Mamba 2).
+        // Granite4 / Mamba 2).
         #expect(m.jamba != nil)
         #expect(m.falconH1 == nil)
         #expect(m.nemotronH == nil)

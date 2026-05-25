@@ -65,7 +65,7 @@
 //     distills), the Qwen3 engine, and Nemotron-Labs-Diffusion.
 //   • Raw only: Gemma 3 / Gemma 4 (`preconditionFailure` on anything
 //     else today), and every hybrid family — FalconH1, NemotronH,
-//     GraniteMoeHybrid, Jamba, Qwen3.5, Mamba 2, GPT-OSS — whose
+//     Granite4, Jamba, Qwen3.5, Mamba 2, GPT-OSS — whose
 //     `makeLayerCaches` hard-codes a raw `KVCache` for attention
 //     layers. When affine/AURA support lands for a family, widen its
 //     `kvSchemes` entry below and the matrix picks it up automatically.
@@ -145,7 +145,7 @@ enum MatrixCatalog {
     /// else gets `[.raw]`.
     private static let fullSchemeFamilies: Set<String> = [
         "Llama", "Qwen2", "Mistral", "Phi", "LlamaCompatibles",
-        "DeepSeekR1Distill", "Qwen3", "NemotronLabsDiffusion",
+        "DeepSeekR1Distill", "Qwen3", "NemotronDiffusion",
     ]
 
     /// KV-cache schemes a given family's engine supports.
@@ -228,7 +228,7 @@ enum MatrixCatalog {
                     weightBits: 3, alwaysRun: false),
 
         // ── Nemotron-Labs-Diffusion — full KV-scheme support ──────────
-        MatrixModel(family: "NemotronLabsDiffusion", id: "nvidia/Nemotron-Labs-Diffusion-3B",
+        MatrixModel(family: "NemotronDiffusion", id: "nvidia/Nemotron-Labs-Diffusion-3B",
                     weightBits: 16, alwaysRun: true),
 
         // ── Raw-KV-only families ──────────────────────────────────────
@@ -257,7 +257,7 @@ enum MatrixCatalog {
                     weightBits: 16, alwaysRun: true),
         MatrixModel(family: "NemotronH", id: "nvidia/Nemotron-H-4B-Base-8K",
                     weightBits: 16, alwaysRun: true),
-        MatrixModel(family: "GraniteMoeHybrid", id: "mlx-community/granite-4.0-h-350m-bf16",
+        MatrixModel(family: "Granite4", id: "mlx-community/granite-4.0-h-350m-bf16",
                     weightBits: 16, alwaysRun: true),
         MatrixModel(family: "Jamba", id: "mlx-community/AI21-Jamba-Reasoning-3B-bf16",
                     weightBits: 16, alwaysRun: true),

@@ -61,7 +61,7 @@
 // (`MoELayer.decode`'s router CPU readback) commit the command buffer
 // mid-layer. Conv layers with a dense FFN do not. `LFM2Model.forward`
 // runs the stack on internal `workCmd` buffers and refreshes after each
-// committing layer — the GraniteMoeHybrid discipline.
+// committing layer — the Granite4 discipline.
 
 import Foundation
 import Metal
@@ -856,7 +856,7 @@ public final class LFM2Model: LanguageModel {
     /// the final norm + lm_head queue onto the caller's pristine `cmd`
     /// so the default `forwardSample` extensions compose cleanly.
     ///
-    /// Command-buffer discipline (GraniteMoeHybrid). Attention layers
+    /// Command-buffer discipline (Granite4). Attention layers
     /// and MoE FFNs commit the buffer they are handed (host-side Q/K
     /// norm / router CPU sync). The caller's `cmd` is therefore never
     /// handed to a layer: the embedding + every layer run on internal

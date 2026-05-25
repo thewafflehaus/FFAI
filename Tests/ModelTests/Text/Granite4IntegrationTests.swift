@@ -1,9 +1,9 @@
 // Slow integration test: downloads (or hits cache) the smallest
-// FFAI-runnable GraniteMoeHybrid checkpoint and runs end-to-end greedy
+// FFAI-runnable Granite4 checkpoint and runs end-to-end greedy
 // generation. Skipped automatically if the network or checkpoint isn't
 // available.
 //
-// GraniteMoeHybrid (IBM Granite 4.0 "-H") is a stack-interleaved hybrid
+// Granite4 (IBM Granite 4.0 "-H") is a stack-interleaved hybrid
 // — a `layer_types` array assigns each decoder layer one mixer kind
 // (Mamba 2 "mamba", attention "attention"), and the FFN half of every
 // layer is either an MoE block (+ shared expert) or a dense SwiGLU MLP.
@@ -13,7 +13,7 @@
 // (embedding / residual / attention / logits scaling).
 //
 // mlx-community/granite-4.0-h-350m-4bit (~350M params, bf16) is the
-// smallest published GraniteMoeHybrid checkpoint: 32 layers, 28 Mamba +
+// smallest published Granite4 checkpoint: 32 layers, 28 Mamba +
 // 4 attention, num_local_experts = 0 (a dense SwiGLU FFN). It exercises
 // the full hybrid stack end-to-end. The 64-expert MoE checkpoints
 // (H-Tiny / H-Small) are 7B+ and ship only quantized on mlx-community;
@@ -26,8 +26,8 @@ import Testing
 @testable import FFAI
 import TestHelpers
 
-@Suite("GraniteMoeHybrid Integration", .serialized)
-struct GraniteMoeHybridIntegrationTests {
+@Suite("Granite4 Integration", .serialized)
+struct Granite4IntegrationTests {
 
     @Test("load + greedy generate produces coherent hybrid output")
     func loadAndGenerate() async throws {
@@ -36,7 +36,7 @@ struct GraniteMoeHybridIntegrationTests {
 
         let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
-        // Engine should be GraniteMoeHybrid (not Llama / FalconH1 /
+        // Engine should be Granite4 (not Llama / FalconH1 /
         // NemotronH / Mamba 2).
         #expect(m.graniteMoeHybrid != nil)
         #expect(m.falconH1 == nil)
@@ -63,10 +63,10 @@ struct GraniteMoeHybridIntegrationTests {
             // Heterogeneous stack: 28 Mamba + 4 attention.
             #expect(g.layers.count == 32)
             let mambaCount = g.layers.filter {
-                ($0 as? GraniteMoeHybridLayer)?.kind == .mamba
+                ($0 as? Granite4Layer)?.kind == .mamba
             }.count
             let attnCount = g.layers.filter {
-                ($0 as? GraniteMoeHybridLayer)?.kind == .attention
+                ($0 as? Granite4Layer)?.kind == .attention
             }.count
             #expect(mambaCount == 28)
             #expect(attnCount == 4)
@@ -82,7 +82,7 @@ struct GraniteMoeHybridIntegrationTests {
         // Cache kinds match the layer kinds, index-for-index.
         if let g = m.graniteMoeHybrid {
             for (i, layer) in g.layers.enumerated() {
-                switch (layer as? GraniteMoeHybridLayer)?.kind {
+                switch (layer as? Granite4Layer)?.kind {
                 case .mamba:
                     #expect(caches[i] is Mamba2LayerCache)
                 case .attention:
@@ -110,9 +110,9 @@ struct GraniteMoeHybridIntegrationTests {
 
         // Print the actual decoded text for manual inspection.
         let decoded = m.tokenizer.decode(tokens: result.generatedTokens)
-        print("GraniteMoeHybrid-350M decoded output: \(decoded)")
+        print("Granite4-350M decoded output: \(decoded)")
 
-        // GraniteMoeHybrid-350M is a tiny hybrid (Mamba 2 + MoE + attn)
+        // Granite4-350M is a tiny hybrid (Mamba 2 + MoE + attn)
         // and at 200 tokens / temperature=0 it bottoms out around 18%
         // unique-token ratio — coherent for the first ~60 tokens, then a
         // "the analysis center" style cycle. Same small-model quality
@@ -122,7 +122,7 @@ struct GraniteMoeHybridIntegrationTests {
             result.generatedTokens,
             minTokens: 32,
             minUniqueRatio: 0.12,
-            label: "GraniteMoeHybrid-350M H bf16"
+            label: "Granite4-350M H bf16"
         )
     }
 }

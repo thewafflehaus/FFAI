@@ -1,7 +1,7 @@
-// GraniteMoeHybrid family — a *stack-interleaved hybrid* model
+// Granite4 family — a *stack-interleaved hybrid* model
 // with a mixture-of-experts feed-forward block.
 //
-// GraniteMoeHybrid (IBM's Granite 4.0 "-H" series — H-350M / H-1B /
+// Granite4 (IBM's Granite 4.0 "-H" series — H-350M / H-1B /
 // H-Tiny / H-Small) is a **stack-interleaved** hybrid like NemotronH: a
 // `layer_types` array assigns each decoder layer exactly ONE mixer kind
 // — "mamba" or "attention" — and the kinds vary down the stack (the
@@ -32,13 +32,13 @@
 // Every published Granite-4 "-H" checkpoint ships
 // `position_embedding_type: "nope"` — the attention layers attend
 // WITHOUT positional rotation (the Mamba layers carry sequence order).
-// `GraniteMoeHybridAttentionLayer` therefore skips the `Ops.rope` call.
+// `Granite4AttentionLayer` therefore skips the `Ops.rope` call.
 //
 // ─── Scalar multipliers — applied at runtime / folded, never doubled ─
 //
 // Granite scatters four scalar multipliers (`embedding_multiplier`,
 // `attention_multiplier`, `residual_multiplier`, `logits_scaling`).
-// Unlike FalconH1's µP vectors, mlx-lm's GraniteMoeHybrid `sanitize`
+// Unlike FalconH1's µP vectors, mlx-lm's Granite4 `sanitize`
 // does NOT fold any of them — they live as runtime config values and
 // the reference applies them live in `callAsFunction`. mlx-community
 // conversions preserve that (their `sanitize` only transposes conv1d
@@ -55,8 +55,8 @@
 // ─── MoE commits the command buffer ──────────────────────────────────
 //
 // `MoELayer.decode` commits the command buffer it is handed (the router
-// needs the gate logits on the CPU). A GraniteMoeHybrid layer whose FFN
-// is an `MoELayer` therefore commits mid-layer. `GraniteMoeHybridModel.
+// needs the gate logits on the CPU). A Granite4 layer whose FFN
+// is an `MoELayer` therefore commits mid-layer. `Granite4Model.
 // forward` keeps ALL per-layer work on internal self-managed command
 // buffers — never the caller's `cmd` — so a committing layer can never
 // double-commit the caller's buffer. It refreshes the internal `workCmd`
@@ -69,16 +69,16 @@ import Metal
 
 // ─── Family entry point ──────────────────────────────────────────────
 
-public enum GraniteMoeHybrid {
+public enum Granite4 {
     public static let modelTypes: Set<String> = ["granitemoehybrid"]
-    public static let architectures: Set<String> = ["GraniteMoeHybridForCausalLM"]
+    public static let architectures: Set<String> = ["Granite4ForCausalLM"]
 
-    public static func variant(for _: ModelConfig) throws -> any GraniteMoeHybridVariant.Type {
-        return GraniteMoeHybridHybrid.self
+    public static func variant(for _: ModelConfig) throws -> any Granite4Variant.Type {
+        return Granite4Hybrid.self
     }
 }
 
-public protocol GraniteMoeHybridVariant {
+public protocol Granite4Variant {
     static var availableCapabilities: Set<Capability> { get }
     static var defaultGenerationParameters: GenerationParameters { get }
     static func loadModel(
@@ -86,18 +86,18 @@ public protocol GraniteMoeHybridVariant {
         weights: SafeTensorsBundle,
         options: LoadOptions,
         device: Device
-    ) throws -> GraniteMoeHybridModel
+    ) throws -> Granite4Model
 }
 
-public enum GraniteMoeHybridError: Error, CustomStringConvertible {
+public enum Granite4Error: Error, CustomStringConvertible {
     case missingConfig(String)
     case unsupportedConfig(String)
     public var description: String {
         switch self {
         case .missingConfig(let f):
-            return "GraniteMoeHybrid: required config field missing: \(f)"
+            return "Granite4: required config field missing: \(f)"
         case .unsupportedConfig(let m):
-            return "GraniteMoeHybrid: unsupported config: \(m)"
+            return "Granite4: unsupported config: \(m)"
         }
     }
 }
@@ -105,7 +105,7 @@ public enum GraniteMoeHybridError: Error, CustomStringConvertible {
 // ─── Layer kind ──────────────────────────────────────────────────────
 
 /// The two mixer kinds a `layer_types` entry can name.
-enum GraniteMoeHybridLayerKind: Equatable {
+enum Granite4LayerKind: Equatable {
     case mamba       // "mamba"
     case attention   // "attention"
 
@@ -114,15 +114,15 @@ enum GraniteMoeHybridLayerKind: Equatable {
         case "mamba": self = .mamba
         case "attention": self = .attention
         default:
-            throw GraniteMoeHybridError.unsupportedConfig(
+            throw Granite4Error.unsupportedConfig(
                 "unknown layer_types entry '\(name)'")
         }
     }
 }
 
-// ─── GraniteMoeHybridHybrid — the single variant ─────────────────────
+// ─── Granite4Hybrid — the single variant ─────────────────────
 
-public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
+public struct Granite4Hybrid: Granite4Variant {
     public static let availableCapabilities: Set<Capability> = [.textIn, .textOut]
 
     /// Granite-4 ships both `-base` and instruction-tuned checkpoints.
@@ -142,12 +142,12 @@ public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
         weights: SafeTensorsBundle,
         options _: LoadOptions,
         device: Device
-    ) throws -> GraniteMoeHybridModel {
+    ) throws -> Granite4Model {
         guard let hidden = config.hiddenSize,
               let vocab = config.vocabSize,
               let nHeads = config.numAttentionHeads
         else {
-            throw GraniteMoeHybridError.missingConfig(
+            throw Granite4Error.missingConfig(
                 "hidden / vocab / num_attention_heads")
         }
         let nKVHeads = config.numKeyValueHeads ?? nHeads
@@ -158,12 +158,12 @@ public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
         // ── Hybrid layer schedule ─────────────────────────────────────
         guard let layerTypeNames = config.raw["layer_types"] as? [String],
               !layerTypeNames.isEmpty
-        else { throw GraniteMoeHybridError.missingConfig("layer_types") }
-        let kinds = try layerTypeNames.map { try GraniteMoeHybridLayerKind(from: $0) }
+        else { throw Granite4Error.missingConfig("layer_types") }
+        let kinds = try layerTypeNames.map { try Granite4LayerKind(from: $0) }
         let nLayers = kinds.count
 
         // ── Scalar multipliers ────────────────────────────────────────
-        // GraniteMoeHybrid keeps all four as runtime config values
+        // Granite4 keeps all four as runtime config values
         // (mlx-lm's sanitize folds none of them) — no double-fold risk.
         let embeddingMultiplier = Float(config.float("embedding_multiplier") ?? 1.0)
         let residualMultiplier = Float(config.float("residual_multiplier") ?? 1.0)
@@ -174,11 +174,11 @@ public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
 
         // ── Mamba 2 mixer geometry ────────────────────────────────────
         guard let mambaNHeads = config.int("mamba_n_heads")
-        else { throw GraniteMoeHybridError.missingConfig("mamba_n_heads") }
+        else { throw Granite4Error.missingConfig("mamba_n_heads") }
         guard let mambaHeadDim = config.int("mamba_d_head")
-        else { throw GraniteMoeHybridError.missingConfig("mamba_d_head") }
+        else { throw Granite4Error.missingConfig("mamba_d_head") }
         guard let stateDim = config.int("mamba_d_state")
-        else { throw GraniteMoeHybridError.missingConfig("mamba_d_state") }
+        else { throw Granite4Error.missingConfig("mamba_d_state") }
         let convKernel = config.int("mamba_d_conv") ?? 4
         let nGroups = config.int("mamba_n_groups") ?? 1
         let useConvBias = config.bool("mamba_conv_bias") ?? true
@@ -186,7 +186,7 @@ public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
         // d_inner taken directly from the Mamba head decomposition.
         let dInner = mambaNHeads * mambaHeadDim
         guard mambaNHeads % nGroups == 0 else {
-            throw GraniteMoeHybridError.unsupportedConfig(
+            throw Granite4Error.unsupportedConfig(
                 "mamba_n_heads (\(mambaNHeads)) must be a multiple of "
                 + "n_groups (\(nGroups))")
         }
@@ -195,7 +195,7 @@ public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
         // rms_norm reduction kernel requires the row size to be a
         // multiple of 128 and ≤ 4096.
         guard dInner % 128 == 0, dInner <= 4096 else {
-            throw GraniteMoeHybridError.unsupportedConfig(
+            throw Granite4Error.unsupportedConfig(
                 "gated mixer RMSNorm row size d_inner = \(dInner) must be "
                 + "a multiple of 128 and ≤ 4096 (rmsNorm kernel invariant)")
         }
@@ -226,10 +226,10 @@ public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
         let activationDtype = embedWRaw.dtype
         precondition(
             activationDtype == .f32 || activationDtype == .bf16 || activationDtype == .f16,
-            "GraniteMoeHybrid: unexpected activation dtype \(activationDtype)")
+            "Granite4: unexpected activation dtype \(activationDtype)")
         guard config.quantization == nil else {
-            throw GraniteMoeHybridError.unsupportedConfig(
-                "quantized GraniteMoeHybrid checkpoints not yet supported — "
+            throw Granite4Error.unsupportedConfig(
+                "quantized Granite4 checkpoints not yet supported — "
                 + "load a raw bf16/f16 variant")
         }
 
@@ -251,7 +251,7 @@ public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
                 eps: eps)
 
             // ── Mixer ─────────────────────────────────────────────────
-            let mixer: GraniteMoeHybridMixer
+            let mixer: Granite4Mixer
             switch kind {
             case .mamba:
                 mixer = .mamba(try buildMambaMixer(
@@ -275,7 +275,7 @@ public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
                 let oW = scaleTensorGMH(
                     try weights.tensor(named: "\(p).self_attn.o_proj.weight"),
                     by: residualMultiplier, device: device)
-                mixer = .attention(GraniteMoeHybridAttentionMixer(
+                mixer = .attention(Granite4AttentionMixer(
                     qProj: qProj, kProj: kProj, vProj: vProj,
                     oProj: AnyLinear(Linear(weight: oW)),
                     nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
@@ -283,7 +283,7 @@ public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
             }
 
             // ── Feed-forward ──────────────────────────────────────────
-            let ffn: GraniteMoeHybridFFN
+            let ffn: Granite4FFN
             if useMoE {
                 ffn = .moe(try buildMoE(
                     prefix: p, weights: weights,
@@ -298,13 +298,13 @@ public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
                 let downW = scaleTensorGMH(
                     try weights.tensor(named: "\(p).mlp.down_proj.weight"),
                     by: residualMultiplier, device: device)
-                ffn = .dense(GraniteMoeHybridDenseMLP(
+                ffn = .dense(Granite4DenseMLP(
                     gateProj: AnyLinear(Linear(weight: gateW)),
                     upProj: AnyLinear(Linear(weight: upW)),
                     downProj: AnyLinear(Linear(weight: downW))))
             }
 
-            layers.append(GraniteMoeHybridLayer(
+            layers.append(Granite4Layer(
                 inputNorm: inputNorm, postNorm: postNorm,
                 mixer: mixer, ffn: ffn, hidden: hidden))
         }
@@ -321,7 +321,7 @@ public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
         }
 
         let maxSeq = config.int("max_position_embeddings") ?? 8192
-        return GraniteMoeHybridModel(
+        return Granite4Model(
             embedTokens: embedTokens, layers: layers,
             finalNorm: finalNorm, lmHead: lmHead,
             hidden: hidden, nLayers: nLayers,
@@ -342,7 +342,7 @@ public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
         convKernel: Int, useConvBias: Bool, eps: Float,
         tsMin: Float, tsMax: Float, residualMultiplier: Float,
         dtype: DType, device: Device
-    ) throws -> GraniteMoeHybridMambaMixer {
+    ) throws -> Granite4MambaMixer {
         let inProj = AnyLinear(Linear(
             weight: try weights.tensor(named: "\(p).in_proj.weight")))
         // out_proj folds residual_multiplier — the layer-level residual
@@ -356,7 +356,7 @@ public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
         // wants [kernel, conv_dim].
         let convWSrc = try weights.tensor(named: "\(p).conv1d.weight")
         precondition(convWSrc.elementCount == convDim * convKernel,
-                     "GraniteMoeHybrid: conv1d.weight count mismatch: \(convWSrc.shape)")
+                     "Granite4: conv1d.weight count mismatch: \(convWSrc.shape)")
         let convW = transposeConv1dWeightGMH(
             src: convWSrc, kernel: convKernel, channels: convDim,
             dtype: dtype, device: device)
@@ -385,7 +385,7 @@ public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
         let mixerNorm = RMSNorm(
             weight: try weights.tensor(named: "\(p).norm.weight"), eps: eps)
 
-        return GraniteMoeHybridMambaMixer(
+        return Granite4MambaMixer(
             inProj: inProj, outProj: outProj,
             convW: convW, convB: convB,
             aEff: aEff, dtBias: dtBias, dTiled: dTiled,
@@ -417,10 +417,10 @@ public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
         let outputLinear = try weights.tensor(
             named: "\(p).block_sparse_moe.output_linear.weight")
         precondition(inputLinear.shape == [numExperts, 2 * moeIntermediate, hidden],
-                     "GraniteMoeHybrid: block_sparse_moe.input_linear shape "
+                     "Granite4: block_sparse_moe.input_linear shape "
                      + "\(inputLinear.shape) ≠ [\(numExperts), \(2 * moeIntermediate), \(hidden)]")
         precondition(outputLinear.shape == [numExperts, hidden, moeIntermediate],
-                     "GraniteMoeHybrid: block_sparse_moe.output_linear shape "
+                     "Granite4: block_sparse_moe.output_linear shape "
                      + "\(outputLinear.shape) ≠ [\(numExperts), \(hidden), \(moeIntermediate)]")
 
         var gateProj: [AnyLinear] = []
@@ -453,10 +453,10 @@ public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
         let sharedOutput = try weights.tensor(
             named: "\(p).shared_mlp.output_linear.weight")
         precondition(sharedInput.shape == [2 * sharedIntermediate, hidden],
-                     "GraniteMoeHybrid: shared_mlp.input_linear shape "
+                     "Granite4: shared_mlp.input_linear shape "
                      + "\(sharedInput.shape) ≠ [\(2 * sharedIntermediate), \(hidden)]")
         precondition(sharedOutput.shape == [hidden, sharedIntermediate],
-                     "GraniteMoeHybrid: shared_mlp.output_linear shape "
+                     "Granite4: shared_mlp.output_linear shape "
                      + "\(sharedOutput.shape) ≠ [\(hidden), \(sharedIntermediate)]")
         let sharedGate = AnyLinear(Linear(
             weight: sharedInput.slicedRows(start: 0, count: sharedIntermediate)))
@@ -465,7 +465,7 @@ public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
         let sharedDown = AnyLinear(Linear(
             weight: scaleTensorGMH(sharedOutput, by: residualMultiplier, device: device)))
 
-        // GraniteMoeHybrid routing is top-K of the raw logits, then a
+        // Granite4 routing is top-K of the raw logits, then a
         // softmax over just those K (`.topKThenSoftmax`) — always
         // normalised, so `normTopKProb` does not apply.
         let router = MoERouter(
@@ -482,26 +482,26 @@ public struct GraniteMoeHybridHybrid: GraniteMoeHybridVariant {
 
 // ─── Mixer + FFN sub-block enums ─────────────────────────────────────
 
-/// The mixer half of a GraniteMoeHybrid layer — Mamba 2 or attention.
-enum GraniteMoeHybridMixer {
-    case mamba(GraniteMoeHybridMambaMixer)
-    case attention(GraniteMoeHybridAttentionMixer)
+/// The mixer half of a Granite4 layer — Mamba 2 or attention.
+enum Granite4Mixer {
+    case mamba(Granite4MambaMixer)
+    case attention(Granite4AttentionMixer)
 }
 
-/// The feed-forward half of a GraniteMoeHybrid layer — block-sparse MoE
+/// The feed-forward half of a Granite4 layer — block-sparse MoE
 /// (commits the command buffer) or a dense SwiGLU MLP.
-enum GraniteMoeHybridFFN {
+enum Granite4FFN {
     case moe(MoELayer)
-    case dense(GraniteMoeHybridDenseMLP)
+    case dense(Granite4DenseMLP)
 }
 
-// ─── GraniteMoeHybridMambaMixer ──────────────────────────────────────
+// ─── Granite4MambaMixer ──────────────────────────────────────
 //
 // The Mamba 2 selective-SSM mixer half. `out_proj` has had
 // residual_multiplier folded in at load time; the gated mixer RMSNorm
 // is a single full-width RMSNorm over d_inner.
 
-public final class GraniteMoeHybridMambaMixer: Module {
+public final class Granite4MambaMixer: Module {
     let inProj, outProj: AnyLinear
     let convW: Tensor        // [kernel, conv_dim]
     let convB: Tensor        // [conv_dim]
@@ -603,7 +603,7 @@ public final class GraniteMoeHybridMambaMixer: Module {
         let ySkip = Ops.add(yFlat, dx, on: cmd)
 
         // gated mixer RMSNorm: y *= silu(z), then a single full-width
-        // RMSNorm over d_inner. Matches GraniteMoeHybridRMSNormGated.
+        // RMSNorm over d_inner. Matches Granite4RMSNormGated.
         let zAct = Ops.silu(z, on: cmd)
         let yGated = Ops.mul(ySkip, zAct, on: cmd)
         let yNormed = Ops.rmsNorm(
@@ -614,14 +614,14 @@ public final class GraniteMoeHybridMambaMixer: Module {
     }
 }
 
-// ─── GraniteMoeHybridAttentionMixer ──────────────────────────────────
+// ─── Granite4AttentionMixer ──────────────────────────────────
 //
 // Multi-head attention with NO positional embedding (no RoPE — every
 // Granite-4 "-H" checkpoint ships position_embedding_type "nope").
 // `scale` is the config's attention_multiplier; `o_proj` has had
 // residual_multiplier folded in at load time.
 
-public final class GraniteMoeHybridAttentionMixer: Module {
+public final class Granite4AttentionMixer: Module {
     let qProj, kProj, vProj, oProj: AnyLinear
     let nHeads, nKVHeads, headDim: Int
     let scale: Float
@@ -666,13 +666,13 @@ public final class GraniteMoeHybridAttentionMixer: Module {
     }
 }
 
-// ─── GraniteMoeHybridDenseMLP ────────────────────────────────────────
+// ─── Granite4DenseMLP ────────────────────────────────────────
 //
 // The dense feed-forward path (Granite-4 "-H" checkpoints with
 // num_local_experts == 0). A plain SwiGLU; down_proj has had
 // residual_multiplier folded in at load time.
 
-public final class GraniteMoeHybridDenseMLP: Module {
+public final class Granite4DenseMLP: Module {
     let gateProj, upProj, downProj: AnyLinear
 
     init(gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear) {
@@ -697,7 +697,7 @@ public final class GraniteMoeHybridDenseMLP: Module {
     }
 }
 
-// ─── GraniteMoeHybridLayer ───────────────────────────────────────────
+// ─── Granite4Layer ───────────────────────────────────────────
 //
 // One stack-interleaved hybrid layer: a mixer (Mamba 2 OR attention)
 // with `input_layernorm`, then a feed-forward (MoE+shared OR dense MLP)
@@ -709,10 +709,10 @@ public final class GraniteMoeHybridDenseMLP: Module {
 // router commits the command buffer mid-layer, so the host model must
 // allocate a fresh one after this layer's `decode` returns.
 
-public final class GraniteMoeHybridLayer: Module, DecoderLayer {
+public final class Granite4Layer: Module, DecoderLayer {
     let inputNorm, postNorm: RMSNorm
-    let mixer: GraniteMoeHybridMixer
-    let ffn: GraniteMoeHybridFFN
+    let mixer: Granite4Mixer
+    let ffn: Granite4FFN
     let hidden: Int
 
     /// True when this layer's FFN commits the command buffer it is given
@@ -721,7 +721,7 @@ public final class GraniteMoeHybridLayer: Module, DecoderLayer {
     public let commitsCommandBuffer: Bool
 
     init(inputNorm: RMSNorm, postNorm: RMSNorm,
-         mixer: GraniteMoeHybridMixer, ffn: GraniteMoeHybridFFN, hidden: Int) {
+         mixer: Granite4Mixer, ffn: Granite4FFN, hidden: Int) {
         self.inputNorm = inputNorm; self.postNorm = postNorm
         self.mixer = mixer; self.ffn = ffn; self.hidden = hidden
         if case .moe = ffn { self.commitsCommandBuffer = true }
@@ -731,7 +731,7 @@ public final class GraniteMoeHybridLayer: Module, DecoderLayer {
     /// The Mamba 2 mixer cache slot is a `Mamba2LayerCache`; the
     /// attention cache slot is a `KVCache`. Either way the FFN holds no
     /// per-token state.
-    var kind: GraniteMoeHybridLayerKind {
+    var kind: Granite4LayerKind {
         switch mixer {
         case .mamba: return .mamba
         case .attention: return .attention
@@ -766,7 +766,7 @@ public final class GraniteMoeHybridLayer: Module, DecoderLayer {
     /// IMPORTANT: when the FFN is an `MoELayer`, this commits the passed
     /// `cmd` (the router needs the gate logits on the CPU). The host
     /// model checks `commitsCommandBuffer` and refreshes `cmd`
-    /// afterwards. See `GraniteMoeHybridModel.forward`.
+    /// afterwards. See `Granite4Model.forward`.
     public func decode(_ h: Tensor, position: Int,
                        cache: any LayerCacheProtocol,
                        cmd: MTLCommandBuffer, device: Device) -> Tensor {
@@ -777,7 +777,7 @@ public final class GraniteMoeHybridLayer: Module, DecoderLayer {
         case .mamba(let m):
             guard let mc = cache as? Mamba2LayerCache else {
                 fatalError(
-                    "GraniteMoeHybridLayer: mamba layer expected "
+                    "Granite4Layer: mamba layer expected "
                     + "Mamba2LayerCache, got \(type(of: cache))")
             }
             mixerOut = m.forward(xNorm, cache: mc, cmd: cmd, device: device)
@@ -785,7 +785,7 @@ public final class GraniteMoeHybridLayer: Module, DecoderLayer {
         case .attention(let a):
             guard let kv = cache as? KVCache else {
                 fatalError(
-                    "GraniteMoeHybridLayer: attention layer expected "
+                    "Granite4Layer: attention layer expected "
                     + "KVCache, got \(type(of: cache))")
             }
             mixerOut = a.forward(xNorm, cache: kv, cmd: cmd, device: device)
@@ -835,7 +835,7 @@ public final class GraniteMoeHybridLayer: Module, DecoderLayer {
     }
 }
 
-/// Re-key a flat `MoELayer` parameter name into GraniteMoeHybrid's
+/// Re-key a flat `MoELayer` parameter name into Granite4's
 /// checkpoint layout. `MoELayer` emits `gate.*` / `experts.<e>.*` /
 /// `shared_expert.*`; Granite stores `block_sparse_moe.router.layer.*`
 /// / stacked `block_sparse_moe.*` / `shared_mlp.*`.
@@ -851,9 +851,9 @@ private func graniteMoEKey(_ k: String) -> String {
     return "block_sparse_moe." + k
 }
 
-// ─── GraniteMoeHybridModel ───────────────────────────────────────────
+// ─── Granite4Model ───────────────────────────────────────────
 
-public final class GraniteMoeHybridModel: LanguageModel {
+public final class Granite4Model: LanguageModel {
     public let embedTokens: AnyEmbedding
     /// Heterogeneous layer stack — each entry is a Mamba or attention
     /// hybrid layer, ordered by `layer_types`.
@@ -868,7 +868,7 @@ public final class GraniteMoeHybridModel: LanguageModel {
     public let dtype: DType
 
     /// Layer kinds, index-aligned with `layers` — drives `makeLayerCaches`.
-    let layerKinds: [GraniteMoeHybridLayerKind]
+    let layerKinds: [Granite4LayerKind]
     /// True when this model has any MoE-bearing layer. Purely
     /// informational — `forward` uses the uniform internal-`workCmd`
     /// discipline regardless of whether any layer commits.
@@ -892,10 +892,10 @@ public final class GraniteMoeHybridModel: LanguageModel {
         self.vocab = vocab; self.maxSeq = maxSeq
         self.logitsScaling = logitsScaling; self.dtype = dtype
         self.layerKinds = layers.map { layer in
-            (layer as? GraniteMoeHybridLayer)?.kind ?? .mamba
+            (layer as? Granite4Layer)?.kind ?? .mamba
         }
         self.hasMoE = layers.contains {
-            ($0 as? GraniteMoeHybridLayer)?.commitsCommandBuffer ?? false
+            ($0 as? Granite4Layer)?.commitsCommandBuffer ?? false
         }
     }
 
@@ -905,7 +905,7 @@ public final class GraniteMoeHybridModel: LanguageModel {
             out.append(("model.embed_tokens.\(k)", v))
         }
         for (i, layer) in layers.enumerated() {
-            if let l = layer as? GraniteMoeHybridLayer {
+            if let l = layer as? Granite4Layer {
                 for (k, v) in l.parameters() {
                     out.append(("model.layers.\(i).\(k)", v))
                 }
@@ -976,7 +976,7 @@ public final class GraniteMoeHybridModel: LanguageModel {
                              cmd: workCmd, device: device)
             // If the layer committed `workCmd` (MoE FFN), swap in a
             // fresh buffer for the next layer.
-            if let g = layer as? GraniteMoeHybridLayer, g.commitsCommandBuffer {
+            if let g = layer as? Granite4Layer, g.commitsCommandBuffer {
                 workCmd = device.makeCommandBuffer()
             }
         }
@@ -986,7 +986,7 @@ public final class GraniteMoeHybridModel: LanguageModel {
         // dense path, or an MoE stack ending on a dense layer) `workCmd`
         // still carries that layer's uncommitted work — commit it so `h`
         // is resident before the caller's `cmd` reads it.
-        let lastCommitted = (layers.last as? GraniteMoeHybridLayer)?
+        let lastCommitted = (layers.last as? Granite4Layer)?
             .commitsCommandBuffer ?? false
         if !lastCommitted {
             workCmd.commit()
@@ -1012,7 +1012,7 @@ public final class GraniteMoeHybridModel: LanguageModel {
     /// Multi-token forward — prefill fast path. Loops
     /// `forward(tokenId:)` per row on the supplied `cmd`.
     ///
-    /// GraniteMoeHybrid interleaves Mamba 2 + MoE-FFN + attention
+    /// Granite4 interleaves Mamba 2 + MoE-FFN + attention
     /// layers. The MoE-FFN router commits mid-layer for CPU readback;
     /// a per-attention-layer `decodeMulti` override will need to
     /// preserve that commit pattern across the chunk. Today this
@@ -1021,7 +1021,7 @@ public final class GraniteMoeHybridModel: LanguageModel {
                              caches: [any LayerCacheProtocol],
                              on cmd: MTLCommandBuffer, device: Device) -> Tensor {
         precondition(!tokenIds.isEmpty,
-                     "GraniteMoeHybridModel.forwardMulti: tokenIds must be non-empty")
+                     "Granite4Model.forwardMulti: tokenIds must be non-empty")
         var logits: Tensor!
         for (i, tok) in tokenIds.enumerated() {
             logits = forward(tokenId: tok, position: position + i,
@@ -1046,7 +1046,7 @@ private func readFloatsGMH(_ t: Tensor) -> [Float] {
     case .f16:
         return t.toArray(as: Float16.self).map { Float($0) }
     default:
-        fatalError("GraniteMoeHybrid: unsupported dtype for host conversion: \(t.dtype)")
+        fatalError("Granite4: unsupported dtype for host conversion: \(t.dtype)")
     }
 }
 
@@ -1062,7 +1062,7 @@ private func writeFloatsGMH(_ values: [Float], shape: [Int],
     case .f16:
         t.copyIn(from: values.map { Float16($0) })
     default:
-        fatalError("GraniteMoeHybrid: unsupported dtype for host conversion: \(dtype)")
+        fatalError("Granite4: unsupported dtype for host conversion: \(dtype)")
     }
     return t
 }
@@ -1080,7 +1080,7 @@ private func scaleTensorGMH(_ t: Tensor, by m: Float, device: Device) -> Tensor 
 private func computeAEffGMH(aLog: Tensor, nHeads: Int,
                             dtype: DType, device: Device) -> Tensor {
     let floats = readFloatsGMH(aLog)
-    precondition(floats.count == nHeads, "GraniteMoeHybrid: A_log expected [n_heads]")
+    precondition(floats.count == nHeads, "Granite4: A_log expected [n_heads]")
     return writeFloatsGMH(floats.map { -Foundation.exp($0) },
                           shape: [nHeads], dtype: dtype, device: device)
 }
@@ -1090,7 +1090,7 @@ private func castVectorGMH(_ src: Tensor, count: Int,
                            dtype: DType, device: Device) -> Tensor {
     if src.dtype == dtype { return src }
     let floats = readFloatsGMH(src)
-    precondition(floats.count == count, "GraniteMoeHybrid: vector size mismatch")
+    precondition(floats.count == count, "Granite4: vector size mismatch")
     return writeFloatsGMH(floats, shape: [count], dtype: dtype, device: device)
 }
 
@@ -1098,7 +1098,7 @@ private func castVectorGMH(_ src: Tensor, count: Int,
 private func tileDGMH(d: Tensor, nHeads: Int, headDim: Int,
                       dtype: DType, device: Device) -> Tensor {
     let floats = readFloatsGMH(d)
-    precondition(floats.count == nHeads, "GraniteMoeHybrid: D expected [n_heads]")
+    precondition(floats.count == nHeads, "Granite4: D expected [n_heads]")
     var tiled: [Float] = []
     tiled.reserveCapacity(nHeads * headDim)
     for h in 0..<nHeads {
@@ -1112,7 +1112,7 @@ private func tileDGMH(d: Tensor, nHeads: Int, headDim: Int,
 private func transposeConv1dWeightGMH(src: Tensor, kernel K: Int, channels C: Int,
                                       dtype: DType, device: Device) -> Tensor {
     let floats = readFloatsGMH(src)
-    precondition(floats.count == K * C, "GraniteMoeHybrid: conv1d.weight count mismatch")
+    precondition(floats.count == K * C, "Granite4: conv1d.weight count mismatch")
     var dst = [Float](repeating: 0, count: K * C)
     for c in 0..<C {
         for k in 0..<K { dst[k * C + c] = floats[c * K + k] }

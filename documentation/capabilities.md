@@ -70,8 +70,8 @@ set without loading weights — useful for a model picker.
 | `Mamba2.Mamba2Dense` | `[.textIn, .textOut]` |
 | `FalconH1.FalconH1Hybrid` | `[.textIn, .textOut]` |
 | `NemotronH.NemotronHHybrid` | `[.textIn, .textOut]` |
-| `NemotronLabsDiffusion.NemotronLabsDiffusionDense` | `[.textIn, .textOut]` |
-| `GraniteMoeHybrid.GraniteMoeHybridHybrid` | `[.textIn, .textOut]` |
+| `NemotronDiffusion.NemotronDiffusionDense` | `[.textIn, .textOut]` |
+| `Granite4.Granite4Hybrid` | `[.textIn, .textOut]` |
 | `Jamba.JambaHybrid` | `[.textIn, .textOut]` |
 | `LFM2.LFM2Dense` / `LFM2MoE` | `[.textIn, .textOut]` |
 | `Qwen35.Qwen35Hybrid` | `[.textIn, .textOut]` |

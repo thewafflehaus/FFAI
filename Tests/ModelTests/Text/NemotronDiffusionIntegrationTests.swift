@@ -11,8 +11,8 @@ import Testing
 @testable import FFAI
 import TestHelpers
 
-@Suite("NemotronLabsDiffusion Integration", .serialized)
-struct NemotronLabsDiffusionIntegrationTests {
+@Suite("NemotronDiffusion Integration", .serialized)
+struct NemotronDiffusionIntegrationTests {
 
     @Test("load + tri-mode generation produces coherent output")
     func loadAndGenerate() async throws {

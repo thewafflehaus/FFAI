@@ -11,7 +11,7 @@
 // or a block-sparse MoE block (`lfm2_moe`). This test exercises the
 // heterogeneous `[any DecoderLayer]` decode loop, the per-index cache
 // array (`LFM2ConvCache` / `KVCache`), the gated short-conv mixer over
-// the shipped `conv1d_causal_step` kernel, and the GraniteMoeHybrid
+// the shipped `conv1d_causal_step` kernel, and the Granite4
 // command-buffer discipline.
 //
 // LiquidAI/LFM2-350M (~350M params, bf16) is the smallest published

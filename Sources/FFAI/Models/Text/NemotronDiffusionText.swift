@@ -1,4 +1,4 @@
-// NemotronLabsDiffusion family — NVIDIA Nemotron-Labs-Diffusion, a
+// NemotronDiffusion family — NVIDIA Nemotron-Labs-Diffusion, a
 // "tri-mode" language model that runs the same weights as
 // autoregressive (AR), block-wise diffusion, or self-speculation.
 //
@@ -27,7 +27,7 @@ import Metal
 
 // ─── Family entry point ──────────────────────────────────────────────
 
-public enum NemotronLabsDiffusion {
+public enum NemotronDiffusion {
     // Both the text-only checkpoint and the VLM checkpoint share this
     // family — the VLM's text backbone uses the identical `encoder.*` /
     // `diffusion_head.weight` layout. Loading a VLM checkpoint here
@@ -38,17 +38,17 @@ public enum NemotronLabsDiffusion {
         "nemotron_labs_diffusion", "nemotron_labs_diffusion_vlm",
     ]
     public static let architectures: Set<String> = [
-        "NemotronLabsDiffusionModel", "NemotronLabsDiffusionVLMModel",
+        "NemotronDiffusionModel", "NemotronDiffusionVLMModel",
     ]
 
     public static func variant(
         for config: ModelConfig
-    ) throws -> any NemotronLabsDiffusionVariant.Type {
-        return NemotronLabsDiffusionDense.self
+    ) throws -> any NemotronDiffusionVariant.Type {
+        return NemotronDiffusionDense.self
     }
 }
 
-public protocol NemotronLabsDiffusionVariant {
+public protocol NemotronDiffusionVariant {
     static var availableCapabilities: Set<Capability> { get }
     static var defaultGenerationParameters: GenerationParameters { get }
     static func loadModel(
@@ -56,22 +56,22 @@ public protocol NemotronLabsDiffusionVariant {
         weights: SafeTensorsBundle,
         options: LoadOptions,
         device: Device
-    ) throws -> NemotronLabsDiffusionModel
+    ) throws -> NemotronDiffusionModel
 }
 
-public enum NemotronLabsDiffusionError: Error, CustomStringConvertible {
+public enum NemotronDiffusionError: Error, CustomStringConvertible {
     case missingConfig
 
     public var description: String {
         switch self {
-        case .missingConfig: return "NemotronLabsDiffusion: required config field missing"
+        case .missingConfig: return "NemotronDiffusion: required config field missing"
         }
     }
 }
 
-// ─── NemotronLabsDiffusionDense — the tri-mode dense transformer ──────
+// ─── NemotronDiffusionDense — the tri-mode dense transformer ──────
 
-public struct NemotronLabsDiffusionDense: NemotronLabsDiffusionVariant {
+public struct NemotronDiffusionDense: NemotronDiffusionVariant {
     public static let availableCapabilities: Set<Capability> = [.textIn, .textOut]
 
     /// Defaults pulled from the Nemotron-Labs-Diffusion instruct
@@ -92,7 +92,7 @@ public struct NemotronLabsDiffusionDense: NemotronLabsDiffusionVariant {
         weights: SafeTensorsBundle,
         options: LoadOptions,
         device: Device
-    ) throws -> NemotronLabsDiffusionModel {
+    ) throws -> NemotronDiffusionModel {
         guard let hidden = config.hiddenSize,
               let nLayers = config.numLayers,
               let nHeads = config.numAttentionHeads,
@@ -101,7 +101,7 @@ public struct NemotronLabsDiffusionDense: NemotronLabsDiffusionVariant {
               let intermediate = config.intermediateSize,
               let eps = config.rmsNormEps
         else {
-            throw NemotronLabsDiffusionError.missingConfig
+            throw NemotronDiffusionError.missingConfig
         }
         let nKVHeads = config.numKeyValueHeads ?? nHeads
         // rope_theta is nested under `rope_parameters` in this config.
@@ -152,7 +152,7 @@ public struct NemotronLabsDiffusionDense: NemotronLabsDiffusionVariant {
             hidden: hidden, quantization: quant
         )
 
-        var layers: [NemotronLabsDiffusionLayer] = []
+        var layers: [NemotronDiffusionLayer] = []
         layers.reserveCapacity(nLayers)
         for i in 0..<nLayers {
             let p = "encoder.layers.\(i)"
@@ -169,7 +169,7 @@ public struct NemotronLabsDiffusionDense: NemotronLabsDiffusionVariant {
             let postAttnNorm = RMSNorm(
                 weight: try weights.tensor(named: "\(p).post_attention_layernorm.weight"),
                 eps: Float(eps))
-            layers.append(NemotronLabsDiffusionLayer(
+            layers.append(NemotronDiffusionLayer(
                 qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
                 gateProj: gateProj, upProj: upProj, downProj: downProj,
                 inputNorm: inputNorm, postAttnNorm: postAttnNorm,
@@ -200,7 +200,7 @@ public struct NemotronLabsDiffusionDense: NemotronLabsDiffusionVariant {
             activationDtype = embedTokens.weight.dtype
         }
 
-        return NemotronLabsDiffusionModel(
+        return NemotronDiffusionModel(
             embedTokens: embedTokens, layers: layers,
             finalNorm: finalNorm, lmHead: lmHead,
             hidden: hidden, nLayers: nLayers, nHeads: nHeads,
@@ -214,9 +214,9 @@ public struct NemotronLabsDiffusionDense: NemotronLabsDiffusionVariant {
     }
 }
 
-// ─── NemotronLabsDiffusionLayer ──────────────────────────────────────
+// ─── NemotronDiffusionLayer ──────────────────────────────────────
 
-public final class NemotronLabsDiffusionLayer: Module {
+public final class NemotronDiffusionLayer: Module {
     let qProj, kProj, vProj, oProj: AnyLinear
     let gateProj, upProj, downProj: AnyLinear
     let inputNorm, postAttnNorm: RMSNorm
@@ -227,7 +227,7 @@ public final class NemotronLabsDiffusionLayer: Module {
 
     /// LoRA adapter for `o_proj`, used during the self-speculation
     /// diffusion-draft phase only. `nil` unless an adapter was attached
-    /// via `NemotronLabsDiffusionModel.attachLoRA`. `loraB` already
+    /// via `NemotronDiffusionModel.attachLoRA`. `loraB` already
     /// carries the adapter's alpha/rank scaling, so the delta is just
     /// `loraB · (loraA · x)`.
     var loraA: Tensor?
@@ -315,7 +315,7 @@ public final class NemotronLabsDiffusionLayer: Module {
         let oOut = oProj(attnReady, on: cmd)
 
         // Fused residual add + post-attn RMSNorm via mt_add_rms_norm
-        // (NemotronLabsDiffusion hidden=3072 fits the ≤ 4096 cap).
+        // (NemotronDiffusion hidden=3072 fits the ≤ 4096 cap).
         // Validator gate keeps the unfused path for any future wider
         // variant.
         let postAttn: Tensor
@@ -448,20 +448,20 @@ public final class NemotronLabsDiffusionLayer: Module {
 private func nemotronBlockProject(_ proj: AnyLinear, _ input: Tensor, nRows: Int,
                                   on cmd: MTLCommandBuffer) -> Tensor {
     guard let lin = proj.inner as? Linear else {
-        preconditionFailure("NemotronLabsDiffusion diffusion / self-speculation require a "
+        preconditionFailure("NemotronDiffusion diffusion / self-speculation require a "
             + "non-quantized checkpoint — the block GEMM has no quantized path")
     }
     precondition(lin.bias == nil,
-                 "NemotronLabsDiffusion: unexpected projection bias "
+                 "NemotronDiffusion: unexpected projection bias "
                  + "(config declares attention_bias / mlp_bias = false)")
     return Ops.gemm(weight: lin.weight, input: input, nRows: nRows, on: cmd)
 }
 
-// ─── NemotronLabsDiffusionModel ──────────────────────────────────────
+// ─── NemotronDiffusionModel ──────────────────────────────────────
 
-public final class NemotronLabsDiffusionModel: LanguageModel {
+public final class NemotronDiffusionModel: LanguageModel {
     public let embedTokens: AnyEmbedding
-    public let layers: [NemotronLabsDiffusionLayer]
+    public let layers: [NemotronDiffusionLayer]
     public let finalNorm: RMSNorm
     public let lmHead: AnyLinear
 
@@ -480,7 +480,7 @@ public final class NemotronLabsDiffusionModel: LanguageModel {
     /// self-speculation uses the LoRA-enhanced diffusion drafter.
     public private(set) var hasLoRA = false
 
-    init(embedTokens: AnyEmbedding, layers: [NemotronLabsDiffusionLayer],
+    init(embedTokens: AnyEmbedding, layers: [NemotronDiffusionLayer],
          finalNorm: RMSNorm, lmHead: AnyLinear,
          hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
          vocab: Int, maxSeq: Int, ropeTheta: Float, dtype: DType,
@@ -669,7 +669,7 @@ public final class NemotronLabsDiffusionModel: LanguageModel {
     }
 
     /// Multi-token forward (LanguageModel protocol) — prefill
-    /// fast path. NemotronLabsDiffusion already ships a block-batched
+    /// fast path. NemotronDiffusion already ships a block-batched
     /// forward (`forwardBlock`) used by the diffusion + self-spec
     /// modes; this is the thin LanguageModel-protocol adapter that
     /// wraps it for the AR-prefill path.
@@ -683,7 +683,7 @@ public final class NemotronLabsDiffusionModel: LanguageModel {
                              caches: [any LayerCacheProtocol],
                              on cmd: MTLCommandBuffer, device: Device) -> Tensor {
         precondition(!tokenIds.isEmpty,
-                     "NemotronLabsDiffusionModel.forwardMulti: tokenIds must be non-empty")
+                     "NemotronDiffusionModel.forwardMulti: tokenIds must be non-empty")
         // forwardBlock requires raw KVCache per layer; if any cache
         // isn't raw, fall back to the per-token loop on the caller's
         // cmd (still gets the protocol's commit-count batching).
@@ -729,7 +729,7 @@ public final class NemotronLabsDiffusionModel: LanguageModel {
                      "forwardBlock: tokenIds / positions count mismatch")
         let rawCaches: [KVCache] = caches.map {
             guard let kv = $0 as? KVCache else {
-                preconditionFailure("NemotronLabsDiffusion diffusion/self-speculation "
+                preconditionFailure("NemotronDiffusion diffusion/self-speculation "
                     + "modes require a raw KVCache — load with LoadOptions.kvCache = .raw")
             }
             return kv

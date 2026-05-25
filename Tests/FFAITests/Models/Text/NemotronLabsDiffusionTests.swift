@@ -1,4 +1,4 @@
-// NemotronLabsDiffusionTests — pure-CPU coverage of the diffusion
+// NemotronDiffusionTests — pure-CPU coverage of the diffusion
 // decode helpers and the family registry constants. The end-to-end
 // tri-mode generation is exercised by the integration test under
 // Tests/ModelTests/.
@@ -7,28 +7,28 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("NemotronLabsDiffusion Family Registry")
-struct NemotronLabsDiffusionRegistryTests {
+@Suite("NemotronDiffusion Family Registry")
+struct NemotronDiffusionRegistryTests {
 
     @Test("family declares the expected model_type / architecture keys")
     func registryKeys() {
-        #expect(NemotronLabsDiffusion.modelTypes.contains("nemotron_labs_diffusion"))
-        #expect(NemotronLabsDiffusion.architectures.contains("NemotronLabsDiffusionModel"))
+        #expect(NemotronDiffusion.modelTypes.contains("nemotron_labs_diffusion"))
+        #expect(NemotronDiffusion.architectures.contains("NemotronDiffusionModel"))
         // Must not collide with the planned NemotronH hybrid family.
-        #expect(!NemotronLabsDiffusion.modelTypes.contains("nemotron_h"))
+        #expect(!NemotronDiffusion.modelTypes.contains("nemotron_h"))
     }
 
     @Test("dense variant declares text-only capabilities")
     func variantCapabilities() throws {
-        let config = ModelConfig(architecture: "NemotronLabsDiffusionModel",
+        let config = ModelConfig(architecture: "NemotronDiffusionModel",
                                  modelType: "nemotron_labs_diffusion", raw: [:])
-        let variant = try NemotronLabsDiffusion.variant(for: config)
+        let variant = try NemotronDiffusion.variant(for: config)
         #expect(variant.availableCapabilities == [.textIn, .textOut])
     }
 }
 
-@Suite("NemotronLabsDiffusion Confidence Transfer")
-struct NemotronLabsDiffusionTransferTests {
+@Suite("NemotronDiffusion Confidence Transfer")
+struct NemotronDiffusionTransferTests {
 
     @Test("numTransferTokens splits evenly with the remainder front-loaded")
     func numTransferEvenSplit() {
@@ -102,9 +102,9 @@ struct NemotronLabsDiffusionTransferTests {
     func familyRegistersTextAndVLM() {
         // The VLM checkpoint's text backbone shares the `encoder.*`
         // layout, so both route through this family.
-        #expect(NemotronLabsDiffusion.modelTypes.contains("nemotron_labs_diffusion"))
-        #expect(NemotronLabsDiffusion.modelTypes.contains("nemotron_labs_diffusion_vlm"))
-        #expect(NemotronLabsDiffusion.architectures.contains("NemotronLabsDiffusionModel"))
-        #expect(NemotronLabsDiffusion.architectures.contains("NemotronLabsDiffusionVLMModel"))
+        #expect(NemotronDiffusion.modelTypes.contains("nemotron_labs_diffusion"))
+        #expect(NemotronDiffusion.modelTypes.contains("nemotron_labs_diffusion_vlm"))
+        #expect(NemotronDiffusion.architectures.contains("NemotronDiffusionModel"))
+        #expect(NemotronDiffusion.architectures.contains("NemotronDiffusionVLMModel"))
     }
 }

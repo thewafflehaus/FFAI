@@ -531,15 +531,15 @@ public enum ModelRegistry {
             return try loadNemotronH(config: config, weights: weights,
                                      options: options, device: device)
         }
-        // GraniteMoeHybrid — a stack-interleaved hybrid (Mamba 2
+        // Granite4 — a stack-interleaved hybrid (Mamba 2
         // / attention layers selected by `layer_types`) with an MoE +
         // shared-expert feed-forward. Routes through its own family file.
-        if let arch = config.architecture, GraniteMoeHybrid.architectures.contains(arch) {
-            return try loadGraniteMoeHybrid(config: config, weights: weights,
+        if let arch = config.architecture, Granite4.architectures.contains(arch) {
+            return try loadGranite4(config: config, weights: weights,
                                             options: options, device: device)
         }
-        if let mt = config.modelType, GraniteMoeHybrid.modelTypes.contains(mt) {
-            return try loadGraniteMoeHybrid(config: config, weights: weights,
+        if let mt = config.modelType, Granite4.modelTypes.contains(mt) {
+            return try loadGranite4(config: config, weights: weights,
                                             options: options, device: device)
         }
         // Jamba — a stack-interleaved hybrid (Mamba 1 / attention
@@ -597,12 +597,12 @@ public enum ModelRegistry {
         // Nemotron-Labs-Diffusion — tri-mode (AR / diffusion /
         // self-speculation) dense transformer. Distinct from the
         // NemotronH stack-interleaved hybrid family above.
-        if let arch = config.architecture, NemotronLabsDiffusion.architectures.contains(arch) {
-            return try loadNemotronLabsDiffusion(config: config, weights: weights,
+        if let arch = config.architecture, NemotronDiffusion.architectures.contains(arch) {
+            return try loadNemotronDiffusion(config: config, weights: weights,
                                                  options: options, device: device)
         }
-        if let mt = config.modelType, NemotronLabsDiffusion.modelTypes.contains(mt) {
-            return try loadNemotronLabsDiffusion(config: config, weights: weights,
+        if let mt = config.modelType, NemotronDiffusion.modelTypes.contains(mt) {
+            return try loadNemotronDiffusion(config: config, weights: weights,
                                                  options: options, device: device)
         }
         throw ModelError.unsupportedArchitecture(
@@ -727,11 +727,11 @@ public enum ModelRegistry {
                       defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
-    public static func loadGraniteMoeHybrid(
+    public static func loadGranite4(
         config: ModelConfig, weights: SafeTensorsBundle,
         options: LoadOptions, device: Device
     ) throws -> Loaded {
-        let variant = try GraniteMoeHybrid.variant(for: config)
+        let variant = try Granite4.variant(for: config)
         let engine = try variant.loadModel(
             config: config, weights: weights,
             options: options, device: device
@@ -792,11 +792,11 @@ public enum ModelRegistry {
                       defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
-    public static func loadNemotronLabsDiffusion(
+    public static func loadNemotronDiffusion(
         config: ModelConfig, weights: SafeTensorsBundle,
         options: LoadOptions, device: Device
     ) throws -> Loaded {
-        let variant = try NemotronLabsDiffusion.variant(for: config)
+        let variant = try NemotronDiffusion.variant(for: config)
         let engine = try variant.loadModel(
             config: config, weights: weights,
             options: options, device: device
@@ -857,9 +857,9 @@ public final class Model: @unchecked Sendable {
     /// Convenience accessor for the NemotronH hybrid engine.
     public var nemotronH: NemotronHModel? { engine as? NemotronHModel }
 
-    /// Convenience accessor for the GraniteMoeHybrid hybrid engine.
-    public var graniteMoeHybrid: GraniteMoeHybridModel? {
-        engine as? GraniteMoeHybridModel
+    /// Convenience accessor for the Granite4 hybrid engine.
+    public var graniteMoeHybrid: Granite4Model? {
+        engine as? Granite4Model
     }
 
     /// Convenience accessor for the Jamba hybrid engine.
@@ -878,8 +878,8 @@ public final class Model: @unchecked Sendable {
     public var lfm2: LFM2Model? { engine as? LFM2Model }
 
     /// Convenience accessor for the Nemotron-Labs-Diffusion engine.
-    public var nemotronLabsDiffusion: NemotronLabsDiffusionModel? {
-        engine as? NemotronLabsDiffusionModel
+    public var nemotronLabsDiffusion: NemotronDiffusionModel? {
+        engine as? NemotronDiffusionModel
     }
 
     private let stateLock = NSLock()
@@ -1015,7 +1015,7 @@ public final class Model: @unchecked Sendable {
                 // `linear_spec_lora` adapter that sharpens the
                 // self-speculation diffusion drafter — attach it if the
                 // checkpoint included the subfolder.
-                if let nd = loaded.engine as? NemotronLabsDiffusionModel {
+                if let nd = loaded.engine as? NemotronDiffusionModel {
                     nd.attachLoRA(from: dir, device: device)
                 }
                 let tokenizer = try await TokenizerLoader().load(from: dir)

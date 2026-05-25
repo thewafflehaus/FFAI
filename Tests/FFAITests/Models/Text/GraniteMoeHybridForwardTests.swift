@@ -1,13 +1,13 @@
-// GraniteMoeHybrid forward-path unit coverage.
+// Granite4 forward-path unit coverage.
 //
-// The slow integration test (Tests/ModelTests/GraniteMoeHybridIntegrationTests
+// The slow integration test (Tests/ModelTests/Granite4IntegrationTests
 // .swift) loads the published H-350M checkpoint, which is DENSE
 // (`num_local_experts = 0`) — every layer's FFN is a plain SwiGLU MLP
 // and no layer commits the command buffer. The MoE-bearing checkpoints
 // (H-Tiny / H-Small) are 7B+ and ship only quantized, so there is no
 // small raw checkpoint to integration-test the MoE feed-forward path.
 //
-// That left `GraniteMoeHybridModel.forward`'s MoE-commit path entirely
+// That left `Granite4Model.forward`'s MoE-commit path entirely
 // unexercised in CI — and it carried a latent double-commit bug: the
 // caller's `cmd` was handed straight to the layers, so the first
 // MoE-bearing layer (whose `MoELayer` FFN commits `cmd`) committed the
@@ -16,7 +16,7 @@
 // buffers and queues only the final norm + lm_head onto the caller's
 // `cmd` (the Jamba discipline).
 //
-// This test builds a tiny synthetic GraniteMoeHybrid-shaped model with a
+// This test builds a tiny synthetic Granite4-shaped model with a
 // real MoE-bearing layer and runs `forward` end-to-end, asserting it
 // completes without a command-buffer error and yields finite,
 // correctly-shaped logits. It actually executes the previously
@@ -27,8 +27,8 @@ import Metal
 import Testing
 @testable import FFAI
 
-@Suite("GraniteMoeHybrid Forward MoE-commit Path")
-struct GraniteMoeHybridForwardTests {
+@Suite("Granite4 Forward MoE-commit Path")
+struct Granite4ForwardTests {
 
     // Synthetic geometry. `headDim == 128` satisfies the `sdpaDecode`
     // kernel invariant; `hidden = nHeads * headDim` and `hidden` is a
@@ -68,14 +68,14 @@ struct GraniteMoeHybridForwardTests {
         return RMSNorm(weight: w, eps: 1e-5)
     }
 
-    /// Build one synthetic GraniteMoeHybrid *attention* layer. An
+    /// Build one synthetic Granite4 *attention* layer. An
     /// attention mixer (rather than Mamba) keeps the synthetic weights
     /// minimal — no SSM parameter derivation needed. `moe == true`
     /// attaches an MoE FFN whose `MoELayer.decode` commits the command
     /// buffer, so the layer's `commitsCommandBuffer` flag is true.
-    private func attentionLayer(seed: UInt64, moe: Bool) -> GraniteMoeHybridLayer {
+    private func attentionLayer(seed: UInt64, moe: Bool) -> Granite4Layer {
         let H = Self.hidden
-        let mixer = GraniteMoeHybridAttentionMixer(
+        let mixer = Granite4AttentionMixer(
             qProj: AnyLinear(Linear(weight: smallWeight(rows: H, cols: H, seed: seed))),
             kProj: AnyLinear(Linear(weight: smallWeight(rows: H, cols: H, seed: seed + 1))),
             vProj: AnyLinear(Linear(weight: smallWeight(rows: H, cols: H, seed: seed + 2))),
@@ -83,10 +83,10 @@ struct GraniteMoeHybridForwardTests {
             nHeads: Self.nHeads, nKVHeads: Self.nKVHeads, headDim: Self.headDim,
             scale: 1.0 / Float(Double(Self.headDim).squareRoot()))
 
-        let ffn: GraniteMoeHybridFFN
+        let ffn: Granite4FFN
         if moe {
             // 4-expert top-2 MoE FFN plus an always-on shared expert —
-            // the GraniteMoeHybrid block-sparse layout. `MoELayer.decode`
+            // the Granite4 block-sparse layout. `MoELayer.decode`
             // commits the command buffer, so this layer commits.
             let I = Self.moeIntermediate
             let gateProj = (0..<Self.nExperts).map {
@@ -111,24 +111,24 @@ struct GraniteMoeHybridForwardTests {
         } else {
             // Dense SwiGLU MLP — no command-buffer commit.
             let I = Self.moeIntermediate
-            ffn = .dense(GraniteMoeHybridDenseMLP(
+            ffn = .dense(Granite4DenseMLP(
                 gateProj: AnyLinear(Linear(weight: smallWeight(rows: I, cols: H, seed: seed + 60))),
                 upProj: AnyLinear(Linear(weight: smallWeight(rows: I, cols: H, seed: seed + 61))),
                 downProj: AnyLinear(Linear(weight: smallWeight(rows: H, cols: I, seed: seed + 62)))))
         }
 
-        return GraniteMoeHybridLayer(
+        return Granite4Layer(
             inputNorm: onesNorm(H), postNorm: onesNorm(H),
             mixer: .attention(mixer), ffn: ffn, hidden: H)
     }
 
-    /// Assemble a synthetic GraniteMoeHybridModel from a list of layers.
-    private func model(layers: [GraniteMoeHybridLayer]) -> GraniteMoeHybridModel {
+    /// Assemble a synthetic Granite4Model from a list of layers.
+    private func model(layers: [Granite4Layer]) -> Granite4Model {
         let H = Self.hidden
         let embedW = smallWeight(rows: Self.vocab, cols: H, seed: 1000)
         let embedTokens = AnyEmbedding(Embedding(weight: embedW))
         let lmHead = AnyLinear(Linear(weight: smallWeight(rows: Self.vocab, cols: H, seed: 2000)))
-        return GraniteMoeHybridModel(
+        return Granite4Model(
             embedTokens: embedTokens, layers: layers,
             finalNorm: onesNorm(H), lmHead: lmHead,
             hidden: H, nLayers: layers.count,

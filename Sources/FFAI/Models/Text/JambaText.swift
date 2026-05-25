@@ -1,7 +1,7 @@
 // Jamba family — a *stack-interleaved hybrid* model.
 //
 // Jamba (AI21's Jamba v0.1 / Jamba-Reasoning-3B) is a stack-interleaved
-// hybrid like NemotronH / GraniteMoeHybrid: a `layers_block_type` array
+// hybrid like NemotronH / Granite4: a `layers_block_type` array
 // assigns each decoder layer exactly ONE mixer kind — "mamba" or
 // "attention" — and the kinds vary down the stack. Every layer ALSO
 // carries a feed-forward half: either a dense SwiGLU MLP
@@ -19,7 +19,7 @@
 //
 // Jamba's `JambaMambaMixer` is the *original* Mamba (Mamba 1) selective
 // SSM — NOT the Mamba 2 SSD form that `Mamba2Layer` / NemotronH /
-// GraniteMoeHybrid implement. The two differ structurally:
+// Granite4 implement. The two differ structurally:
 //
 //   * Mamba 2: `A` is one scalar per head; `dt` is one scalar per head;
 //     the recurrence decay `exp(A·dt)` is shared across all `state_dim`.
@@ -55,7 +55,7 @@
 // before `out_proj` runs. `JambaMambaLayer.commitsCommandBuffer` is
 // `true`; an `MoELayer` FFN also commits. `JambaModel.forward` refreshes
 // `cmd` after any layer whose `commitsCommandBuffer` flag is set — the
-// same pattern GraniteMoeHybrid uses for its MoE layers.
+// same pattern Granite4 uses for its MoE layers.
 //
 // ─── No RoPE ─────────────────────────────────────────────────────────
 //

@@ -15,7 +15,7 @@ and a sliding-window eviction policy that composes with all of them.
 | **`affine4`** (`AffineQuantizedKVCache`, 4-bit) | Tight memory; same speed as `affine8`. | ~0.31× (69% smaller, group_size=32) | ✅ Shipped (Phase 5c). |
 | **AURA** (Adaptive Unified Rotated Activations, `AURAQuantizedKVCache`) | Best memory ratio at minimal quality loss. | ~6–8× at `aura4v2` | ✅ Shipped (Phase 5d — per-layer SRHT rotation; decodes coherently across `aura4v4` / `aura4v2` / `aura8v4` / `aura8v8`). See [`papers/aura-compression-algorithm.md`](../papers/aura-compression-algorithm.md). |
 | **Sliding window / FIFO eviction** (`.window(maxSize:keep:)`) | Long-running streams; capped memory regardless of context length. | Caps each layer's KV at `maxSize` positions independent of model `max_position_embeddings`. | ✅ Shipped — composes with every cache scheme above. |
-| **SSM / Hybrid** (`Mamba2LayerCache` / `GDNStateCache` / …) | Mamba / GatedDeltaNet families (Qwen 3.5, NemotronH, Jamba, GraniteMoeHybrid, FalconH1) | n/a — stores recurrent + conv state | ✅ Shipped (Phase 5e). |
+| **SSM / Hybrid** (`Mamba2LayerCache` / `GDNStateCache` / …) | Mamba / GatedDeltaNet families (Qwen 3.5, NemotronH, Jamba, Granite4, FalconH1) | n/a — stores recurrent + conv state | ✅ Shipped (Phase 5e). |
 | **Batched** | Multi-stream decode (speculative, B>1 serving) | linear in B | ⏳ Planned (Phase 8). |
 
 Every attention-cache scheme (raw, `affine8`, `affine4`, AURA — and

@@ -1,5 +1,5 @@
 // GenerateDiffusion — block-wise diffusion + linear self-speculation
-// decoding for NemotronLabsDiffusion. AR decoding uses the standard
+// decoding for NemotronDiffusion. AR decoding uses the standard
 // `Generate.swift` path; the two non-autoregressive tri-modes live here.
 //
 // Diffusion (`generateDiffusion`): causal-prefill the prompt, then
@@ -60,7 +60,7 @@ public struct DiffusionResult: Sendable {
 
 public extension Model {
 
-    /// Block-wise diffusion decoding. Requires a NemotronLabsDiffusion
+    /// Block-wise diffusion decoding. Requires a NemotronDiffusion
     /// engine loaded with a raw KV cache (`LoadOptions.kvCache = .raw`).
     func generateDiffusion(prompt: String,
                            parameters: DiffusionParameters = DiffusionParameters())
@@ -90,10 +90,10 @@ public extension Model {
                                text: text, forwardPasses: generated.nfe)
     }
 
-    private func diffusionEngine() -> NemotronLabsDiffusionModel {
-        guard let m = engine as? NemotronLabsDiffusionModel else {
+    private func diffusionEngine() -> NemotronDiffusionModel {
+        guard let m = engine as? NemotronDiffusionModel else {
             preconditionFailure("generateDiffusion / generateSelfSpeculative require a "
-                + "NemotronLabsDiffusion model")
+                + "NemotronDiffusion model")
         }
         return m
     }

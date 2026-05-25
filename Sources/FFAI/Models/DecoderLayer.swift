@@ -3,7 +3,7 @@
 // A homogeneous model (Llama, Qwen3, Mamba 2) has one concrete layer
 // type repeated `nLayers` times, so it can hold a typed array and call
 // the layer's `forward` directly. A hybrid model — Qwen 3.5 (GDN ↔
-// attention), NemotronH / Jamba / GraniteMoeHybrid / FalconH1 (Mamba 2 +
+// attention), NemotronH / Jamba / Granite4 / FalconH1 (Mamba 2 +
 // attention + MoE/MLP) — interleaves several layer kinds in one stack.
 //
 // `DecoderLayer` lets a hybrid model hold a heterogeneous

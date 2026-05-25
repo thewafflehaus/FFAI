@@ -23,7 +23,7 @@
 //                       softmax probabilities, then (optionally)
 //                       re-normalise the K picked probabilities so they
 //                       sum to 1.
-//   .topKThenSoftmax  — GraniteMoeHybrid. pick the top-K raw logits
+//   .topKThenSoftmax  — Granite4. pick the top-K raw logits
 //                       first, then softmax over just those K. The
 //                       result is always normalised by construction.
 //
@@ -59,7 +59,7 @@ public enum MoEGatingMode: Sendable {
     /// optional re-normalisation (Qwen3 / Qwen3.5 MoE, `norm_topk_prob`).
     case softmaxThenTopK
     /// top-K of the raw logits, then softmax over just those K
-    /// (GraniteMoeHybrid). Always normalised.
+    /// (Granite4). Always normalised.
     case topKThenSoftmax
 }
 
@@ -295,7 +295,7 @@ public final class MoELayer: Module, DecoderLayer {
     public let gateProj: [AnyLinear]
     public let upProj: [AnyLinear]
     public let downProj: [AnyLinear]
-    /// Optional always-on shared expert (GraniteMoeHybrid-style). Its
+    /// Optional always-on shared expert (Granite4-style). Its
     /// output is added to the routed combination unconditionally.
     public let sharedGateProj: AnyLinear?
     public let sharedUpProj: AnyLinear?
@@ -975,7 +975,7 @@ public final class MoELayer: Module, DecoderLayer {
 
 // ─── Integration note for MoE-bearing families ───────────────────────
 //
-// A hybrid family (NemotronH, GraniteMoeHybrid, Jamba, Qwen3.5 MoE,
+// A hybrid family (NemotronH, Granite4, Jamba, Qwen3.5 MoE,
 // Gemma4 MoE) places an `MoELayer` in its `[any DecoderLayer]` stack
 // exactly where a dense MLP layer would otherwise sit. To wire one up:
 //
@@ -984,7 +984,7 @@ public final class MoELayer: Module, DecoderLayer {
 //                               topK: cfg.numExpertsPerToken,
 //                               gatingMode: .softmaxThenTopK,   // Qwen
 //                               normTopKProb: cfg.normTopkProb)
-//     Use `.topKThenSoftmax` for GraniteMoeHybrid-style checkpoints.
+//     Use `.topKThenSoftmax` for Granite4-style checkpoints.
 //
 //  2. Expert weights ship stacked as `[nExperts, outDim, inDim]`
 //     tensors. Slice per-expert with `Tensor.slicedRows` and wrap:
@@ -997,7 +997,7 @@ public final class MoELayer: Module, DecoderLayer {
 //     affine-quantised experts use `QuantizedLinear` per slice (the
 //     stacked weight / scales / biases each slice along dim 0).
 //
-//  3. Optionally build the shared expert (GraniteMoeHybrid). Pass all
+//  3. Optionally build the shared expert (Granite4). Pass all
 //     three shared projections to the `MoELayer` initialiser, or none.
 //
 //  4. The MoE layer's residual add + pre-norm stay in the host layer

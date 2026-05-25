@@ -49,7 +49,7 @@ struct MoERouterTests {
         #expect(r.weights.reduce(0, +) < 0.9)
     }
 
-    /// topKThenSoftmax (GraniteMoeHybrid). logits [1, 3, 2, 0], topK = 2.
+    /// topKThenSoftmax (Granite4). logits [1, 3, 2, 0], topK = 2.
     ///   top-2 raw logits = expert 1 (3.0), expert 2 (2.0)
     ///   softmax([3,2])   = [0.73106, 0.26894]   (always normalised)
     @Test("topKThenSoftmax matches softmax over the picked logits")
@@ -184,7 +184,7 @@ struct MoELayerTests {
     }
 
     /// Shared (always-on) expert: its output is added to the routed
-    /// combination unconditionally — GraniteMoeHybrid layout.
+    /// combination unconditionally — Granite4 layout.
     @Test("shared expert output is added unconditionally")
     func sharedExpertContributes() {
         autoreleasepool {

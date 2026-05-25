@@ -101,7 +101,7 @@ private let modelCatalog: [CatalogGroup] = [
             summary: "Stack-interleaved Mamba 2 / attention / MLP. Raw bf16/f16 only.",
             repos: ["nvidia/Nemotron-H-4B-Base-8K"]),
         CatalogEntry(
-            family: "GraniteMoeHybrid", modelType: "granitemoehybrid",
+            family: "Granite4", modelType: "granitemoehybrid",
             summary: "Stack-interleaved Mamba 2 / attention + dense or MoE FFN. Raw bf16/f16 only.",
             repos: ["mlx-community/granite-4.0-h-350m-bf16"]),
         CatalogEntry(
