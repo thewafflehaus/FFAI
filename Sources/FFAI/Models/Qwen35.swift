@@ -748,9 +748,22 @@ enum Qwen35FFN {
 
 public final class Qwen35DenseMLP: Module {
     let gateProj, upProj, downProj: AnyLinear
+    /// ITER 89 (Bagel 2): cached gate+up fused-path eligibility +
+    /// instance-scoped output scratches (vs fresh allocs per call).
+    private let fusedGateUpEligible: Bool
+    private var gateScratch: Tensor?
+    private var upScratch: Tensor?
 
     init(gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear) {
         self.gateProj = gateProj; self.upProj = upProj; self.downProj = downProj
+        if let qg = gateProj.inner as? QuantizedLinear,
+           let qu = upProj.inner as? QuantizedLinear,
+           qg.bits == 4, qu.bits == 4,
+           qg.groupSize == qu.groupSize {
+            self.fusedGateUpEligible = true
+        } else {
+            self.fusedGateUpEligible = false
+        }
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -762,9 +775,33 @@ public final class Qwen35DenseMLP: Module {
     }
 
     /// down(silu(gate(x)) * up(x)).
+    /// ITER 89 (Bagel 2): when gate + up are both int4 with matching
+    /// groupSize, fuse into ONE shared-encoder `dequantGemvInt4Two`
+    /// dispatch (vs two separate qmm encoders). Saves 1 encoder pair
+    /// per dense-MLP layer per decode token.
     func forward(_ xNorm: Tensor, cmd: MTLCommandBuffer) -> Tensor {
-        let g = gateProj(xNorm, on: cmd)
-        let u = upProj(xNorm, on: cmd)
+        let g: Tensor
+        let u: Tensor
+        if fusedGateUpEligible,
+           let qg = gateProj.inner as? QuantizedLinear,
+           let qu = upProj.inner as? QuantizedLinear {
+            let outDim = qg.weight.shape[0]
+            if gateScratch == nil || gateScratch!.elementCount != outDim
+                || gateScratch!.dtype != xNorm.dtype {
+                gateScratch = Tensor.empty(shape: [outDim], dtype: xNorm.dtype)
+                upScratch = Tensor.empty(shape: [outDim], dtype: xNorm.dtype)
+            }
+            g = gateScratch!
+            u = upScratch!
+            Ops.dequantGemvInt4Two(
+                input: xNorm,
+                w0: qg.weight, s0: qg.scales, b0: qg.biases, out0: g,
+                w1: qu.weight, s1: qu.scales, b1: qu.biases, out1: u,
+                groupSize: qg.groupSize, on: cmd)
+        } else {
+            g = gateProj(xNorm, on: cmd)
+            u = upProj(xNorm, on: cmd)
+        }
         let inner = Ops.swiglu(gate: g, up: u, on: cmd)
         return downProj(inner, on: cmd)
     }
