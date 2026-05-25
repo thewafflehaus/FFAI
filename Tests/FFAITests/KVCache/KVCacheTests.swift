@@ -559,4 +559,14 @@ struct KVCacheTests {
             #expect(c.length == 2)
         }
     }
+
+    @Test("totalBytes accessors — bytesAllocated, bytesInUse, totalBytesAllocated")
+    func totalBytesAccessors() {
+        let c = KVCache(nKVHeads: 8, headDim: 64, maxSeq: 1024, dtype: .f16)
+        let elems = 2 * 8 * 1024 * 64
+        #expect(c.bytesAllocated == elems * 2)   // fp16 = 2 bytes
+        #expect(c.bytesInUse == 0)
+        let arr = [c, c, c]
+        #expect(arr.totalBytesAllocated == c.bytesAllocated * 3)
+    }
 }

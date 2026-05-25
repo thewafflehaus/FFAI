@@ -92,4 +92,11 @@ struct ChatTemplateTests {
         let e2 = ChatTemplateError.renderFailed(Boom())
         #expect(String(describing: e2).contains("Boom"))
     }
+
+    @Test("ThinkingFormat — every case has a non-empty rawValue")
+    func thinkingFormatRawValues() {
+        for f in ThinkingFormat.allCases {
+            #expect(!f.rawValue.isEmpty)
+        }
+    }
 }

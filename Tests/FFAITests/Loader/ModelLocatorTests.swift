@@ -47,4 +47,10 @@ struct ModelLocatorTests {
             Issue.record("unexpected error type: \(error)")
         }
     }
+
+    @Test("ModelLocatorError description renders the offending path")
+    func locatorErrorDesc() {
+        let e = ModelLocatorError.localPathNotFound(URL(fileURLWithPath: "/x"))
+        #expect(String(describing: e).contains("/x"))
+    }
 }

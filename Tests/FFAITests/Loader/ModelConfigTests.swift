@@ -134,4 +134,10 @@ struct ModelConfigTests {
             // ok
         }
     }
+
+    @Test("ModelConfigError description renders the offending path")
+    func configErrorDesc() {
+        let e = ModelConfigError.malformed(URL(fileURLWithPath: "/y"))
+        #expect(String(describing: e).contains("/y"))
+    }
 }

@@ -39,4 +39,29 @@ struct ModelDownloaderTests {
         #expect(!ModelLocator.isLocalPath("meta-llama/Llama-3.2-1B"))
         #expect(!ModelLocator.isLocalPath("unsloth/llama"))
     }
+
+    @Test("rejects a malformed repo id")
+    func badRepoID() async {
+        do {
+            _ = try await ModelDownloader().download(id: "")
+            Issue.record("expected throw")
+        } catch let e as ModelDownloaderError {
+            switch e {
+            case .invalidRepoID, .downloadFailed:
+                break  // either is acceptable for an empty id
+            }
+        } catch {
+            // Any other thrown error is also acceptable
+        }
+    }
+
+    @Test("ModelDownloaderError descriptions render")
+    func downloaderErrorDesc() {
+        struct Boom: Error { let message: String }
+        let cases: [ModelDownloaderError] = [
+            .invalidRepoID("bad"),
+            .downloadFailed("foo/bar", Boom(message: "x")),
+        ]
+        for c in cases { #expect(!String(describing: c).isEmpty) }
+    }
 }
