@@ -2148,6 +2148,11 @@ public final class Qwen35AttentionMixer: Module {
         // small enough that T launches at T≤256 cost less than one big
         // qmm. KV append uses appendRangeOnGPU for the single length-lock
         // path; each step is one Ops.kvCacheUpdate dispatch.
+        // ITER 84 (Bagel 2): pair Q+K RoPE for each row on the SAME
+        // shared encoder via `ropePartialTwo` instead of two separate
+        // `ropePartial` encoders. Saves T encoder begin/end pairs per
+        // attn-layer prefill call (T at T=512 ≈ 512 encoders/layer = a
+        // real chunk of host-side dispatch overhead).
         var kRows: [Tensor] = []; kRows.reserveCapacity(t)
         var vRows: [Tensor] = []; vRows.reserveCapacity(t)
         for r in 0..<t {
@@ -2160,12 +2165,9 @@ public final class Qwen35AttentionMixer: Module {
             let vRow = Tensor(buffer: vOut.buffer,
                               offset: vOut.offset + r * kvDim * dtBytes,
                               shape: [kvDim], dtype: dt)
-            Ops.ropePartial(qRow, position: startPosition + r,
-                            headDim: headDim, rotaryDim: rotaryDim,
-                            thetaBase: ropeTheta, on: cmd)
-            Ops.ropePartial(kRow, position: startPosition + r,
-                            headDim: headDim, rotaryDim: rotaryDim,
-                            thetaBase: ropeTheta, on: cmd)
+            Ops.ropePartialTwo(qRow, kRow, position: startPosition + r,
+                                headDim: headDim, rotaryDim: rotaryDim,
+                                thetaBase: ropeTheta, on: cmd)
             kRows.append(kRow.reshaped(to: [nKVHeads, headDim]))
             vRows.append(vRow.reshaped(to: [nKVHeads, headDim]))
         }
