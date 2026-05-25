@@ -239,17 +239,20 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
         precondition(kRows.count == vRows.count,
                      "KVCache.appendRangeOnGPU: kRows (\(kRows.count)) / vRows "
                      + "(\(vRows.count)) count mismatch")
+        // ITER 85 (Bagel 2): each row's K+V append runs on ONE shared
+        // encoder via `Ops.kvCacheUpdateKV` (vs two separate
+        // `kvCacheUpdate` encoders). Saves T encoder begin/end pairs
+        // per attn-layer prefill call.
         lengthLock.withLock {
             for (kFlat, vFlat) in zip(kRows, vRows) {
                 precondition(kFlat.dtype == dtype && vFlat.dtype == dtype,
                              "KVCache.appendRangeOnGPU: dtype mismatch")
                 let pos = _evictionState.reserveNextSlot()
-                Ops.kvCacheUpdate(src: kFlat, into: kBuffer,
-                                  nKVHeads: nKVHeads, headDim: headDim,
-                                  maxSeq: maxSeq, position: pos, on: cmd)
-                Ops.kvCacheUpdate(src: vFlat, into: vBuffer,
-                                  nKVHeads: nKVHeads, headDim: headDim,
-                                  maxSeq: maxSeq, position: pos, on: cmd)
+                Ops.kvCacheUpdateKV(
+                    kSrc: kFlat, kCache: kBuffer,
+                    vSrc: vFlat, vCache: vBuffer,
+                    nKVHeads: nKVHeads, headDim: headDim,
+                    maxSeq: maxSeq, position: pos, on: cmd)
             }
         }
     }
