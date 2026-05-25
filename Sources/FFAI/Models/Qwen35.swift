@@ -3110,8 +3110,11 @@ public final class Qwen35Model: LanguageModel {
             workCmd.waitUntilCompleted()
         }
 
-        let normed = finalNorm(h, on: cmd)
-        return lmHead(normed, on: cmd)
+        // ITER 79: same fused finalNorm+lmHead helper as the other two
+        // single-row return paths — saves 1 dispatch on the VLM embed
+        // input variant.
+        return qwen35FinalNormLmHead(h: h, finalNorm: finalNorm,
+                                      lmHead: lmHead, on: cmd)
     }
 
     /// Raw embedding-table lookup for one text token.
