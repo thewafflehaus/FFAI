@@ -81,7 +81,8 @@ public enum Gemma4VL {
         // ── Vision tower + multi-modal embedder ──
         let vision = try Gemma4VLVisionModel.load(
             visionConfig: visionConfig, textHidden: textEngine.hidden,
-            weights: weights, dtype: textEngine.dtype, device: device)
+            weights: weights, dtype: textEngine.dtype,
+            quantization: config.quantization, device: device)
 
         let imageTokenId = config.int("image_token_id")
             ?? config.int("image_token_index") ?? defaultImageTokenId
@@ -410,7 +411,9 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
     let stdBias: Tensor?
     let stdScale: Tensor?
     /// Multi-modal embedder: GemmaRMSNorm (no-scale) + linear projection.
-    let embedderProjection: Linear
+    /// Wrapped as `AnyLinear` so quantized checkpoints (4-bit e2b-it) work
+    /// transparently — the weight is uint32-packed in those conversions.
+    let embedderProjection: AnyLinear
     /// The no-scale norm's epsilon (the norm itself is unweighted).
     let embedderNormEps: Float
     let textHidden: Int
@@ -423,7 +426,7 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
     init(cfg: Gemma4VLVisionConfig, patchEmbedWeight: Tensor,
          patchDimPadded: Int, posTableX: Tensor, posTableY: Tensor,
          blocks: [Gemma4VLVisionBlock], stdBias: Tensor?, stdScale: Tensor?,
-         embedderProjection: Linear, embedderNormEps: Float,
+         embedderProjection: AnyLinear, embedderNormEps: Float,
          textHidden: Int, dtype: DType, gridSide: Int, tokensPerImage: Int) {
         self.cfg = cfg
         self.patchEmbedWeight = patchEmbedWeight
@@ -446,7 +449,9 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
 
     static func load(
         visionConfig: ModelConfig, textHidden: Int,
-        weights: SafeTensorsBundle, dtype: DType, device: Device
+        weights: SafeTensorsBundle, dtype: DType,
+        quantization: ModelConfig.QuantizationConfig?,
+        device: Device
     ) throws -> Gemma4VLVisionModel {
         let cfg = try Gemma4VLVisionConfig.decode(visionConfig)
         // The vision tower weights are namespaced under `vision_tower.`
@@ -533,10 +538,16 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
         let stdScale = try? vt.tensor(named: "std_scale")
 
         // ── Multi-modal embedder ──
-        let embedderProjW = try ev.tensor(named: "embedding_projection.weight")
+        // `embedding_projection` may be quantized in 4-bit checkpoints (e.g.
+        // `gemma-4-e2b-it-4bit` — weight dtype is U32). Load through
+        // `loadLinear` so a `QuantizedLinear` is returned for those cases
+        // instead of a plain `Linear` with packed-uint32 data, which would
+        // trip `Ops.gemm`'s element-count precondition (packed column count
+        // 8× less than the actual input width).
         // `embedding_pre_projection_norm` is a GemmaRMSNorm-no-scale —
         // unweighted; only the eps matters.
-        let embedderProjection = Linear(weight: embedderProjW, bias: nil)
+        let embedderProjection = try loadLinear(
+            base: "embedding_projection", in: ev, quantization: quantization)
 
         // Size the test grid so the patch count pools cleanly into the
         // soft-token grid. `defaultOutputLength` is the soft-token count;
@@ -730,8 +741,10 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
         ImagePreprocessing.copyFloats(normed, into: normedT)
 
         let cmd = device.makeCommandBuffer()
-        let projected = Ops.gemm(weight: embedderProjection.weight,
-                                 input: normedT, nRows: nTokens, on: cmd)
+        // Use `callMany` so quantized weights (QuantizedLinear from a 4-bit
+        // checkpoint) are handled correctly via the dequant-gemm path.
+        let projected = embedderProjection.callMany(
+            normedT, t: nTokens, on: cmd, device: device)
         cmd.commit()
         cmd.waitUntilCompleted()
         return projected

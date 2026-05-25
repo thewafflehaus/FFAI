@@ -409,8 +409,15 @@ public final class GLMASRModel: @unchecked Sendable {
 
         // ── Adapting MLP: [mergedDim → intermediateDim → lmHidden] ──
         // fc1 with GELU activation, fc2 linear.
+        //
+        // The adapter weights are dequantized to f32 on the CPU side (see
+        // `dequantizeLinear`), so the input tensors must match that dtype.
+        // Using `adaptingFC1Weight.dtype` (instead of the model's `dtype`)
+        // ensures no dtype mismatch at `Ops.gemm` when the checkpoint is
+        // quantized (e.g. 4-bit) and `dtype` is bf16.
+        let adaptorDtype = adaptingFC1Weight.dtype
         let mergedT = Tensor.empty(shape: [newSeqLen, mergedDim],
-                                    dtype: dtype, device: device)
+                                    dtype: adaptorDtype, device: device)
         AudioPreprocessing.copyFloats(merged, into: mergedT)
 
         let cmdA = device.makeCommandBuffer()
@@ -429,7 +436,7 @@ public final class GLMASRModel: @unchecked Sendable {
             let inner = gk * (v + gc * v * v * v)
             fc1Vals[i] = 0.5 * v * (1 + tanh(inner))
         }
-        let fc1Act = Tensor.empty(shape: [newSeqLen, fc1Dim], dtype: dtype,
+        let fc1Act = Tensor.empty(shape: [newSeqLen, fc1Dim], dtype: adaptorDtype,
                                    device: device)
         AudioPreprocessing.copyFloats(fc1Vals, into: fc1Act)
 
