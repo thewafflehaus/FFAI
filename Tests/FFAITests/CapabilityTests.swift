@@ -24,7 +24,19 @@ struct CapabilityTests {
         #expect(s.contains(.audioIn))
         #expect(s.contains(.audioOut))
         #expect(s.contains(.toolCalling))
-        #expect(s.count == 7)
+        #expect(s.contains(.thinking))
+        #expect(s.contains(.reasoningLevel))
+        #expect(s.count == 9)
+    }
+
+    @Test("ReasoningLevel — all cases round-trip via raw value")
+    func reasoningLevelCodable() throws {
+        for level in ReasoningLevel.allCases {
+            let data = try JSONEncoder().encode(level)
+            let decoded = try JSONDecoder().decode(ReasoningLevel.self, from: data)
+            #expect(decoded == level)
+        }
+        #expect(ReasoningLevel.allCases.count == 4) // minimal, low, medium, high
     }
 
     @Test("Codable round-trip via raw value")

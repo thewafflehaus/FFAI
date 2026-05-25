@@ -22,6 +22,27 @@ public enum Capability: String, Sendable, Hashable, CaseIterable, Codable {
     case audioIn
     case audioOut
     case toolCalling
+    /// Model supports chain-of-thought / "thinking" generation — emits
+    /// a private reasoning trace before the final answer (Qwen 3 thinking,
+    /// DeepSeek-R1, Claude extended thinking). The trace is typically
+    /// fenced in `<think>…</think>` (or family-specific tokens) and
+    /// stripped by `ThinkingSplit` before being shown to the user.
+    case thinking
+    /// Model supports a user-tunable reasoning-effort dial (minimal /
+    /// low / medium / high), distinct from just having `.thinking`.
+    /// The selected level is set on `GenerationParameters`, not here —
+    /// this capability just advertises that the model honours it.
+    case reasoningLevel
+}
+
+/// User-tunable reasoning effort for models that advertise the
+/// `Capability.reasoningLevel` capability. Models without it ignore
+/// the setting.
+public enum ReasoningLevel: String, Sendable, Hashable, CaseIterable, Codable {
+    case minimal
+    case low
+    case medium
+    case high
 }
 
 extension Capability {
