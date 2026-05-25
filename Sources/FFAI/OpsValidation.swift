@@ -603,4 +603,135 @@ public enum OpsValidation {
         }
         return nil
     }
+
+    // ─── ffai_rms_norm_residual + ffai_gated_rmsnorm ───────────────
+    //
+    // Both kernels share `mt_add_rms_norm`'s row-width contract:
+    //   * `N = TPG * 4` → caller picks `TPG = n / 4`.
+    //   * `TPG` must be a multiple of 32 (simdgroup floor) and ≤ 1024.
+    //   * Combined: `n` multiple of 128 and `n ≤ 4096`.
+    // Wider rows must fall back to unfused `add` + `rmsNorm` /
+    // `silu(z) * w * rmsNorm(y)`.
+
+    /// Validate the row-width parameter for `Ops.rmsNormResidual`.
+    public static func validateRmsNormResidual(n: Int) -> String? {
+        if n <= 0 {
+            return "n must be positive (got \(n))"
+        }
+        if !n.isMultiple(of: 128) {
+            return "n=\(n) must be a multiple of 128 (32-lane simdgroup × 4 elements/thread)"
+        }
+        if n > 4096 {
+            return "n must be ≤ 4096 (got \(n)); the kernel's TPG = n/4 exceeds the 1024-thread group cap"
+        }
+        return nil
+    }
+
+    /// Validate the row-width parameter for `Ops.gatedRmsNorm`.
+    public static func validateGatedRmsNorm(n: Int) -> String? {
+        // Same invariants as `mt_add_rms_norm` / `rms_norm_residual` —
+        // TPG = n/4, multiple of 32, ≤ 1024.
+        if n <= 0 {
+            return "n must be positive (got \(n))"
+        }
+        if !n.isMultiple(of: 128) {
+            return "n=\(n) must be a multiple of 128 (32-lane simdgroup × 4 elements/thread)"
+        }
+        if n > 4096 {
+            return "n must be ≤ 4096 (got \(n)); the kernel's TPG = n/4 exceeds the 1024-thread group cap"
+        }
+        return nil
+    }
+
+    // ─── mt_rms_norm_small ─────────────────────────────────────────
+    //
+    // Per-head RMSNorm specialisation for n < 128 (the default
+    // `mt_rms_norm` floor). 2 elements/thread → TPG = n/2:
+    //   * TPG ≥ 32 (one full simdgroup) → n ≥ 64.
+    //   * TPG ≤ 1024 (Apple cap) → n ≤ 2048.
+    //   * n even (each thread loads 2 contiguous elements).
+
+    public static func validateRmsNormSmall(n: Int) -> String? {
+        if n <= 0 {
+            return "n must be positive (got \(n))"
+        }
+        if !n.isMultiple(of: 2) {
+            return "n=\(n) must be even (2 elements per thread)"
+        }
+        if n < 64 {
+            return "n=\(n) must be ≥ 64 — TPG = n/2 below 32 makes the simdgroup reduction degenerate"
+        }
+        if n > 2048 {
+            return "n=\(n) must be ≤ 2048 — TPG = n/2 exceeds the 1024-thread group cap; use rmsNorm or rmsNormWide for larger rows"
+        }
+        return nil
+    }
+
+    // ─── logits processors ─────────────────────────────────────────
+    //
+    // Five sampling-pipeline kernels:
+    //   * temperature / topk-mask / repetition-penalty: Grid3D, pure
+    //     elementwise. Only contracts are scalar parameter sanity and
+    //     n > 0 (vocab non-empty).
+    //   * min-p / top-p mask: Reduction-mode, one threadgroup per row,
+    //     TPG = 256. Contract is row-width `n > 0` + rows > 0 +
+    //     `0 < p < 1`.
+
+    public static func validateLogitsTemperature(n: Int, temperature: Float) -> String? {
+        if n <= 0 {
+            return "n must be positive (got \(n))"
+        }
+        if !temperature.isFinite || temperature <= 0 {
+            return "temperature must be a positive finite float (got \(temperature)); use Ops.argmax for greedy/zero-temperature sampling"
+        }
+        return nil
+    }
+
+    public static func validateLogitsRepetitionPenalty(
+        vocab: Int, nTokenIds: Int, penalty: Float
+    ) -> String? {
+        if vocab <= 0 {
+            return "vocab size must be positive (got \(vocab))"
+        }
+        if nTokenIds < 0 {
+            return "tokenIds count must be non-negative (got \(nTokenIds))"
+        }
+        if !penalty.isFinite || penalty <= 0 {
+            return "penalty must be a positive finite float (got \(penalty)); 1.0 disables"
+        }
+        return nil
+    }
+
+    public static func validateLogitsTopKMask(n: Int) -> String? {
+        if n <= 0 {
+            return "n must be positive (got \(n))"
+        }
+        return nil
+    }
+
+    public static func validateLogitsMinPMask(n: Int, rows: Int, minP: Float) -> String? {
+        if n <= 0 {
+            return "n must be positive (got \(n))"
+        }
+        if rows <= 0 {
+            return "rows must be positive (got \(rows))"
+        }
+        if !minP.isFinite || minP <= 0 || minP >= 1 {
+            return "minP must satisfy 0 < minP < 1 (got \(minP))"
+        }
+        return nil
+    }
+
+    public static func validateLogitsTopPMask(n: Int, rows: Int, topP: Float) -> String? {
+        if n <= 0 {
+            return "n must be positive (got \(n))"
+        }
+        if rows <= 0 {
+            return "rows must be positive (got \(rows))"
+        }
+        if !topP.isFinite || topP <= 0 || topP >= 1 {
+            return "topP must satisfy 0 < topP < 1 (got \(topP))"
+        }
+        return nil
+    }
 }

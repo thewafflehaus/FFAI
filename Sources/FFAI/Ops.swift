@@ -19,7 +19,9 @@ public enum Ops {
     /// PSO maxTotalThreadsPerThreadgroup will accept on M-series.
     public static let elementwiseTgSize = 256
 
-    private static func elementwiseGrid(_ n: Int) -> (MTLSize, MTLSize) {
+    /// Internal because the per-Ops extension files (`OpsMath.swift`,
+    /// `OpsLogits.swift`, `OpsFused.swift`) call it.
+    static func elementwiseGrid(_ n: Int) -> (MTLSize, MTLSize) {
         let tg = MTLSize(width: min(elementwiseTgSize, n), height: 1, depth: 1)
         let grid = MTLSize(width: n, height: 1, depth: 1)
         return (grid, tg)

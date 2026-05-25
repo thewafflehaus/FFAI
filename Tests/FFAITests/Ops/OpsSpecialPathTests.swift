@@ -1,6 +1,8 @@
-// Stub GPU correctness / smoke tests for `Ops.*` wrappers that the
-// audit in May 2026 found to have no end-to-end test exercising the
-// kernel dispatch (only OpsValidation pre-condition coverage at best).
+// GPU correctness / smoke tests for `Ops.*` wrappers that don't fit
+// neatly into the elementwise / SDPA / dequant suites: blit/cast/fused
+// activations, KV cache append + round-trip, GDN/Mamba prep+chunk +
+// fused mixer norms, SDPA prefill-MMA, MoE BM=8 / scalar M=1 variants,
+// unpermute, dynamic-M dequant GEMM.
 //
 // Each test follows the canonical OpsTests.swift pattern:
 //   autoreleasepool { … runAndWait { cb in Ops.foo(…, on: cb) } … }
@@ -16,8 +18,8 @@ import Metal
 import Testing
 @testable import FFAI
 
-@Suite("Ops — missing coverage stubs")
-struct OpsMissingCoverageTests {
+@Suite("Ops — special-path wrappers")
+struct OpsSpecialPathTests {
 
     // MARK: - Element-wise blit / cast / fused
 
