@@ -493,6 +493,79 @@ public enum Ops {
     /// per Qwen3.6-A3B decode token (2 per layer × 40 layers if both
     /// layer-boundary residuals fuse).
     /// Single-row form (decode T=1).
+    /// ITER 73 (Bagel 2): batched fused residual-add + RMSNorm across
+    /// N rows. Same kernel as `addRmsNorm` but dispatched with N
+    /// threadgroups (the underlying `mt_add_rms_norm` uses
+    /// `program_id<0>()` for row index). Lets the prefill `decodeMany`
+    /// paths use the fused kernel that the decode T=1 path already
+    /// benefits from.
+    ///
+    /// `a`, `b`, `residualOut`, `normedOut` are all `[nRows * rowSize]`
+    /// flat. `weight` is `[rowSize]`.
+    public static func addRmsNormRows(
+        a: Tensor, b: Tensor, weight: Tensor, eps: Float,
+        nRows: Int, rowSize: Int,
+        residualOut: Tensor, normedOut: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        let total = nRows * rowSize
+        precondition(a.elementCount == total && b.elementCount == total,
+                     "addRmsNormRows: a/b must be nRows·rowSize = \(total)")
+        precondition(weight.elementCount == rowSize,
+                     "addRmsNormRows: weight must be [rowSize=\(rowSize)]")
+        precondition(a.dtype == b.dtype && a.dtype == weight.dtype,
+                     "addRmsNormRows: dtype mismatch")
+        precondition(residualOut.elementCount == total
+                      && normedOut.elementCount == total,
+                     "addRmsNormRows: outputs must be nRows·rowSize")
+        precondition(residualOut.dtype == a.dtype && normedOut.dtype == a.dtype,
+                     "addRmsNormRows: output dtype mismatch")
+        if let reason = OpsValidation.validateRmsNorm(n: rowSize) {
+            preconditionFailure("Ops.addRmsNormRows: \(reason)")
+        }
+        let epsBuf = epsBuffer(eps)
+        // Kernel's threadgroup geometry: TPG = rowSize / 4 (one thread
+        // owns 4 consecutive elements). Grid = nRows * TPG total
+        // threads → nRows threadgroups of TPG threads.
+        let tgWidth = rowSize / 4
+        let grid = MTLSize(width: nRows * tgWidth, height: 1, depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+        switch a.dtype {
+        case .f32:
+            MetalTileKernels.mt_add_rms_norm_f32(
+                a: a.buffer, aOffset: a.offset,
+                b: b.buffer, bOffset: b.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                residual_out: residualOut.buffer, residual_outOffset: residualOut.offset,
+                normed_out: normedOut.buffer, normed_outOffset: normedOut.offset,
+                n: UInt32(rowSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_add_rms_norm_f16(
+                a: a.buffer, aOffset: a.offset,
+                b: b.buffer, bOffset: b.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                residual_out: residualOut.buffer, residual_outOffset: residualOut.offset,
+                normed_out: normedOut.buffer, normed_outOffset: normedOut.offset,
+                n: UInt32(rowSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_add_rms_norm_bf16(
+                a: a.buffer, aOffset: a.offset,
+                b: b.buffer, bOffset: b.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                residual_out: residualOut.buffer, residual_outOffset: residualOut.offset,
+                normed_out: normedOut.buffer, normed_outOffset: normedOut.offset,
+                n: UInt32(rowSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.addRmsNormRows: unsupported dtype \(a.dtype)")
+        }
+    }
+
     public static func addRmsNorm(
         a: Tensor, b: Tensor, weight: Tensor, eps: Float,
         residualOut: Tensor, normedOut: Tensor,

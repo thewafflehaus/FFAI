@@ -2239,17 +2239,26 @@ public final class Qwen35GDNLayer: Module, DecoderLayer {
             xNormFlat, t: t, cache: gc, cmd: cmd, device: device
         ).reshaped(to: [t * hidden])
 
-        // ── Residual add ────────────────────────────────────────────────
-        let postMix = Ops.add(hFlat, mixerOutFlat, on: cmd)
+        // ── Fused residual-add + post-norm (ITER 73) ───────────────────
+        // `mt_add_rms_norm` over T rows: one dispatch produces both
+        // `postMix = hFlat + mixerOutFlat` AND `ffnNorm = rmsNorm(postMix)`.
+        // Replaces `Ops.add(hFlat, mixerOutFlat)` + `Ops.rmsNormRows` =
+        // 2 dispatches → 1 per layer × 40 layers = 40 dispatches/chunk.
+        let postMix = Tensor.empty(shape: [t * hidden], dtype: hFlat.dtype,
+                                    device: device)
+        let ffnNorm = Tensor.empty(shape: [t * hidden], dtype: hFlat.dtype,
+                                    device: device)
+        Ops.addRmsNormRows(
+            a: hFlat, b: mixerOutFlat,
+            weight: postNorm.weight, eps: postNorm.eps,
+            nRows: t, rowSize: hidden,
+            residualOut: postMix, normedOut: ffnNorm, on: cmd)
 
         // ── FFN half — T-batched via qwen35ApplyFFNMany. ─────────────────
-        // For MoE FFN this dispatches `moe.decodeMany` (one BGEMM per
-        // gate/up/down at mTotal=T·topK + scatter-sum). For dense FFN
-        // it dispatches `mlp.forwardMany` (3 gemms). Mirrors the
-        // attention-layer's FFN dispatch.
         return qwen35ApplyFFNMany(ffn, postMix: postMix, t: t,
                                   postNorm: postNorm, hidden: hidden,
-                                  cmd: cmd, device: device)
+                                  cmd: cmd, device: device,
+                                  precomputedFFNNorm: ffnNorm)
     }
 }
 
@@ -2381,16 +2390,22 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
             cache: kv, cmd: cmd, device: device
         ).reshaped(to: [t * hidden])
 
-        // ── Residual add — one Ops.add over T·hidden elements ───────────
-        let postMix = Ops.add(hFlat, mixerOutFlat, on: cmd)
+        // ── Fused residual-add + post-norm (ITER 73) — same as GDN ──
+        let postMix = Tensor.empty(shape: [t * hidden], dtype: hFlat.dtype,
+                                    device: device)
+        let ffnNorm = Tensor.empty(shape: [t * hidden], dtype: hFlat.dtype,
+                                    device: device)
+        Ops.addRmsNormRows(
+            a: hFlat, b: mixerOutFlat,
+            weight: postNorm.weight, eps: postNorm.eps,
+            nRows: t, rowSize: hidden,
+            residualOut: postMix, normedOut: ffnNorm, on: cmd)
 
         // ── FFN half — T-batched via qwen35ApplyFFNMany. ─────────────────
-        // For MoE FFN this dispatches `moe.decodeMany` (one BGEMM per
-        // gate/up/down at mTotal=T·topK + scatter-sum). For dense FFN
-        // it dispatches `mlp.forwardMany` (3 gemms).
         return qwen35ApplyFFNMany(ffn, postMix: postMix, t: t,
                                   postNorm: postNorm, hidden: hidden,
-                                  cmd: cmd, device: device)
+                                  cmd: cmd, device: device,
+                                  precomputedFFNNorm: ffnNorm)
     }
 }
 
@@ -2418,11 +2433,20 @@ private func qwen35FFNParameters(_ ffn: Qwen35FFN) -> [(String, Tensor)] {
 /// of `qwen35ApplyFFN`).
 private func qwen35ApplyFFNMany(_ ffn: Qwen35FFN, postMix: Tensor, t: Int,
                                 postNorm: RMSNorm, hidden: Int,
-                                cmd: MTLCommandBuffer, device: Device) -> Tensor {
-    // Post-norm over T rows of [hidden]. One rmsNormRows kernel.
-    let ffnNorm = Ops.rmsNormRows(
-        postMix, weight: postNorm.weight, eps: postNorm.eps,
-        nRows: t, rowSize: hidden, on: cmd)
+                                cmd: MTLCommandBuffer, device: Device,
+                                precomputedFFNNorm: Tensor? = nil) -> Tensor {
+    // ITER 73: If the caller already fused the residual-add + RMSNorm
+    // via `Ops.addRmsNormRows`, `postMix` is `residualOut` and
+    // `precomputedFFNNorm` is `normedOut` — skip the internal rmsNorm
+    // pass. Otherwise compute the FFN-pre-norm here (legacy path).
+    let ffnNorm: Tensor
+    if let pre = precomputedFFNNorm {
+        ffnNorm = pre
+    } else {
+        ffnNorm = Ops.rmsNormRows(
+            postMix, weight: postNorm.weight, eps: postNorm.eps,
+            nRows: t, rowSize: hidden, on: cmd)
+    }
     switch ffn {
     case .dense(let mlp):
         let ffnOut = mlp.forwardMany(ffnNorm, t: t, cmd: cmd, device: device)
