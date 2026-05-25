@@ -1,34 +1,55 @@
-// Nemotron-VLM — NVIDIA's Nemotron Nano vision-language model (the
-// Nemotron Nano VL `*ForConditionalGeneration` checkpoints).
+// Nemotron family — NVIDIA's Nemotron model line. Unified entry point
+// covering three variants:
 //
-// Composition:
-//   • Vision tower — a ViT (the C-RADIO / SigLIP-shaped encoder NVIDIA
-//     pairs with the Nemotron Nano backbone): a conv2d patch-embed, a
-//     learned position embedding, a LayerNorm-pre-norm block stack with
-//     bidirectional multi-head attention and a GELU MLP, and a
-//     post-LayerNorm. This is exactly the shared `VisionEncoder` core,
-//     loaded straight into it.
-//   • Multi-modal projector — a two-layer MLP (`linear_1` → GELU →
-//     `linear_2`) that maps the encoder hidden into the NemotronH text
-//     hidden dim. Pixel-shuffle / patch-pooling variants reduce the
-//     token count; this coherence-first port keeps one projected token
-//     per encoder patch.
-//   • NemotronH text backbone — the existing `NemotronHModel`
-//     stack-interleaved hybrid (Mamba 2 / attention / dense-MLP layers
-//     selected by a `hybrid_override_pattern`), loaded from the
-//     `language_model.`-prefixed sub-tree with the checkpoint's
-//     `text_config`.
+//   • NemotronH (text) — the stack-interleaved hybrid (Mamba 2 /
+//     attention / dense-MLP) decoder. Impl + family enum live in
+//     `Models/Text/NemotronHText.swift`.
+//   • NemotronH (vision-language) — Nemotron Nano VL: the ViT vision
+//     tower + multi-modal projector + the NemotronH hybrid text
+//     backbone. Orchestrator (`enum NemotronVL`) lives below; tower
+//     internals in `Models/Vision/NemotronHVision.swift`.
+//   • NemotronDiffusion (text) — Nemotron-Labs-Diffusion, the
+//     tri-mode (AR / block-diffusion / self-speculation) decoder.
+//     Impl + family enum live in `Models/Text/NemotronDiffusionText.swift`.
 //
-// The three are joined by `VisionModel`'s cross-modal token splice: each
-// image-placeholder token (`image_token_id`) in the prompt takes one of
-// the projected vision tokens.
-//
-// Vision tower internals (projector, composed encoder, helper types)
-// live in `Models/Vision/NemotronHVision.swift`. This file is the
-// family orchestrator (load entrypoint + public constants).
+// The `enum Nemotron` below is the unified family root — it advertises
+// the union of every variant's `modelTypes` + `architectures` so the
+// ModelRegistry can ask "is this a Nemotron checkpoint?" with one
+// lookup. Per-variant dispatch still routes to the right loader (Text/
+// for text + diffusion, the NemotronVL block in this file for VL).
 
 import Foundation
 import Metal
+
+/// Unified Nemotron family root. Covers the text NemotronH backbone,
+/// the NemotronH vision-language wrapper, and the NemotronDiffusion
+/// tri-mode decoder. Each variant retains its own per-variant enum
+/// (`NemotronH`, `NemotronVL`, `NemotronDiffusion`) — this root just
+/// unions the metadata so the registry can dispatch with one
+/// membership check.
+public enum Nemotron {
+    /// Union of every Nemotron variant's HuggingFace `model_type`
+    /// labels. Used by `ModelRegistry` to recognise "this is a
+    /// Nemotron checkpoint" before dispatching to the per-variant
+    /// loader.
+    public static var modelTypes: Set<String> {
+        NemotronH.modelTypes
+            .union(NemotronVL.modelTypes)
+            .union(NemotronDiffusion.modelTypes)
+    }
+
+    /// Union of every Nemotron variant's HuggingFace `architectures[0]`
+    /// labels.
+    public static var architectures: Set<String> {
+        NemotronH.architectures
+            .union(NemotronDiffusion.architectures)
+        // NemotronVL doesn't ship a distinct architecture string — the
+        // VL checkpoints carry `text_config.model_type = nemotron_h`
+        // and the registry routes them via the vision-config sniff.
+    }
+}
+
+// ─── NemotronVL — vision-language orchestrator ──────────────────────
 
 public enum NemotronVLError: Error, CustomStringConvertible {
     case missingConfig
@@ -45,6 +66,12 @@ public enum NemotronVLError: Error, CustomStringConvertible {
 }
 
 public enum NemotronVL {
+    /// `model_type` labels this orchestrator recognises (the VL
+    /// checkpoints actually carry `text_config.model_type = nemotron_h`
+    /// — the union here is mostly for documentation / future
+    /// dispatch flexibility).
+    public static let modelTypes: Set<String> = []
+
     /// `image_token_id` fallback for Nemotron Nano VL checkpoints.
     public static let defaultImageTokenId = 131_072
 
