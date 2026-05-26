@@ -65,14 +65,21 @@ Rust DSL that compiles kernels) and Cargo:
 git clone https://github.com/thewafflehaus/FFAI
 git clone https://github.com/thewafflehaus/metaltile
 cd FFAI
-./scripts/setup-dev.sh
+make setup-dev
+make install-hooks   # pre-commit / commit-msg / pre-push
 ```
 
-`setup-dev.sh` verifies Xcode CLI tools + `xcrun metal` + Swift +
-Cargo, resolves SPM deps, and runs the first build to populate
-`kernels.metallib`. End users adding FFAI as a SwiftPM dependency
-do **not** need Cargo or the metaltile repo — they consume the
-pre-built metallib bundled into the package.
+`make setup-dev` (wrapping `./scripts/setup-dev.sh`) verifies Xcode
+CLI tools + `xcrun metal` + Swift + Cargo + `swift-format`
+(auto-installed via Homebrew if missing), resolves SPM deps, and runs
+the first build to populate `kernels.metallib`. `make install-hooks`
+points git at the in-tree hook scripts — see
+[`developing.md`](developing/developing.md#git-hooks) for what each
+one runs.
+
+End users adding FFAI as a SwiftPM dependency do **not** need Cargo,
+the metaltile repo, or the hooks — they consume the pre-built
+metallib bundled into the package.
 
 ## After install
 

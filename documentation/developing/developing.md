@@ -9,19 +9,27 @@ cd ~/Development
 git clone https://github.com/thewafflehaus/FFAI
 git clone https://github.com/thewafflehaus/metaltile     # sibling repo, required
 cd FFAI
-./scripts/setup-dev.sh
+make setup-dev      # wraps ./scripts/setup-dev.sh
+make install-hooks  # point core.hooksPath at scripts/hooks/
 ```
 
-`setup-dev.sh` verifies:
+`make setup-dev` verifies:
 
 - Xcode CLI tools (`xcode-select -p`)
 - `xcrun metal` (the full Xcode IDE, not just CLI tools, is required)
 - Swift toolchain (`swift --version`)
 - Cargo (Rust, for `metaltile`)
+- `swift-format` (auto-installed via Homebrew if missing — needed by
+  `make format-check` and the pre-commit hook)
 - The sibling `metaltile` checkout at `../metaltile`
 
 Then resolves SPM deps and runs `make build` to produce
 `kernels.metallib`.
+
+`make install-hooks` points `core.hooksPath` at `scripts/hooks/` so
+the in-tree git hooks fire on the appropriate events — see the
+[Git hooks](#git-hooks) section below. Skip it if you'd rather opt out
+(or run `make uninstall-hooks` later).
 
 ## Repo layout
 
@@ -41,7 +49,12 @@ Tests/
 
 planning/                  Phased build-out + architecture diagrams
 documentation/             User-facing docs (you are here)
-scripts/                   setup-dev.sh, coverage.sh, verify-docs.sh
+scripts/                   setup-dev.sh, coverage.sh, verify-docs.sh,
+                           release.sh, integration-bisect.sh,
+                           update-license.sh, install-hooks.sh,
+                           commit_hygiene.py, hooks/{pre-commit,
+                                                    commit-msg,
+                                                    pre-push}
 ```
 
 For the per-Sources-file purpose see
@@ -50,19 +63,66 @@ For the per-Sources-file purpose see
 ## The `make` workflow
 
 ```bash
+make setup-dev          # one-time dev environment setup
+make install-hooks      # install pre-commit / commit-msg / pre-push
+make uninstall-hooks    # clear core.hooksPath (opt out of the hooks)
 make build              # regenerate kernels + swift build (debug)
 make build-release      # regenerate kernels + swift build -c release
 make regenerate-kernels # run `tile build --emit all` only
-make test               # regenerate kernels + swift test
+make test               # regenerate kernels + swift test (unit + integration)
+make test-unit          # FFAITests + MetalTileSwiftTests only (fast)
+make test-integration   # ModelIntegrationTests only (multi-GB downloads)
 make coverage           # swift test --enable-code-coverage + summary
 make format             # swift-format the repo in place
-make format-check       # lint without modifying
+make format-check       # swift-format lint (no writes)
 make docs               # verify swift-docc builds clean
 make clean              # remove .build + generated artifacts
 ```
 
 `make build` and `make test` always run `regenerate-kernels` first —
 no out-of-date kernels in CI or local dev.
+
+## Git hooks
+
+`make install-hooks` sets `core.hooksPath = scripts/hooks` so the
+checked-in hooks under `scripts/hooks/` fire on git events. Each hook
+is intentionally scoped to the cheapest check that catches its class
+of regression:
+
+```
+pre-commit   make format-check                       (~1-3 s)
+commit-msg   banned-term + trailer-shape scan        (~50 ms)
+pre-push     make build + make test-unit             (~2-3 min)
+```
+
+The full integration suite (`make test-integration`) is deliberately
+NOT gated by any hook — multi-GB checkpoint downloads + 15-30 min
+runtime make it too heavyweight for every commit/push. The release
+workflow covers it pre-tag instead. See
+[`.github/workflows/release.yml`](../../.github/workflows/release.yml).
+
+Bypass any individual hook run with `--no-verify`:
+
+```bash
+git commit --no-verify -m "..."
+git push   --no-verify
+```
+
+Uninstall with `make uninstall-hooks` (clears `core.hooksPath`).
+
+### Commit message hygiene
+
+The `commit-msg` hook + the parallel `commit-check.yml` workflow on
+every PR reject AI **attribution pollution** — `Co-Authored-By:` /
+`Signed-off-by:` / `Generated-by:` trailers, `🤖 Generated with
+<tool>` footers, and any git-trailer-shaped line in the trailing
+paragraph (`Word: value`). Bare mentions of CLAUDE.md / `.cursor/` /
+model names like `llama` stay fine — only attribution credit is
+rejected. See [`scripts/commit_hygiene.py`](../../scripts/commit_hygiene.py)
+for the full detection ruleset.
+
+Phrase summary lines as `Test results — 7/7` rather than `Tests: 7/7`
+to dodge the trailing-block trailer check.
 
 ## How kernel regeneration works
 
