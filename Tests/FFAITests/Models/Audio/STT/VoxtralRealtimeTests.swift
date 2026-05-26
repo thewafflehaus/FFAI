@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // Unit tests for the VoxtralRealtime speech-to-text family.

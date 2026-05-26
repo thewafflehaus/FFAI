@@ -148,7 +148,8 @@ public struct DeepFilterNetConfig: Codable, Sendable {
         dfNumLayers = try c.decodeIfPresent(Int.self, forKey: .dfNumLayers) ?? dfNumLayers
         gruGroups = try c.decodeIfPresent(Int.self, forKey: .gruGroups) ?? gruGroups
         linearGroups = try c.decodeIfPresent(Int.self, forKey: .linearGroups) ?? linearGroups
-        encLinearGroups = try c.decodeIfPresent(Int.self, forKey: .encLinearGroups) ?? encLinearGroups
+        encLinearGroups =
+            try c.decodeIfPresent(Int.self, forKey: .encLinearGroups) ?? encLinearGroups
         groupShuffle = try c.decodeIfPresent(Bool.self, forKey: .groupShuffle) ?? groupShuffle
         encConcat = try c.decodeIfPresent(Bool.self, forKey: .encConcat) ?? encConcat
         dfGruSkip = try c.decodeIfPresent(String.self, forKey: .dfGruSkip) ?? dfGruSkip
@@ -188,8 +189,8 @@ struct DFNWeightTable: @unchecked Sendable {
 /// A fused BatchNorm layer: `y = x * scale + bias` applied channel-wise in
 /// `BCHW` layout (`shape = [1, C, 1, 1]` each).
 struct DFNBatchNorm: Sendable {
-    let scale: [Float]   // length C
-    let bias: [Float]    // length C
+    let scale: [Float]  // length C
+    let bias: [Float]  // length C
 
     /// Apply to `x` in `[B, C, H, W]` layout (C = scale.count).
     /// Returns a new array with the same layout.
@@ -197,12 +198,12 @@ struct DFNBatchNorm: Sendable {
         precondition(channels == scale.count)
         var out = [Float](repeating: 0, count: x.count)
         let hw = height * width
-        for b in 0..<batch {
-            for c in 0..<channels {
+        for b in 0 ..< batch {
+            for c in 0 ..< channels {
                 let s = scale[c]
                 let bi = bias[c]
                 let base = (b * channels + c) * hw
-                for i in 0..<hw {
+                for i in 0 ..< hw {
                     out[base + i] = x[base + i] * s + bi
                 }
             }
@@ -229,12 +230,12 @@ public final class DeepFilterNetModel: @unchecked Sendable {
     /// Model types recognised in `config.json` for this family.
     public static let modelTypes: Set<String> = [
         "deepfilternet", "deepfilternet2", "deepfilternet3",
-        "deep_filter_net", "deepfilternet_v3"
+        "deep_filter_net", "deepfilternet_v3",
     ]
 
     /// `config.json` architecture strings that map to this family.
     public static let architectures: Set<String> = [
-        "DeepFilterNet", "DeepFilterNet2", "DeepFilterNet3"
+        "DeepFilterNet", "DeepFilterNet2", "DeepFilterNet3",
     ]
 
     /// Capability set exposed by this model.
@@ -277,7 +278,7 @@ public final class DeepFilterNetModel: @unchecked Sendable {
 
         // ERB band widths.
         if let explicit = config.erbWidths,
-           explicit.reduce(0, +) == config.freqBins
+            explicit.reduce(0, +) == config.freqBins
         {
             self.erbBandWidths = explicit
         } else {
@@ -290,7 +291,8 @@ public final class DeepFilterNetModel: @unchecked Sendable {
         }
 
         self.vorbisWindowData = DeepFilterNetSTFT.vorbisWindow(size: config.fftSize)
-        self.normAlpha = Self.computeNormAlpha(hopSize: config.hopSize, sampleRate: config.sampleRate)
+        self.normAlpha = Self.computeNormAlpha(
+            hopSize: config.hopSize, sampleRate: config.sampleRate)
 
         // Pre-compute fused BN affine (γ, β, μ, σ²) → (scale, bias).
         self.bnMap = Self.buildBatchNormMap(weights: weights)
@@ -304,14 +306,14 @@ public final class DeepFilterNetModel: @unchecked Sendable {
             let (outC, inC, kT, kF) = (shape[0], shape[1], shape[2], shape[3])
             // Transpose [outC, inC, kT, kF] → [outC, kT, kF, inC].
             var transposed = [Float](repeating: 0, count: w.count)
-            for o in 0..<outC {
-                for t in 0..<kT {
-                    for f in 0..<kF {
-                        for i in 0..<inC {
+            for o in 0 ..< outC {
+                for t in 0 ..< kT {
+                    for f in 0 ..< kF {
+                        for i in 0 ..< inC {
                             // src: o*inC*kT*kF + i*kT*kF + t*kF + f
                             // dst: o*kT*kF*inC + t*kF*inC + f*inC + i
-                            transposed[o * kT * kF * inC + t * kF * inC + f * inC + i]
-                                = w[o * inC * kT * kF + i * kT * kF + t * kF + f]
+                            transposed[o * kT * kF * inC + t * kF * inC + f * inC + i] =
+                                w[o * inC * kT * kF + i * kT * kF + t * kF + f]
                         }
                     }
                 }
@@ -327,10 +329,11 @@ public final class DeepFilterNetModel: @unchecked Sendable {
         var whhT = [String: [Float]]()
         for (key, w) in weights.table where key.contains(".gru.weight_") && key.hasSuffix("_l0") {
             guard let shape = weights.shapes[key], shape.count == 2 else { continue }
-            let rows = shape[0], cols = shape[1]
+            let rows = shape[0]
+            let cols = shape[1]
             var t = [Float](repeating: 0, count: rows * cols)
-            for r in 0..<rows {
-                for c in 0..<cols {
+            for r in 0 ..< rows {
+                for c in 0 ..< cols {
                     t[c * rows + r] = w[r * cols + c]
                 }
             }
@@ -366,7 +369,7 @@ public final class DeepFilterNetModel: @unchecked Sendable {
         var modelDir = directory
         let configURL = modelDir.appendingPathComponent("config.json")
         if !FileManager.default.fileExists(atPath: configURL.path),
-           let sub = subfolder, !sub.isEmpty
+            let sub = subfolder, !sub.isEmpty
         {
             modelDir = directory.appendingPathComponent(sub)
         }
@@ -474,8 +477,9 @@ public final class DeepFilterNetModel: @unchecked Sendable {
         // 2. ERB energy and features.
         // specMagSq: [nT, nF]
         var specMagSq = [Float](repeating: 0, count: nT * nF)
-        for i in 0..<(nT * nF) {
-            let r = spec.real[i], im = spec.imag[i]
+        for i in 0 ..< (nT * nF) {
+            let r = spec.real[i]
+            let im = spec.imag[i]
             specMagSq[i] = r * r + im * im
         }
 
@@ -483,23 +487,25 @@ public final class DeepFilterNetModel: @unchecked Sendable {
         let erb = computeErbEnergies(specMagSq: specMagSq, nT: nT)
         // ERB dB: [nT, nbErb]
         var erbDB = [Float](repeating: 0, count: nT * config.nbErb)
-        for i in 0..<erbDB.count {
+        for i in 0 ..< erbDB.count {
             erbDB[i] = 10.0 * log10f(erb[i] + 1e-10)
         }
 
         // Feature normalization: [nT, nbErb]
-        let featErb = config.isV1
+        let featErb =
+            config.isV1
             ? bandMeanNormExact(erbDB, bands: config.nbErb, nT: nT)
             : bandMeanNorm(erbDB, bands: config.nbErb, nT: nT)
 
         // Deep-filter feature normalization: [nT, nbDf, 2]
-        let dfRe = (0..<nT).flatMap { t in
-            (0..<config.nbDf).map { b in spec.real[t * nF + b] }
+        let dfRe = (0 ..< nT).flatMap { t in
+            (0 ..< config.nbDf).map { b in spec.real[t * nF + b] }
         }
-        let dfIm = (0..<nT).flatMap { t in
-            (0..<config.nbDf).map { b in spec.imag[t * nF + b] }
+        let dfIm = (0 ..< nT).flatMap { t in
+            (0 ..< config.nbDf).map { b in spec.imag[t * nF + b] }
         }
-        let (normDfRe, normDfIm) = config.isV1
+        let (normDfRe, normDfIm) =
+            config.isV1
             ? bandUnitNormExact(real: dfRe, imag: dfIm, freqs: config.nbDf, nT: nT)
             : bandUnitNorm(real: dfRe, imag: dfIm, freqs: config.nbDf, nT: nT)
 
@@ -541,9 +547,9 @@ extension DeepFilterNetModel {
         // EMA over time using the libDF init state.
         var state = dfLinspace(start: -60.0, end: -90.0, count: bands)
         var out = [Float](repeating: 0, count: nT * bands)
-        for t in 0..<nT {
+        for t in 0 ..< nT {
             let base = t * bands
-            for e in 0..<bands {
+            for e in 0 ..< bands {
                 let xv = x[base + e]
                 state[e] = xv * oneMinusA + state[e] * a
                 out[base + e] = (xv - state[e]) / 40.0
@@ -568,11 +574,12 @@ extension DeepFilterNetModel {
         var state = dfLinspace(start: 0.001, end: 0.0001, count: freqs)
         var outR = [Float](repeating: 0, count: nT * freqs)
         var outI = [Float](repeating: 0, count: nT * freqs)
-        for t in 0..<nT {
+        for t in 0 ..< nT {
             let base = t * freqs
-            for f in 0..<freqs {
+            for f in 0 ..< freqs {
                 let idx = base + f
-                let r = real[idx], im = imag[idx]
+                let r = real[idx]
+                let im = imag[idx]
                 let mag = sqrtf(r * r + im * im)
                 state[f] = mag * oneMinusA + state[f] * a
                 let denom = sqrtf(max(state[f], 1e-12))
@@ -596,16 +603,16 @@ extension DeepFilterNetModel {
         let nF = config.freqBins
         let nbErb = config.nbErb
         var out = [Float](repeating: 0, count: nT * nbErb)
-        for t in 0..<nT {
+        for t in 0 ..< nT {
             let srcBase = t * nF
             let dstBase = t * nbErb
             var binStart = 0
-            for e in 0..<nbErb {
+            for e in 0 ..< nbErb {
                 let width = erbBandWidths[e]
                 let binEnd = min(binStart + width, nF)
                 var sum: Float = 0
                 let count = max(1, binEnd - binStart)
-                for b in binStart..<binEnd { sum += specMagSq[srcBase + b] }
+                for b in binStart ..< binEnd { sum += specMagSq[srcBase + b] }
                 out[dstBase + e] = sum / Float(count)
                 binStart = binEnd
             }
@@ -639,8 +646,8 @@ extension DeepFilterNetModel {
         for (key, mean) in weights.table where key.hasSuffix(".running_mean") {
             let prefix = String(key.dropLast(".running_mean".count))
             guard let gamma = weights["\(prefix).weight"],
-                  let beta = weights["\(prefix).bias"],
-                  let variance = weights["\(prefix).running_var"]
+                let beta = weights["\(prefix).bias"],
+                let variance = weights["\(prefix).running_var"]
             else { continue }
             let scale = zip(gamma, variance).map { g, v in g / sqrtf(v + 1e-5) }
             let bias = zip(zip(beta, mean), scale).map { pair, s in pair.0 - pair.1 * s }
@@ -671,8 +678,8 @@ extension DeepFilterNetModel {
 
         // Shape for DF input: [1, 2, nT, nbDf] (real + imag as 2 channels).
         var dfIn4D = [Float](repeating: 0, count: 2 * nT * config.nbDf)
-        for t in 0..<nT {
-            for b in 0..<config.nbDf {
+        for t in 0 ..< nT {
+            for b in 0 ..< config.nbDf {
                 dfIn4D[0 * nT * config.nbDf + t * config.nbDf + b] = dfRe[t * config.nbDf + b]
                 dfIn4D[1 * nT * config.nbDf + t * config.nbDf + b] = dfIm[t * config.nbDf + b]
             }
@@ -681,25 +688,48 @@ extension DeepFilterNetModel {
         // Apply convLookahead shift (shift the input forward in time by
         // convLookahead frames, padding the end with zeros).
         let lookahead = config.convLookahead
-        let erbShifted = lookahead > 0 ? applyLookaheadBCHW(erbIn4D, B: B, C: 1, T: nT, F: config.nbErb, l: lookahead) : erbIn4D
-        let dfShifted  = lookahead > 0 ? applyLookaheadBCHW(dfIn4D, B: B, C: 2, T: nT, F: config.nbDf, l: lookahead) : dfIn4D
+        let erbShifted =
+            lookahead > 0
+            ? applyLookaheadBCHW(erbIn4D, B: B, C: 1, T: nT, F: config.nbErb, l: lookahead)
+            : erbIn4D
+        let dfShifted =
+            lookahead > 0
+            ? applyLookaheadBCHW(dfIn4D, B: B, C: 2, T: nT, F: config.nbDf, l: lookahead) : dfIn4D
 
         // ── Encoder ──────────────────────────────────────────────────────
         // ERB branch.
-        let e0 = try encConv(erbShifted, B: B, C: 1, T: nT, F: config.nbErb, prefix: "enc.erb_conv0", main: 1, pointwise: nil, bn: 2, fstride: 1)
-        let e0T = nT, e0F = config.nbErb, e0C = convShape(prefix: "enc.erb_conv0", main: 1).outC
-        let e1 = try encConv(e0, B: B, C: e0C, T: e0T, F: e0F, prefix: "enc.erb_conv1", main: 0, pointwise: 1, bn: 2, fstride: 2)
-        let e1C = convShape(prefix: "enc.erb_conv1", main: 0).outC, e1F = e0F / 2
-        let e2 = try encConv(e1, B: B, C: e1C, T: nT, F: e1F, prefix: "enc.erb_conv2", main: 0, pointwise: 1, bn: 2, fstride: 2)
-        let e2C = convShape(prefix: "enc.erb_conv2", main: 0).outC, e2F = e1F / 2
-        let e3 = try encConv(e2, B: B, C: e2C, T: nT, F: e2F, prefix: "enc.erb_conv3", main: 0, pointwise: 1, bn: 2, fstride: 1)
-        let e3C = convShape(prefix: "enc.erb_conv3", main: 0).outC, e3F = e2F
+        let e0 = try encConv(
+            erbShifted, B: B, C: 1, T: nT, F: config.nbErb, prefix: "enc.erb_conv0", main: 1,
+            pointwise: nil, bn: 2, fstride: 1)
+        let e0T = nT
+        let e0F = config.nbErb
+        let e0C = convShape(prefix: "enc.erb_conv0", main: 1).outC
+        let e1 = try encConv(
+            e0, B: B, C: e0C, T: e0T, F: e0F, prefix: "enc.erb_conv1", main: 0, pointwise: 1, bn: 2,
+            fstride: 2)
+        let e1C = convShape(prefix: "enc.erb_conv1", main: 0).outC
+        let e1F = e0F / 2
+        let e2 = try encConv(
+            e1, B: B, C: e1C, T: nT, F: e1F, prefix: "enc.erb_conv2", main: 0, pointwise: 1, bn: 2,
+            fstride: 2)
+        let e2C = convShape(prefix: "enc.erb_conv2", main: 0).outC
+        let e2F = e1F / 2
+        let e3 = try encConv(
+            e2, B: B, C: e2C, T: nT, F: e2F, prefix: "enc.erb_conv3", main: 0, pointwise: 1, bn: 2,
+            fstride: 1)
+        let e3C = convShape(prefix: "enc.erb_conv3", main: 0).outC
+        let e3F = e2F
 
         // DF branch.
-        let c0 = try encConv(dfShifted, B: B, C: 2, T: nT, F: config.nbDf, prefix: "enc.df_conv0", main: 1, pointwise: 2, bn: 3, fstride: 1)
+        let c0 = try encConv(
+            dfShifted, B: B, C: 2, T: nT, F: config.nbDf, prefix: "enc.df_conv0", main: 1,
+            pointwise: 2, bn: 3, fstride: 1)
         let c0C = convShape(prefix: "enc.df_conv0", main: 1).outC
-        let c1 = try encConv(c0, B: B, C: c0C, T: nT, F: config.nbDf, prefix: "enc.df_conv1", main: 0, pointwise: 1, bn: 2, fstride: 2)
-        let c1C = convShape(prefix: "enc.df_conv1", main: 0).outC, c1F = config.nbDf / 2
+        let c1 = try encConv(
+            c0, B: B, C: c0C, T: nT, F: config.nbDf, prefix: "enc.df_conv1", main: 0, pointwise: 1,
+            bn: 2, fstride: 2)
+        let c1C = convShape(prefix: "enc.df_conv1", main: 0).outC
+        let c1F = config.nbDf / 2
 
         // Embedding.
         // cemb: flatten c1 from [1, c1C, nT, c1F] → [1, nT, c1C*c1F], then groupedLinear.
@@ -710,8 +740,8 @@ extension DeepFilterNetModel {
         cemb = try groupedLinearRelu(cemb, T: nT, weightKey: "enc.df_fc_emb.0.weight")
 
         // emb: flatten e3 from [1, e3C, nT, e3F] → [1, nT, e3C*e3F].
-        var emb = bchwTobtf(e3, B: B, C: e3C, T: nT, F: e3F)   // [nT, e3C*e3F]
-        let cembDim = cemb[0..<(cemb.count / nT)].count  // output dim per time step
+        var emb = bchwTobtf(e3, B: B, C: e3C, T: nT, F: e3F)  // [nT, e3C*e3F]
+        let cembDim = cemb[0 ..< (cemb.count / nT)].count  // output dim per time step
         // Merge: add or concat.
         if config.encConcat {
             emb = zip(emb, cemb).map { $0 + $1 }  // placeholder — proper concat below
@@ -719,49 +749,63 @@ extension DeepFilterNetModel {
             let embDim = emb.count / nT
             let cDim = cemb.count / nT
             var merged = [Float](repeating: 0, count: nT * (embDim + cDim))
-            for t in 0..<nT {
-                for d in 0..<embDim { merged[t * (embDim + cDim) + d] = emb[t * embDim + d] }
-                for d in 0..<cDim { merged[t * (embDim + cDim) + embDim + d] = cemb[t * cDim + d] }
+            for t in 0 ..< nT {
+                for d in 0 ..< embDim { merged[t * (embDim + cDim) + d] = emb[t * embDim + d] }
+                for d in 0 ..< cDim {
+                    merged[t * (embDim + cDim) + embDim + d] = cemb[t * cDim + d]
+                }
             }
             emb = merged
         } else {
             // element-wise add (requires same dim — typical for V2/V3).
             let embDim = emb.count / nT
             let cDim = min(embDim, cemb.count / nT)
-            for t in 0..<nT {
-                for d in 0..<cDim {
+            for t in 0 ..< nT {
+                for d in 0 ..< cDim {
                     emb[t * embDim + d] += cemb[t * cDim + d]
                 }
             }
         }
 
         // Embedding GRU.
-        emb = try squeezedGRU(emb, T: nT, prefix: "enc.emb_gru", hiddenSize: config.embHiddenDim, linearOut: true)
+        emb = try squeezedGRU(
+            emb, T: nT, prefix: "enc.emb_gru", hiddenSize: config.embHiddenDim, linearOut: true)
 
         // ── ERB Decoder ───────────────────────────────────────────────────
-        var embDec = try squeezedGRU(emb, T: nT, prefix: "erb_dec.emb_gru", hiddenSize: config.embHiddenDim, linearOut: true)
+        var embDec = try squeezedGRU(
+            emb, T: nT, prefix: "erb_dec.emb_gru", hiddenSize: config.embHiddenDim, linearOut: true)
         let embDecDim = embDec.count / nT
         // Project to [1, embDecDim/e3F, nT, e3F] BCHW.
         let embDecC = embDecDim / max(1, e3F)
         var embDecBCHW = tfToBchw(embDec, T: nT, dim: embDecDim, newC: embDecC, F: e3F)
 
-        var d3 = addBCHW(relu4D(try pathwayConv(e3, B: B, C: e3C, T: nT, F: e3F, prefix: "erb_dec.conv3p")),
-                         embDecBCHW, B: B, C: embDecC, T: nT, F: e3F)
+        var d3 = addBCHW(
+            relu4D(try pathwayConv(e3, B: B, C: e3C, T: nT, F: e3F, prefix: "erb_dec.conv3p")),
+            embDecBCHW, B: B, C: embDecC, T: nT, F: e3F)
         d3 = relu4D(try regularBlock(d3, B: B, C: embDecC, T: nT, F: e3F, prefix: "erb_dec.convt3"))
 
         let d3C = embDecC
-        var d2 = addBCHW(relu4D(try pathwayConv(e2, B: B, C: e2C, T: nT, F: e2F, prefix: "erb_dec.conv2p")),
-                         alignTime(d3, C: d3C, T: nT, F: e2F), B: B, C: d3C, T: nT, F: e2F)
-        d2 = relu4D(try transposeBlock(d2, B: B, C: d3C, T: nT, F: e2F, prefix: "erb_dec.convt2", fstride: 2))
-        let d2C = d3C, d2F = e2F * 2
+        var d2 = addBCHW(
+            relu4D(try pathwayConv(e2, B: B, C: e2C, T: nT, F: e2F, prefix: "erb_dec.conv2p")),
+            alignTime(d3, C: d3C, T: nT, F: e2F), B: B, C: d3C, T: nT, F: e2F)
+        d2 = relu4D(
+            try transposeBlock(
+                d2, B: B, C: d3C, T: nT, F: e2F, prefix: "erb_dec.convt2", fstride: 2))
+        let d2C = d3C
+        let d2F = e2F * 2
 
-        var d1 = addBCHW(relu4D(try pathwayConv(e1, B: B, C: e1C, T: nT, F: e1F, prefix: "erb_dec.conv1p")),
-                         alignTime(d2, C: d2C, T: nT, F: e1F), B: B, C: d2C, T: nT, F: e1F)
-        d1 = relu4D(try transposeBlock(d1, B: B, C: d2C, T: nT, F: e1F, prefix: "erb_dec.convt1", fstride: 2))
-        let d1C = d2C, d1F = e1F * 2
+        var d1 = addBCHW(
+            relu4D(try pathwayConv(e1, B: B, C: e1C, T: nT, F: e1F, prefix: "erb_dec.conv1p")),
+            alignTime(d2, C: d2C, T: nT, F: e1F), B: B, C: d2C, T: nT, F: e1F)
+        d1 = relu4D(
+            try transposeBlock(
+                d1, B: B, C: d2C, T: nT, F: e1F, prefix: "erb_dec.convt1", fstride: 2))
+        let d1C = d2C
+        let d1F = e1F * 2
 
-        var d0 = addBCHW(relu4D(try pathwayConv(e0, B: B, C: e0C, T: nT, F: e0F, prefix: "erb_dec.conv0p")),
-                         alignTime(d1, C: d1C, T: nT, F: e0F), B: B, C: d1C, T: nT, F: e0F)
+        var d0 = addBCHW(
+            relu4D(try pathwayConv(e0, B: B, C: e0C, T: nT, F: e0F, prefix: "erb_dec.conv0p")),
+            alignTime(d1, C: d1C, T: nT, F: e0F), B: B, C: d1C, T: nT, F: e0F)
         var maskBCHW = try outputConv(d0, B: B, C: d1C, T: nT, F: e0F, prefix: "erb_dec.conv0_out")
         // Sigmoid.
         for i in maskBCHW.indices { maskBCHW[i] = 1.0 / (1.0 + expf(-maskBCHW[i])) }
@@ -775,8 +819,8 @@ extension DeepFilterNetModel {
         var specMaskedImag = specImag
         // Build inverse ERB filterbank gains.
         let gains = applyErbMask(maskFlat: maskFlat, nT: nT, maskC: maskC)
-        for t in 0..<nT {
-            for f in 0..<nF {
+        for t in 0 ..< nT {
+            for f in 0 ..< nF {
                 let g = gains[t * nF + f]
                 specMaskedReal[t * nF + f] *= g
                 specMaskedImag[t * nF + f] *= g
@@ -784,16 +828,18 @@ extension DeepFilterNetModel {
         }
 
         // ── DF Decoder ────────────────────────────────────────────────────
-        var dfGruOut = try squeezedGRU(emb, T: nT, prefix: "df_dec.df_gru", hiddenSize: config.dfHiddenDim, linearOut: false)
+        var dfGruOut = try squeezedGRU(
+            emb, T: nT, prefix: "df_dec.df_gru", hiddenSize: config.dfHiddenDim, linearOut: false)
 
         // Optional skip connection.
         if weights.has("df_dec.df_skip.weight") {
-            let skip = try groupedLinear(emb, T: nT, prefix: nil, weightKey: "df_dec.df_skip.weight")
+            let skip = try groupedLinear(
+                emb, T: nT, prefix: nil, weightKey: "df_dec.df_skip.weight")
             let skipDim = skip.count / nT
             let dfDim = dfGruOut.count / nT
             let minDim = min(skipDim, dfDim)
-            for t in 0..<nT {
-                for d in 0..<minDim {
+            for t in 0 ..< nT {
+                for d in 0 ..< minDim {
                     dfGruOut[t * dfDim + d] += skip[t * skipDim + d]
                 }
             }
@@ -801,34 +847,41 @@ extension DeepFilterNetModel {
 
         // df_convp branch from c0.
         let c0F = config.nbDf
-        var c0p = try conv2dLayer(c0, B: B, C: c0C, T: nT, F: c0F, weightKey: "df_dec.df_convp.1.weight", bias: nil, fstride: 1, lookahead: 0)
+        var c0p = try conv2dLayer(
+            c0, B: B, C: c0C, T: nT, F: c0F, weightKey: "df_dec.df_convp.1.weight", bias: nil,
+            fstride: 1, lookahead: 0)
         let c0p1C = convShape(prefix: "df_dec.df_convp", main: 1).outC
-        c0p = try conv2dLayer(c0p, B: B, C: c0p1C, T: nT, F: c0F, weightKey: "df_dec.df_convp.2.weight", bias: nil, fstride: 1, lookahead: 0)
+        c0p = try conv2dLayer(
+            c0p, B: B, C: c0p1C, T: nT, F: c0F, weightKey: "df_dec.df_convp.2.weight", bias: nil,
+            fstride: 1, lookahead: 0)
         let c0p2C = convShape(prefix: "df_dec.df_convp", main: 2).outC
-        c0p = relu4D(try applyBatchNorm(c0p, B: B, C: c0p2C, T: nT, F: c0F, prefix: "df_dec.df_convp.3"))
+        c0p = relu4D(
+            try applyBatchNorm(c0p, B: B, C: c0p2C, T: nT, F: c0F, prefix: "df_dec.df_convp.3"))
         // c0p BCHW → [nT, c0p2C*c0F].
         let c0pFlat = bchwTobtf(c0p, B: B, C: c0p2C, T: nT, F: c0F)
 
         // df_out: tanh(groupedLinear(dfGruOut)) → [nT, nbDf * dfOrder * 2].
-        var dfOut = try groupedLinear(dfGruOut, T: nT, prefix: nil, weightKey: "df_dec.df_out.0.weight")
+        var dfOut = try groupedLinear(
+            dfGruOut, T: nT, prefix: nil, weightKey: "df_dec.df_out.0.weight")
         for i in dfOut.indices { dfOut[i] = tanhf(dfOut[i]) }
         // Reshape to [nT, nbDf, dfOrder*2].
         let dfCoefDim = config.nbDf * config.dfOrder * 2
 
         // Add c0pFlat (as [nT, nbDf, dfOrder*2] after proper reshape).
         let minLen = min(dfOut.count, c0pFlat.count)
-        for i in 0..<minLen { dfOut[i] += c0pFlat[i] }
+        for i in 0 ..< minLen { dfOut[i] += c0pFlat[i] }
 
         // dfCoefs shape: [nT, dfOrder, nbDf, 2] (for deepFilter application).
         // dfOut is [nT, nbDf*dfOrder*2]; reshape to [nT, nbDf, dfOrder, 2] then transpose to [nT, dfOrder, nbDf, 2].
         var dfCoefs = [Float](repeating: 0, count: nT * config.dfOrder * config.nbDf * 2)
-        for t in 0..<nT {
-            for f in 0..<config.nbDf {
-                for k in 0..<config.dfOrder {
-                    let srcBase = t * config.nbDf * config.dfOrder * 2 + f * config.dfOrder * 2 + k * 2
+        for t in 0 ..< nT {
+            for f in 0 ..< config.nbDf {
+                for k in 0 ..< config.dfOrder {
+                    let srcBase =
+                        t * config.nbDf * config.dfOrder * 2 + f * config.dfOrder * 2 + k * 2
                     let dstBase = t * config.dfOrder * config.nbDf * 2 + k * config.nbDf * 2 + f * 2
                     if srcBase + 1 < dfOut.count {
-                        dfCoefs[dstBase]     = dfOut[srcBase]
+                        dfCoefs[dstBase] = dfOut[srcBase]
                         dfCoefs[dstBase + 1] = dfOut[srcBase + 1]
                     }
                 }
@@ -844,8 +897,8 @@ extension DeepFilterNetModel {
         // Combine: low-freq from deep filter, high-freq from ERB mask.
         var outReal = specMaskedReal
         var outImag = specMaskedImag
-        for t in 0..<nT {
-            for b in 0..<config.nbDf {
+        for t in 0 ..< nT {
+            for b in 0 ..< config.nbDf {
                 outReal[t * nF + b] = enhLowReal[t * config.nbDf + b]
                 outImag[t * nF + b] = enhLowImag[t * config.nbDf + b]
             }
@@ -871,12 +924,14 @@ extension DeepFilterNetModel {
         var outReal = [Float](repeating: 0, count: nT * nbDf)
         var outImag = [Float](repeating: 0, count: nT * nbDf)
 
-        for t in 0..<nT {
-            for b in 0..<nbDf {
-                var accR: Float = 0, accI: Float = 0
-                for k in 0..<dfOrder {
+        for t in 0 ..< nT {
+            for b in 0 ..< nbDf {
+                var accR: Float = 0
+                var accI: Float = 0
+                for k in 0 ..< dfOrder {
                     let srcT = t - padLeft + k
-                    var sr: Float = 0, si: Float = 0
+                    var sr: Float = 0
+                    var si: Float = 0
                     if srcT >= 0, srcT < nT {
                         sr = specReal[srcT * nF + b]
                         si = specImag[srcT * nF + b]
@@ -902,12 +957,12 @@ extension DeepFilterNetModel {
         let nbErb = config.nbErb
         let nF = config.freqBins
         var gains = [Float](repeating: 0, count: nT * nF)
-        for t in 0..<nT {
+        for t in 0 ..< nT {
             var binStart = 0
-            for e in 0..<nbErb {
+            for e in 0 ..< nbErb {
                 // Average across maskC channels (usually 1).
                 var gain: Float = 0
-                for c in 0..<maskC {
+                for c in 0 ..< maskC {
                     let idx = c * nT * nbErb + t * nbErb + e
                     if idx < maskFlat.count { gain += maskFlat[idx] }
                 }
@@ -915,7 +970,7 @@ extension DeepFilterNetModel {
                 // Broadcast to all bins in this ERB band.
                 let width = erbBandWidths[e]
                 let binEnd = min(binStart + width, nF)
-                for b in binStart..<binEnd {
+                for b in binStart ..< binEnd {
                     gains[t * nF + b] = gain
                 }
                 binStart = binEnd
@@ -932,10 +987,10 @@ extension DeepFilterNetModel {
     /// Convert `[B, C, T, F]` to `[T, dim]` where `dim = C*F`.
     func bchwTobtf(_ x: [Float], B: Int, C: Int, T: Int, F: Int) -> [Float] {
         var out = [Float](repeating: 0, count: T * C * F)
-        for b in 0..<B {
-            for t in 0..<T {
-                for c in 0..<C {
-                    for f in 0..<F {
+        for b in 0 ..< B {
+            for t in 0 ..< T {
+                for c in 0 ..< C {
+                    for f in 0 ..< F {
                         out[t * C * F + c * F + f] = x[b * C * T * F + c * T * F + t * F + f]
                     }
                 }
@@ -947,9 +1002,9 @@ extension DeepFilterNetModel {
     /// Convert `[T, dim]` back to `[B, C, T, F]`.
     func tfToBchw(_ x: [Float], T: Int, dim: Int, newC: Int, F: Int) -> [Float] {
         var out = [Float](repeating: 0, count: newC * T * F)
-        for t in 0..<T {
-            for c in 0..<newC {
-                for f in 0..<F {
+        for t in 0 ..< T {
+            for c in 0 ..< newC {
+                for f in 0 ..< F {
                     let srcIdx = t * dim + c * F + f
                     if srcIdx < x.count {
                         out[c * T * F + t * F + f] = x[srcIdx]
@@ -963,7 +1018,7 @@ extension DeepFilterNetModel {
     func addBCHW(_ a: [Float], _ b: [Float], B: Int, C: Int, T: Int, F: Int) -> [Float] {
         let n = min(a.count, b.count)
         var out = a
-        for i in 0..<n { out[i] += b[i] }
+        for i in 0 ..< n { out[i] += b[i] }
         return out
     }
 
@@ -979,14 +1034,15 @@ extension DeepFilterNetModel {
         guard l > 0, T > l else { return x }
         // Shift time axis forward by `l` (drop first `l` frames, zero-pad end).
         var out = [Float](repeating: 0, count: B * C * T * F)
-        for b in 0..<B {
-            for c in 0..<C {
-                for t in 0..<T {
+        for b in 0 ..< B {
+            for c in 0 ..< C {
+                for t in 0 ..< T {
                     let srcT = t + l
                     if srcT < T {
                         let srcBase = b * C * T * F + c * T * F + srcT * F
                         let dstBase = b * C * T * F + c * T * F + t * F
-                        out.replaceSubrange(dstBase..<(dstBase + F), with: x[srcBase..<(srcBase + F)])
+                        out.replaceSubrange(
+                            dstBase ..< (dstBase + F), with: x[srcBase ..< (srcBase + F)])
                     }
                 }
             }
@@ -1003,7 +1059,9 @@ extension DeepFilterNetModel {
 
     func convShape(prefix: String, main: Int) -> ConvDims {
         let key = "\(prefix).\(main).weight"
-        if let s = conv2dShapes[key] { return ConvDims(outC: s.outC, kT: s.kT, kF: s.kF, inC: s.inC) }
+        if let s = conv2dShapes[key] {
+            return ConvDims(outC: s.outC, kT: s.kT, kF: s.kF, inC: s.inC)
+        }
         if let shape = weights.shapes[key], shape.count == 4 {
             return ConvDims(outC: shape[0], kT: shape[2], kF: shape[3], inC: shape[1])
         }
@@ -1024,32 +1082,34 @@ extension DeepFilterNetModel {
         weightKey: String, bias: [Float]?, fstride: Int, lookahead: Int
     ) throws -> [Float] {
         guard let wOHWI = conv2dWeightsOHWI[weightKey],
-              let shape = conv2dShapes[weightKey]
+            let shape = conv2dShapes[weightKey]
         else {
             // Fallback: load from weights dict.
             guard let wRaw = weights[weightKey],
-                  let rawShape = weights.shapes[weightKey], rawShape.count == 4
+                let rawShape = weights.shapes[weightKey], rawShape.count == 4
             else { throw DeepFilterNetError.missingWeightKey(weightKey) }
             let (outC, inC, kT, kF) = (rawShape[0], rawShape[1], rawShape[2], rawShape[3])
             // Transpose on the fly.
             var wOHWI2 = [Float](repeating: 0, count: outC * kT * kF * inC)
-            for o in 0..<outC {
-                for t in 0..<kT {
-                    for f in 0..<kF {
-                        for i in 0..<inC {
-                            wOHWI2[o * kT * kF * inC + t * kF * inC + f * inC + i]
-                                = wRaw[o * inC * kT * kF + i * kT * kF + t * kF + f]
+            for o in 0 ..< outC {
+                for t in 0 ..< kT {
+                    for f in 0 ..< kF {
+                        for i in 0 ..< inC {
+                            wOHWI2[o * kT * kF * inC + t * kF * inC + f * inC + i] =
+                                wRaw[o * inC * kT * kF + i * kT * kF + t * kF + f]
                         }
                     }
                 }
             }
-            return conv2dCompute(x, B: B, C: C, T: T, F: F,
-                                 weight: wOHWI2, outC: outC, kT: kT, kF: kF,
-                                 bias: bias, fstride: fstride, lookahead: lookahead)
+            return conv2dCompute(
+                x, B: B, C: C, T: T, F: F,
+                weight: wOHWI2, outC: outC, kT: kT, kF: kF,
+                bias: bias, fstride: fstride, lookahead: lookahead)
         }
-        return conv2dCompute(x, B: B, C: C, T: T, F: F,
-                             weight: wOHWI, outC: shape.outC, kT: shape.kT, kF: shape.kF,
-                             bias: bias, fstride: fstride, lookahead: lookahead)
+        return conv2dCompute(
+            x, B: B, C: C, T: T, F: F,
+            weight: wOHWI, outC: shape.outC, kT: shape.kT, kF: shape.kF,
+            bias: bias, fstride: fstride, lookahead: lookahead)
     }
 
     /// Core convolution computation.  Input/output in `[B, C, T, F]`.
@@ -1091,17 +1151,19 @@ extension DeepFilterNetModel {
             let g = oc / outCPerGroup
             let ocLocal = oc % outCPerGroup
 
-            for of in 0..<outF {
+            for of in 0 ..< outF {
                 var acc: Float = 0
-                for kt in 0..<kT {
-                    for kf in 0..<kF {
+                for kt in 0 ..< kT {
+                    for kf in 0 ..< kF {
                         let srcT = ot - timePadLeft + kt + timeCrop
                         let srcFRaw = of * fstride - freqPad + kf
                         guard srcT >= 0, srcT < T, srcFRaw >= 0, srcFRaw < F else { continue }
-                        for ic in 0..<inCPerGroup {
+                        for ic in 0 ..< inCPerGroup {
                             let inC_idx = g * inCPerGroup + ic
                             let xVal = x[b * C * T * F + inC_idx * T * F + srcT * F + srcFRaw]
-                            let wVal = weight[oc * kT * kF * inCPerGroup + kt * kF * inCPerGroup + kf * inCPerGroup + ic]
+                            let wVal = weight[
+                                oc * kT * kF * inCPerGroup + kt * kF * inCPerGroup + kf
+                                    * inCPerGroup + ic]
                             acc += xVal * wVal
                         }
                     }
@@ -1121,7 +1183,7 @@ extension DeepFilterNetModel {
         weightKey: String, fstride: Int
     ) throws -> [Float] {
         guard let wRaw = weights[weightKey],
-              let rawShape = weights.shapes[weightKey], rawShape.count == 4
+            let rawShape = weights.shapes[weightKey], rawShape.count == 4
         else { throw DeepFilterNetError.missingWeightKey(weightKey) }
         let (inC, outCW, kT, kF) = (rawShape[0], rawShape[1], rawShape[2], rawShape[3])
         // groups = inC / outCW typically.
@@ -1137,28 +1199,30 @@ extension DeepFilterNetModel {
 
         var out = [Float](repeating: 0, count: B * outC * outT * outF)
 
-        for b in 0..<B {
-            for g in 0..<groups {
-                for ic in 0..<inCPerGroup {
+        for b in 0 ..< B {
+            for g in 0 ..< groups {
+                for ic in 0 ..< inCPerGroup {
                     let inC_idx = g * inCPerGroup + ic
-                    for oc in 0..<outCPerGroup {
+                    for oc in 0 ..< outCPerGroup {
                         let outC_idx = g * outCPerGroup + oc
-                        for it in 0..<T {
-                            for inf2 in 0..<F {
+                        for it in 0 ..< T {
+                            for inf2 in 0 ..< F {
                                 let xVal = x[b * C * T * F + inC_idx * T * F + it * F + inf2]
-                                for kt in 0..<kT {
+                                for kt in 0 ..< kT {
                                     let ot = it - kt + (kT - 1) - paddingT + (kT - 1)
                                     // Simplified: just add contribution.
                                     let ot2 = it + (kT - 1) - kt
                                     guard ot2 >= 0, ot2 < outT else { continue }
-                                    for kf in 0..<kF {
+                                    for kf in 0 ..< kF {
                                         let of2 = inf2 * fstride - paddingF + kf
                                         guard of2 >= 0, of2 < outF else { continue }
                                         // weight layout: [inC, outCPerGroup, kT, kF]
-                                        let wIdx = inC_idx * outCPerGroup * kT * kF
+                                        let wIdx =
+                                            inC_idx * outCPerGroup * kT * kF
                                             + oc * kT * kF + kt * kF + kf
                                         if wIdx < wRaw.count {
-                                            let outIdx = b * outC * outT * outF
+                                            let outIdx =
+                                                b * outC * outT * outF
                                                 + outC_idx * outT * outF + ot2 * outF + of2
                                             out[outIdx] += xVal * wRaw[wIdx]
                                         }
@@ -1175,15 +1239,17 @@ extension DeepFilterNetModel {
 
     // MARK: BatchNorm
 
-    func applyBatchNorm(_ x: [Float], B: Int, C: Int, T: Int, F: Int, prefix: String) throws -> [Float] {
+    func applyBatchNorm(_ x: [Float], B: Int, C: Int, T: Int, F: Int, prefix: String) throws
+        -> [Float]
+    {
         if let bn = bnMap[prefix] {
             return bn.apply(x, batch: B, channels: C, height: T, width: F)
         }
         // Build on the fly.
         guard let gamma = weights["\(prefix).weight"],
-              let beta = weights["\(prefix).bias"],
-              let mean = weights["\(prefix).running_mean"],
-              let variance = weights["\(prefix).running_var"]
+            let beta = weights["\(prefix).bias"],
+            let mean = weights["\(prefix).running_mean"],
+            let variance = weights["\(prefix).running_var"]
         else { throw DeepFilterNetError.missingWeightKey("\(prefix).weight") }
         let scale = zip(gamma, variance).map { g, v in g / sqrtf(v + 1e-5) }
         let bias = zip(zip(beta, mean), scale).map { pair, s in pair.0 - pair.1 * s }
@@ -1197,10 +1263,10 @@ extension DeepFilterNetModel {
         guard let shape = findLinearShape(weight: weight, inDim: x.count / T) else { return x }
         let (inDim, outDim) = shape
         var out = [Float](repeating: 0, count: T * outDim)
-        for t in 0..<T {
-            for o in 0..<outDim {
+        for t in 0 ..< T {
+            for o in 0 ..< outDim {
                 var acc: Float = 0
-                for i in 0..<inDim {
+                for i in 0 ..< inDim {
                     acc += x[t * inDim + i] * weight[o * inDim + i]
                 }
                 if let bias, o < bias.count { acc += bias[o] }
@@ -1235,11 +1301,11 @@ extension DeepFilterNetModel {
         // Shape: [groups, inPerGroup, outPerGroup]
         let (groups, inPG, outPG) = (shape[0], shape[1], shape[2])
         var out = [Float](repeating: 0, count: T * groups * outPG)
-        for t in 0..<T {
-            for g in 0..<groups {
-                for o in 0..<outPG {
+        for t in 0 ..< T {
+            for g in 0 ..< groups {
+                for o in 0 ..< outPG {
                     var acc: Float = 0
-                    for i in 0..<inPG {
+                    for i in 0 ..< inPG {
                         let xIdx = t * (groups * inPG) + g * inPG + i
                         let wIdx = g * inPG * outPG + i * outPG + o
                         if xIdx < x.count, wIdx < w.count {
@@ -1289,15 +1355,15 @@ extension DeepFilterNetModel {
             0.0, &gxAll, Int32(h3)
         )
         // Add bias.
-        for t in 0..<T {
-            for j in 0..<h3 { gxAll[t * h3 + j] += bih[j] }
+        for t in 0 ..< T {
+            for j in 0 ..< h3 { gxAll[t * h3 + j] += bih[j] }
         }
 
         var output = [Float](repeating: 0, count: T * hiddenSize)
         var state = [Float](repeating: 0, count: hiddenSize)
         var gh = [Float](repeating: 0, count: h3)
 
-        for t in 0..<T {
+        for t in 0 ..< T {
             // gh = state @ whhT.
             cblas_sgemv(
                 CblasRowMajor, CblasNoTrans,
@@ -1305,17 +1371,21 @@ extension DeepFilterNetModel {
                 1.0, whhT, Int32(hiddenSize),
                 state, 1, 0.0, &gh, 1
             )
-            for j in 0..<h3 { gh[j] += bhh[j] }
+            for j in 0 ..< h3 { gh[j] += bhh[j] }
             // GRU gates.
-            for k in 0..<hiddenSize {
-                let xr = gxAll[t * h3 + k], xz = gxAll[t * h3 + hiddenSize + k], xn = gxAll[t * h3 + 2 * hiddenSize + k]
-                let hr = gh[k], hz = gh[hiddenSize + k], hn = gh[2 * hiddenSize + k]
+            for k in 0 ..< hiddenSize {
+                let xr = gxAll[t * h3 + k]
+                let xz = gxAll[t * h3 + hiddenSize + k]
+                let xn = gxAll[t * h3 + 2 * hiddenSize + k]
+                let hr = gh[k]
+                let hz = gh[hiddenSize + k]
+                let hn = gh[2 * hiddenSize + k]
                 let r = 1.0 / (1.0 + expf(-(xr + hr)))
                 let z = 1.0 / (1.0 + expf(-(xz + hz)))
                 let n = tanhf(xn + r * hn)
                 state[k] = (1.0 - z) * n + z * state[k]
             }
-            output.replaceSubrange((t * hiddenSize)..<((t + 1) * hiddenSize), with: state)
+            output.replaceSubrange((t * hiddenSize) ..< ((t + 1) * hiddenSize), with: state)
         }
         return output
     }
@@ -1347,9 +1417,17 @@ extension DeepFilterNetModel {
             let curDim = y.count / T
             let wihTKey = "\(prefix).gru.weight_ih_l\(layer)"
             let whhTKey = "\(prefix).gru.weight_hh_l\(layer)"
-            let wihT = gruWeightIHT[wihTKey] ?? (weights[wihTKey].map { transpose2D($0, rows: 3 * hiddenSize, cols: curDim) } ?? [])
-            let whhT = gruWeightHHT[whhTKey] ?? (weights[whhTKey].map { transpose2D($0, rows: 3 * hiddenSize, cols: hiddenSize) } ?? [])
-            y = gruLayer(y, T: T, inDim: curDim, wihT: wihT, whhT: whhT, bih: bih, bhh: bhh, hiddenSize: hiddenSize)
+            let wihT =
+                gruWeightIHT[wihTKey]
+                ?? (weights[wihTKey].map { transpose2D($0, rows: 3 * hiddenSize, cols: curDim) }
+                    ?? [])
+            let whhT =
+                gruWeightHHT[whhTKey]
+                ?? (weights[whhTKey].map { transpose2D($0, rows: 3 * hiddenSize, cols: hiddenSize) }
+                    ?? [])
+            y = gruLayer(
+                y, T: T, inDim: curDim, wihT: wihT, whhT: whhT, bih: bih, bhh: bhh,
+                hiddenSize: hiddenSize)
             layer += 1
         }
 
@@ -1364,8 +1442,8 @@ extension DeepFilterNetModel {
     /// Transpose a 2-D matrix stored row-major: `[rows, cols]` → `[cols, rows]`.
     func transpose2D(_ m: [Float], rows: Int, cols: Int) -> [Float] {
         var out = [Float](repeating: 0, count: rows * cols)
-        for r in 0..<rows {
-            for c in 0..<cols {
+        for r in 0 ..< rows {
+            for c in 0 ..< cols {
                 out[c * rows + r] = m[r * cols + c]
             }
         }
@@ -1378,16 +1456,18 @@ extension DeepFilterNetModel {
         _ x: [Float], B: Int, C: Int, T: Int, F: Int,
         prefix: String, main: Int, pointwise: Int?, bn: Int, fstride: Int
     ) throws -> [Float] {
-        var y = try conv2dLayer(x, B: B, C: C, T: T, F: F,
-                                weightKey: "\(prefix).\(main).weight",
-                                bias: nil, fstride: fstride, lookahead: 0)
+        var y = try conv2dLayer(
+            x, B: B, C: C, T: T, F: F,
+            weightKey: "\(prefix).\(main).weight",
+            bias: nil, fstride: fstride, lookahead: 0)
         let outDims = convShape(prefix: prefix, main: main)
         let outC = outDims.outC
         let outF = (fstride == 1) ? F : F / fstride
         if let pw = pointwise {
-            y = try conv2dLayer(y, B: B, C: outC, T: T, F: outF,
-                                weightKey: "\(prefix).\(pw).weight",
-                                bias: nil, fstride: 1, lookahead: 0)
+            y = try conv2dLayer(
+                y, B: B, C: outC, T: T, F: outF,
+                weightKey: "\(prefix).\(pw).weight",
+                bias: nil, fstride: 1, lookahead: 0)
         }
         let pwC = pointwise != nil ? convShape(prefix: prefix, main: pointwise!).outC : outC
         y = try applyBatchNorm(y, B: B, C: pwC, T: T, F: outF, prefix: "\(prefix).\(bn)")
@@ -1398,27 +1478,35 @@ extension DeepFilterNetModel {
     // MARK: Decoder blocks
 
     func pathwayConv(_ x: [Float], B: Int, C: Int, T: Int, F: Int, prefix: String) throws -> [Float] {
-        var y = try conv2dLayer(x, B: B, C: C, T: T, F: F,
-                                weightKey: "\(prefix).0.weight", bias: nil, fstride: 1, lookahead: 0)
+        var y = try conv2dLayer(
+            x, B: B, C: C, T: T, F: F,
+            weightKey: "\(prefix).0.weight", bias: nil, fstride: 1, lookahead: 0)
         let outC = convShape(prefix: prefix, main: 0).outC
         y = try applyBatchNorm(y, B: B, C: outC, T: T, F: F, prefix: "\(prefix).1")
         for i in y.indices { y[i] = max(0, y[i]) }  // ReLU
         return y
     }
 
-    func regularBlock(_ x: [Float], B: Int, C: Int, T: Int, F: Int, prefix: String) throws -> [Float] {
-        var y = try conv2dLayer(x, B: B, C: C, T: T, F: F,
-                                weightKey: "\(prefix).0.weight", bias: nil, fstride: 1, lookahead: 0)
+    func regularBlock(_ x: [Float], B: Int, C: Int, T: Int, F: Int, prefix: String) throws
+        -> [Float]
+    {
+        var y = try conv2dLayer(
+            x, B: B, C: C, T: T, F: F,
+            weightKey: "\(prefix).0.weight", bias: nil, fstride: 1, lookahead: 0)
         let c1 = convShape(prefix: prefix, main: 0).outC
-        y = try conv2dLayer(y, B: B, C: c1, T: T, F: F,
-                            weightKey: "\(prefix).1.weight", bias: nil, fstride: 1, lookahead: 0)
+        y = try conv2dLayer(
+            y, B: B, C: c1, T: T, F: F,
+            weightKey: "\(prefix).1.weight", bias: nil, fstride: 1, lookahead: 0)
         let c2 = convShape(prefix: prefix, main: 1).outC
         return try applyBatchNorm(y, B: B, C: c2, T: T, F: F, prefix: "\(prefix).2")
     }
 
-    func transposeBlock(_ x: [Float], B: Int, C: Int, T: Int, F: Int, prefix: String, fstride: Int) throws -> [Float] {
-        var y = try convTranspose2dLayer(x, B: B, C: C, T: T, F: F,
-                                         weightKey: "\(prefix).0.weight", fstride: fstride)
+    func transposeBlock(_ x: [Float], B: Int, C: Int, T: Int, F: Int, prefix: String, fstride: Int)
+        throws -> [Float]
+    {
+        var y = try convTranspose2dLayer(
+            x, B: B, C: C, T: T, F: F,
+            weightKey: "\(prefix).0.weight", fstride: fstride)
         let outF = F * fstride
         // Infer channels from transpose-conv output.
         let outC: Int
@@ -1427,15 +1515,17 @@ extension DeepFilterNetModel {
         } else {
             outC = C
         }
-        y = try conv2dLayer(y, B: B, C: outC, T: T, F: outF,
-                            weightKey: "\(prefix).1.weight", bias: nil, fstride: 1, lookahead: 0)
+        y = try conv2dLayer(
+            y, B: B, C: outC, T: T, F: outF,
+            weightKey: "\(prefix).1.weight", bias: nil, fstride: 1, lookahead: 0)
         let c2 = convShape(prefix: prefix, main: 1).outC
         return try applyBatchNorm(y, B: B, C: c2, T: T, F: outF, prefix: "\(prefix).2")
     }
 
     func outputConv(_ x: [Float], B: Int, C: Int, T: Int, F: Int, prefix: String) throws -> [Float] {
-        var y = try conv2dLayer(x, B: B, C: C, T: T, F: F,
-                                weightKey: "\(prefix).0.weight", bias: nil, fstride: 1, lookahead: 0)
+        var y = try conv2dLayer(
+            x, B: B, C: C, T: T, F: F,
+            weightKey: "\(prefix).0.weight", bias: nil, fstride: 1, lookahead: 0)
         let outC = convShape(prefix: prefix, main: 0).outC
         return try applyBatchNorm(y, B: B, C: outC, T: T, F: F, prefix: "\(prefix).1")
     }

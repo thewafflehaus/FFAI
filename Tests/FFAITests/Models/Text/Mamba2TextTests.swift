@@ -22,6 +22,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Mamba2Dense Variant Surface")

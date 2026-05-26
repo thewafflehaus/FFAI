@@ -31,6 +31,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("StyleTTS2 Integration", .serialized)
@@ -40,19 +41,23 @@ struct StyleTTS2IntegrationTests {
     private static var cachedSnapshotDir: URL? {
         let hub = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".cache/huggingface/hub")
-        let modelDir = hub
+        let modelDir =
+            hub
             .appendingPathComponent("models--mlx-community--kitten-tts-nano-0.8-fp16")
             .appendingPathComponent("snapshots")
-        guard let snap = try? FileManager.default.contentsOfDirectory(
-            at: modelDir, includingPropertiesForKeys: nil
-        ).first else { return nil }
+        guard
+            let snap = try? FileManager.default.contentsOfDirectory(
+                at: modelDir, includingPropertiesForKeys: nil
+            ).first
+        else { return nil }
         return snap
     }
 
     @Test("load kitten-tts-nano checkpoint + synthesize placeholder produces sane waveform")
     func loadAndSynthesize() async throws {
-        let dir = try #require(Self.cachedSnapshotDir,
-                               "StyleTTS2: kitten-tts-nano-0.8-fp16 not cached at ~/.cache/huggingface/hub/")
+        let dir = try #require(
+            Self.cachedSnapshotDir,
+            "StyleTTS2: kitten-tts-nano-0.8-fp16 not cached at ~/.cache/huggingface/hub/")
 
         // ── 1. Load via AudioModelRegistry ──────────────────────────────
         let loaded = try await AudioModelRegistry.load(directory: dir)
@@ -64,13 +69,15 @@ struct StyleTTS2IntegrationTests {
 
         // ── 2. Registry detection ────────────────────────────────────────
         let caps = AudioModelRegistry.capabilities(forConfigAt: dir)
-        #expect(caps == Capability.textToSpeech,
-                "expected textToSpeech capability for kitten-tts checkpoint")
+        #expect(
+            caps == Capability.textToSpeech,
+            "expected textToSpeech capability for kitten-tts checkpoint")
 
         // ── 3. Config sanity ─────────────────────────────────────────────
         #expect(model.config.modelType == "kitten_tts")
-        #expect(model.config.nToken == 178,
-                "nToken mismatch — KittenTTS nano uses 178 symbols")
+        #expect(
+            model.config.nToken == 178,
+            "nToken mismatch — KittenTTS nano uses 178 symbols")
         #expect(model.config.hiddenDim == 128)
         #expect(model.config.sampleRate == 24_000)
         #expect(model.config.istftnet.genIstftNFft == 20)
@@ -82,15 +89,21 @@ struct StyleTTS2IntegrationTests {
         // file presence alone confirms the checkpoint is a valid sharded
         // model; non-zero count is only asserted when shards are present.
         let indexURL = dir.appendingPathComponent("model.safetensors.index.json")
-        let shardsPresent = !FileManager.default.fileExists(atPath: indexURL.path)
-            || (try? FileManager.default.contentsOfDirectory(at: dir,
-                                                               includingPropertiesForKeys: nil)
-                .filter { $0.pathExtension == "safetensors"
-                       && $0.lastPathComponent != "voices.safetensors" }
-                .isEmpty == false) ?? false
+        let shardsPresent =
+            !FileManager.default.fileExists(atPath: indexURL.path)
+            || (try? FileManager.default.contentsOfDirectory(
+                at: dir,
+                includingPropertiesForKeys: nil
+            )
+            .filter {
+                $0.pathExtension == "safetensors"
+                    && $0.lastPathComponent != "voices.safetensors"
+            }
+            .isEmpty == false) ?? false
         if shardsPresent {
-            #expect(model.weightCount > 0,
-                    "expected at least one weight tensor in the checkpoint")
+            #expect(
+                model.weightCount > 0,
+                "expected at least one weight tensor in the checkpoint")
         }
         // When shards are absent the index file alone confirms the
         // checkpoint shape; the weight-count assertion is skipped only
@@ -108,15 +121,17 @@ struct StyleTTS2IntegrationTests {
 
         // ── 6. Placeholder waveform: non-empty, sane RMS ─────────────────
         let waveform = model.generatePlaceholder(durationSeconds: 0.1)
-        #expect(waveform.elementCount > 0,
-                "placeholder waveform must be non-empty")
+        #expect(
+            waveform.elementCount > 0,
+            "placeholder waveform must be non-empty")
         #expect(waveform.dtype == .f32)
         let samples = waveform.toArray(as: Float.self)
         // Placeholder is zeros — RMS == 0 is expected and intentional.
         // What we're verifying is that the tensor shape is sane.
         let nExpected = Int(0.1 * Double(model.sampleRate))
-        #expect(samples.count >= nExpected,
-                "expected at least \(nExpected) samples for 0.1s at 24kHz")
+        #expect(
+            samples.count >= nExpected,
+            "expected at least \(nExpected) samples for 0.1s at 24kHz")
     }
 
     @Test("synthesizeFromSpectrogram — vocoder tail produces a non-degenerate waveform")
@@ -127,8 +142,9 @@ struct StyleTTS2IntegrationTests {
         // vocoder check: feed a synthetic complex spectrogram and assert the
         // reconstructed waveform is finite, non-silent, non-constant, and the
         // expected length.
-        let dir = try #require(Self.cachedSnapshotDir,
-                               "StyleTTS2 vocoder: kitten-tts checkpoint not cached")
+        let dir = try #require(
+            Self.cachedSnapshotDir,
+            "StyleTTS2 vocoder: kitten-tts checkpoint not cached")
         let loaded = try await AudioModelRegistry.load(directory: dir)
         guard case .styleTTS2(let model) = loaded else {
             Issue.record("expected LoadedAudioModel.styleTTS2, got \(loaded)")
@@ -141,8 +157,8 @@ struct StyleTTS2IntegrationTests {
         let nFreq = model.vocoder.nFFT / 2 + 1
         var re = [Float](repeating: 0, count: nFrames * nFreq)
         var im = [Float](repeating: 0, count: nFrames * nFreq)
-        for f in 0..<nFrames {
-            for k in 0..<nFreq {
+        for f in 0 ..< nFrames {
+            for k in 0 ..< nFreq {
                 let phase = 2.0 * Float.pi * Float(k) * Float(f) / Float(nFrames)
                 re[f * nFreq + k] = 0.4 * cos(phase)
                 im[f * nFreq + k] = 0.4 * sin(phase)
@@ -161,8 +177,9 @@ struct StyleTTS2IntegrationTests {
         #expect(energy > 1e-4, "StyleTTS2 vocoder produced a silent waveform")
         let distinct = Set(samples.map { ($0 * 1000).rounded() }).count
         #expect(distinct > 10, "StyleTTS2 vocoder produced a constant waveform")
-        print("StyleTTS2 vocoder synthesized \(samples.count) samples, "
-              + "energy=\(energy), distinct=\(distinct)")
+        print(
+            "StyleTTS2 vocoder synthesized \(samples.count) samples, "
+                + "energy=\(energy), distinct=\(distinct)")
     }
 
     @Test("AudioModelRegistry.load throws for non-audio directory")
@@ -170,11 +187,13 @@ struct StyleTTS2IntegrationTests {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("ffai-s2tts-int-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
-        try FileManager.default.createDirectory(at: dir,
-                                                 withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true)
         try #"{"model_type": "llama", "architectures": ["LlamaForCausalLM"]}"#
-            .write(to: dir.appendingPathComponent("config.json"),
-                   atomically: true, encoding: .utf8)
+            .write(
+                to: dir.appendingPathComponent("config.json"),
+                atomically: true, encoding: .utf8)
 
         do {
             _ = try await AudioModelRegistry.load(directory: dir)

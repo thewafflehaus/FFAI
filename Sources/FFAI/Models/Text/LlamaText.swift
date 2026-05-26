@@ -51,12 +51,12 @@ public struct LlamaDense: LlamaVariant {
         device: Device
     ) throws -> LlamaModel {
         guard let hidden = config.hiddenSize,
-              let nLayers = config.numLayers,
-              let nHeads = config.numAttentionHeads,
-              let headDim = config.headDim,
-              let vocab = config.vocabSize,
-              let intermediate = config.intermediateSize,
-              let eps = config.rmsNormEps
+            let nLayers = config.numLayers,
+            let nHeads = config.numAttentionHeads,
+            let headDim = config.headDim,
+            let vocab = config.vocabSize,
+            let intermediate = config.intermediateSize,
+            let eps = config.rmsNormEps
         else {
             throw LlamaError.missingConfig
         }
@@ -70,10 +70,11 @@ public struct LlamaDense: LlamaVariant {
         // handle the explicit llama3 case + plain rope.
         var ropeScaling = Ops.RoPEScaling.none
         if let rs = config.nested("rope_scaling"),
-           (rs["rope_type"] as? String) == "llama3"
+            (rs["rope_type"] as? String) == "llama3"
         {
             ropeScaling = Ops.RoPEScaling(
-                scaleFactor: Float((rs["factor"] as? Double) ?? (rs["factor"] as? Int).map(Double.init) ?? 1),
+                scaleFactor: Float(
+                    (rs["factor"] as? Double) ?? (rs["factor"] as? Int).map(Double.init) ?? 1),
                 lowFreqFactor: Float((rs["low_freq_factor"] as? Double) ?? 1),
                 highFreqFactor: Float((rs["high_freq_factor"] as? Double) ?? 4),
                 originalMaxPosition: Float((rs["original_max_position_embeddings"] as? Int) ?? 8192)
@@ -92,17 +93,23 @@ public struct LlamaDense: LlamaVariant {
         // Layers
         var layers: [LlamaLayer] = []
         layers.reserveCapacity(nLayers)
-        for i in 0..<nLayers {
+        for i in 0 ..< nLayers {
             let p = "model.layers.\(i)"
 
-            let qProj = try loadLinear(base: "\(p).self_attn.q_proj", in: weights, quantization: quant)
-            let kProj = try loadLinear(base: "\(p).self_attn.k_proj", in: weights, quantization: quant)
-            let vProj = try loadLinear(base: "\(p).self_attn.v_proj", in: weights, quantization: quant)
-            let oProj = try loadLinear(base: "\(p).self_attn.o_proj", in: weights, quantization: quant)
+            let qProj = try loadLinear(
+                base: "\(p).self_attn.q_proj", in: weights, quantization: quant)
+            let kProj = try loadLinear(
+                base: "\(p).self_attn.k_proj", in: weights, quantization: quant)
+            let vProj = try loadLinear(
+                base: "\(p).self_attn.v_proj", in: weights, quantization: quant)
+            let oProj = try loadLinear(
+                base: "\(p).self_attn.o_proj", in: weights, quantization: quant)
 
-            let gateProj = try loadLinear(base: "\(p).mlp.gate_proj", in: weights, quantization: quant)
+            let gateProj = try loadLinear(
+                base: "\(p).mlp.gate_proj", in: weights, quantization: quant)
             let upProj = try loadLinear(base: "\(p).mlp.up_proj", in: weights, quantization: quant)
-            let downProj = try loadLinear(base: "\(p).mlp.down_proj", in: weights, quantization: quant)
+            let downProj = try loadLinear(
+                base: "\(p).mlp.down_proj", in: weights, quantization: quant)
 
             let inputNorm = RMSNorm(
                 weight: try weights.tensor(named: "\(p).input_layernorm.weight"),
@@ -111,14 +118,15 @@ public struct LlamaDense: LlamaVariant {
                 weight: try weights.tensor(named: "\(p).post_attention_layernorm.weight"),
                 eps: Float(eps))
 
-            layers.append(LlamaLayer(
-                qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
-                gateProj: gateProj, upProj: upProj, downProj: downProj,
-                inputNorm: inputNorm, postAttnNorm: postAttnNorm,
-                hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
-                headDim: headDim, intermediate: intermediate,
-                ropeTheta: theta, ropeScaling: ropeScaling
-            ))
+            layers.append(
+                LlamaLayer(
+                    qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
+                    gateProj: gateProj, upProj: upProj, downProj: downProj,
+                    inputNorm: inputNorm, postAttnNorm: postAttnNorm,
+                    hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
+                    headDim: headDim, intermediate: intermediate,
+                    ropeTheta: theta, ropeScaling: ropeScaling
+                ))
         }
 
         // Final norm
@@ -141,10 +149,11 @@ public struct LlamaDense: LlamaVariant {
                 weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
                 scaleCols: t.scales.shape[t.scales.shape.count - 1],
                 groupSize: q.groupSize)
-            lmHead = AnyLinear(QuantizedLinear(
-                weight: t.weight, scales: t.scales, biases: t.biases,
-                bits: bits, groupSize: q.groupSize
-            ))
+            lmHead = AnyLinear(
+                QuantizedLinear(
+                    weight: t.weight, scales: t.scales, biases: t.biases,
+                    bits: bits, groupSize: q.groupSize
+                ))
         } else {
             lmHead = AnyLinear(Linear(weight: embedTokens.weight))
         }
@@ -154,7 +163,8 @@ public struct LlamaDense: LlamaVariant {
         // in), fall back to the embedding weight dtype otherwise.
         let activationDtype: DType
         if weights.isQuantized("model.embed_tokens"),
-           let scales = try? weights.tensor(named: "model.embed_tokens.scales") {
+            let scales = try? weights.tensor(named: "model.embed_tokens.scales")
+        {
             activationDtype = scales.dtype
         } else {
             activationDtype = embedTokens.weight.dtype
@@ -184,17 +194,28 @@ public final class LlamaLayer: Module {
     let ropeScaling: Ops.RoPEScaling
     let scale: Float
 
-    init(qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
-         gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
-         inputNorm: RMSNorm, postAttnNorm: RMSNorm,
-         hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         intermediate: Int, ropeTheta: Float,
-         ropeScaling: Ops.RoPEScaling) {
-        self.qProj = qProj; self.kProj = kProj; self.vProj = vProj; self.oProj = oProj
-        self.gateProj = gateProj; self.upProj = upProj; self.downProj = downProj
-        self.inputNorm = inputNorm; self.postAttnNorm = postAttnNorm
-        self.hidden = hidden; self.nHeads = nHeads; self.nKVHeads = nKVHeads
-        self.headDim = headDim; self.intermediate = intermediate
+    init(
+        qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
+        gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
+        inputNorm: RMSNorm, postAttnNorm: RMSNorm,
+        hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        intermediate: Int, ropeTheta: Float,
+        ropeScaling: Ops.RoPEScaling
+    ) {
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
+        self.gateProj = gateProj
+        self.upProj = upProj
+        self.downProj = downProj
+        self.inputNorm = inputNorm
+        self.postAttnNorm = postAttnNorm
+        self.hidden = hidden
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.intermediate = intermediate
         self.ropeTheta = ropeTheta
         self.ropeScaling = ropeScaling
         self.scale = 1.0 / Float(Double(headDim).squareRoot())
@@ -220,27 +241,32 @@ public final class LlamaLayer: Module {
     ///
     /// All work is queued on `cmd` — no commit/wait inside. Caller is
     /// responsible for committing once at end-of-token and waiting.
-    func forward(_ h: Tensor, position: Int, cache: any KVCacheProtocol,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forward(
+        _ h: Tensor, position: Int, cache: any KVCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // Attention
         let xNorm = inputNorm(h, on: cmd)
-        let q = qProj(xNorm, on: cmd)   // [n_heads * head_dim]
-        let k = kProj(xNorm, on: cmd)   // [n_kv_heads * head_dim]
-        let v = vProj(xNorm, on: cmd)   // [n_kv_heads * head_dim]
+        let q = qProj(xNorm, on: cmd)  // [n_heads * head_dim]
+        let k = kProj(xNorm, on: cmd)  // [n_kv_heads * head_dim]
+        let v = vProj(xNorm, on: cmd)  // [n_kv_heads * head_dim]
 
         // RoPE on q and k
-        let qRotated = Ops.rope(q.reshaped(to: [nHeads, headDim]),
-                                position: position, headDim: headDim,
-                                thetaBase: ropeTheta, scaling: ropeScaling, on: cmd)
-        let kRotated = Ops.rope(k.reshaped(to: [nKVHeads, headDim]),
-                                position: position, headDim: headDim,
-                                thetaBase: ropeTheta, scaling: ropeScaling, on: cmd)
+        let qRotated = Ops.rope(
+            q.reshaped(to: [nHeads, headDim]),
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, scaling: ropeScaling, on: cmd)
+        let kRotated = Ops.rope(
+            k.reshaped(to: [nKVHeads, headDim]),
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, scaling: ropeScaling, on: cmd)
 
         // GPU KV cache update — no CPU sync. Bumps cache.length so
         // SDPA below sees this token in its attended-positions count.
-        cache.appendOnGPU(kFlat: kRotated,
-                          vFlat: v.reshaped(to: [nKVHeads, headDim]),
-                          on: cmd)
+        cache.appendOnGPU(
+            kFlat: kRotated,
+            vFlat: v.reshaped(to: [nKVHeads, headDim]),
+            on: cmd)
 
         // AURA cache stores K and V in Π-rotated space; apply Π to Q
         // before SDPA and Π^T to the SDPA output before oProj so the
@@ -329,12 +355,15 @@ public final class LlamaLayer: Module {
     /// post-SDPA π^T-unrotation; this fast path doesn't apply them.
     /// `LlamaModel.forwardMulti` checks the cache type and falls back
     /// to the per-token loop when any layer's cache is `AURAQuantizedKVCache`.
-    func forwardMulti(_ h: Tensor, startingAt position: Int,
-                      cache: any KVCacheProtocol,
-                      cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forwardMulti(
+        _ h: Tensor, startingAt position: Int,
+        cache: any KVCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let nRows = h.shape[0]
-        precondition(h.shape == [nRows, hidden],
-                     "LlamaLayer.forwardMulti: h shape \(h.shape) ≠ [nRows, hidden]")
+        precondition(
+            h.shape == [nRows, hidden],
+            "LlamaLayer.forwardMulti: h shape \(h.shape) ≠ [nRows, hidden]")
 
         // ── Attention ───────────────────────────────────────────────────
         let xNorm = Ops.rmsNormRows(
@@ -343,27 +372,31 @@ public final class LlamaLayer: Module {
             nRows: nRows, rowSize: hidden, on: cmd
         ).reshaped(to: [nRows, hidden])
 
-        let q = qProj.callMany(xNorm, t: nRows, on: cmd, device: device)   // [N, nHeads*headDim]
-        let k = kProj.callMany(xNorm, t: nRows, on: cmd, device: device)   // [N, nKVHeads*headDim]
-        let v = vProj.callMany(xNorm, t: nRows, on: cmd, device: device)   // [N, nKVHeads*headDim]
+        let q = qProj.callMany(xNorm, t: nRows, on: cmd, device: device)  // [N, nHeads*headDim]
+        let k = kProj.callMany(xNorm, t: nRows, on: cmd, device: device)  // [N, nKVHeads*headDim]
+        let v = vProj.callMany(xNorm, t: nRows, on: cmd, device: device)  // [N, nKVHeads*headDim]
 
         // RoPE — single-position kernel, looped per row on the same cmd.
         // Allocates rotated buffers up front, RoPE writes in place.
-        let qRot = Tensor.empty(shape: [nRows, nHeads * headDim],
-                                dtype: q.dtype, device: device)
-        let kRot = Tensor.empty(shape: [nRows, nKVHeads * headDim],
-                                dtype: k.dtype, device: device)
-        for i in 0..<nRows {
+        let qRot = Tensor.empty(
+            shape: [nRows, nHeads * headDim],
+            dtype: q.dtype, device: device)
+        let kRot = Tensor.empty(
+            shape: [nRows, nKVHeads * headDim],
+            dtype: k.dtype, device: device)
+        for i in 0 ..< nRows {
             let qRow = q.slicedRows(start: i, count: 1).reshaped(to: [nHeads * headDim])
             let qOut = qRot.slicedRows(start: i, count: 1).reshaped(to: [nHeads * headDim])
-            _ = Ops.rope(qRow, position: position + i, headDim: headDim,
-                         thetaBase: ropeTheta, scaling: ropeScaling,
-                         on: cmd, into: qOut)
+            _ = Ops.rope(
+                qRow, position: position + i, headDim: headDim,
+                thetaBase: ropeTheta, scaling: ropeScaling,
+                on: cmd, into: qOut)
             let kRow = k.slicedRows(start: i, count: 1).reshaped(to: [nKVHeads * headDim])
             let kOut = kRot.slicedRows(start: i, count: 1).reshaped(to: [nKVHeads * headDim])
-            _ = Ops.rope(kRow, position: position + i, headDim: headDim,
-                         thetaBase: ropeTheta, scaling: ropeScaling,
-                         on: cmd, into: kOut)
+            _ = Ops.rope(
+                kRow, position: position + i, headDim: headDim,
+                thetaBase: ropeTheta, scaling: ropeScaling,
+                on: cmd, into: kOut)
             // Append this token's rotated K + raw V to the cache.
             cache.appendOnGPU(
                 kFlat: kOut.reshaped(to: [nKVHeads, headDim]),
@@ -447,13 +480,15 @@ public final class LlamaModel: LanguageModel {
     /// Ignored when `kvCacheKind != .auraQuantized(...)`.
     public let auraDecodePath: AURADecodePath
 
-    init(embedTokens: AnyEmbedding, layers: [LlamaLayer],
-         finalNorm: RMSNorm, lmHead: AnyLinear,
-         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         vocab: Int, maxSeq: Int, ropeTheta: Float, dtype: DType,
-         kvCacheKind: KVCacheKind = .raw,
-         kvEviction: KVEviction = .unbounded,
-         auraDecodePath: AURADecodePath = .compressed) {
+    init(
+        embedTokens: AnyEmbedding, layers: [LlamaLayer],
+        finalNorm: RMSNorm, lmHead: AnyLinear,
+        hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        vocab: Int, maxSeq: Int, ropeTheta: Float, dtype: DType,
+        kvCacheKind: KVCacheKind = .raw,
+        kvEviction: KVEviction = .unbounded,
+        auraDecodePath: AURADecodePath = .compressed
+    ) {
         self.embedTokens = embedTokens
         self.layers = layers
         self.finalNorm = finalNorm
@@ -494,19 +529,22 @@ public final class LlamaModel: LanguageModel {
         let eviction = kvEviction
         switch kvCacheKind {
         case .raw:
-            return (0..<nLayers).map { _ in
-                KVCache(nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
-                        dtype: dtype, eviction: eviction, device: device)
+            return (0 ..< nLayers).map { _ in
+                KVCache(
+                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    dtype: dtype, eviction: eviction, device: device)
             }
         case .affineQuantized(let bits, let groupSize):
             // One shared working buffer pair across every layer's
             // cache — gives the real memory savings vs per-layer
             // working buffers.
-            let sharedK = Tensor.empty(shape: [nKVHeads, cap, headDim],
-                                       dtype: dtype, device: device)
-            let sharedV = Tensor.empty(shape: [nKVHeads, cap, headDim],
-                                       dtype: dtype, device: device)
-            return (0..<nLayers).map { _ in
+            let sharedK = Tensor.empty(
+                shape: [nKVHeads, cap, headDim],
+                dtype: dtype, device: device)
+            let sharedV = Tensor.empty(
+                shape: [nKVHeads, cap, headDim],
+                dtype: dtype, device: device)
+            return (0 ..< nLayers).map { _ in
                 AffineQuantizedKVCache(
                     nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
                     dtype: dtype, bits: bits, groupSize: groupSize,
@@ -526,18 +564,22 @@ public final class LlamaModel: LanguageModel {
 
             let kCodebook = Tensor.empty(shape: [kCodebookData.count], dtype: .f32, device: device)
             kCodebook.copyIn(from: kCodebookData)
-            let kBoundaries = Tensor.empty(shape: [kBoundariesData.count], dtype: .f32, device: device)
+            let kBoundaries = Tensor.empty(
+                shape: [kBoundariesData.count], dtype: .f32, device: device)
             kBoundaries.copyIn(from: kBoundariesData)
             let vCodebook = Tensor.empty(shape: [vCodebookData.count], dtype: .f32, device: device)
             vCodebook.copyIn(from: vCodebookData)
-            let vBoundaries = Tensor.empty(shape: [vBoundariesData.count], dtype: .f32, device: device)
+            let vBoundaries = Tensor.empty(
+                shape: [vBoundariesData.count], dtype: .f32, device: device)
             vBoundaries.copyIn(from: vBoundariesData)
 
-            let sharedK = Tensor.empty(shape: [nKVHeads, cap, headDim],
-                                       dtype: dtype, device: device)
-            let sharedV = Tensor.empty(shape: [nKVHeads, cap, headDim],
-                                       dtype: dtype, device: device)
-            return (0..<nLayers).map { i in
+            let sharedK = Tensor.empty(
+                shape: [nKVHeads, cap, headDim],
+                dtype: dtype, device: device)
+            let sharedV = Tensor.empty(
+                shape: [nKVHeads, cap, headDim],
+                dtype: dtype, device: device)
+            return (0 ..< nLayers).map { i in
                 let rot = AURAQuantizedKVCacheRotations.build(
                     headDim: headDim, layerIndex: i,
                     activationDtype: dtype, device: device)
@@ -567,9 +609,11 @@ public final class LlamaModel: LanguageModel {
     /// (`forward`, `forwardSample`, `forwardSampleCategorical`) compose
     /// this with their respective output kernels on the same cmdbuf
     /// for a 1-commit-per-token decode step.
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // `InspectTap` is a no-op when FFAI_INSPECT isn't set
         // (single bool compare per boundary). When enabled, it
         // runs everything on a private cmdbuf and prints per-layer
@@ -583,28 +627,33 @@ public final class LlamaModel: LanguageModel {
         memcpy(tokenBuf.contents(), &tid, 4)
         let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
         var h = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
-        workCmd = tap.dumpLayerBoundary(h, label: "embed", layer: -1,
-                                        cmd: workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(
+            h, label: "embed", layer: -1,
+            cmd: workCmd, device: device)
 
         // Layers — all queued on the same command buffer, no syncs.
         // Tap fires at each layer's residual output. In production
         // mode `dumpLayerBoundary` returns its `cmd` parameter
         // unchanged (the optimizer folds the whole call to a no-op).
         for (i, layer) in layers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              cmd: workCmd, device: device)
-            workCmd = tap.dumpLayerBoundary(h, label: "layer_out", layer: i,
-                                            cmd: workCmd, device: device)
+            h = layer.forward(
+                h, position: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                cmd: workCmd, device: device)
+            workCmd = tap.dumpLayerBoundary(
+                h, label: "layer_out", layer: i,
+                cmd: workCmd, device: device)
         }
 
         // Final norm + lm head
         let normed = finalNorm(h, on: workCmd)
-        workCmd = tap.dumpLayerBoundary(normed, label: "final_norm", layer: -1,
-                                        cmd: workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(
+            normed, label: "final_norm", layer: -1,
+            cmd: workCmd, device: device)
         let logits = lmHead(normed, on: workCmd)
-        workCmd = tap.dumpLayerBoundary(logits, label: "logits", layer: -1,
-                                        cmd: workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(
+            logits, label: "logits", layer: -1,
+            cmd: workCmd, device: device)
 
         // Flush the private cmdbuf when taps are active. Caller's
         // cmd has no work in that case (fast no-op commit).
@@ -638,11 +687,14 @@ public final class LlamaModel: LanguageModel {
     ///     when wide and head_dim=64 when narrow. The single-token
     ///     `Ops.sdpaDecode` has variants at d64 / d128 / d256 / d512,
     ///     so the per-token loop covers every shape we care about.
-    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                             caches: [any LayerCacheProtocol],
-                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(!tokenIds.isEmpty,
-                     "LlamaModel.forwardMulti: tokenIds must be non-empty")
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "LlamaModel.forwardMulti: tokenIds must be non-empty")
 
         // Fallback to per-token loop when the chunked SDPA fast path
         // can't apply — see doc comment.
@@ -651,8 +703,9 @@ public final class LlamaModel: LanguageModel {
         if hasAura || headDimUnsupported {
             var logits: Tensor!
             for (i, tok) in tokenIds.enumerated() {
-                logits = forward(tokenId: tok, position: position + i,
-                                 caches: caches, on: cmd, device: device)
+                logits = forward(
+                    tokenId: tok, position: position + i,
+                    caches: caches, on: cmd, device: device)
             }
             return logits
         }
@@ -666,8 +719,9 @@ public final class LlamaModel: LanguageModel {
         }
         let idsTensor = Tensor(buffer: idsBuf, offset: 0, shape: [n], dtype: .u32)
         var h = embedTokens(idsTensor, on: cmd)
-        precondition(h.shape == [n, hidden],
-                     "LlamaModel.forwardMulti: embedding shape \(h.shape) ≠ [n, hidden]")
+        precondition(
+            h.shape == [n, hidden],
+            "LlamaModel.forwardMulti: embedding shape \(h.shape) ≠ [n, hidden]")
 
         // Layers — each runs its chunked forward over [N, hidden].
         for (i, layer) in layers.enumerated() {
@@ -693,17 +747,21 @@ public final class LlamaModel: LanguageModel {
     /// splice needs this primitive on `LlamaModel`.
     public var supportsEmbeddingInput: Bool { true }
 
-    public func forward(inputEmbedding: Tensor, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(inputEmbedding.elementCount == hidden,
-                     "LlamaModel.forward(inputEmbedding:): expected [\(hidden)], "
-                     + "got \(inputEmbedding.shape)")
+    public func forward(
+        inputEmbedding: Tensor, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            inputEmbedding.elementCount == hidden,
+            "LlamaModel.forward(inputEmbedding:): expected [\(hidden)], "
+                + "got \(inputEmbedding.shape)")
         var h = inputEmbedding.reshaped(to: [hidden])
         for (i, layer) in layers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              cmd: cmd, device: device)
+            h = layer.forward(
+                h, position: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                cmd: cmd, device: device)
         }
         let normed = finalNorm(h, on: cmd)
         return lmHead(normed, on: cmd)

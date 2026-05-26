@@ -66,7 +66,7 @@ public enum ThinkingSplit {
     public static func detectFormat(model: Model) -> ThinkingFormat {
         let mt = (model.config.modelType ?? "").lowercased()
         if mt.contains("gpt-oss") || mt.contains("gpt_oss") { return .harmony }
-        if mt.contains("gemma3") || mt.contains("gemma4")  { return .gemmaChannel }
+        if mt.contains("gemma3") || mt.contains("gemma4") { return .gemmaChannel }
         if chatMLMarkers(tokenizer: model.tokenizer) != nil { return .chatML }
         return .none
     }
@@ -77,18 +77,21 @@ public enum ThinkingSplit {
     /// format. Returns `nil` when the format is `.none` or no split
     /// boundary was found.
     public static func split(tokens: [Int], model: Model) -> Split? {
-        split(tokens: tokens, format: detectFormat(model: model),
-              tokenizer: model.tokenizer)
+        split(
+            tokens: tokens, format: detectFormat(model: model),
+            tokenizer: model.tokenizer)
     }
 
     /// Split using an explicit format — bypasses auto-detection.
-    public static func split(tokens: [Int],
-                             format: ThinkingFormat,
-                             tokenizer: any Tokenizer) -> Split? {
+    public static func split(
+        tokens: [Int],
+        format: ThinkingFormat,
+        tokenizer: any Tokenizer
+    ) -> Split? {
         switch format {
-        case .none:         return nil
-        case .chatML:       return splitChatML(tokens: tokens, tokenizer: tokenizer)
-        case .harmony:      return splitHarmony(tokens: tokens, tokenizer: tokenizer)
+        case .none: return nil
+        case .chatML: return splitChatML(tokens: tokens, tokenizer: tokenizer)
+        case .harmony: return splitHarmony(tokens: tokens, tokenizer: tokenizer)
         case .gemmaChannel: return splitGemmaChannel(tokens: tokens, tokenizer: tokenizer)
         }
     }
@@ -98,24 +101,32 @@ public enum ThinkingSplit {
     /// Look up the `<think>` / `</think>` token ids in the tokenizer's
     /// vocab. Returns `nil` when the tokenizer doesn't carry them.
     public static func chatMLMarkers(tokenizer: any Tokenizer) -> (open: Int, close: Int)? {
-        let openCandidates  = ["<think>", "<|think|>", "<thinking>"]
+        let openCandidates = ["<think>", "<|think|>", "<thinking>"]
         let closeCandidates = ["</think>", "<|/think|>", "</thinking>"]
         var open: Int?
         var close: Int?
         for s in openCandidates {
             let ids = tokenizer.encode(text: s)
-            if ids.count == 1 { open = ids[0]; break }
+            if ids.count == 1 {
+                open = ids[0]
+                break
+            }
         }
         for s in closeCandidates {
             let ids = tokenizer.encode(text: s)
-            if ids.count == 1 { close = ids[0]; break }
+            if ids.count == 1 {
+                close = ids[0]
+                break
+            }
         }
         guard let o = open, let c = close else { return nil }
         return (o, c)
     }
 
-    private static func splitChatML(tokens: [Int],
-                                    tokenizer: any Tokenizer) -> Split? {
+    private static func splitChatML(
+        tokens: [Int],
+        tokenizer: any Tokenizer
+    ) -> Split? {
         guard let (open, close) = chatMLMarkers(tokenizer: tokenizer) else { return nil }
         return splitChatML(tokens: tokens, openMarker: open, closeMarker: close)
     }
@@ -123,20 +134,25 @@ public enum ThinkingSplit {
     /// Tokenizer-free ChatML scanner — partition `tokens` on the
     /// supplied open/close marker ids. Useful for tests that don't
     /// want to mock a full `Tokenizer` conformance.
-    public static func splitChatML(tokens: [Int],
-                                   openMarker: Int,
-                                   closeMarker: Int) -> Split? {
+    public static func splitChatML(
+        tokens: [Int],
+        openMarker: Int,
+        closeMarker: Int
+    ) -> Split? {
         guard let openIdx = tokens.firstIndex(of: openMarker) else { return nil }
         guard let closeIdx = tokens[openIdx...].firstIndex(of: closeMarker) else { return nil }
-        return Split(thinkTokens: tokens[(openIdx + 1)..<closeIdx],
-                     genTokens: tokens[(closeIdx + 1)...],
-                     format: .chatML)
+        return Split(
+            thinkTokens: tokens[(openIdx + 1) ..< closeIdx],
+            genTokens: tokens[(closeIdx + 1)...],
+            format: .chatML)
     }
 
     // MARK: - Harmony scanner (GPT-OSS) — TODO planned
 
-    private static func splitHarmony(tokens: [Int],
-                                     tokenizer: any Tokenizer) -> Split? {
+    private static func splitHarmony(
+        tokens: [Int],
+        tokenizer: any Tokenizer
+    ) -> Split? {
         // Harmony emits multi-token channel sequences:
         //   `<|start|>assistant<|channel|>analysis<|message|>` … (think)
         //   `<|end|>` … `<|start|>assistant<|channel|>final<|message|>` … (gen)
@@ -152,8 +168,10 @@ public enum ThinkingSplit {
 
     // MARK: - Gemma channel scanner — TODO planned
 
-    private static func splitGemmaChannel(tokens: [Int],
-                                          tokenizer: any Tokenizer) -> Split? {
+    private static func splitGemmaChannel(
+        tokens: [Int],
+        tokenizer: any Tokenizer
+    ) -> Split? {
         // Gemma 3/4 reasoning mode uses `<channel|reasoning|>` …
         // `<channel|final|>` markers. Scanner lands with the Gemma
         // family file; right now FFAI doesn't ship a Gemma family.

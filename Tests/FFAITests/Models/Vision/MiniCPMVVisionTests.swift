@@ -30,14 +30,16 @@ struct MiniCPMVRegistrationTests {
     @Test("MiniCPMV4_6 owns the minicpmv4_6 model_type + ConditionalGeneration arch")
     func familyStrings() {
         #expect(MiniCPMV4_6.modelTypes.contains("minicpmv4_6"))
-        #expect(MiniCPMV4_6.architectures.contains(
-            "MiniCPMV4_6ForConditionalGeneration"))
+        #expect(
+            MiniCPMV4_6.architectures.contains(
+                "MiniCPMV4_6ForConditionalGeneration"))
     }
 
     @Test("VL registry recognises MiniCPMV4_6ForConditionalGeneration")
     func vlRegistryRecognition() {
-        #expect(VisionLanguageArchitectures.architectures.contains(
-            "MiniCPMV4_6ForConditionalGeneration"))
+        #expect(
+            VisionLanguageArchitectures.architectures.contains(
+                "MiniCPMV4_6ForConditionalGeneration"))
     }
 
     @Test("default image_token_id matches the checkpoint chat template")
@@ -58,9 +60,10 @@ struct MiniCPMVPosEmbInterpTests {
         let device = Device.shared
         let hidden = 4
         let side = 3
-        let vals: [Float] = (0..<(side * side * hidden)).map { Float($0) }
-        let src = Tensor.empty(shape: [side * side, hidden], dtype: .f32,
-                               device: device)
+        let vals: [Float] = (0 ..< (side * side * hidden)).map { Float($0) }
+        let src = Tensor.empty(
+            shape: [side * side, hidden], dtype: .f32,
+            device: device)
         src.copyIn(from: vals)
         let out = interpolatePositionEmbedding(
             src, storedSide: side, targetSide: side, hidden: hidden,
@@ -75,16 +78,19 @@ struct MiniCPMVPosEmbInterpTests {
     @Test("bilinear resample is exact on a linear field")
     func bilinearExactOnLinearField() {
         let device = Device.shared
-        let storedSide = 8, targetSide = 4, hidden = 1
+        let storedSide = 8
+        let targetSide = 4
+        let hidden = 1
         // f(srcX, srcY) = 2·srcX + 3·srcY + 1.
         var src = [Float](repeating: 0, count: storedSide * storedSide)
-        for y in 0..<storedSide {
-            for x in 0..<storedSide {
+        for y in 0 ..< storedSide {
+            for x in 0 ..< storedSide {
                 src[y * storedSide + x] = 2 * Float(x) + 3 * Float(y) + 1
             }
         }
-        let srcT = Tensor.empty(shape: [storedSide * storedSide, hidden],
-                                dtype: .f32, device: device)
+        let srcT = Tensor.empty(
+            shape: [storedSide * storedSide, hidden],
+            dtype: .f32, device: device)
         srcT.copyIn(from: src)
 
         let out = interpolatePositionEmbedding(
@@ -94,14 +100,15 @@ struct MiniCPMVPosEmbInterpTests {
 
         // Same half-pixel-centered sampling the impl uses.
         let scale = Float(storedSide) / Float(targetSide)
-        for ty in 0..<targetSide {
+        for ty in 0 ..< targetSide {
             let srcY = (Float(ty) + 0.5) * scale - 0.5
-            for tx in 0..<targetSide {
+            for tx in 0 ..< targetSide {
                 let srcX = (Float(tx) + 0.5) * scale - 0.5
                 let expected = 2 * srcX + 3 * srcY + 1
                 let actual = got[ty * targetSide + tx]
-                #expect(abs(actual - expected) < 1e-4,
-                        "(ty=\(ty), tx=\(tx)): expected \(expected), got \(actual)")
+                #expect(
+                    abs(actual - expected) < 1e-4,
+                    "(ty=\(ty), tx=\(tx)): expected \(expected), got \(actual)")
             }
         }
     }
@@ -111,8 +118,9 @@ struct MiniCPMVPosEmbInterpTests {
     func constantFieldPreserved() {
         let device = Device.shared
         let hidden = 3
-        let src = Tensor.empty(shape: [7 * 7, hidden], dtype: .f32,
-                               device: device)
+        let src = Tensor.empty(
+            shape: [7 * 7, hidden], dtype: .f32,
+            device: device)
         src.copyIn(from: [Float](repeating: 1.5, count: 7 * 7 * hidden))
         let out = interpolatePositionEmbedding(
             src, storedSide: 7, targetSide: 3, hidden: hidden,

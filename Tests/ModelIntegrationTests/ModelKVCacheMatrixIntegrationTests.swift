@@ -85,9 +85,10 @@
 //     `kvSchemes` entry below and the matrix picks it up automatically.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 // ─── Matrix axes ──────────────────────────────────────────────────────
 
@@ -139,7 +140,7 @@ enum MatrixCatalog {
     /// targeted verification cheap. `nil` → no filter, normal gating.
     static let familyFilter: String? =
         ProcessInfo.processInfo.environment["FFAI_MATRIX_FAMILY"]
-            .map { $0.lowercased() }
+        .map { $0.lowercased() }
 
     // ── KV-cache scheme sets ──────────────────────────────────────────
 
@@ -149,10 +150,10 @@ enum MatrixCatalog {
         .raw,
         .affineQuantized(bits: 8, groupSize: 64),
         .affineQuantized(bits: 4, groupSize: 16),
-        .auraQuantized(scheme: .default),                            // aura4v4
-        .auraQuantized(scheme: .aura4v2),                            // aura4v2
-        .auraQuantized(scheme: AURAScheme(keyBits: 8, valueBits: 4)), // aura8v4
-        .auraQuantized(scheme: AURAScheme(keyBits: 8, valueBits: 8)), // aura8v8
+        .auraQuantized(scheme: .default),  // aura4v4
+        .auraQuantized(scheme: .aura4v2),  // aura4v2
+        .auraQuantized(scheme: AURAScheme(keyBits: 8, valueBits: 4)),  // aura8v4
+        .auraQuantized(scheme: AURAScheme(keyBits: 8, valueBits: 8)),  // aura8v8
     ]
 
     /// Families whose engine honors the full scheme set. Everything
@@ -173,10 +174,10 @@ enum MatrixCatalog {
         switch kv {
         case .raw:
             return "raw"
-        case let .affineQuantized(bits, groupSize):
+        case .affineQuantized(let bits, let groupSize):
             return "affine\(bits)g\(groupSize)"
-        case let .auraQuantized(scheme):
-            return scheme.name   // "aura4" / "aura4v2" / …
+        case .auraQuantized(let scheme):
+            return scheme.name  // "aura4" / "aura4v2" / …
         }
     }
 
@@ -190,101 +191,134 @@ enum MatrixCatalog {
 
     static let models: [MatrixModel] = [
         // ── Llama engine — dense text, full KV-scheme support ─────────
-        MatrixModel(family: "Llama", id: "unsloth/Llama-3.2-1B",
-                    weightBits: 16, alwaysRun: true),
-        MatrixModel(family: "Llama", id: "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit",
-                    weightBits: 4, alwaysRun: false),
+        MatrixModel(
+            family: "Llama", id: "unsloth/Llama-3.2-1B",
+            weightBits: 16, alwaysRun: true),
+        MatrixModel(
+            family: "Llama", id: "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit",
+            weightBits: 4, alwaysRun: false),
 
-        MatrixModel(family: "Qwen2", id: "Qwen/Qwen2.5-0.5B-Instruct",
-                    weightBits: 16, alwaysRun: true),
+        MatrixModel(
+            family: "Qwen2", id: "Qwen/Qwen2.5-0.5B-Instruct",
+            weightBits: 16, alwaysRun: true),
 
-        MatrixModel(family: "Mistral", id: "mlx-community/Mistral-7B-Instruct-v0.3-4bit",
-                    weightBits: 4, alwaysRun: true),
+        MatrixModel(
+            family: "Mistral", id: "mlx-community/Mistral-7B-Instruct-v0.3-4bit",
+            weightBits: 4, alwaysRun: true),
 
-        MatrixModel(family: "Phi", id: "mlx-community/Phi-3-mini-4k-instruct-4bit",
-                    weightBits: 4, alwaysRun: true),
+        MatrixModel(
+            family: "Phi", id: "mlx-community/Phi-3-mini-4k-instruct-4bit",
+            weightBits: 4, alwaysRun: true),
 
         // Llama-compatible zoo — each family has its own root file but
         // they all flow through the Llama loader.
-        MatrixModel(family: "SmolLM", id: "mlx-community/SmolLM2-360M-Instruct-bf16",
-                    weightBits: 16, alwaysRun: true),
-        MatrixModel(family: "SmolLM", id: "mlx-community/SmolLM-360M-Instruct-bf16",
-                    weightBits: 16, alwaysRun: false),
-        MatrixModel(family: "SmolLM", id: "mlx-community/SmolLM3-3B-bf16",
-                    weightBits: 16, alwaysRun: false),
-        MatrixModel(family: "OLMo", id: "mlx-community/OLMo-2-0425-1B-Instruct-bf16",
-                    weightBits: 16, alwaysRun: false),
-        MatrixModel(family: "Starcoder2", id: "mlx-community/Starcoder2-3B-bf16",
-                    weightBits: 16, alwaysRun: false),
-        MatrixModel(family: "Granite3", id: "mlx-community/granite-3.0-2b-instruct-bf16",
-                    weightBits: 16, alwaysRun: false),
-        MatrixModel(family: "InternLM2", id: "mlx-community/internlm2-chat-1_8b-bf16",
-                    weightBits: 16, alwaysRun: false),
+        MatrixModel(
+            family: "SmolLM", id: "mlx-community/SmolLM2-360M-Instruct-bf16",
+            weightBits: 16, alwaysRun: true),
+        MatrixModel(
+            family: "SmolLM", id: "mlx-community/SmolLM-360M-Instruct-bf16",
+            weightBits: 16, alwaysRun: false),
+        MatrixModel(
+            family: "SmolLM", id: "mlx-community/SmolLM3-3B-bf16",
+            weightBits: 16, alwaysRun: false),
+        MatrixModel(
+            family: "OLMo", id: "mlx-community/OLMo-2-0425-1B-Instruct-bf16",
+            weightBits: 16, alwaysRun: false),
+        MatrixModel(
+            family: "Starcoder2", id: "mlx-community/Starcoder2-3B-bf16",
+            weightBits: 16, alwaysRun: false),
+        MatrixModel(
+            family: "Granite3", id: "mlx-community/granite-3.0-2b-instruct-bf16",
+            weightBits: 16, alwaysRun: false),
+        MatrixModel(
+            family: "InternLM2", id: "mlx-community/internlm2-chat-1_8b-bf16",
+            weightBits: 16, alwaysRun: false),
 
         // DeepSeek-R1 distills — Qwen2 / Llama architectures.
-        MatrixModel(family: "DeepSeekR1Distill",
-                    id: "mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit",
-                    weightBits: 4, alwaysRun: true),
-        MatrixModel(family: "DeepSeekR1Distill",
-                    id: "mlx-community/DeepSeek-R1-Distill-Llama-8B-4bit",
-                    weightBits: 4, alwaysRun: false),
+        MatrixModel(
+            family: "DeepSeekR1Distill",
+            id: "mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit",
+            weightBits: 4, alwaysRun: true),
+        MatrixModel(
+            family: "DeepSeekR1Distill",
+            id: "mlx-community/DeepSeek-R1-Distill-Llama-8B-4bit",
+            weightBits: 4, alwaysRun: false),
 
         // ── Qwen3 engine — full KV-scheme support + weight-bits ladder ─
-        MatrixModel(family: "Qwen3", id: "mlx-community/Qwen3-1.7B-bf16",
-                    weightBits: 16, alwaysRun: true),
-        MatrixModel(family: "Qwen3", id: "mlx-community/Qwen3-1.7B-8bit",
-                    weightBits: 8, alwaysRun: false),
-        MatrixModel(family: "Qwen3", id: "mlx-community/Qwen3-1.7B-6bit",
-                    weightBits: 6, alwaysRun: false),
-        MatrixModel(family: "Qwen3", id: "mlx-community/Qwen3-1.7B-5bit",
-                    weightBits: 5, alwaysRun: false),
-        MatrixModel(family: "Qwen3", id: "mlx-community/Qwen3-1.7B-4bit",
-                    weightBits: 4, alwaysRun: false),
-        MatrixModel(family: "Qwen3", id: "mlx-community/Qwen3-1.7B-3bit",
-                    weightBits: 3, alwaysRun: false),
+        MatrixModel(
+            family: "Qwen3", id: "mlx-community/Qwen3-1.7B-bf16",
+            weightBits: 16, alwaysRun: true),
+        MatrixModel(
+            family: "Qwen3", id: "mlx-community/Qwen3-1.7B-8bit",
+            weightBits: 8, alwaysRun: false),
+        MatrixModel(
+            family: "Qwen3", id: "mlx-community/Qwen3-1.7B-6bit",
+            weightBits: 6, alwaysRun: false),
+        MatrixModel(
+            family: "Qwen3", id: "mlx-community/Qwen3-1.7B-5bit",
+            weightBits: 5, alwaysRun: false),
+        MatrixModel(
+            family: "Qwen3", id: "mlx-community/Qwen3-1.7B-4bit",
+            weightBits: 4, alwaysRun: false),
+        MatrixModel(
+            family: "Qwen3", id: "mlx-community/Qwen3-1.7B-3bit",
+            weightBits: 3, alwaysRun: false),
 
         // ── Nemotron-Labs-Diffusion — full KV-scheme support ──────────
-        MatrixModel(family: "NemotronDiffusion", id: "nvidia/Nemotron-Labs-Diffusion-3B",
-                    weightBits: 16, alwaysRun: true),
+        MatrixModel(
+            family: "NemotronDiffusion", id: "nvidia/Nemotron-Labs-Diffusion-3B",
+            weightBits: 16, alwaysRun: true),
 
         // ── Raw-KV-only families ──────────────────────────────────────
         // Gemma 3 / 4: engine `preconditionFailure`s on non-raw today.
-        MatrixModel(family: "Gemma3", id: "mlx-community/gemma-3-1b-it-bf16",
-                    weightBits: 16, alwaysRun: true),
-        MatrixModel(family: "Gemma4", id: "mlx-community/gemma-4-e2b-it-bf16",
-                    weightBits: 16, alwaysRun: true),
-        MatrixModel(family: "Gemma4", id: "mlx-community/gemma-4-31b-it-4bit",
-                    weightBits: 4, alwaysRun: false),
+        MatrixModel(
+            family: "Gemma3", id: "mlx-community/gemma-3-1b-it-bf16",
+            weightBits: 16, alwaysRun: true),
+        MatrixModel(
+            family: "Gemma4", id: "mlx-community/gemma-4-e2b-it-bf16",
+            weightBits: 16, alwaysRun: true),
+        MatrixModel(
+            family: "Gemma4", id: "mlx-community/gemma-4-31b-it-4bit",
+            weightBits: 4, alwaysRun: false),
 
         // Hybrid families — attention layers use a raw `KVCache`.
-        MatrixModel(family: "Qwen35Dense", id: "mlx-community/Qwen3.5-0.8B-MLX-bf16",
-                    weightBits: 16, alwaysRun: true),
+        MatrixModel(
+            family: "Qwen35Dense", id: "mlx-community/Qwen3.5-0.8B-MLX-bf16",
+            weightBits: 16, alwaysRun: true),
         // Qwen3.5 / 3.6 MoE share the Qwen35 engine (dense vs MoE is a
         // per-checkpoint `num_experts` decision). No small *raw* MoE
         // checkpoint exists — every published MoE conversion is
         // quantized, and the per-expert quantized-slice path is large.
         // env-gated. IDs unverified — confirm before a build-machine run.
-        MatrixModel(family: "Qwen35MoE", id: "mlx-community/Qwen3.5-35B-A3B-4bit",
-                    weightBits: 4, alwaysRun: false),
-        MatrixModel(family: "Qwen36MoE", id: "mlx-community/Qwen3.6-30B-A3B-4bit",
-                    weightBits: 4, alwaysRun: false),
+        MatrixModel(
+            family: "Qwen35MoE", id: "mlx-community/Qwen3.5-35B-A3B-4bit",
+            weightBits: 4, alwaysRun: false),
+        MatrixModel(
+            family: "Qwen36MoE", id: "mlx-community/Qwen3.6-30B-A3B-4bit",
+            weightBits: 4, alwaysRun: false),
 
-        MatrixModel(family: "FalconH1", id: "mlx-community/Falcon-H1-Tiny-90M-Instruct-bf16",
-                    weightBits: 16, alwaysRun: true),
-        MatrixModel(family: "NemotronH", id: "nvidia/Nemotron-H-4B-Base-8K",
-                    weightBits: 16, alwaysRun: true),
-        MatrixModel(family: "Granite4", id: "mlx-community/granite-4.0-h-350m-bf16",
-                    weightBits: 16, alwaysRun: true),
-        MatrixModel(family: "Jamba", id: "mlx-community/AI21-Jamba-Reasoning-3B-bf16",
-                    weightBits: 16, alwaysRun: true),
-        MatrixModel(family: "Mamba2", id: "mlx-community/mamba2-130m",
-                    weightBits: 16, alwaysRun: true),
+        MatrixModel(
+            family: "FalconH1", id: "mlx-community/Falcon-H1-Tiny-90M-Instruct-bf16",
+            weightBits: 16, alwaysRun: true),
+        MatrixModel(
+            family: "NemotronH", id: "nvidia/Nemotron-H-4B-Base-8K",
+            weightBits: 16, alwaysRun: true),
+        MatrixModel(
+            family: "Granite4", id: "mlx-community/granite-4.0-h-350m-bf16",
+            weightBits: 16, alwaysRun: true),
+        MatrixModel(
+            family: "Jamba", id: "mlx-community/AI21-Jamba-Reasoning-3B-bf16",
+            weightBits: 16, alwaysRun: true),
+        MatrixModel(
+            family: "Mamba2", id: "mlx-community/mamba2-130m",
+            weightBits: 16, alwaysRun: true),
         // GPT-OSS — only the 20B exists at small scale; ~11 GB even at
         // MXFP4. env-gated to keep it out of the default gate (the
         // smallest-runnable GPT-OSS coherence check lives in
         // GPTOSSIntegrationTests). A build machine runs it here too.
-        MatrixModel(family: "GPTOSS", id: "mlx-community/gpt-oss-20b-MXFP4-Q8",
-                    weightBits: 8, alwaysRun: false),
+        MatrixModel(
+            family: "GPTOSS", id: "mlx-community/gpt-oss-20b-MXFP4-Q8",
+            weightBits: 8, alwaysRun: false),
     ]
 
     /// The flattened (model, KV-scheme) cell list — the parameter set.
@@ -305,16 +339,18 @@ struct ModelKVCacheMatrixIntegrationTests {
         // for this run; `#require` surfaces that explicitly instead of
         // silently passing.
         if let only = MatrixCatalog.familyFilter {
-            try #require(cell.model.family.lowercased() == only,
-                         "matrix cell gated by FFAI_MATRIX_FAMILY=\(only): \(cell.label)")
+            try #require(
+                cell.model.family.lowercased() == only,
+                "matrix cell gated by FFAI_MATRIX_FAMILY=\(only): \(cell.label)")
         }
 
         // Gate: smallest-per-family cells always run; the rest need
         // FFAI_BUILD_MACHINE. Build-machine-gated cells `#require` the
         // env so they fail visibly on non-build machines rather than
         // silently pass.
-        try #require(cell.model.alwaysRun || MatrixCatalog.buildMachineEnabled,
-                     "matrix cell is build-machine gated; set FFAI_BUILD_MACHINE: \(cell.label)")
+        try #require(
+            cell.model.alwaysRun || MatrixCatalog.buildMachineEnabled,
+            "matrix cell is build-machine gated; set FFAI_BUILD_MACHINE: \(cell.label)")
 
         // Load under the cell's KV-cache scheme. Load failures fail the
         // cell — a missing checkpoint is a real failure, not a silent

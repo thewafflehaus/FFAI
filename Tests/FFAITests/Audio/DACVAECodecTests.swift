@@ -24,6 +24,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("DACVAE codec — structure + round-trip")
@@ -34,22 +35,22 @@ struct DACVAECodecTests {
     @Test("DACVAEConfig decodes a representative config.json")
     func configDecode() throws {
         let json = """
-        {
-          "encoder_dim": 64,
-          "encoder_rates": [2, 8, 10, 12],
-          "latent_dim": 1024,
-          "decoder_dim": 1536,
-          "decoder_rates": [12, 10, 8, 2],
-          "n_codebooks": 16,
-          "codebook_size": 1024,
-          "codebook_dim": 128,
-          "sample_rate": 48000
-        }
-        """
+            {
+              "encoder_dim": 64,
+              "encoder_rates": [2, 8, 10, 12],
+              "latent_dim": 1024,
+              "decoder_dim": 1536,
+              "decoder_rates": [12, 10, 8, 2],
+              "n_codebooks": 16,
+              "codebook_size": 1024,
+              "codebook_dim": 128,
+              "sample_rate": 48000
+            }
+            """
         let config = try JSONDecoder().decode(
             DACVAEConfig.self, from: Data(json.utf8))
         #expect(config.sampleRate == 48_000)
-        #expect(config.hopLength == 2 * 8 * 10 * 12)   // 1920
+        #expect(config.hopLength == 2 * 8 * 10 * 12)  // 1920
         #expect(config.codebookDim == 128)
         #expect(config.latentDim == 1024)
     }
@@ -88,7 +89,7 @@ struct DACVAECodecTests {
         // A short 0.25s sine tone at the codec sample rate.
         let n = codec.sampleRate / 4
         var samples = [Float](repeating: 0, count: n)
-        for i in 0..<n {
+        for i in 0 ..< n {
             let t = Float(i) / Float(codec.sampleRate)
             samples[i] = 0.5 * sin(2.0 * .pi * 220.0 * t)
         }
@@ -108,8 +109,10 @@ struct DACVAECodecTests {
 
         // Codecs are lossy; assert correlation rather than equality.
         let len = min(samples.count, reconFloats.count)
-        var dotXY: Float = 0, dotXX: Float = 0, dotYY: Float = 0
-        for i in 0..<len {
+        var dotXY: Float = 0
+        var dotXX: Float = 0
+        var dotYY: Float = 0
+        for i in 0 ..< len {
             dotXY += samples[i] * reconFloats[i]
             dotXX += samples[i] * samples[i]
             dotYY += reconFloats[i] * reconFloats[i]

@@ -132,8 +132,10 @@ public struct ChatterboxGPT2Config: Sendable {
         )
     }
 
-    public init(activationFunction: String, nCtx: Int, hiddenSize: Int,
-                nHead: Int, nLayer: Int, vocabSize: Int, layerNormEpsilon: Float) {
+    public init(
+        activationFunction: String, nCtx: Int, hiddenSize: Int,
+        nHead: Int, nLayer: Int, vocabSize: Int, layerNormEpsilon: Float
+    ) {
         self.activationFunction = activationFunction
         self.nCtx = nCtx
         self.hiddenSize = hiddenSize
@@ -233,8 +235,8 @@ public struct ChatterboxT3Config: Sendable {
             return nil
         }
         guard let speechTokensDictSize = i("speech_tokens_dict_size"),
-              let startSpeechToken = i("start_speech_token"),
-              let stopSpeechToken = i("stop_speech_token")
+            let startSpeechToken = i("start_speech_token"),
+            let stopSpeechToken = i("stop_speech_token")
         else { return nil }
 
         let llamaConfigName = raw["llama_config_name"] as? String ?? "Llama_520M"
@@ -255,11 +257,13 @@ public struct ChatterboxT3Config: Sendable {
         )
     }
 
-    public init(textTokensDictSize: Int, startTextToken: Int, stopTextToken: Int,
-                maxTextTokens: Int, speechTokensDictSize: Int, startSpeechToken: Int,
-                stopSpeechToken: Int, maxSpeechTokens: Int, llamaConfigName: String,
-                speechCondPromptLen: Int, speakerEmbedSize: Int,
-                usePerceiverResampler: Bool, emotionAdv: Bool) {
+    public init(
+        textTokensDictSize: Int, startTextToken: Int, stopTextToken: Int,
+        maxTextTokens: Int, speechTokensDictSize: Int, startSpeechToken: Int,
+        stopSpeechToken: Int, maxSpeechTokens: Int, llamaConfigName: String,
+        speechCondPromptLen: Int, speakerEmbedSize: Int,
+        usePerceiverResampler: Bool, emotionAdv: Bool
+    ) {
         self.textTokensDictSize = textTokensDictSize
         self.startTextToken = startTextToken
         self.stopTextToken = stopTextToken
@@ -368,7 +372,8 @@ public struct ChatterboxConfig: Sendable {
     /// full Turbo format with nested `t3`, `gpt2`, `voice_encoder`, `s3gen` keys.
     public static func from(_ config: ModelConfig) -> ChatterboxConfig? {
         guard let mt = config.modelType,
-              ["chatterbox", "chatterbox_turbo"].contains(mt) else { return nil }
+            ["chatterbox", "chatterbox_turbo"].contains(mt)
+        else { return nil }
 
         let raw = config.raw
         let isTurboType = (mt == "chatterbox_turbo")
@@ -376,10 +381,12 @@ public struct ChatterboxConfig: Sendable {
         // --- T3 config: try "t3_config" key, then "t3", then defaults ---
         let t3Config: ChatterboxT3Config
         if let t3Raw = raw["t3_config"] as? [String: Any],
-           let parsed = ChatterboxT3Config.from(t3Raw) {
+            let parsed = ChatterboxT3Config.from(t3Raw)
+        {
             t3Config = parsed
         } else if let t3Raw = raw["t3"] as? [String: Any],
-                  let parsed = ChatterboxT3Config.from(t3Raw) {
+            let parsed = ChatterboxT3Config.from(t3Raw)
+        {
             t3Config = parsed
         } else {
             t3Config = isTurboType ? .turbo : .englishOnly
@@ -461,19 +468,22 @@ public struct ChatterboxConfig: Sendable {
             decoderNBlocks: s3i("decoder_n_blocks", "decoder_n_blocks", 4),
             decoderNumMidBlocks: s3i("decoder_num_mid_blocks", "decoder_num_mid_blocks", 12),
             decoderNumHeads: s3i("decoder_num_heads", "decoder_num_heads", 8),
-            decoderAttentionHeadDim: s3i("decoder_attention_head_dim",
-                                          "decoder_attention_head_dim", 64)
+            decoderAttentionHeadDim: s3i(
+                "decoder_attention_head_dim",
+                "decoder_attention_head_dim", 64)
         )
     }
 
-    public init(modelType: String, t3: ChatterboxT3Config,
-                gpt2: ChatterboxGPT2Config?,
-                s3SampleRate: Int, s3genSampleRate: Int, sampleRate: Int,
-                encCondLen: Int, decCondLen: Int, meanflow: Bool,
-                decoderInChannels: Int, decoderOutChannels: Int,
-                decoderChannels: [Int], decoderNBlocks: Int,
-                decoderNumMidBlocks: Int, decoderNumHeads: Int,
-                decoderAttentionHeadDim: Int) {
+    public init(
+        modelType: String, t3: ChatterboxT3Config,
+        gpt2: ChatterboxGPT2Config?,
+        s3SampleRate: Int, s3genSampleRate: Int, sampleRate: Int,
+        encCondLen: Int, decCondLen: Int, meanflow: Bool,
+        decoderInChannels: Int, decoderOutChannels: Int,
+        decoderChannels: [Int], decoderNBlocks: Int,
+        decoderNumMidBlocks: Int, decoderNumHeads: Int,
+        decoderAttentionHeadDim: Int
+    ) {
         self.modelType = modelType
         self.t3 = t3
         self.gpt2 = gpt2
@@ -573,8 +583,9 @@ extension ChatterboxModel {
         // Structural detection: the T3 config is the canonical marker.
         for key in ["t3", "t3_config"] {
             if let t3Raw = config.raw[key] as? [String: Any],
-               let speechVocab = t3Raw["speech_tokens_dict_size"] as? Int,
-               (6000 ... 9000).contains(speechVocab) {
+                let speechVocab = t3Raw["speech_tokens_dict_size"] as? Int,
+                (6000 ... 9000).contains(speechVocab)
+            {
                 return true
             }
         }

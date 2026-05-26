@@ -20,6 +20,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("GPTOSS Family Root")
@@ -37,16 +38,18 @@ struct GPTOSSRootTests {
 
     @Test("variant(for:) returns GPTOSSMoEVariant")
     func variantDispatch() throws {
-        let cfg = ModelConfig(architecture: "GptOssForCausalLM",
-                              modelType: "gpt_oss", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "GptOssForCausalLM",
+            modelType: "gpt_oss", raw: [:])
         let v = try GPTOSS.variant(for: cfg)
         #expect(String(describing: v) == String(describing: GPTOSSMoEVariant.self))
     }
 
     @Test("GPTOSSError stringifies every case with its payload")
     func errorDescriptions() {
-        #expect(GPTOSSError.missingConfig("num_experts").description
-            .contains("num_experts"))
+        #expect(
+            GPTOSSError.missingConfig("num_experts").description
+                .contains("num_experts"))
         #expect(GPTOSSError.unsupportedConfig("bad").description.contains("bad"))
         #expect(GPTOSSError.missingConfig("x").description.contains("GPT-OSS"))
     }

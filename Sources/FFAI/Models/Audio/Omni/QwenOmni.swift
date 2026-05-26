@@ -72,9 +72,11 @@ public struct QwenOmniAudioConfig: Sendable {
     /// projected into this so they can be spliced into the text stream.
     public let textHidden: Int
 
-    public init(nMels: Int, encoderHidden: Int, encoderIntermediate: Int,
-                encoderLayers: Int, encoderHeads: Int, maxAudioCtx: Int,
-                textHidden: Int) {
+    public init(
+        nMels: Int, encoderHidden: Int, encoderIntermediate: Int,
+        encoderLayers: Int, encoderHeads: Int, maxAudioCtx: Int,
+        textHidden: Int
+    ) {
         self.nMels = nMels
         self.encoderHidden = encoderHidden
         self.encoderIntermediate = encoderIntermediate
@@ -89,14 +91,16 @@ public struct QwenOmniAudioConfig: Sendable {
     /// Omni / mlx conversions hoist it to the top level. Returns the
     /// `(audio_config, text_config)` pair, looking in both places.
     static func locateConfigs(_ config: ModelConfig)
-        -> (audio: [String: Any], text: [String: Any]?)? {
+        -> (audio: [String: Any], text: [String: Any]?)?
+    {
         // Top-level (hoisted) layout.
         if let audio = config.nested("audio_config") {
             return (audio, config.nested("text_config"))
         }
         // Qwen2.5-Omni nested-under-thinker layout.
         if let thinker = config.nested("thinker_config"),
-           let audio = thinker["audio_config"] as? [String: Any] {
+            let audio = thinker["audio_config"] as? [String: Any]
+        {
             return (audio, thinker["text_config"] as? [String: Any])
         }
         return nil
@@ -118,14 +122,16 @@ public struct QwenOmniAudioConfig: Sendable {
         // Whisper-style configs name the layer count `encoder_layers`;
         // Qwen-Omni's audio block also carries `num_hidden_layers`.
         guard let encLayers = ai("encoder_layers") ?? ai("num_hidden_layers"),
-              let encHeads = ai("encoder_attention_heads") else { return nil }
+            let encHeads = ai("encoder_attention_heads")
+        else { return nil }
         let nMels = ai("num_mel_bins") ?? 128
         let encInter = ai("encoder_ffn_dim") ?? (4 * encHidden)
         let maxAud = ai("max_source_positions") ?? 1500
         // The text hidden dim — the audio features project into it.
         // `output_dim` on the audio block is the projection target;
         // fall back to the text config's hidden_size.
-        let textHidden = ai("output_dim")
+        let textHidden =
+            ai("output_dim")
             ?? (located.text?["hidden_size"] as? Int)
             ?? config.hiddenSize
             ?? encHidden
@@ -138,8 +144,9 @@ public struct QwenOmniAudioConfig: Sendable {
 
     /// The front-end config the audio tower expects (16 kHz log-Mel).
     public var frontEnd: AudioFrontEndConfig {
-        AudioFrontEndConfig(sampleRate: 16_000, nFFT: 400, hopLength: 160,
-                            nMels: nMels)
+        AudioFrontEndConfig(
+            sampleRate: 16_000, nFFT: 400, hopLength: 160,
+            nMels: nMels)
     }
 }
 
@@ -174,9 +181,11 @@ public final class QwenOmniModel: @unchecked Sendable {
     public let textBackbone: Qwen3Model?
     let dtype: DType
 
-    public init(config: QwenOmniAudioConfig, audioEncoder: AudioEncoder,
-                audioProjection: Linear?, textBackbone: Qwen3Model?,
-                dtype: DType) {
+    public init(
+        config: QwenOmniAudioConfig, audioEncoder: AudioEncoder,
+        audioProjection: Linear?, textBackbone: Qwen3Model?,
+        dtype: DType
+    ) {
         self.config = config
         self.audioEncoder = audioEncoder
         self.audioProjection = audioProjection
@@ -188,7 +197,8 @@ public final class QwenOmniModel: @unchecked Sendable {
     /// hidden dim. Returns `[nAudioTokens, textHidden]` — the tokens a
     /// caller splices into a Qwen3 prompt's embedding stream.
     public func encodeAudio(waveform: [Float], device: Device = .shared)
-        -> Tensor {
+        -> Tensor
+    {
         // The mel_spectrogram kernel only emits f32 / f16; a bf16 model
         // gets the front-end run in f32, then the spectrogram cast to
         // the model's activation dtype before the conv stem.
@@ -200,19 +210,22 @@ public final class QwenOmniModel: @unchecked Sendable {
         let melRaw = AudioPreprocessing.logMelSpectrogram(
             waveform: waveform, cfg: config.frontEnd, dtype: melDtype,
             whisperNormalize: true, device: device, on: cmd)
-        let mel = AudioPreprocessing.castTensor(melRaw, to: dtype,
-                                                device: device)
+        let mel = AudioPreprocessing.castTensor(
+            melRaw, to: dtype,
+            device: device)
 
         // Run the Whisper-style encoder over the log-Mel.
-        var features = audioEncoder.encode(mel: mel, melFrameMajor: true,
-                                           device: device)
+        var features = audioEncoder.encode(
+            mel: mel, melFrameMajor: true,
+            device: device)
 
         // Project into the text hidden dim if the dims differ.
         guard let proj = audioProjection else { return features }
         let nTokens = features.shape[0]
         let cmd2 = device.makeCommandBuffer()
-        var projected = Ops.gemm(weight: proj.weight, input: features,
-                                 nRows: nTokens, on: cmd2)
+        var projected = Ops.gemm(
+            weight: proj.weight, input: features,
+            nRows: nTokens, on: cmd2)
         if let bias = proj.bias {
             projected = AudioEncoder.addRowBias(
                 projected, bias: bias, nRows: nTokens,
@@ -255,7 +268,8 @@ extension QwenOmniModel {
     /// loaded when the checkpoint's text weights are present and the
     /// vision path is left for the Qwen-VL port (see the scope note).
     public static func load(directory: URL, device: Device = .shared)
-        throws -> QwenOmniModel {
+        throws -> QwenOmniModel
+    {
         let config = try ModelConfig.load(from: directory)
         guard let qc = QwenOmniAudioConfig.from(config) else {
             throw ModelError.unsupportedModelType(
@@ -267,15 +281,21 @@ extension QwenOmniModel {
 
     /// Assemble a `QwenOmniModel` audio path from a decoded config + a
     /// weight bundle. Factored out so tests can drive it directly.
-    public static func build(config qc: QwenOmniAudioConfig,
-                             bundle: SafeTensorsBundle) throws -> QwenOmniModel {
+    public static func build(
+        config qc: QwenOmniAudioConfig,
+        bundle: SafeTensorsBundle
+    ) throws -> QwenOmniModel {
         // Qwen-Omni prefixes the audio tower weights; conversions vary
         // (`audio_tower.` / `thinker.audio_tower.`). Detect the prefix.
-        let prefixes = ["thinker.audio_tower.", "audio_tower.",
-                        "model.audio_tower.", ""]
-        guard let prefix = prefixes.first(where: {
-            bundle.has("\($0)conv1.weight")
-        }) else {
+        let prefixes = [
+            "thinker.audio_tower.", "audio_tower.",
+            "model.audio_tower.", "",
+        ]
+        guard
+            let prefix = prefixes.first(where: {
+                bundle.has("\($0)conv1.weight")
+            })
+        else {
             throw ModelError.unsupportedModelType(
                 "QwenOmni: no audio_tower weights found in the checkpoint")
         }
@@ -285,30 +305,33 @@ extension QwenOmniModel {
             try bundle.tensor(named: prefix + name)
         }
         func ln(_ base: String) throws -> LayerNorm {
-            LayerNorm(weight: try t("\(base).weight"),
-                      bias: try t("\(base).bias"), eps: 1e-5)
+            LayerNorm(
+                weight: try t("\(base).weight"),
+                bias: try t("\(base).bias"), eps: 1e-5)
         }
         func linear(_ base: String, hasBias: Bool = true) throws -> Linear {
             let w = try t("\(base).weight")
-            let b = hasBias && bundle.has(prefix + "\(base).bias")
+            let b =
+                hasBias && bundle.has(prefix + "\(base).bias")
                 ? try t("\(base).bias") : nil
             return Linear(weight: w, bias: b)
         }
 
         var encLayers: [AudioEncoderLayer] = []
-        for i in 0..<qc.encoderLayers {
+        for i in 0 ..< qc.encoderLayers {
             let base = "layers.\(i)"
-            encLayers.append(AudioEncoderLayer(
-                layerNorm1: try ln("\(base).self_attn_layer_norm"),
-                qProj: try linear("\(base).self_attn.q_proj"),
-                kProj: try linear("\(base).self_attn.k_proj", hasBias: false),
-                vProj: try linear("\(base).self_attn.v_proj"),
-                oProj: try linear("\(base).self_attn.out_proj"),
-                layerNorm2: try ln("\(base).final_layer_norm"),
-                fc1: try linear("\(base).fc1"),
-                fc2: try linear("\(base).fc2"),
-                hidden: qc.encoderHidden, nHeads: qc.encoderHeads,
-                intermediate: qc.encoderIntermediate))
+            encLayers.append(
+                AudioEncoderLayer(
+                    layerNorm1: try ln("\(base).self_attn_layer_norm"),
+                    qProj: try linear("\(base).self_attn.q_proj"),
+                    kProj: try linear("\(base).self_attn.k_proj", hasBias: false),
+                    vProj: try linear("\(base).self_attn.v_proj"),
+                    oProj: try linear("\(base).self_attn.out_proj"),
+                    layerNorm2: try ln("\(base).final_layer_norm"),
+                    fc1: try linear("\(base).fc1"),
+                    fc2: try linear("\(base).fc2"),
+                    hidden: qc.encoderHidden, nHeads: qc.encoderHeads,
+                    intermediate: qc.encoderIntermediate))
         }
         let encoderConfig = AudioEncoderConfig(
             nMels: qc.nMels, hidden: qc.encoderHidden,
@@ -326,8 +349,9 @@ extension QwenOmniModel {
         } else {
             let table = AudioPreprocessing.sinusoidalPositions(
                 length: qc.maxAudioCtx, dim: qc.encoderHidden)
-            let pe = Tensor.empty(shape: [qc.maxAudioCtx, qc.encoderHidden],
-                                  dtype: dtype)
+            let pe = Tensor.empty(
+                shape: [qc.maxAudioCtx, qc.encoderHidden],
+                dtype: dtype)
             AudioPreprocessing.copyFloats(table, into: pe)
             posEmbedding = pe
         }
@@ -347,8 +371,10 @@ extension QwenOmniModel {
         // dims differ.
         var audioProjection: Linear? = nil
         if qc.encoderHidden != qc.textHidden {
-            for projBase in ["proj", "audio_bos_eos_token.proj",
-                             "multi_modal_projector"] {
+            for projBase in [
+                "proj", "audio_bos_eos_token.proj",
+                "multi_modal_projector",
+            ] {
                 if bundle.has(prefix + "\(projBase).weight") {
                     audioProjection = try linear(projBase)
                     break

@@ -38,10 +38,12 @@ public struct AURAScheme: Sendable, Equatable, Hashable {
     public let valueBits: Int
 
     public init(keyBits: Int, valueBits: Int) {
-        precondition(AURACodebook.supportedBits.contains(keyBits),
-                     "AURAScheme: keyBits=\(keyBits) not in \(AURACodebook.supportedBits.sorted())")
-        precondition(AURACodebook.supportedBits.contains(valueBits),
-                     "AURAScheme: valueBits=\(valueBits) not in \(AURACodebook.supportedBits.sorted())")
+        precondition(
+            AURACodebook.supportedBits.contains(keyBits),
+            "AURAScheme: keyBits=\(keyBits) not in \(AURACodebook.supportedBits.sorted())")
+        precondition(
+            AURACodebook.supportedBits.contains(valueBits),
+            "AURAScheme: valueBits=\(valueBits) not in \(AURACodebook.supportedBits.sorted())")
         self.keyBits = keyBits
         self.valueBits = valueBits
     }
@@ -77,8 +79,8 @@ public struct AURAScheme: Sendable, Equatable, Hashable {
             let kPart = String(rest[..<vIdx])
             let vPart = String(rest[rest.index(after: vIdx)...])
             guard let kb = Int(kPart), let vb = Int(vPart),
-                  AURACodebook.supportedBits.contains(kb),
-                  AURACodebook.supportedBits.contains(vb)
+                AURACodebook.supportedBits.contains(kb),
+                AURACodebook.supportedBits.contains(vb)
             else { return nil }
             return AURAScheme(keyBits: kb, valueBits: vb)
         } else {

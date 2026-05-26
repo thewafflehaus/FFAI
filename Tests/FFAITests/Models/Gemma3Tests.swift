@@ -21,6 +21,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Gemma3 Family Root")
@@ -40,8 +41,9 @@ struct Gemma3RootTests {
 
     @Test("variant(for:) returns Gemma3Dense (the only variant today)")
     func variantDispatch() throws {
-        let cfg = ModelConfig(architecture: "Gemma3ForCausalLM",
-                              modelType: "gemma3", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "Gemma3ForCausalLM",
+            modelType: "gemma3", raw: [:])
         let v = try Gemma3.variant(for: cfg)
         #expect(String(describing: v) == String(describing: Gemma3Dense.self))
     }

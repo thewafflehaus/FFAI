@@ -50,11 +50,11 @@ public enum AudioModelKind: String, Sendable, CaseIterable {
     /// architecture.
     var modelTypes: Set<String> {
         switch self {
-        case .sileroVAD:   return ["silero_vad"]
-        case .smartTurn:   return ["smart_turn", "smart_turn_v3", "smart-turn"]
-        case .sortformer:  return ["sortformer", "diar_sortformer"]
-        case .tenVAD:      return ["ten_vad", "ten-vad", "tenvad"]
-        case .fireRedVAD:  return ["firered_vad", "firered-vad", "fireredvad"]
+        case .sileroVAD: return ["silero_vad"]
+        case .smartTurn: return ["smart_turn", "smart_turn_v3", "smart-turn"]
+        case .sortformer: return ["sortformer", "diar_sortformer"]
+        case .tenVAD: return ["ten_vad", "ten-vad", "tenvad"]
+        case .fireRedVAD: return ["firered_vad", "firered-vad", "fireredvad"]
         }
     }
 }
@@ -89,11 +89,11 @@ public enum LoadedVADModel: @unchecked Sendable {
 
     public var kind: AudioModelKind {
         switch self {
-        case .sileroVAD:   return .sileroVAD
-        case .smartTurn:   return .smartTurn
-        case .sortformer:  return .sortformer
-        case .tenVAD:      return .tenVAD
-        case .fireRedVAD:  return .fireRedVAD
+        case .sileroVAD: return .sileroVAD
+        case .smartTurn: return .smartTurn
+        case .sortformer: return .sortformer
+        case .tenVAD: return .tenVAD
+        case .fireRedVAD: return .fireRedVAD
         }
     }
 }
@@ -107,10 +107,13 @@ public enum VADModelRegistry {
     public static func detectKind(in directory: URL) throws -> AudioModelKind {
         let configURL = directory.appendingPathComponent("config.json")
         if let data = try? Data(contentsOf: configURL),
-           let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        {
             // Prefer `model_type`, then `architecture`.
-            let candidates = [raw["model_type"] as? String,
-                              raw["architecture"] as? String].compactMap { $0?.lowercased() }
+            let candidates = [
+                raw["model_type"] as? String,
+                raw["architecture"] as? String,
+            ].compactMap { $0?.lowercased() }
             for candidate in candidates {
                 for kind in AudioModelKind.allCases where kind.modelTypes.contains(candidate) {
                     return kind
@@ -133,8 +136,10 @@ public enum VADModelRegistry {
 
     /// Load an audio model from a local snapshot directory, dispatching
     /// to the right family loader by detected architecture.
-    public static func loadFromDirectory(_ directory: URL,
-                                         device: Device = .shared) throws -> LoadedVADModel {
+    public static func loadFromDirectory(
+        _ directory: URL,
+        device: Device = .shared
+    ) throws -> LoadedVADModel {
         let kind = try detectKind(in: directory)
         switch kind {
         case .sileroVAD:
@@ -152,8 +157,10 @@ public enum VADModelRegistry {
 
     /// Download (or hit cache) an audio checkpoint from HuggingFace and
     /// load it.
-    public static func fromPretrained(_ idOrPath: String,
-                                      device: Device = .shared) async throws -> LoadedVADModel {
+    public static func fromPretrained(
+        _ idOrPath: String,
+        device: Device = .shared
+    ) async throws -> LoadedVADModel {
         let dir = try await ModelLocator().resolve(idOrPath: idOrPath)
         return try loadFromDirectory(dir, device: device)
     }

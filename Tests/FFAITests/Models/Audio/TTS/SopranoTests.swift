@@ -29,6 +29,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Soprano")
@@ -88,7 +89,7 @@ struct SopranoTests {
             "bos_token_id": 1,
             "eos_token_id": 2,
             "pad_token_id": 0,
-            // No decoder fields — Soprano-1.1 is LLM-only.
+                // No decoder fields — Soprano-1.1 is LLM-only.
         ]
     }
 
@@ -97,8 +98,9 @@ struct SopranoTests {
     @Test("SopranoConfig — decodes transformer fields from Soprano-80M config")
     func configDecodes80M() {
         let raw = Self.soprano80MRaw()
-        let modelConfig = ModelConfig(architecture: "SopranoForCausalLM",
-                                      modelType: "soprano", raw: raw)
+        let modelConfig = ModelConfig(
+            architecture: "SopranoForCausalLM",
+            modelType: "soprano", raw: raw)
         let config = SopranoConfig.from(modelConfig)
         #expect(config != nil)
         #expect(config?.hiddenSize == 512)
@@ -120,8 +122,9 @@ struct SopranoTests {
     @Test("SopranoConfig — decodes decoder fields for Soprano-80M")
     func configDecodes80MDecoder() {
         let raw = Self.soprano80MRaw()
-        let modelConfig = ModelConfig(architecture: "SopranoForCausalLM",
-                                      modelType: "soprano", raw: raw)
+        let modelConfig = ModelConfig(
+            architecture: "SopranoForCausalLM",
+            modelType: "soprano", raw: raw)
         let config = SopranoConfig.from(modelConfig)!
         #expect(config.sampleRate == 32_000)
         #expect(config.decoderNumLayers == 8)
@@ -138,8 +141,9 @@ struct SopranoTests {
     @Test("SopranoConfig — hasDecoderConfig is true for Soprano-80M")
     func hasDecoderConfigTrue() {
         let raw = Self.soprano80MRaw()
-        let modelConfig = ModelConfig(architecture: "SopranoForCausalLM",
-                                      modelType: "soprano", raw: raw)
+        let modelConfig = ModelConfig(
+            architecture: "SopranoForCausalLM",
+            modelType: "soprano", raw: raw)
         let config = SopranoConfig.from(modelConfig)!
         #expect(config.hasDecoderConfig == true)
     }
@@ -147,8 +151,9 @@ struct SopranoTests {
     @Test("SopranoConfig — hasDecoderConfig is false for Soprano-1.1 (LLM-only)")
     func hasDecoderConfigFalse() {
         let raw = Self.soprano11Raw()
-        let modelConfig = ModelConfig(architecture: "Qwen3ForCausalLM",
-                                      modelType: "soprano", raw: raw)
+        let modelConfig = ModelConfig(
+            architecture: "Qwen3ForCausalLM",
+            modelType: "soprano", raw: raw)
         let config = SopranoConfig.from(modelConfig)!
         #expect(config.hasDecoderConfig == false)
         #expect(config.decoderDim == nil)
@@ -159,8 +164,9 @@ struct SopranoTests {
     @Test("SopranoConfig — returns nil for missing required fields")
     func configReturnsNilForMissingFields() {
         // Missing hidden_size, num_hidden_layers, etc.
-        let modelConfig = ModelConfig(architecture: nil, modelType: "soprano",
-                                      raw: ["model_type": "soprano"])
+        let modelConfig = ModelConfig(
+            architecture: nil, modelType: "soprano",
+            raw: ["model_type": "soprano"])
         #expect(SopranoConfig.from(modelConfig) == nil)
     }
 
@@ -197,7 +203,7 @@ struct SopranoTests {
         let config = SopranoConfig.from(modelConfig)!
         // sampleRate is a computed property on SopranoModel, checked via the config.
         // The model falls back to 32_000 when sampleRate is nil.
-        #expect(config.sampleRate == nil)      // nil in config …
+        #expect(config.sampleRate == nil)  // nil in config …
         // … but the model exposes 32_000 via the fallback.
         // We assert the fallback directly here.
         let fallback = config.sampleRate ?? 32_000
@@ -207,8 +213,9 @@ struct SopranoTests {
     @Test("sampleRate — returns 32 000 for Soprano-80M with sample_rate in config")
     func sampleRate32kHz() {
         let config = SopranoConfig.from(
-            ModelConfig(architecture: "SopranoForCausalLM", modelType: "soprano",
-                        raw: Self.soprano80MRaw()))!
+            ModelConfig(
+                architecture: "SopranoForCausalLM", modelType: "soprano",
+                raw: Self.soprano80MRaw()))!
         #expect(config.sampleRate == 32_000)
     }
 
@@ -216,50 +223,57 @@ struct SopranoTests {
 
     @Test("SopranoModel.handles — detects from model_type soprano")
     func handlesModelType() {
-        let config = ModelConfig(architecture: nil, modelType: "soprano",
-                                 raw: ["model_type": "soprano"])
+        let config = ModelConfig(
+            architecture: nil, modelType: "soprano",
+            raw: ["model_type": "soprano"])
         #expect(SopranoModel.handles(config))
     }
 
     @Test("SopranoModel.handles — detects from SopranoForCausalLM architecture")
     func handlesArchitecture() {
-        let config = ModelConfig(architecture: "SopranoForCausalLM", modelType: nil,
-                                 raw: ["architectures": ["SopranoForCausalLM"]])
+        let config = ModelConfig(
+            architecture: "SopranoForCausalLM", modelType: nil,
+            raw: ["architectures": ["SopranoForCausalLM"]])
         #expect(SopranoModel.handles(config))
     }
 
     @Test("SopranoModel.handles — detects Soprano-1.1 (Qwen3ForCausalLM + soprano model_type)")
     func handlesQwen3ArchWithSopranoModelType() {
-        let config = ModelConfig(architecture: "Qwen3ForCausalLM", modelType: "soprano",
-                                 raw: Self.soprano11Raw())
+        let config = ModelConfig(
+            architecture: "Qwen3ForCausalLM", modelType: "soprano",
+            raw: Self.soprano11Raw())
         #expect(SopranoModel.handles(config))
     }
 
     @Test("SopranoModel.handles — does not detect plain Qwen3 models")
     func doesNotDetectQwen3() {
-        let config = ModelConfig(architecture: "Qwen3ForCausalLM", modelType: "qwen3",
-                                 raw: ["model_type": "qwen3", "hidden_size": 2048])
+        let config = ModelConfig(
+            architecture: "Qwen3ForCausalLM", modelType: "qwen3",
+            raw: ["model_type": "qwen3", "hidden_size": 2048])
         #expect(!SopranoModel.handles(config))
     }
 
     @Test("SopranoModel.handles — does not detect Llama models")
     func doesNotDetectLlama() {
-        let config = ModelConfig(architecture: "LlamaForCausalLM", modelType: "llama",
-                                 raw: ["model_type": "llama", "hidden_size": 4096])
+        let config = ModelConfig(
+            architecture: "LlamaForCausalLM", modelType: "llama",
+            raw: ["model_type": "llama", "hidden_size": 4096])
         #expect(!SopranoModel.handles(config))
     }
 
     @Test("SopranoModel.handles — does not detect Kokoro models")
     func doesNotDetectKokoro() {
-        let config = ModelConfig(architecture: nil, modelType: "kokoro",
-                                 raw: ["model_type": "kokoro"])
+        let config = ModelConfig(
+            architecture: nil, modelType: "kokoro",
+            raw: ["model_type": "kokoro"])
         #expect(!SopranoModel.handles(config))
     }
 
     @Test("SopranoModel.handles — does not detect MOSS-TTS models")
     func doesNotDetectMossTTS() {
-        let config = ModelConfig(architecture: nil, modelType: "moss_tts",
-                                 raw: ["model_type": "moss_tts", "n_vq": 32])
+        let config = ModelConfig(
+            architecture: nil, modelType: "moss_tts",
+            raw: ["model_type": "moss_tts", "n_vq": 32])
         #expect(!SopranoModel.handles(config))
     }
 
@@ -277,15 +291,17 @@ struct SopranoTests {
 
     @Test("AudioModelRegistry — handles Soprano from model_type soprano")
     func registryHandlesSoprano() {
-        let config = ModelConfig(architecture: "SopranoForCausalLM", modelType: "soprano",
-                                 raw: ["model_type": "soprano"])
+        let config = ModelConfig(
+            architecture: "SopranoForCausalLM", modelType: "soprano",
+            raw: ["model_type": "soprano"])
         #expect(AudioModelRegistry.handles(config))
     }
 
     @Test("AudioModelRegistry — capabilities for Soprano is textToSpeech")
     func registryCapabilitiesSoprano() {
-        let config = ModelConfig(architecture: "SopranoForCausalLM", modelType: "soprano",
-                                 raw: ["model_type": "soprano"])
+        let config = ModelConfig(
+            architecture: "SopranoForCausalLM", modelType: "soprano",
+            raw: ["model_type": "soprano"])
         let caps = AudioModelRegistry.capabilities(for: config)
         #expect(caps == Capability.textToSpeech)
         #expect(caps?.contains(.audioOut) == true)
@@ -294,8 +310,9 @@ struct SopranoTests {
 
     @Test("AudioModelRegistry — does not handle plain Qwen3 as Soprano")
     func registryDoesNotHandlePlainQwen3AsSoprano() {
-        let config = ModelConfig(architecture: "Qwen3ForCausalLM", modelType: "qwen3",
-                                 raw: ["model_type": "qwen3", "hidden_size": 2048])
+        let config = ModelConfig(
+            architecture: "Qwen3ForCausalLM", modelType: "qwen3",
+            raw: ["model_type": "qwen3", "hidden_size": 2048])
         // Soprano should not steal a plain Qwen3 config.
         #expect(!SopranoModel.handles(config))
     }

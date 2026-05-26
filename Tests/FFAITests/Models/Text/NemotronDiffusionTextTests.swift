@@ -29,6 +29,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("NemotronDiffusionDense Variant Surface")
@@ -69,8 +70,9 @@ struct NemotronDiffusionTextTests {
 
     @Test("dense variant declares text-only capabilities")
     func variantCapabilities() throws {
-        let config = ModelConfig(architecture: "NemotronDiffusionModel",
-                                 modelType: "nemotron_labs_diffusion", raw: [:])
+        let config = ModelConfig(
+            architecture: "NemotronDiffusionModel",
+            modelType: "nemotron_labs_diffusion", raw: [:])
         let variant = try NemotronDiffusion.variant(for: config)
         #expect(variant.availableCapabilities == [.textIn, .textOut])
     }
@@ -99,8 +101,8 @@ struct NemotronDiffusionTextTests {
     func transferWithThreshold() {
         // pos0 non-mask; pos1 mask, very confident; pos2 mask, diffuse.
         let blockLogits = [
-            logitsTensor([0, 0, 5, 0]),       // non-mask — ignored for confidence
-            logitsTensor([0, 0, 12, 0]),      // mask — softmax peak ≈ 1.0
+            logitsTensor([0, 0, 5, 0]),  // non-mask — ignored for confidence
+            logitsTensor([0, 0, 12, 0]),  // mask — softmax peak ≈ 1.0
             logitsTensor([1.0, 1.0, 1.0, 1.05]),  // mask — diffuse, low confidence
         ]
         let isMask = [false, true, true]
@@ -108,8 +110,8 @@ struct NemotronDiffusionTextTests {
             blockLogits: blockLogits, isMask: isMask,
             numTransfer: 99, threshold: 0.9)
 
-        #expect(x0[1] == 2)              // argmax of the confident position
-        #expect(x0[2] == 3)              // argmax of the diffuse position
+        #expect(x0[1] == 2)  // argmax of the confident position
+        #expect(x0[2] == 3)  // argmax of the diffuse position
         // Only the confident masked position clears the 0.9 threshold;
         // the diffuse one is rank 1 and below threshold → not committed.
         #expect(transfer == [1])
@@ -133,9 +135,9 @@ struct NemotronDiffusionTextTests {
     @Test("without a threshold the top-numTransfer positions commit")
     func transferTopK() {
         let blockLogits = [
-            logitsTensor([0, 0, 8, 0]),       // confident
+            logitsTensor([0, 0, 8, 0]),  // confident
             logitsTensor([1.0, 1.0, 1.0, 1.02]),  // diffuse
-            logitsTensor([0, 6, 0, 0]),       // medium
+            logitsTensor([0, 6, 0, 0]),  // medium
         ]
         let (_, transfer) = Model.transferIndex(
             blockLogits: blockLogits, isMask: [true, true, true],

@@ -123,12 +123,14 @@ public final class Profile: @unchecked Sendable {
 // instead of reaching for `Profile.shared`. The `static` variants below
 // are thin `shared`-bound wrappers kept for call sites (Ops wrappers,
 // model layers) that have no injected instance to thread.
-public extension Profile {
+extension Profile {
     /// Wrap a closure in an `os_signpost` interval. Below level 2
     /// this is a single `body()` call with no instrumentation cost.
     @inlinable
-    func signpost<T>(_ name: StaticString,
-                     _ body: () throws -> T) rethrows -> T {
+    public func signpost<T>(
+        _ name: StaticString,
+        _ body: () throws -> T
+    ) rethrows -> T {
         guard level >= .signposts else { return try body() }
         let id = signposter.makeSignpostID()
         let state = signposter.beginInterval(name, id: id)
@@ -138,8 +140,10 @@ public extension Profile {
 
     /// Async variant.
     @inlinable
-    func signpostAsync<T>(_ name: StaticString,
-                          _ body: () async throws -> T) async rethrows -> T {
+    public func signpostAsync<T>(
+        _ name: StaticString,
+        _ body: () async throws -> T
+    ) async rethrows -> T {
         guard level >= .signposts else { return try await body() }
         let id = signposter.makeSignpostID()
         let state = signposter.beginInterval(name, id: id)
@@ -150,7 +154,7 @@ public extension Profile {
     /// Emit a single point-in-time signpost event. Use for instants
     /// without duration (e.g. "first token sampled", "EOS hit").
     @inlinable
-    func event(_ name: StaticString) {
+    public func event(_ name: StaticString) {
         guard level >= .signposts else { return }
         signposter.emitEvent(name)
     }
@@ -158,8 +162,10 @@ public extension Profile {
     /// Time `body()` and record it under `phaseName` if level ≥ 1.
     /// Always returns the body's value.
     @inlinable
-    func time<T>(_ phaseName: String,
-                 _ body: () throws -> T) rethrows -> T {
+    public func time<T>(
+        _ phaseName: String,
+        _ body: () throws -> T
+    ) rethrows -> T {
         guard level >= .wallclock else { return try body() }
         let start = Date()
         defer { recordPhase(phaseName, durationS: Date().timeIntervalSince(start)) }
@@ -168,8 +174,10 @@ public extension Profile {
 
     /// Async variant.
     @inlinable
-    func timeAsync<T>(_ phaseName: String,
-                      _ body: () async throws -> T) async rethrows -> T {
+    public func timeAsync<T>(
+        _ phaseName: String,
+        _ body: () async throws -> T
+    ) async rethrows -> T {
         guard level >= .wallclock else { return try await body() }
         let start = Date()
         defer { recordPhase(phaseName, durationS: Date().timeIntervalSince(start)) }
@@ -183,41 +191,49 @@ public extension Profile {
 // `Profile` should prefer the instance methods above; these exist for
 // the many fixed call sites (Ops wrappers, model layers) that have no
 // instance to thread and always profile against the process singleton.
-public extension Profile {
+extension Profile {
     /// Wrap a closure in an `os_signpost` interval. Below level 2
     /// this is a single `body()` call with no instrumentation cost.
     @inlinable
-    static func signpost<T>(_ name: StaticString,
-                            _ body: () throws -> T) rethrows -> T {
+    public static func signpost<T>(
+        _ name: StaticString,
+        _ body: () throws -> T
+    ) rethrows -> T {
         try shared.signpost(name, body)
     }
 
     /// Async variant.
     @inlinable
-    static func signpostAsync<T>(_ name: StaticString,
-                                 _ body: () async throws -> T) async rethrows -> T {
+    public static func signpostAsync<T>(
+        _ name: StaticString,
+        _ body: () async throws -> T
+    ) async rethrows -> T {
         try await shared.signpostAsync(name, body)
     }
 
     /// Emit a single point-in-time signpost event. Use for instants
     /// without duration (e.g. "first token sampled", "EOS hit").
     @inlinable
-    static func event(_ name: StaticString) {
+    public static func event(_ name: StaticString) {
         shared.event(name)
     }
 
     /// Time `body()` and record it under `phaseName` if level ≥ 1.
     /// Always returns the body's value.
     @inlinable
-    static func time<T>(_ phaseName: String,
-                        _ body: () throws -> T) rethrows -> T {
+    public static func time<T>(
+        _ phaseName: String,
+        _ body: () throws -> T
+    ) rethrows -> T {
         try shared.time(phaseName, body)
     }
 
     /// Async variant.
     @inlinable
-    static func timeAsync<T>(_ phaseName: String,
-                             _ body: () async throws -> T) async rethrows -> T {
+    public static func timeAsync<T>(
+        _ phaseName: String,
+        _ body: () async throws -> T
+    ) async rethrows -> T {
         try await shared.timeAsync(phaseName, body)
     }
 }

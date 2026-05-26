@@ -29,9 +29,10 @@
 // prior MiniCPMVVideoIntegrationTests.swift).
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("MiniCPMV Vision Integration (image + video)", .serialized)
 struct MiniCPMVIntegrationTests {
@@ -88,14 +89,16 @@ struct MiniCPMVIntegrationTests {
         let trailer = m.tokenizer.encode(
             text: "\nDescribe this image briefly.<|im_end|>\n"
                 + "<|im_start|>assistant\n")
-        let promptTokens = header
+        let promptTokens =
+            header
             + Array(repeating: imageTokenId, count: vlm.imageTokenCount)
             + trailer
 
         // A solid test image at the encoder's runtime resolution (448).
         let cfg = vlm.visionEncoder.config
-        let image = RGBImage.solid(width: cfg.imageSize, height: cfg.imageSize,
-                                   r: 0.55, g: 0.45, b: 0.30)
+        let image = RGBImage.solid(
+            width: cfg.imageSize, height: cfg.imageSize,
+            r: 0.55, g: 0.45, b: 0.30)
 
         let generated = try vlm.generate(
             promptTokens: promptTokens, image: image,
@@ -103,8 +106,9 @@ struct MiniCPMVIntegrationTests {
 
         // Coherence-only contract: a real image+text prompt should
         // decode a non-degenerate run of tokens.
-        expectCoherentOutput(generated, minTokens: 16,
-                             label: "MiniCPM-V 4.6 image+text")
+        expectCoherentOutput(
+            generated, minTokens: 16,
+            label: "MiniCPM-V 4.6 image+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("MiniCPM-V 4.6 generated: \(text)")
     }
@@ -118,18 +122,23 @@ struct MiniCPMVIntegrationTests {
         }
         // The MiniCPM-V 4.6 family loader threads video_token_id (248057)
         // through to VisionModel.init; confirm it landed.
-        let vlm = try #require(m.vlModel,
-                               "MiniCPM-V 4.6 checkpoint is not a VLM")
-        #expect(vlm.videoTokenId != nil,
-                "video_token_id should be threaded through from config")
-        #expect(vlm.videoTokenId == MiniCPMV4_6.defaultVideoTokenId,
-                "video_token_id should be 248057 (<|video_pad|>)")
-        #expect(vlm.imageTokenId == MiniCPMV4_6.defaultImageTokenId,
-                "image_token_id should be 248056 (<|image_pad|>)")
+        let vlm = try #require(
+            m.vlModel,
+            "MiniCPM-V 4.6 checkpoint is not a VLM")
+        #expect(
+            vlm.videoTokenId != nil,
+            "video_token_id should be threaded through from config")
+        #expect(
+            vlm.videoTokenId == MiniCPMV4_6.defaultVideoTokenId,
+            "video_token_id should be 248057 (<|video_pad|>)")
+        #expect(
+            vlm.imageTokenId == MiniCPMV4_6.defaultImageTokenId,
+            "image_token_id should be 248056 (<|image_pad|>)")
         // Each frame produces 64 merged tokens (32×32 → vit_merger 16×16
         // → merger 8×8 = 64) for the v1 448×448 path.
-        #expect(vlm.imageTokenCount == 64,
-                "imageTokenCount should be 64 for the v1 single-tile path")
+        #expect(
+            vlm.imageTokenCount == 64,
+            "imageTokenCount should be 64 for the v1 single-tile path")
     }
 
     @Test("video + text prompt — describes the cat clip")
@@ -137,10 +146,12 @@ struct MiniCPMVIntegrationTests {
         let m = try await ModelLoadLock.shared.loadSerially {
             try await Model.load(Self.modelId)
         }
-        let vlm = try #require(m.vlModel,
-                               "MiniCPM-V 4.6 checkpoint is not a VLM")
-        let videoTokenId = try #require(vlm.videoTokenId,
-                                        "video_token_id must be set for video generation")
+        let vlm = try #require(
+            m.vlModel,
+            "MiniCPM-V 4.6 checkpoint is not a VLM")
+        let videoTokenId = try #require(
+            vlm.videoTokenId,
+            "video_token_id must be set for video generation")
 
         // Decode `frameCount` evenly-spaced frames from cat.mp4.
         let frames = try VisionTestHelpers.catVideoFrames(maxFrames: Self.frameCount)
@@ -163,7 +174,8 @@ struct MiniCPMVIntegrationTests {
         let trailer = m.tokenizer.encode(
             text: "\nWhat's in this video?<|im_end|>\n"
                 + "<|im_start|>assistant\n")
-        let promptTokens = header
+        let promptTokens =
+            header
             + Array(repeating: videoTokenId, count: videoTokenCount)
             + trailer
 
@@ -175,8 +187,9 @@ struct MiniCPMVIntegrationTests {
             eosTokenIds: m.config.eosTokenIds)
 
         // Coherence first — the model should produce a non-degenerate run.
-        expectCoherentOutput(generated, minTokens: 8,
-                             label: "MiniCPM-V 4.6 video+text")
+        expectCoherentOutput(
+            generated, minTokens: 8,
+            label: "MiniCPM-V 4.6 video+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("MiniCPM-V 4.6 video generated: \(text)")
         VisionTestHelpers.expectMentionsCat(text, label: "MiniCPM-V 4.6 video")

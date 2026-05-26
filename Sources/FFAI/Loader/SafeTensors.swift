@@ -140,7 +140,8 @@ public final class SafeTensorsFile: @unchecked Sendable {
         defer { close(fd) }
 
         guard let mapped = mmap(nil, totalBytes, PROT_READ, MAP_PRIVATE, fd, 0),
-              mapped != MAP_FAILED else {
+            mapped != MAP_FAILED
+        else {
             throw SafeTensorsError.mmapFailed(resolvedURL)
         }
 
@@ -155,12 +156,12 @@ public final class SafeTensorsFile: @unchecked Sendable {
         for (name, value) in json {
             if name == "__metadata__" { continue }
             guard let dict = value as? [String: Any],
-                  let dtypeStr = dict["dtype"] as? String,
-                  let shapeAny = dict["shape"] as? [Any],
-                  let offsets = dict["data_offsets"] as? [Any],
-                  offsets.count == 2,
-                  let startNum = offsets[0] as? NSNumber,
-                  let endNum = offsets[1] as? NSNumber
+                let dtypeStr = dict["dtype"] as? String,
+                let shapeAny = dict["shape"] as? [Any],
+                let offsets = dict["data_offsets"] as? [Any],
+                offsets.count == 2,
+                let startNum = offsets[0] as? NSNumber,
+                let endNum = offsets[1] as? NSNumber
             else {
                 throw SafeTensorsError.headerEntryMalformed(name)
             }
@@ -172,10 +173,11 @@ public final class SafeTensorsFile: @unchecked Sendable {
                 // with a debug log; model code that asks for one of
                 // these by name later will get `missingTensor`, which
                 // is the right error. Surface every skip via FFAI_DEBUG_LOAD=1.
-                Debug.log(.load,
+                Debug.log(
+                    .load,
                     "SafeTensorsBundle: skipping tensor \"\(name)\" "
-                    + "with unsupported dtype \(dtypeStr) "
-                    + "(typically a training-only buffer)")
+                        + "with unsupported dtype \(dtypeStr) "
+                        + "(typically a training-only buffer)")
                 continue
             }
             let shape: [Int] = shapeAny.compactMap { ($0 as? NSNumber)?.intValue }
@@ -191,15 +193,18 @@ public final class SafeTensorsFile: @unchecked Sendable {
             // (Apple Silicon page size = 16 KiB), and arbitrary offsets
             // into a mmap'd safetensors file are not page-aligned.
             // Cost: one extra memcpy of the full file at load time.
-            guard let perTensorBuf = device.mtlDevice.makeBuffer(
-                bytes: ptr, length: length,
-                options: [.storageModeShared]
-            ) else {
+            guard
+                let perTensorBuf = device.mtlDevice.makeBuffer(
+                    bytes: ptr, length: length,
+                    options: [.storageModeShared]
+                )
+            else {
                 munmap(mapped, totalBytes)
                 throw SafeTensorsError.mtlBufferFailed
             }
-            parsed[name] = Entry(name: name, dtype: dtype,
-                                 shape: shape, buffer: perTensorBuf)
+            parsed[name] = Entry(
+                name: name, dtype: dtype,
+                shape: shape, buffer: perTensorBuf)
         }
 
         // All tensor bytes have been copied into MTLBuffers above; the
@@ -262,7 +267,7 @@ public final class SafeTensorsBundle: @unchecked Sendable {
             // Sharded: read weight_map → distinct file names
             let data = try Data(contentsOf: indexURL)
             guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let weightMap = obj["weight_map"] as? [String: String]
+                let weightMap = obj["weight_map"] as? [String: String]
             else {
                 throw SafeTensorsError.headerJSONMalformed
             }
@@ -279,7 +284,8 @@ public final class SafeTensorsBundle: @unchecked Sendable {
                     at: directory,
                     includingPropertiesForKeys: nil
                 )
-                fileURLs = contents
+                fileURLs =
+                    contents
                     .filter { $0.pathExtension == "safetensors" }
                     .sorted { $0.lastPathComponent < $1.lastPathComponent }
             }
@@ -306,8 +312,10 @@ public final class SafeTensorsBundle: @unchecked Sendable {
 
     /// Internal init for building a re-indexed view over the same
     /// underlying `SafeTensorsFile`s — used by `prefixed(_:)`.
-    private init(files: [SafeTensorsFile], directory: URL,
-                 index: [String: Int], keyTranslation: [String: String]) {
+    private init(
+        files: [SafeTensorsFile], directory: URL,
+        index: [String: Int], keyTranslation: [String: String]
+    ) {
         self.files = files
         self.directory = directory
         self.index = index
@@ -334,8 +342,9 @@ public final class SafeTensorsBundle: @unchecked Sendable {
             // `prefixed` calls still reach the real physical key.
             translation[stripped] = keyTranslation[key] ?? key
         }
-        return SafeTensorsBundle(files: files, directory: directory,
-                                 index: remapped, keyTranslation: translation)
+        return SafeTensorsBundle(
+            files: files, directory: directory,
+            index: remapped, keyTranslation: translation)
     }
 
     /// A view onto this bundle with `prefix` *prepended* to every
@@ -353,8 +362,9 @@ public final class SafeTensorsBundle: @unchecked Sendable {
             remapped[added] = fileIndex
             translation[added] = keyTranslation[key] ?? key
         }
-        return SafeTensorsBundle(files: files, directory: directory,
-                                 index: remapped, keyTranslation: translation)
+        return SafeTensorsBundle(
+            files: files, directory: directory,
+            index: remapped, keyTranslation: translation)
     }
 
     public var allKeys: [String] { Array(index.keys).sorted() }

@@ -21,6 +21,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("FishS1DAC config + structural invariants")
@@ -31,26 +32,26 @@ struct FishS1DACTests {
     @Test("FishS1DACConfig decodes a representative codec.json")
     func configDecodeFullJSON() throws {
         let json = """
-        {
-          "encoder_dim": 64,
-          "encoder_rates": [2, 4, 8, 8],
-          "latent_dim": 1024,
-          "decoder_dim": 1536,
-          "decoder_rates": [8, 8, 4, 2],
-          "n_codebooks": 9,
-          "codebook_size": 1024,
-          "codebook_dim": 8,
-          "semantic_codebook_size": 4096,
-          "downsample_factor": [2, 2],
-          "sample_rate": 44100,
-          "quantizer_transformer_layers": 8,
-          "quantizer_transformer_heads": 16,
-          "quantizer_transformer_dim": 1024,
-          "quantizer_transformer_intermediate_size": 3072,
-          "quantizer_transformer_head_dim": 64,
-          "quantizer_window_size": 128
-        }
-        """
+            {
+              "encoder_dim": 64,
+              "encoder_rates": [2, 4, 8, 8],
+              "latent_dim": 1024,
+              "decoder_dim": 1536,
+              "decoder_rates": [8, 8, 4, 2],
+              "n_codebooks": 9,
+              "codebook_size": 1024,
+              "codebook_dim": 8,
+              "semantic_codebook_size": 4096,
+              "downsample_factor": [2, 2],
+              "sample_rate": 44100,
+              "quantizer_transformer_layers": 8,
+              "quantizer_transformer_heads": 16,
+              "quantizer_transformer_dim": 1024,
+              "quantizer_transformer_intermediate_size": 3072,
+              "quantizer_transformer_head_dim": 64,
+              "quantizer_window_size": 128
+            }
+            """
         let config = try JSONDecoder().decode(
             FishS1DACConfig.self, from: Data(json.utf8))
 
@@ -124,8 +125,8 @@ struct FishS1DACTests {
     @Test("FishS1DACConfig accepts optional downsample_dims field")
     func configDownsampleDimsOptional() throws {
         let withDims = """
-        {"downsample_dims": [512, 1024]}
-        """
+            {"downsample_dims": [512, 1024]}
+            """
         let config = try JSONDecoder().decode(
             FishS1DACConfig.self, from: Data(withDims.utf8))
         #expect(config.downsampleDims == [512, 1024])
@@ -176,9 +177,10 @@ struct FishS1DACTests {
         guard let path = ProcessInfo.processInfo.environment["FFAI_FISH_DAC_DIR"]
         else { return nil }
         let url = URL(fileURLWithPath: path)
-        let hasConfig = FileManager.default.fileExists(
-            atPath: url.appendingPathComponent("codec.json").path) ||
+        let hasConfig =
             FileManager.default.fileExists(
+                atPath: url.appendingPathComponent("codec.json").path)
+            || FileManager.default.fileExists(
                 atPath: url.appendingPathComponent("config.json").path)
         return hasConfig ? url : nil
     }
@@ -195,11 +197,11 @@ struct FishS1DACTests {
         // Public invariants from config.
         #expect(codec.sampleRate == 44_100)
         #expect(codec.hopLength == 512)
-        #expect(codec.numCodebooks == 10)    // 1 semantic + 9 residual (S2 defaults)
+        #expect(codec.numCodebooks == 10)  // 1 semantic + 9 residual (S2 defaults)
 
         // 4 frames of silence codes (all zeros).
         let nFrames = 4
-        let codes = (0..<codec.numCodebooks).map { _ in
+        let codes = (0 ..< codec.numCodebooks).map { _ in
             [Int32](repeating: 0, count: nFrames)
         }
 
@@ -219,6 +221,6 @@ struct FishS1DACTests {
         // Rough amplitude sanity: silence codes should produce small output
         // (codec embedding [0] may not be exactly silent, but should be bounded).
         let rms = sqrt(floats.map { $0 * $0 }.reduce(0, +) / Float(floats.count))
-        #expect(rms < 1.0)    // well within ±1 f32 audio range
+        #expect(rms < 1.0)  // well within ±1 f32 audio range
     }
 }

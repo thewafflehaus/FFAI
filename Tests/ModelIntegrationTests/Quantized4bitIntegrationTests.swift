@@ -19,9 +19,10 @@
 // Skipped if network/checkpoint isn't available.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Qwen3 4-bit Integration", .serialized)
 struct Quantized4bitIntegrationTests {

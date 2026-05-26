@@ -22,6 +22,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("NemotronDiffusion Family Root")
@@ -41,18 +42,22 @@ struct NemotronDiffusionRootTests {
 
     @Test("variant(for:) returns NemotronDiffusionDense")
     func variantDispatch() throws {
-        let cfg = ModelConfig(architecture: "NemotronDiffusionModel",
-                              modelType: "nemotron_labs_diffusion", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "NemotronDiffusionModel",
+            modelType: "nemotron_labs_diffusion", raw: [:])
         let v = try NemotronDiffusion.variant(for: cfg)
-        #expect(String(describing: v)
-            == String(describing: NemotronDiffusionDense.self))
+        #expect(
+            String(describing: v)
+                == String(describing: NemotronDiffusionDense.self))
     }
 
     @Test("NemotronDiffusionError.missingConfig description names the family")
     func errorDescription() {
-        #expect(NemotronDiffusionError.missingConfig.description
-            .contains("NemotronDiffusion"))
-        #expect(NemotronDiffusionError.missingConfig.description
-            .contains("missing"))
+        #expect(
+            NemotronDiffusionError.missingConfig.description
+                .contains("NemotronDiffusion"))
+        #expect(
+            NemotronDiffusionError.missingConfig.description
+                .contains("missing"))
     }
 }

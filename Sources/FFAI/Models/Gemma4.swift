@@ -71,9 +71,9 @@ public protocol Gemma4Variant {
     ) throws -> Gemma4Model
 }
 
-public extension Gemma4Variant {
-    static var availableCapabilities: Set<Capability> { [.textIn, .textOut] }
-    static var defaultGenerationParameters: GenerationParameters {
+extension Gemma4Variant {
+    public static var availableCapabilities: Set<Capability> { [.textIn, .textOut] }
+    public static var defaultGenerationParameters: GenerationParameters {
         // Gemma 4: 4096-token prefill chunk is the audited family
         // optimum (pure-attention backbone, no SSM bottleneck).
         GenerationParameters(

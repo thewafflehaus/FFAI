@@ -51,10 +51,10 @@ struct Qwen2VLVisionConfig {
     static func decode(_ c: ModelConfig) throws -> Qwen2VLVisionConfig {
         // `embed_dim` is the vision hidden (Qwen2-VL naming convention).
         guard let depth = c.int("depth"),
-              let hidden = c.int("embed_dim"),
-              let numHeads = c.int("num_heads"),
-              let patchSize = c.int("patch_size"),
-              let mergeSize = c.int("spatial_merge_size")
+            let hidden = c.int("embed_dim"),
+            let numHeads = c.int("num_heads"),
+            let patchSize = c.int("patch_size"),
+            let mergeSize = c.int("spatial_merge_size")
         else {
             throw Qwen2VLError.missingConfig
         }
@@ -79,22 +79,27 @@ struct Qwen2VLVisionConfig {
 final class Qwen2VLVisionBlock {
     let norm1: LayerNorm
     let norm2: LayerNorm
-    let qkv: Linear            // fused [3·hidden, hidden] (+ bias)
-    let proj: Linear           // [hidden, hidden] (+ bias)
-    let fc1: Linear            // GELU-MLP up   [paddedIntermediate, hidden]
-    let fc2: Linear            // GELU-MLP down [hidden, paddedIntermediate]
+    let qkv: Linear  // fused [3·hidden, hidden] (+ bias)
+    let proj: Linear  // [hidden, hidden] (+ bias)
+    let fc1: Linear  // GELU-MLP up   [paddedIntermediate, hidden]
+    let fc2: Linear  // GELU-MLP down [hidden, paddedIntermediate]
     let cfg: Qwen2VLVisionConfig
     /// MLP intermediate dim rounded up to the GEMM K-tile width — `fc1`'s
     /// output rows are zero-extended and `fc2`'s input columns zero-padded
     /// to it, so the `fc2` projection's `inDim` is aligned.
     let paddedIntermediate: Int
 
-    init(norm1: LayerNorm, norm2: LayerNorm, qkv: Linear, proj: Linear,
-         fc1: Linear, fc2: Linear,
-         paddedIntermediate: Int, cfg: Qwen2VLVisionConfig) {
-        self.norm1 = norm1; self.norm2 = norm2
-        self.qkv = qkv; self.proj = proj
-        self.fc1 = fc1; self.fc2 = fc2
+    init(
+        norm1: LayerNorm, norm2: LayerNorm, qkv: Linear, proj: Linear,
+        fc1: Linear, fc2: Linear,
+        paddedIntermediate: Int, cfg: Qwen2VLVisionConfig
+    ) {
+        self.norm1 = norm1
+        self.norm2 = norm2
+        self.qkv = qkv
+        self.proj = proj
+        self.fc1 = fc1
+        self.fc2 = fc2
         self.paddedIntermediate = paddedIntermediate
         self.cfg = cfg
     }
@@ -102,37 +107,46 @@ final class Qwen2VLVisionBlock {
     /// Forward `[nTokens, hidden]` activations through one block.
     /// `cosTable` / `sinTable` are the precomputed per-token rotary
     /// tables `[nTokens, headDim]`.
-    func forward(_ h: Tensor, nTokens: Int,
-                 cosTable: [Float], sinTable: [Float],
-                 device: Device) -> Tensor {
+    func forward(
+        _ h: Tensor, nTokens: Int,
+        cosTable: [Float], sinTable: [Float],
+        device: Device
+    ) -> Tensor {
         let hidden = cfg.hidden
         // ── Attention sub-block ──
         let cmd = device.makeCommandBuffer()
-        let normed = Ops.layerNorm(h, weight: norm1.weight, bias: norm1.bias,
-                                   eps: norm1.eps, nRows: nTokens,
-                                   rowSize: hidden, on: cmd)
-        let qkvOut = projectRows(qkv, normed, nTokens: nTokens,
-                                 outDim: 3 * hidden, on: cmd)
+        let normed = Ops.layerNorm(
+            h, weight: norm1.weight, bias: norm1.bias,
+            eps: norm1.eps, nRows: nTokens,
+            rowSize: hidden, on: cmd)
+        let qkvOut = projectRows(
+            qkv, normed, nTokens: nTokens,
+            outDim: 3 * hidden, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
 
-        let attn = cpuAttention(qkv: qkvOut, nTokens: nTokens,
-                                cosTable: cosTable, sinTable: sinTable,
-                                device: device)
+        let attn = cpuAttention(
+            qkv: qkvOut, nTokens: nTokens,
+            cosTable: cosTable, sinTable: sinTable,
+            device: device)
 
         // ── Residual + MLP sub-block ──
         let cmd2 = device.makeCommandBuffer()
-        let attnProj = projectRows(proj, attn, nTokens: nTokens,
-                                   outDim: hidden, on: cmd2)
+        let attnProj = projectRows(
+            proj, attn, nTokens: nTokens,
+            outDim: hidden, on: cmd2)
         let postAttn = Ops.add(h, attnProj, on: cmd2)
-        let normed2 = Ops.layerNorm(postAttn, weight: norm2.weight,
-                                    bias: norm2.bias, eps: norm2.eps,
-                                    nRows: nTokens, rowSize: hidden, on: cmd2)
-        let up = projectRows(fc1, normed2, nTokens: nTokens,
-                             outDim: paddedIntermediate, on: cmd2)
+        let normed2 = Ops.layerNorm(
+            postAttn, weight: norm2.weight,
+            bias: norm2.bias, eps: norm2.eps,
+            nRows: nTokens, rowSize: hidden, on: cmd2)
+        let up = projectRows(
+            fc1, normed2, nTokens: nTokens,
+            outDim: paddedIntermediate, on: cmd2)
         let act = Ops.gelu(up, on: cmd2)
-        let down = projectRows(fc2, act, nTokens: nTokens,
-                               outDim: hidden, on: cmd2)
+        let down = projectRows(
+            fc2, act, nTokens: nTokens,
+            outDim: hidden, on: cmd2)
         let result = Ops.add(postAttn, down, on: cmd2)
         cmd2.commit()
         cmd2.waitUntilCompleted()
@@ -149,9 +163,11 @@ final class Qwen2VLVisionBlock {
     ///      row — disjoint, race-free.
     ///   2. Attention — per `(head, query-row)`: writes to a disjoint
     ///      `[oBase, oBase + headDim)` output slice.
-    private func cpuAttention(qkv: Tensor, nTokens: Int,
-                              cosTable: [Float], sinTable: [Float],
-                              device: Device) -> Tensor {
+    private func cpuAttention(
+        qkv: Tensor, nTokens: Int,
+        cosTable: [Float], sinTable: [Float],
+        device: Device
+    ) -> Tensor {
         let nHeads = cfg.numHeads
         let headDim = cfg.headDim
         let hidden = cfg.hidden
@@ -171,17 +187,18 @@ final class Qwen2VLVisionBlock {
             let t = work % nTokens
             let hOff = head * headDim
             let base = t * 3 * hidden
-            var q = Array(qkvA[(base + hOff)..<(base + hOff + headDim)])
-            var k = Array(qkvA[(base + hidden + hOff)..<(base + hidden + hOff + headDim)])
-            let v = Array(qkvA[(base + 2 * hidden + hOff)..<(base + 2 * hidden + hOff + headDim)])
+            var q = Array(qkvA[(base + hOff) ..< (base + hOff + headDim)])
+            var k = Array(qkvA[(base + hidden + hOff) ..< (base + hidden + hOff + headDim)])
+            let v = Array(qkvA[(base + 2 * hidden + hOff) ..< (base + 2 * hidden + hOff + headDim)])
             // Apply M-RoPE inline. Qwen's rotate-half scheme:
             // out[d] = x[d]·cos − x[d±half]·sin. Defined inside the
             // closure to avoid @Sendable capture warnings.
             func applyRope(_ x: inout [Float], tok: Int) {
                 let cb = tok * headDim
-                for d in 0..<headDim {
+                for d in 0 ..< headDim {
                     let rotated = d < half ? -x[d + half] : x[d - half]
-                    let c = cosTable[cb + d], s = sinTable[cb + d]
+                    let c = cosTable[cb + d]
+                    let s = sinTable[cb + d]
                     x[d] = x[d] * c + rotated * s
                 }
             }
@@ -202,43 +219,48 @@ final class Qwen2VLVisionBlock {
                 let hOff = head * headDim
                 var scores = [Float](repeating: 0, count: nTokens)
                 var maxS = -Float.greatestFiniteMagnitude
-                for j in 0..<nTokens {
+                for j in 0 ..< nTokens {
                     var dot: Float = 0
                     let qVec = qH[head * nTokens + i]
                     let kVec = kH[head * nTokens + j]
-                    for d in 0..<headDim { dot += qVec[d] * kVec[d] }
+                    for d in 0 ..< headDim { dot += qVec[d] * kVec[d] }
                     let s = dot * scale
                     scores[j] = s
                     if s > maxS { maxS = s }
                 }
                 var sum: Float = 0
-                for j in 0..<nTokens {
+                for j in 0 ..< nTokens {
                     let e = exp(scores[j] - maxS)
-                    scores[j] = e; sum += e
+                    scores[j] = e
+                    sum += e
                 }
                 let inv = sum > 0 ? 1 / sum : 0
                 let oBase = i * hidden + hOff
-                for j in 0..<nTokens {
+                for j in 0 ..< nTokens {
                     let w = scores[j] * inv
                     let vVec = vH[head * nTokens + j]
-                    for d in 0..<headDim { outPtr[oBase + d] += w * vVec[d] }
+                    for d in 0 ..< headDim { outPtr[oBase + d] += w * vVec[d] }
                 }
             }
         }
-        let result = Tensor.empty(shape: [nTokens, hidden], dtype: qkv.dtype,
-                                  device: device)
+        let result = Tensor.empty(
+            shape: [nTokens, hidden], dtype: qkv.dtype,
+            device: device)
         ImagePreprocessing.copyFloats(out, into: result)
         return result
     }
 
     /// Apply a `Linear` to every row of `[nTokens, *]` via `Ops.gemm`,
     /// then broadcast-add the bias if present.
-    private func projectRows(_ linear: Linear, _ x: Tensor, nTokens: Int,
-                             outDim: Int, on cmd: MTLCommandBuffer) -> Tensor {
+    private func projectRows(
+        _ linear: Linear, _ x: Tensor, nTokens: Int,
+        outDim: Int, on cmd: MTLCommandBuffer
+    ) -> Tensor {
         let y = Ops.gemm(weight: linear.weight, input: x, nRows: nTokens, on: cmd)
         guard let bias = linear.bias else { return y }
-        return addRowBias(y, bias: bias, nRows: nTokens,
-                          rowSize: outDim, on: cmd)
+        return addRowBias(
+            y, bias: bias, nRows: nTokens,
+            rowSize: outDim, on: cmd)
     }
 }
 
@@ -286,11 +308,13 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
         return mod == 0 ? frameCount : frameCount + (tp - mod)
     }
 
-    init(cfg: Qwen2VLVisionConfig, patchEmbedWeight: Tensor,
-         patchDimPadded: Int,
-         blocks: [Qwen2VLVisionBlock], mergerNorm: LayerNorm,
-         mergerFC1: Linear, mergerFC2: Linear, textHidden: Int,
-         dtype: DType, gridSide: Int) {
+    init(
+        cfg: Qwen2VLVisionConfig, patchEmbedWeight: Tensor,
+        patchDimPadded: Int,
+        blocks: [Qwen2VLVisionBlock], mergerNorm: LayerNorm,
+        mergerFC1: Linear, mergerFC2: Linear, textHidden: Int,
+        dtype: DType, gridSide: Int
+    ) {
         self.cfg = cfg
         self.patchEmbedWeight = patchEmbedWeight
         self.patchDimPadded = patchDimPadded
@@ -319,7 +343,8 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
         // `[hidden, tPatch, patch, patch, in_ch]` (MLX channel-last).
         // Flatten to a 2D GEMM weight `[hidden, patchDim]`.
         let rawPatch = try weights.tensor(named: "patch_embed.proj.weight")
-        let patchDim = cfg.inChannels * cfg.temporalPatchSize
+        let patchDim =
+            cfg.inChannels * cfg.temporalPatchSize
             * cfg.patchSize * cfg.patchSize
         let kTile = gemmKTileWidth
         let patchDimPadded = ((patchDim + kTile - 1) / kTile) * kTile
@@ -332,7 +357,7 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
             ((cfg.intermediate + kTile - 1) / kTile) * kTile
         var blocks: [Qwen2VLVisionBlock] = []
         blocks.reserveCapacity(cfg.depth)
-        for i in 0..<cfg.depth {
+        for i in 0 ..< cfg.depth {
             let p = "blocks.\(i)"
             func lin(_ name: String) throws -> Linear {
                 let w = try weights.tensor(named: "\(p).\(name).weight")
@@ -349,14 +374,15 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
             // MLP uses `mlp.fc1` / `mlp.fc2` (GELU, not SwiGLU).
             let fc1 = try lin("mlp.fc1")
             let fc2 = try lin("mlp.fc2")
-            blocks.append(Qwen2VLVisionBlock(
-                norm1: try norm("norm1"), norm2: try norm("norm2"),
-                qkv: try lin("attn.qkv"), proj: try lin("attn.proj"),
-                fc1: padLinearRows(
-                    fc1, toRows: paddedIntermediate, device: device),
-                fc2: padLinearCols(
-                    fc2, toCols: paddedIntermediate, device: device),
-                paddedIntermediate: paddedIntermediate, cfg: cfg))
+            blocks.append(
+                Qwen2VLVisionBlock(
+                    norm1: try norm("norm1"), norm2: try norm("norm2"),
+                    qkv: try lin("attn.qkv"), proj: try lin("attn.proj"),
+                    fc1: padLinearRows(
+                        fc1, toRows: paddedIntermediate, device: device),
+                    fc2: padLinearCols(
+                        fc2, toCols: paddedIntermediate, device: device),
+                    paddedIntermediate: paddedIntermediate, cfg: cfg))
         }
 
         // Patch-merger: LayerNorm under `merger.ln_q` (with bias), then
@@ -389,8 +415,9 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
     /// `gridT=1` and a single frame replicated `temporalPatchSize` times
     /// in the unfold — identical to the Qwen 2.5-VL reference.
     func encode(image: Tensor, device: Device) -> Tensor {
-        return runForward(framePixels: [image.toFloatArray()], gridT: 1,
-                          device: device)
+        return runForward(
+            framePixels: [image.toFloatArray()], gridT: 1,
+            device: device)
     }
 
     /// Run the full vision forward on `frames` preprocessed video frames
@@ -402,14 +429,15 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
     /// Precondition: every frame must share `[1, inChannels, side, side]`
     /// with `side = gridSide · patchSize`.
     func encode(frames: [Tensor], device: Device) -> Tensor {
-        precondition(!frames.isEmpty,
-                     "Qwen2VL.encode(frames:): expected at least one frame")
+        precondition(
+            !frames.isEmpty,
+            "Qwen2VL.encode(frames:): expected at least one frame")
         let side = gridSide * cfg.patchSize
         for (i, frame) in frames.enumerated() {
             precondition(
                 frame.shape == [1, cfg.inChannels, side, side],
                 "Qwen2VL.encode(frames:): frame[\(i)] shape \(frame.shape) "
-                + "!= [1,\(cfg.inChannels),\(side),\(side)]")
+                    + "!= [1,\(cfg.inChannels),\(side),\(side)]")
         }
 
         // Pad frame count up to a multiple of `temporal_patch_size` by
@@ -420,7 +448,7 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
         if mod != 0 {
             let pad = tp - mod
             if let last = framePixels.last {
-                for _ in 0..<pad { framePixels.append(last) }
+                for _ in 0 ..< pad { framePixels.append(last) }
             }
         }
         let gridT = framePixels.count / tp
@@ -431,16 +459,19 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
     /// 1 element (image, replicated `tp` times in the unfold) or
     /// `gridT * tp` elements (video, one per real frame in display order).
     /// `gridT` is the number of temporal patches the unfold will produce.
-    private func runForward(framePixels: [[Float]], gridT: Int,
-                            device: Device) -> Tensor {
+    private func runForward(
+        framePixels: [[Float]], gridT: Int,
+        device: Device
+    ) -> Tensor {
         let side = gridSide
         let nPatches = gridT * side * side
 
         // ── Patch unfold + embed ──
         let unfolded = unfoldPatches(framePixels: framePixels, gridT: gridT)
         let cmd = device.makeCommandBuffer()
-        let h = Ops.gemm(weight: patchEmbedWeight, input: unfolded,
-                         nRows: nPatches, on: cmd)
+        let h = Ops.gemm(
+            weight: patchEmbedWeight, input: unfolded,
+            nRows: nPatches, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
 
@@ -450,9 +481,10 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
         // ── Block stack (full attention on every block) ──
         var hidden = h
         for block in blocks {
-            hidden = block.forward(hidden, nTokens: nPatches,
-                                   cosTable: cosTable, sinTable: sinTable,
-                                   device: device)
+            hidden = block.forward(
+                hidden, nTokens: nPatches,
+                cosTable: cosTable, sinTable: sinTable,
+                device: device)
         }
 
         // ── Patch merger ──
@@ -499,23 +531,23 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
         // temporal patch contiguous, so the merger reshape is correct
         // for both images (gridT=1) and video (gridT>1).
         var patch = 0
-        for tGroup in 0..<gridT {
+        for tGroup in 0 ..< gridT {
             // Merge-block raster order within each temporal group.
-            for br in 0..<mergeBlocks {
-                for bc in 0..<mergeBlocks {
-                    for ir in 0..<m {
-                        for ic in 0..<m {
+            for br in 0 ..< mergeBlocks {
+                for bc in 0 ..< mergeBlocks {
+                    for ir in 0 ..< m {
+                        for ic in 0 ..< m {
                             let pr = br * m + ir
                             let pc = bc * m + ic
                             var col = 0
                             // Layout: (temporal, channel, py, px).
-                            for tWithin in 0..<tp {
+                            for tWithin in 0 ..< tp {
                                 let frameIdx = isImage ? 0 : tGroup * tp + tWithin
                                 let pix = framePixels[frameIdx]
-                                for ch in 0..<c {
-                                    for py in 0..<p {
+                                for ch in 0 ..< c {
+                                    for py in 0 ..< p {
                                         let yy = pr * p + py
-                                        for px in 0..<p {
+                                        for px in 0 ..< p {
                                             let xx = pc * p + px
                                             let v = pix[(ch * imgSide + yy) * imgSide + xx]
                                             rows[patch * patchDimPadded + col] = v
@@ -550,11 +582,11 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
         let side = gridSide
         let nPatches = gridT * side * side
         let headDim = cfg.headDim
-        let half = headDim / 2          // height half | width half
-        let quarter = half / 2          // distinct rotary frequencies
+        let half = headDim / 2  // height half | width half
+        let quarter = half / 2  // distinct rotary frequencies
         // Inverse frequencies with theta 10000 (VisionRotaryEmbedding).
         var invFreq = [Float](repeating: 0, count: quarter)
-        for i in 0..<quarter {
+        for i in 0 ..< quarter {
             invFreq[i] = 1.0 / pow(10_000, Float(2 * i) / Float(half))
         }
         let (hPos, wPos) = mergeReorderedPositions()
@@ -562,21 +594,23 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
 
         var cosT = [Float](repeating: 0, count: nPatches * headDim)
         var sinT = [Float](repeating: 0, count: nPatches * headDim)
-        for t in 0..<nPatches {
+        for t in 0 ..< nPatches {
             // Spatial position is the same per-frame tile for all temporal
             // groups — only (h, w) coordinates drive the vision RoPE.
             let spatial = t % perFrame
             let base = t * headDim
             // Height rotary fills [0, half); width rotary fills [half, 2·half).
-            for i in 0..<quarter {
+            for i in 0 ..< quarter {
                 let fh = Float(hPos[spatial]) * invFreq[i]
                 let fw = Float(wPos[spatial]) * invFreq[i]
                 // Frequencies tiled to half (duplicate for rotate-half).
                 for (off, f) in [(i, fh), (i + quarter, fh)] {
-                    cosT[base + off] = cos(f); sinT[base + off] = sin(f)
+                    cosT[base + off] = cos(f)
+                    sinT[base + off] = sin(f)
                 }
                 for (off, f) in [(half + i, fw), (half + i + quarter, fw)] {
-                    cosT[base + off] = cos(f); sinT[base + off] = sin(f)
+                    cosT[base + off] = cos(f)
+                    sinT[base + off] = sin(f)
                 }
             }
         }
@@ -592,10 +626,10 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
         var hPos = [Int](repeating: 0, count: side * side)
         var wPos = [Int](repeating: 0, count: side * side)
         var idx = 0
-        for br in 0..<mergeBlocks {
-            for bc in 0..<mergeBlocks {
-                for ir in 0..<m {
-                    for ic in 0..<m {
+        for br in 0 ..< mergeBlocks {
+            for bc in 0 ..< mergeBlocks {
+                for ir in 0 ..< m {
+                    for ic in 0 ..< m {
                         hPos[idx] = br * m + ir
                         wPos[idx] = bc * m + ic
                         idx += 1
@@ -620,9 +654,10 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
 
         // LayerNorm each token, then group `mergeUnit` tokens into one row.
         let cmd = device.makeCommandBuffer()
-        let normed = Ops.layerNorm(h, weight: mergerNorm.weight,
-                                   bias: mergerNorm.bias, eps: mergerNorm.eps,
-                                   nRows: nPatches, rowSize: hidden, on: cmd)
+        let normed = Ops.layerNorm(
+            h, weight: mergerNorm.weight,
+            bias: mergerNorm.bias, eps: mergerNorm.eps,
+            nRows: nPatches, rowSize: hidden, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
 
@@ -631,16 +666,18 @@ final class Qwen2VLVisionModel: @unchecked Sendable {
         let grouped = normed.reshaped(to: [merged, mergeUnit * hidden])
 
         let cmd2 = device.makeCommandBuffer()
-        var x = Ops.gemm(weight: mergerFC1.weight, input: grouped,
-                         nRows: merged, on: cmd2)
+        var x = Ops.gemm(
+            weight: mergerFC1.weight, input: grouped,
+            nRows: merged, on: cmd2)
         if let b = mergerFC1.bias {
             x = addRowBias(
                 x, bias: b, nRows: merged,
                 rowSize: mergerFC1.weight.shape[0], on: cmd2)
         }
         x = Ops.gelu(x, on: cmd2)
-        var y = Ops.gemm(weight: mergerFC2.weight, input: x,
-                         nRows: merged, on: cmd2)
+        var y = Ops.gemm(
+            weight: mergerFC2.weight, input: x,
+            nRows: merged, on: cmd2)
         if let b = mergerFC2.bias {
             y = addRowBias(
                 y, bias: b, nRows: merged,

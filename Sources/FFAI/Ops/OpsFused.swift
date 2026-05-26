@@ -156,17 +156,21 @@ extension Ops {
         x: Tensor, residual: Tensor, weight: Tensor, epsBuf: Tensor,
         on cmd: MTLCommandBuffer, into out: Tensor? = nil
     ) -> Tensor {
-        precondition(x.shape == residual.shape,
-                     "Ops.rmsNormResidual: x/residual shape mismatch")
-        precondition(x.dtype == residual.dtype && residual.dtype == weight.dtype,
-                     "Ops.rmsNormResidual: x/residual/weight dtype mismatch")
-        precondition(epsBuf.dtype == .f32 && epsBuf.elementCount == 1,
-                     "Ops.rmsNormResidual: epsBuf must be a single f32 element")
+        precondition(
+            x.shape == residual.shape,
+            "Ops.rmsNormResidual: x/residual shape mismatch")
+        precondition(
+            x.dtype == residual.dtype && residual.dtype == weight.dtype,
+            "Ops.rmsNormResidual: x/residual/weight dtype mismatch")
+        precondition(
+            epsBuf.dtype == .f32 && epsBuf.elementCount == 1,
+            "Ops.rmsNormResidual: epsBuf must be a single f32 element")
         precondition(!x.shape.isEmpty, "Ops.rmsNormResidual: x must be non-empty")
         let n = x.shape.last!
         let rows = x.elementCount / n
-        precondition(weight.elementCount == n,
-                     "Ops.rmsNormResidual: weight (\(weight.elementCount)) must have n=\(n) elements")
+        precondition(
+            weight.elementCount == n,
+            "Ops.rmsNormResidual: weight (\(weight.elementCount)) must have n=\(n) elements")
         if let reason = OpsValidation.validateRmsNormResidual(n: n) {
             preconditionFailure("Ops.rmsNormResidual: \(reason)")
         }
@@ -218,15 +222,18 @@ extension Ops {
     ) -> Tensor {
         precondition(y.shape == z.shape, "Ops.gatedRmsNorm: y/z shape mismatch")
         precondition(y.dtype == .f32, "Ops.gatedRmsNorm: y must be f32 (GDN recurrence output)")
-        precondition(z.dtype == weight.dtype,
-                     "Ops.gatedRmsNorm: z/weight dtype must match")
-        precondition(epsBuf.dtype == .f32 && epsBuf.elementCount == 1,
-                     "Ops.gatedRmsNorm: epsBuf must be a single f32 element")
+        precondition(
+            z.dtype == weight.dtype,
+            "Ops.gatedRmsNorm: z/weight dtype must match")
+        precondition(
+            epsBuf.dtype == .f32 && epsBuf.elementCount == 1,
+            "Ops.gatedRmsNorm: epsBuf must be a single f32 element")
         precondition(!y.shape.isEmpty, "Ops.gatedRmsNorm: y must be non-empty")
         let n = y.shape.last!
         let rows = y.elementCount / n
-        precondition(weight.elementCount == n,
-                     "Ops.gatedRmsNorm: weight (\(weight.elementCount)) must have n=\(n) elements")
+        precondition(
+            weight.elementCount == n,
+            "Ops.gatedRmsNorm: weight (\(weight.elementCount)) must have n=\(n) elements")
         if let reason = OpsValidation.validateGatedRmsNorm(n: n) {
             preconditionFailure("Ops.gatedRmsNorm: \(reason)")
         }
@@ -278,15 +285,18 @@ extension Ops {
         _ x: Tensor, weight: Tensor, epsBuf: Tensor,
         on cmd: MTLCommandBuffer, into out: Tensor? = nil
     ) -> Tensor {
-        precondition(x.dtype == weight.dtype,
-                     "Ops.rmsNormSmall: x/weight dtype mismatch")
-        precondition(epsBuf.dtype == .f32 && epsBuf.elementCount == 1,
-                     "Ops.rmsNormSmall: epsBuf must be a single f32 element")
+        precondition(
+            x.dtype == weight.dtype,
+            "Ops.rmsNormSmall: x/weight dtype mismatch")
+        precondition(
+            epsBuf.dtype == .f32 && epsBuf.elementCount == 1,
+            "Ops.rmsNormSmall: epsBuf must be a single f32 element")
         precondition(!x.shape.isEmpty, "Ops.rmsNormSmall: x must be non-empty")
         let n = x.shape.last!
         let rows = x.elementCount / n
-        precondition(weight.elementCount == n,
-                     "Ops.rmsNormSmall: weight (\(weight.elementCount)) must have n=\(n) elements")
+        precondition(
+            weight.elementCount == n,
+            "Ops.rmsNormSmall: weight (\(weight.elementCount)) must have n=\(n) elements")
         if let reason = OpsValidation.validateRmsNormSmall(n: n) {
             preconditionFailure("Ops.rmsNormSmall: \(reason)")
         }

@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("ModelLifecycle")
@@ -56,15 +57,17 @@ struct ModelLifecycleTests {
     func eventDefaults() {
         let e = ModelLifecycleEvent(state: .ready)
         #expect(e.capability == nil)
-        if case .ready = e.state { /* ok */ } else {
+        if case .ready = e.state { /* ok */
+        } else {
             Issue.record("expected .ready")
         }
     }
 
     @Test("ModelLifecycleEvent can target a specific capability")
     func eventCapability() {
-        let e = ModelLifecycleEvent(capability: .imageIn,
-                                    state: .loading(LoadProgress(stage: "vision", completed: 0, total: 1)))
+        let e = ModelLifecycleEvent(
+            capability: .imageIn,
+            state: .loading(LoadProgress(stage: "vision", completed: 0, total: 1)))
         #expect(e.capability == .imageIn)
         if case .loading(let p) = e.state {
             #expect(p.stage == "vision")
@@ -97,7 +100,7 @@ struct ModelLifecycleTests {
 
         // Yield 10 items with no consumer attached. Older 6 should be
         // dropped; only the last 4 (6..9) retained.
-        for i in 0..<10 {
+        for i in 0 ..< 10 {
             cont.yield(i)
         }
         cont.finish()
@@ -106,7 +109,8 @@ struct ModelLifecycleTests {
         for await item in stream {
             received.append(item)
         }
-        #expect(received == [6, 7, 8, 9],
-                "bufferingNewest(\(cap)) should keep newest 4; got \(received)")
+        #expect(
+            received == [6, 7, 8, 9],
+            "bufferingNewest(\(cap)) should keep newest 4; got \(received)")
     }
 }

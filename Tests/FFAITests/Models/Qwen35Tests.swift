@@ -22,6 +22,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Qwen35 Family Root")
@@ -45,16 +46,18 @@ struct Qwen35RootTests {
 
     @Test("variant(for:) returns Qwen35Hybrid (dense/MoE decided at load time)")
     func variantDispatch() throws {
-        let cfg = ModelConfig(architecture: "Qwen3_5ForCausalLM",
-                              modelType: "qwen3_5", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "Qwen3_5ForCausalLM",
+            modelType: "qwen3_5", raw: [:])
         let v = try Qwen35.variant(for: cfg)
         #expect(String(describing: v) == String(describing: Qwen35Hybrid.self))
     }
 
     @Test("Qwen35Error stringifies every case with its payload")
     func errorDescriptions() {
-        #expect(Qwen35Error.missingConfig("hidden_size").description
-            .contains("hidden_size"))
+        #expect(
+            Qwen35Error.missingConfig("hidden_size").description
+                .contains("hidden_size"))
         #expect(Qwen35Error.missingConfig("x").description.contains("Qwen3.5"))
         #expect(Qwen35Error.unsupportedConfig("bad").description.contains("bad"))
     }

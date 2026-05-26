@@ -29,9 +29,9 @@
 
 import AVFoundation
 import CoreGraphics
+import FFAI
 import Foundation
 import Testing
-import FFAI
 
 public enum VisionTestHelpers {
 
@@ -66,8 +66,8 @@ public enum VisionTestHelpers {
             img, targetW: targetSize, targetH: targetSize)
         var planar = [Float](repeating: 0, count: 3 * targetSize * targetSize)
         let plane = targetSize * targetSize
-        for y in 0..<targetSize {
-            for x in 0..<targetSize {
+        for y in 0 ..< targetSize {
+            for x in 0 ..< targetSize {
                 let srcBase = (y * targetSize + x) * 3
                 let dstBase = y * targetSize + x
                 planar[0 * plane + dstBase] = resized.pixels[srcBase]
@@ -89,10 +89,11 @@ public enum VisionTestHelpers {
         var pixels = try dogImageCHW(targetSize: targetSize)
         let plane = targetSize * targetSize
         let means = [normalization.mean.0, normalization.mean.1, normalization.mean.2]
-        let stds  = [normalization.std.0,  normalization.std.1,  normalization.std.2]
-        for c in 0..<3 {
-            let m = means[c], s = stds[c]
-            for i in (c * plane)..<((c + 1) * plane) {
+        let stds = [normalization.std.0, normalization.std.1, normalization.std.2]
+        for c in 0 ..< 3 {
+            let m = means[c]
+            let s = stds[c]
+            for i in (c * plane) ..< ((c + 1) * plane) {
                 pixels[i] = (pixels[i] - m) / s
             }
         }
@@ -141,11 +142,12 @@ public enum VisionTestHelpers {
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
 
-        let stamps: [CMTime] = (0..<maxFrames).map { i in
+        let stamps: [CMTime] = (0 ..< maxFrames).map { i in
             // Evenly spaced — frame 0 at t=0, frame N-1 just before
             // duration. For maxFrames=1 this picks t=0 (the natural
             // "thumbnail" frame).
-            let t = maxFrames == 1
+            let t =
+                maxFrames == 1
                 ? 0.0
                 : durationSecs * Double(i) / Double(maxFrames)
             return CMTime(seconds: t, preferredTimescale: 600)
@@ -181,12 +183,15 @@ public enum VisionTestHelpers {
         let bytesPerRow = w * 4
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
-        guard let ctx = raw.withUnsafeMutableBufferPointer({ ptr in
-            CGContext(data: ptr.baseAddress,
-                      width: w, height: h, bitsPerComponent: 8,
-                      bytesPerRow: bytesPerRow,
-                      space: colorSpace, bitmapInfo: bitmapInfo)
-        }) else {
+        guard
+            let ctx = raw.withUnsafeMutableBufferPointer({ ptr in
+                CGContext(
+                    data: ptr.baseAddress,
+                    width: w, height: h, bitsPerComponent: 8,
+                    bytesPerRow: bytesPerRow,
+                    space: colorSpace, bitmapInfo: bitmapInfo)
+            })
+        else {
             throw VisionTestHelpersError.videoDecodeFailed(
                 "CGContext init failed for \(w)x\(h)")
         }
@@ -194,8 +199,8 @@ public enum VisionTestHelpers {
 
         // Pack as RGB Float [0,1] row-major: pixels[(y*w+x)*3 + c].
         var pixels = [Float](repeating: 0, count: w * h * 3)
-        for y in 0..<h {
-            for x in 0..<w {
+        for y in 0 ..< h {
+            for x in 0 ..< w {
                 let srcBase = (y * w + x) * 4
                 let dstBase = (y * w + x) * 3
                 pixels[dstBase + 0] = Float(raw[srcBase + 0]) / 255.0
@@ -219,9 +224,10 @@ public enum VisionTestHelpers {
         let lowered = text.lowercased()
         let comment = Comment(
             rawValue: "\(label): caption should mention a dog — got: \(text)")
-        #expect(lowered.contains("dog"),
-                comment,
-                sourceLocation: sourceLocation)
+        #expect(
+            lowered.contains("dog"),
+            comment,
+            sourceLocation: sourceLocation)
     }
 
     /// Assert a decoded VLM caption describes the cat video frame.
@@ -233,9 +239,10 @@ public enum VisionTestHelpers {
         let lowered = text.lowercased()
         let comment = Comment(
             rawValue: "\(label): caption should mention a cat — got: \(text)")
-        #expect(lowered.contains("cat") || lowered.contains("kitten"),
-                comment,
-                sourceLocation: sourceLocation)
+        #expect(
+            lowered.contains("cat") || lowered.contains("kitten"),
+            comment,
+            sourceLocation: sourceLocation)
     }
 }
 

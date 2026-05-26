@@ -22,6 +22,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("MiniCPM-V Family Root — error + multi-modality capabilities")
@@ -30,8 +31,9 @@ struct MiniCPMVRootTests {
     @Test("MiniCPMV4_6 advertises the canonical model_type + architecture")
     func registration() {
         #expect(MiniCPMV4_6.modelTypes.contains("minicpmv4_6"))
-        #expect(MiniCPMV4_6.architectures
-            .contains("MiniCPMV4_6ForConditionalGeneration"))
+        #expect(
+            MiniCPMV4_6.architectures
+                .contains("MiniCPMV4_6ForConditionalGeneration"))
     }
 
     @Test("token id defaults match the shipped checkpoint")
@@ -56,8 +58,9 @@ struct MiniCPMVRootTests {
 
     @Test("MiniCPMVError stringifies every case with its payload")
     func errorDescriptions() {
-        #expect(MiniCPMVError.missingConfig("vision_config").description
-            .contains("vision_config"))
+        #expect(
+            MiniCPMVError.missingConfig("vision_config").description
+                .contains("vision_config"))
         #expect(MiniCPMVError.unsupportedConfig("bad").description.contains("bad"))
         #expect(MiniCPMVError.missingConfig("x").description.contains("MiniCPM-V"))
     }

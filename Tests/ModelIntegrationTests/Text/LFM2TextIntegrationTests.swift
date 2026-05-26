@@ -32,9 +32,10 @@
 // LFM2 checkpoint.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("LFM2 Text Integration", .serialized)
 struct LFM2TextIntegrationTests {

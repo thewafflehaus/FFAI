@@ -31,11 +31,13 @@ public enum BenchRunnerError: Error, CustomStringConvertible {
     public var description: String {
         switch self {
         case .notImplemented(let m, let dep):
-            return "ffai bench --method \(m.rawValue): not implemented yet — needs \(dep). Tracked alongside its parent feature in planning/plan.md."
+            return
+                "ffai bench --method \(m.rawValue): not implemented yet — needs \(dep). Tracked alongside its parent feature in planning/plan.md."
         case .missingPrompt:
             return "ffai bench: --prompt is required for this method"
         case .wikitext2CorpusMissing(let url):
-            return "ffai bench: WikiText-2 corpus not found at \(url.path). Provide --wikitext2-corpus </path/to/wiki.test.raw>"
+            return
+                "ffai bench: WikiText-2 corpus not found at \(url.path). Provide --wikitext2-corpus </path/to/wiki.test.raw>"
         case .kldRequiresReferenceModel:
             return "ffai bench: KLD computation requires --ref-model"
         }
@@ -81,8 +83,10 @@ public struct BenchRunner {
 
     /// Run `method` against the loaded model, returning a `BenchRow`
     /// the caller can hand to `BenchmarkWriter.append(_:)`.
-    public func run(method: BenchMethod,
-                    options: BenchOptions) async throws -> BenchRow {
+    public func run(
+        method: BenchMethod,
+        options: BenchOptions
+    ) async throws -> BenchRow {
         Debug.log(.bench, "running method=\(method.rawValue) model=\(modelLabel)")
         switch method {
         case .simple:

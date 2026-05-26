@@ -254,12 +254,16 @@ public struct SAMAudioTransformerConfig: Codable, Sendable {
         nonLinearity = try c.decodeIfPresent(String.self, forKey: .nonLinearity) ?? "swiglu"
         useRope = try c.decodeIfPresent(Bool.self, forKey: .useRope) ?? true
         maxPositions = try c.decodeIfPresent(Int.self, forKey: .maxPositions) ?? 10000
-        frequencyEmbeddingDim = try c.decodeIfPresent(Int.self, forKey: .frequencyEmbeddingDim) ?? 256
-        timestepNonLinearity = try c.decodeIfPresent(String.self, forKey: .timestepNonLinearity) ?? "swiglu"
-        tBlockNonLinearity = try c.decodeIfPresent(String.self, forKey: .tBlockNonLinearity) ?? "silu"
+        frequencyEmbeddingDim =
+            try c.decodeIfPresent(Int.self, forKey: .frequencyEmbeddingDim) ?? 256
+        timestepNonLinearity =
+            try c.decodeIfPresent(String.self, forKey: .timestepNonLinearity) ?? "swiglu"
+        tBlockNonLinearity =
+            try c.decodeIfPresent(String.self, forKey: .tBlockNonLinearity) ?? "silu"
         tBlockBias = try c.decodeIfPresent(Bool.self, forKey: .tBlockBias) ?? true
         contextDim = try c.decodeIfPresent(Int.self, forKey: .contextDim) ?? dim
-        contextNonLinearity = try c.decodeIfPresent(String.self, forKey: .contextNonLinearity) ?? "swiglu"
+        contextNonLinearity =
+            try c.decodeIfPresent(String.self, forKey: .contextNonLinearity) ?? "swiglu"
         contextNorm = try c.decodeIfPresent(Bool.self, forKey: .contextNorm) ?? false
         outChannels = try c.decodeIfPresent(Int.self, forKey: .outChannels) ?? 256
     }
@@ -301,9 +305,14 @@ public struct SAMAudioConfig: Codable, Sendable {
 
     public init(from decoder: Swift.Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        audioCodec = try c.decodeIfPresent(SAMAudioCodecConfig.self, forKey: .audioCodec) ?? SAMAudioCodecConfig()
-        textEncoder = try c.decodeIfPresent(SAMAudioT5Config.self, forKey: .textEncoder) ?? SAMAudioT5Config()
-        transformer = try c.decodeIfPresent(SAMAudioTransformerConfig.self, forKey: .transformer) ?? SAMAudioTransformerConfig()
+        audioCodec =
+            try c.decodeIfPresent(SAMAudioCodecConfig.self, forKey: .audioCodec)
+            ?? SAMAudioCodecConfig()
+        textEncoder =
+            try c.decodeIfPresent(SAMAudioT5Config.self, forKey: .textEncoder) ?? SAMAudioT5Config()
+        transformer =
+            try c.decodeIfPresent(SAMAudioTransformerConfig.self, forKey: .transformer)
+            ?? SAMAudioTransformerConfig()
         // inChannels defaults to 6 * codebookDim per reference design
         let defaultInChannels = 6 * audioCodec.codebookDim
         inChannels = try c.decodeIfPresent(Int.self, forKey: .inChannels) ?? defaultInChannels
@@ -518,7 +527,7 @@ public final class SAMAudioModel: @unchecked Sendable {
         // Precompute: inv_freq[i] = 1 / 10000^(i / (dim/2)), i in [0, dim/2).
         let halfDim = config.transformer.dim / 2
         let logBase = Float(Foundation.log(Float(10_000)))
-        self.timestepInvFreq = (0..<halfDim).map { i in
+        self.timestepInvFreq = (0 ..< halfDim).map { i in
             Foundation.exp(-logBase * Float(i) / Float(halfDim))
         }
     }
@@ -535,7 +544,8 @@ public final class SAMAudioModel: @unchecked Sendable {
             // Store by the original key — weight names are unchanged after
             // the drop-prefix filter.
             if let entry = bundle.index[key],
-               let tensor = try? bundle.files[entry].tensor(named: key) {
+                let tensor = try? bundle.files[entry].tensor(named: key)
+            {
                 weightStore[key] = tensor
                 loaded += 1
             }
@@ -624,16 +634,16 @@ public final class SAMAudioModel: @unchecked Sendable {
                     let t = Float(step) * ode.stepSize
                     let emb = self.sinusoidalTimeEmbedding(t)
                     let base = step * embDim
-                    for i in 0..<embDim { buf[base + i] = emb[i] }
+                    for i in 0 ..< embDim { buf[base + i] = emb[i] }
                 }
             }
             // Wrap into per-step arrays for the ODE forward pass.
-            let timeEmbeddings: [[Float]] = (0..<numSteps).map { step in
-                Array(timeEmbeddingsFlat[(step * embDim)..<((step + 1) * embDim)])
+            let timeEmbeddings: [[Float]] = (0 ..< numSteps).map { step in
+                Array(timeEmbeddingsFlat[(step * embDim) ..< ((step + 1) * embDim)])
             }
 
             // Sequential ODE steps (each step depends on previous output).
-            for step in 0..<numSteps {
+            for step in 0 ..< numSteps {
                 let dt = ode.stepSize
                 let _ = timeEmbeddings[step]  // Available for transformer forward.
 
@@ -650,8 +660,10 @@ public final class SAMAudioModel: @unchecked Sendable {
             let targetFeatures = Array(noisyFeatures.prefix(featureLen * halfFeature))
             let residualFeatures = Array(noisyFeatures.suffix(featureLen * halfFeature))
 
-            let targetWav = decodeFeatures(targetFeatures, featureLen: featureLen, nSamples: nSamples)
-            let residualWav = decodeFeatures(residualFeatures, featureLen: featureLen, nSamples: nSamples)
+            let targetWav = decodeFeatures(
+                targetFeatures, featureLen: featureLen, nSamples: nSamples)
+            let residualWav = decodeFeatures(
+                residualFeatures, featureLen: featureLen, nSamples: nSamples)
 
             targets.append(targetWav)
             residuals.append(residualWav)
@@ -700,14 +712,16 @@ public final class SAMAudioModel: @unchecked Sendable {
         let config = loadConfig(from: dir)
         let bundle = try SafeTensorsBundle(directory: dir, device: device)
         let variant = try SAMAudio.variant(for: ModelConfig.load(from: dir))
-        return try variant.loadModel(directory: dir, config: config, weights: bundle, device: device)
+        return try variant.loadModel(
+            directory: dir, config: config, weights: bundle, device: device)
     }
 
     /// Decode a `SAMAudioConfig` from `config.json` in the given directory.
     public static func loadConfig(from directory: URL) -> SAMAudioConfig {
         let url = directory.appendingPathComponent("config.json")
         if let data = try? Data(contentsOf: url),
-           let config = try? JSONDecoder().decode(SAMAudioConfig.self, from: data) {
+            let config = try? JSONDecoder().decode(SAMAudioConfig.self, from: data)
+        {
             return config
         }
         return SAMAudioConfig()

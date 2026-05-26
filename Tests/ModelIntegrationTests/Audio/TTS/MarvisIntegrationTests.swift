@@ -32,9 +32,10 @@
 // pointed at U32-packed weights.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Marvis Integration", .serialized)
 struct MarvisIntegrationTests {
@@ -78,10 +79,12 @@ struct MarvisIntegrationTests {
         #expect(codes.allSatisfy { $0.count == nFrames })
         // Codes are valid Mimi indices — within the audio vocabulary.
         let audioVocab = model.config.audioVocabSize
-        #expect(codes.allSatisfy { row in
-            row.allSatisfy { $0 >= 0 && $0 < audioVocab }
-        })
-        print("Marvis generated \(nFrames) Mimi frames "
-              + "× \(codes.count) codebooks")
+        #expect(
+            codes.allSatisfy { row in
+                row.allSatisfy { $0 >= 0 && $0 < audioVocab }
+            })
+        print(
+            "Marvis generated \(nFrames) Mimi frames "
+                + "× \(codes.count) codebooks")
     }
 }

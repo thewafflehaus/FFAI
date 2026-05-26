@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("ModelLocator")
@@ -54,7 +55,8 @@ struct ModelLocatorTests {
             _ = try await ModelLocator().resolve(idOrPath: "/__definitely_not_present__/ffai")
             Issue.record("expected error")
         } catch let e as ModelLocatorError {
-            if case .localPathNotFound = e { /* ok */ } else {
+            if case .localPathNotFound = e { /* ok */
+            } else {
                 Issue.record("expected .localPathNotFound, got \(e)")
             }
         } catch {

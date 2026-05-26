@@ -18,9 +18,10 @@
 
 import Foundation
 import Metal
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Ops dtypes (f16 + bf16)")
 struct OpsDtypeTests {
@@ -187,7 +188,7 @@ struct OpsDtypeTests {
             // Kernel invariant: n must be a multiple of 128 (32-lane simdgroup ×
             // 4 elements/thread). Mirrors the f32 fix in OpsTests.rmsNormF32.
             let n = 128
-            let xs: [Float16] = (0..<n).map { Float16(Float($0 + 1)) }
+            let xs: [Float16] = (0 ..< n).map { Float16(Float($0 + 1)) }
             let ws: [Float16] = Array(repeating: Float16(1), count: n)
             let x = Tensor.empty(shape: [n], dtype: .f16)
             x.copyIn(from: xs)
@@ -202,10 +203,11 @@ struct OpsDtypeTests {
             let expectedRms = (ssq / Float(n)).squareRoot()
             // f16 has 10-bit mantissa; tolerance accounts for both the kernel's
             // fp32 → fp16 storage cast and the magnitude of values (up to 128).
-            for i in 0..<n {
+            for i in 0 ..< n {
                 let expected = xsF[i] / expectedRms
-                #expect(abs(r[i] - expected) < 0.1,
-                        "i=\(i) got \(r[i]) expected \(expected)")
+                #expect(
+                    abs(r[i] - expected) < 0.1,
+                    "i=\(i) got \(r[i]) expected \(expected)")
             }
         }
     }
@@ -229,7 +231,7 @@ struct OpsDtypeTests {
                     lo > 0x8000 || (lo == 0x8000 && (hi & 1) == 1)
                 return roundUp ? hi &+ 1 : hi
             }
-            let xs: [UInt16] = (0..<n).map { f32ToBf16(Float($0 + 1)) }
+            let xs: [UInt16] = (0 ..< n).map { f32ToBf16(Float($0 + 1)) }
             let ws: [UInt16] = Array(repeating: f32ToBf16(1.0), count: n)
             let x = Tensor.empty(shape: [n], dtype: .bf16)
             x.copyIn(from: xs)
@@ -238,15 +240,16 @@ struct OpsDtypeTests {
             var out: Tensor!
             runAndWait { cb in out = Ops.rmsNorm(x, weight: w, eps: 1e-6, on: cb) }
             let r = out.toArray(as: UInt16.self).map { Float(bitPattern: UInt32($0) << 16) }
-            let xsF: [Float] = (0..<n).map { Float($0 + 1) }
+            let xsF: [Float] = (0 ..< n).map { Float($0 + 1) }
             let ssq = xsF.reduce(Float(0)) { $0 + $1 * $1 }
             let expectedRms = (ssq / Float(n)).squareRoot()
             // bf16 mantissa is 7 bits → ~1% relative error at unit magnitude;
             // tolerance scaled for values up to 128.
-            for i in 0..<n {
+            for i in 0 ..< n {
                 let expected = xsF[i] / expectedRms
-                #expect(abs(r[i] - expected) < 0.5,
-                        "i=\(i) got \(r[i]) expected \(expected)")
+                #expect(
+                    abs(r[i] - expected) < 0.5,
+                    "i=\(i) got \(r[i]) expected \(expected)")
             }
         }
     }
@@ -263,7 +266,7 @@ struct OpsDtypeTests {
                 out = Ops.rope(qk, position: 0, headDim: 4, thetaBase: 10000, on: cb)
             }
             let r = out.toArray(as: Float16.self).map { Float($0) }
-            for i in 0..<4 {
+            for i in 0 ..< 4 {
                 #expect(abs(r[i] - Float(i + 1)) < 1e-2)
             }
         }
@@ -279,7 +282,7 @@ struct OpsDtypeTests {
                 out = Ops.rope(qk, position: 0, headDim: 4, thetaBase: 10000, on: cb)
             }
             let r = out.toArray(as: UInt16.self).map { Float(bitPattern: UInt32($0) << 16) }
-            for i in 0..<4 {
+            for i in 0 ..< 4 {
                 #expect(abs(r[i] - Float(i + 1)) < 1e-2)
             }
         }
@@ -311,20 +314,22 @@ struct OpsDtypeTests {
             k.copyIn(from: kData)
 
             var vData = [Float16](repeating: 0, count: nKVHeads * kvStride * D)
-            for d in 0..<D { vData[d] = Float16(Float(d + 1)) }
+            for d in 0 ..< D { vData[d] = Float16(Float(d + 1)) }
             v.copyIn(from: vData)
 
             var out: Tensor!
             runAndWait { cb in
-                out = Ops.sdpaDecode(q: q, k: k, v: v,
-                                     nQHeads: nQHeads, nKVHeads: nKVHeads, headDim: D,
-                                     nKV: nKV, kvStride: kvStride, scale: 1.0, on: cb)
+                out = Ops.sdpaDecode(
+                    q: q, k: k, v: v,
+                    nQHeads: nQHeads, nKVHeads: nKVHeads, headDim: D,
+                    nKV: nKV, kvStride: kvStride, scale: 1.0, on: cb)
             }
             let r = out.toArray(as: Float16.self).map { Float($0) }
             // f16 round-trip on integers 1..128 is exact (well within mantissa).
-            for d in 0..<D {
-                #expect(abs(r[d] - Float(d + 1)) < 0.5,
-                        "out[\(d)] = \(r[d]), expected \(d + 1)")
+            for d in 0 ..< D {
+                #expect(
+                    abs(r[d] - Float(d + 1)) < 0.5,
+                    "out[\(d)] = \(r[d]), expected \(d + 1)")
             }
         }
     }
@@ -362,20 +367,22 @@ struct OpsDtypeTests {
             k.copyIn(from: kBits)
 
             var vBits = [UInt16](repeating: 0, count: nKVHeads * kvStride * D)
-            for d in 0..<D { vBits[d] = f32ToBf16(Float(d + 1)) }
+            for d in 0 ..< D { vBits[d] = f32ToBf16(Float(d + 1)) }
             v.copyIn(from: vBits)
 
             var out: Tensor!
             runAndWait { cb in
-                out = Ops.sdpaDecode(q: q, k: k, v: v,
-                                     nQHeads: nQHeads, nKVHeads: nKVHeads, headDim: D,
-                                     nKV: nKV, kvStride: kvStride, scale: 1.0, on: cb)
+                out = Ops.sdpaDecode(
+                    q: q, k: k, v: v,
+                    nQHeads: nQHeads, nKVHeads: nKVHeads, headDim: D,
+                    nKV: nKV, kvStride: kvStride, scale: 1.0, on: cb)
             }
             let r = out.toArray(as: UInt16.self).map { Float(bitPattern: UInt32($0) << 16) }
             // bf16 round-error at magnitudes up to 128 is ~0.5 (1/256 × 128 = 0.5).
-            for d in 0..<D {
-                #expect(abs(r[d] - Float(d + 1)) < 1.0,
-                        "out[\(d)] = \(r[d]), expected \(d + 1)")
+            for d in 0 ..< D {
+                #expect(
+                    abs(r[d] - Float(d + 1)) < 1.0,
+                    "out[\(d)] = \(r[d]), expected \(d + 1)")
             }
         }
     }

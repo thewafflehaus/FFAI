@@ -27,9 +27,10 @@
 // (serialized, --num-workers 1).
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Mistral3 Vision Integration", .serialized)
 struct Mistral3IntegrationTests {
@@ -82,8 +83,10 @@ struct Mistral3IntegrationTests {
         let imageTokenId = vlm.imageTokenId
         let questionTokens = m.tokenizer.encode(
             text: "\nDescribe this image.")
-        let promptTokens = Array(repeating: imageTokenId,
-                                 count: vlm.imageTokenCount) + questionTokens
+        let promptTokens =
+            Array(
+                repeating: imageTokenId,
+                count: vlm.imageTokenCount) + questionTokens
 
         // The golden-retriever fixture shared by all VLM tests.
         let image = try VisionTestHelpers.dogImage()
@@ -94,8 +97,9 @@ struct Mistral3IntegrationTests {
 
         // Coherence gate: the model must produce at least 8 tokens of
         // non-trivial text.
-        expectCoherentOutput(generated, minTokens: 8,
-                             label: "Mistral3 image+text")
+        expectCoherentOutput(
+            generated, minTokens: 8,
+            label: "Mistral3 image+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("Mistral3 generated: \(text)")
         // Content gate: the caption should mention a dog.

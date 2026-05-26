@@ -63,9 +63,11 @@ public struct WhisperConfig: Sendable {
     /// Maximum audio-context length (encoder positional rows).
     public let maxAudioCtx: Int
 
-    public init(nMels: Int, hidden: Int, encoderLayers: Int, encoderHeads: Int,
-                decoderLayers: Int, decoderHeads: Int, intermediate: Int,
-                vocab: Int, maxDecoderCtx: Int = 448, maxAudioCtx: Int = 1500) {
+    public init(
+        nMels: Int, hidden: Int, encoderLayers: Int, encoderHeads: Int,
+        decoderLayers: Int, decoderHeads: Int, intermediate: Int,
+        vocab: Int, maxDecoderCtx: Int = 448, maxAudioCtx: Int = 1500
+    ) {
         self.nMels = nMels
         self.hidden = hidden
         self.encoderLayers = encoderLayers
@@ -85,11 +87,12 @@ public struct WhisperConfig: Sendable {
     /// HF configs name fields `d_model`, `encoder_layers`, etc.
     public static func from(_ config: ModelConfig) -> WhisperConfig? {
         guard let hidden = config.int("d_model"),
-              let encLayers = config.int("encoder_layers"),
-              let encHeads = config.int("encoder_attention_heads"),
-              let decLayers = config.int("decoder_layers"),
-              let decHeads = config.int("decoder_attention_heads"),
-              let vocab = config.int("vocab_size") else { return nil }
+            let encLayers = config.int("encoder_layers"),
+            let encHeads = config.int("encoder_attention_heads"),
+            let decLayers = config.int("decoder_layers"),
+            let decHeads = config.int("decoder_attention_heads"),
+            let vocab = config.int("vocab_size")
+        else { return nil }
         let nMels = config.int("num_mel_bins") ?? 80
         let intermediate = config.int("encoder_ffn_dim") ?? (4 * hidden)
         let maxDec = config.int("max_target_positions") ?? 448
@@ -104,8 +107,9 @@ public struct WhisperConfig: Sendable {
 
     /// The front-end config that pairs with this Whisper variant.
     public var frontEnd: AudioFrontEndConfig {
-        AudioFrontEndConfig(sampleRate: 16_000, nFFT: 400, hopLength: 160,
-                            nMels: nMels)
+        AudioFrontEndConfig(
+            sampleRate: 16_000, nFFT: 400, hopLength: 160,
+            nMels: nMels)
     }
 }
 
@@ -125,22 +129,30 @@ public final class WhisperDecoderLayer: Module {
     let hidden, nHeads, headDim, intermediate: Int
     let scale: Float
 
-    init(selfAttnLayerNorm: LayerNorm,
-         qProj: Linear, kProj: Linear, vProj: Linear, oProj: Linear,
-         crossAttnLayerNorm: LayerNorm,
-         crossQProj: Linear, crossKProj: Linear, crossVProj: Linear,
-         crossOProj: Linear,
-         finalLayerNorm: LayerNorm, fc1: Linear, fc2: Linear,
-         hidden: Int, nHeads: Int, intermediate: Int) {
+    init(
+        selfAttnLayerNorm: LayerNorm,
+        qProj: Linear, kProj: Linear, vProj: Linear, oProj: Linear,
+        crossAttnLayerNorm: LayerNorm,
+        crossQProj: Linear, crossKProj: Linear, crossVProj: Linear,
+        crossOProj: Linear,
+        finalLayerNorm: LayerNorm, fc1: Linear, fc2: Linear,
+        hidden: Int, nHeads: Int, intermediate: Int
+    ) {
         self.selfAttnLayerNorm = selfAttnLayerNorm
-        self.qProj = qProj; self.kProj = kProj
-        self.vProj = vProj; self.oProj = oProj
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
         self.crossAttnLayerNorm = crossAttnLayerNorm
-        self.crossQProj = crossQProj; self.crossKProj = crossKProj
-        self.crossVProj = crossVProj; self.crossOProj = crossOProj
+        self.crossQProj = crossQProj
+        self.crossKProj = crossKProj
+        self.crossVProj = crossVProj
+        self.crossOProj = crossOProj
         self.finalLayerNorm = finalLayerNorm
-        self.fc1 = fc1; self.fc2 = fc2
-        self.hidden = hidden; self.nHeads = nHeads
+        self.fc1 = fc1
+        self.fc2 = fc2
+        self.hidden = hidden
+        self.nHeads = nHeads
         self.headDim = hidden / nHeads
         self.intermediate = intermediate
         self.scale = 1.0 / Float(Double(hidden / nHeads).squareRoot())
@@ -180,16 +192,18 @@ public final class WhisperModel: @unchecked Sendable {
     public let config: WhisperConfig
     public let encoder: AudioEncoder
 
-    let tokenEmbedding: Tensor          // [vocab, hidden]
-    let decoderPosEmbedding: Tensor     // [maxDecoderCtx, hidden]
+    let tokenEmbedding: Tensor  // [vocab, hidden]
+    let decoderPosEmbedding: Tensor  // [maxDecoderCtx, hidden]
     let decoderLayers: [WhisperDecoderLayer]
-    let decoderLayerNorm: LayerNorm     // post-decoder LayerNorm
+    let decoderLayerNorm: LayerNorm  // post-decoder LayerNorm
     let dtype: DType
 
-    public init(config: WhisperConfig, encoder: AudioEncoder,
-                tokenEmbedding: Tensor, decoderPosEmbedding: Tensor,
-                decoderLayers: [WhisperDecoderLayer],
-                decoderLayerNorm: LayerNorm, dtype: DType) {
+    public init(
+        config: WhisperConfig, encoder: AudioEncoder,
+        tokenEmbedding: Tensor, decoderPosEmbedding: Tensor,
+        decoderLayers: [WhisperDecoderLayer],
+        decoderLayerNorm: LayerNorm, dtype: DType
+    ) {
         self.config = config
         self.encoder = encoder
         self.tokenEmbedding = tokenEmbedding
@@ -212,7 +226,8 @@ public final class WhisperModel: @unchecked Sendable {
     /// `[nAudioCtx, hidden]` audio features the decoder cross-attends
     /// to. The waveform is resampled / framed by `AudioPreprocessing`.
     public func encodeAudio(waveform: [Float], device: Device = .shared)
-        -> Tensor {
+        -> Tensor
+    {
         // The mel_spectrogram kernel only emits f32 / f16; a bf16 model
         // gets the front-end run in f32, then the spectrogram cast to
         // the model's activation dtype before the conv stem.
@@ -229,8 +244,9 @@ public final class WhisperModel: @unchecked Sendable {
         let melRaw = AudioPreprocessing.logMelSpectrogram(
             waveform: framed, cfg: config.frontEnd, dtype: melDtype,
             whisperNormalize: true, device: device, on: cmd)
-        var mel = AudioPreprocessing.castTensor(melRaw, to: dtype,
-                                                device: device)
+        var mel = AudioPreprocessing.castTensor(
+            melRaw, to: dtype,
+            device: device)
         // The kernel's frame walk yields one extra frame versus
         // Whisper's reference (`torch.stft(center=True)` produces
         // `n_samples/hop + 1` columns, then drops the last as
@@ -251,9 +267,10 @@ public final class WhisperModel: @unchecked Sendable {
     /// first window. Trailing zeros become near-floor log-Mel frames,
     /// exactly the silence representation the decoder is trained on.
     public static func padOrTrim(_ waveform: [Float], to length: Int)
-        -> [Float] {
+        -> [Float]
+    {
         if waveform.count == length { return waveform }
-        if waveform.count > length { return Array(waveform[0..<length]) }
+        if waveform.count > length { return Array(waveform[0 ..< length]) }
         return waveform + [Float](repeating: 0, count: length - waveform.count)
     }
 
@@ -262,11 +279,14 @@ public final class WhisperModel: @unchecked Sendable {
     /// the `[vocab]` logits for the next token. All-CPU attention cores
     /// keep the decode head-dim-agnostic and correct; Whisper transcript
     /// lengths are short so the O(L²) self-attention is cheap.
-    public func decoderLogits(tokenIds: [Int], audioFeatures: Tensor,
-                              device: Device = .shared) -> [Float] {
+    public func decoderLogits(
+        tokenIds: [Int], audioFeatures: Tensor,
+        device: Device = .shared
+    ) -> [Float] {
         let L = tokenIds.count
-        precondition(L > 0 && L <= config.maxDecoderCtx,
-                     "WhisperModel.decoderLogits: bad token count \(L)")
+        precondition(
+            L > 0 && L <= config.maxDecoderCtx,
+            "WhisperModel.decoderLogits: bad token count \(L)")
         let H = config.hidden
 
         // Embed tokens + add positional embedding → [L, hidden].
@@ -276,18 +296,20 @@ public final class WhisperModel: @unchecked Sendable {
         let nAudioCtx = audioFeatures.shape[0]
 
         for layer in decoderLayers {
-            h = decodeLayer(layer, h: h, L: L,
-                            audio: audio, nAudioCtx: nAudioCtx,
-                            device: device)
+            h = decodeLayer(
+                layer, h: h, L: L,
+                audio: audio, nAudioCtx: nAudioCtx,
+                device: device)
         }
 
         // Post-decoder LayerNorm, then project the LAST token's hidden
         // state to vocab logits via the tied token embedding.
         let cmdN = device.makeCommandBuffer()
-        let normed = Ops.layerNorm(h, weight: decoderLayerNorm.weight,
-                                   bias: decoderLayerNorm.bias,
-                                   eps: decoderLayerNorm.eps,
-                                   nRows: L, rowSize: H, on: cmdN)
+        let normed = Ops.layerNorm(
+            h, weight: decoderLayerNorm.weight,
+            bias: decoderLayerNorm.bias,
+            eps: decoderLayerNorm.eps,
+            nRows: L, rowSize: H, on: cmdN)
         cmdN.commit()
         cmdN.waitUntilCompleted()
         // gemv requires a 1D input — drop the leading singleton row.
@@ -295,8 +317,9 @@ public final class WhisperModel: @unchecked Sendable {
             .reshaped(to: [H])
 
         let cmdL = device.makeCommandBuffer()
-        let logits = Ops.gemv(weight: tokenEmbedding, input: lastHidden,
-                              on: cmdL)
+        let logits = Ops.gemv(
+            weight: tokenEmbedding, input: lastHidden,
+            on: cmdL)
         cmdL.commit()
         cmdL.waitUntilCompleted()
         return logits.toFloatArray()
@@ -312,14 +335,16 @@ public final class WhisperModel: @unchecked Sendable {
     ) -> [Int] {
         var tokens = initialTokens
         var generated: [Int] = []
-        for _ in 0..<maxTokens {
-            let logits = decoderLogits(tokenIds: tokens,
-                                       audioFeatures: audioFeatures,
-                                       device: device)
+        for _ in 0 ..< maxTokens {
+            let logits = decoderLogits(
+                tokenIds: tokens,
+                audioFeatures: audioFeatures,
+                device: device)
             var best = 0
             var bestVal = -Float.greatestFiniteMagnitude
             for (i, v) in logits.enumerated() where v > bestVal {
-                bestVal = v; best = i
+                bestVal = v
+                best = i
             }
             if best == eosToken { break }
             tokens.append(best)
@@ -349,18 +374,21 @@ public final class WhisperModel: @unchecked Sendable {
 
     /// One decoder block forward over the whole `[L, hidden]` token
     /// sequence: causal self-attention, cross-attention to audio, MLP.
-    private func decodeLayer(_ layer: WhisperDecoderLayer, h hIn: Tensor,
-                             L: Int, audio: [Float], nAudioCtx: Int,
-                             device: Device) -> Tensor {
+    private func decodeLayer(
+        _ layer: WhisperDecoderLayer, h hIn: Tensor,
+        L: Int, audio: [Float], nAudioCtx: Int,
+        device: Device
+    ) -> Tensor {
         let H = config.hidden
         var h = hIn
 
         // ── Causal self-attention ──
         let cmd1 = device.makeCommandBuffer()
-        let normed = Ops.layerNorm(h, weight: layer.selfAttnLayerNorm.weight,
-                                   bias: layer.selfAttnLayerNorm.bias,
-                                   eps: layer.selfAttnLayerNorm.eps,
-                                   nRows: L, rowSize: H, on: cmd1)
+        let normed = Ops.layerNorm(
+            h, weight: layer.selfAttnLayerNorm.weight,
+            bias: layer.selfAttnLayerNorm.bias,
+            eps: layer.selfAttnLayerNorm.eps,
+            nRows: L, rowSize: H, on: cmd1)
         let q = project(layer.qProj, normed, nRows: L, on: cmd1)
         let k = project(layer.kProj, normed, nRows: L, on: cmd1)
         let v = project(layer.vProj, normed, nRows: L, on: cmd1)
@@ -377,15 +405,17 @@ public final class WhisperModel: @unchecked Sendable {
         h = Ops.add(h, selfOut, on: cmd2)
 
         // ── Cross-attention to audio features ──
-        let crossNormed = Ops.layerNorm(h,
+        let crossNormed = Ops.layerNorm(
+            h,
             weight: layer.crossAttnLayerNorm.weight,
             bias: layer.crossAttnLayerNorm.bias,
             eps: layer.crossAttnLayerNorm.eps,
             nRows: L, rowSize: H, on: cmd2)
         let crossQ = project(layer.crossQProj, crossNormed, nRows: L, on: cmd2)
         // K / V come from the audio features (recomputed per layer).
-        let audioT = Tensor.empty(shape: [nAudioCtx, H], dtype: dtype,
-                                  device: device)
+        let audioT = Tensor.empty(
+            shape: [nAudioCtx, H], dtype: dtype,
+            device: device)
         AudioPreprocessing.copyFloats(audio, into: audioT)
         let crossK = project(layer.crossKProj, audioT, nRows: nAudioCtx, on: cmd2)
         let crossV = project(layer.crossVProj, audioT, nRows: nAudioCtx, on: cmd2)
@@ -403,10 +433,11 @@ public final class WhisperModel: @unchecked Sendable {
         let cmd3 = device.makeCommandBuffer()
         let crossOut = project(layer.crossOProj, crossCtx, nRows: L, on: cmd3)
         h = Ops.add(h, crossOut, on: cmd3)
-        let mlpNormed = Ops.layerNorm(h, weight: layer.finalLayerNorm.weight,
-                                      bias: layer.finalLayerNorm.bias,
-                                      eps: layer.finalLayerNorm.eps,
-                                      nRows: L, rowSize: H, on: cmd3)
+        let mlpNormed = Ops.layerNorm(
+            h, weight: layer.finalLayerNorm.weight,
+            bias: layer.finalLayerNorm.bias,
+            eps: layer.finalLayerNorm.eps,
+            nRows: L, rowSize: H, on: cmd3)
         let ff1 = project(layer.fc1, mlpNormed, nRows: L, on: cmd3)
         let act = Ops.gelu(ff1, on: cmd3)
         let ff2 = project(layer.fc2, act, nRows: L, on: cmd3)
@@ -417,13 +448,16 @@ public final class WhisperModel: @unchecked Sendable {
     }
 
     /// Apply a `Linear` to every row via `Ops.gemm` + broadcast bias.
-    private func project(_ linear: Linear, _ x: Tensor, nRows: Int,
-                         on cmd: MTLCommandBuffer) -> Tensor {
+    private func project(
+        _ linear: Linear, _ x: Tensor, nRows: Int,
+        on cmd: MTLCommandBuffer
+    ) -> Tensor {
         let outD = linear.weight.shape[0]
         let y = Ops.gemm(weight: linear.weight, input: x, nRows: nRows, on: cmd)
         guard let bias = linear.bias else { return y }
-        return AudioEncoder.addRowBias(y, bias: bias, nRows: nRows,
-                                       rowSize: outD, on: cmd)
+        return AudioEncoder.addRowBias(
+            y, bias: bias, nRows: nRows,
+            rowSize: outD, on: cmd)
     }
 
     /// CPU multi-head attention. `qa` is query-major `[nQuery, H]`,
@@ -435,55 +469,60 @@ public final class WhisperModel: @unchecked Sendable {
     /// disjoint `[oBase, oBase + headDim)` output slice — race-free by
     /// construction. Mirrors the parallelization of
     /// `AudioEncoderLayer.cpuAttention`.
-    private func cpuAttention(qa: [Float], ka: [Float], va: [Float],
-                              nQuery: Int, nKV: Int, nHeads: Int,
-                              headDim: Int, scale: Float, causal: Bool,
-                              device: Device) -> Tensor {
+    private func cpuAttention(
+        qa: [Float], ka: [Float], va: [Float],
+        nQuery: Int, nKV: Int, nHeads: Int,
+        headDim: Int, scale: Float, causal: Bool,
+        device: Device
+    ) -> Tensor {
         let stride = nHeads * headDim
         var out = [Float](repeating: 0, count: nQuery * stride)
 
         out.withUnsafeMutableBufferPointer { outBuf in
             let outPtr = outBuf.baseAddress!
             qa.withUnsafeBufferPointer { qPtr in
-            ka.withUnsafeBufferPointer { kPtr in
-            va.withUnsafeBufferPointer { vPtr in
-                let qb = qPtr.baseAddress!
-                let kb = kPtr.baseAddress!
-                let vb = vPtr.baseAddress!
-                DispatchQueue.concurrentPerform(iterations: nHeads * nQuery) { work in
-                    let head = work / nQuery
-                    let i = work % nQuery
-                    let hOff = head * headDim
-                    let jMax = causal ? min(i, nKV - 1) : nKV - 1
-                    var scores = [Float](repeating: 0, count: jMax + 1)
-                    var maxScore = -Float.greatestFiniteMagnitude
-                    let qBase = i * stride + hOff
-                    for j in 0...jMax {
-                        var dot: Float = 0
-                        let kBase = j * stride + hOff
-                        for d in 0..<headDim { dot += qb[qBase + d] * kb[kBase + d] }
-                        let s = dot * scale
-                        scores[j] = s
-                        if s > maxScore { maxScore = s }
-                    }
-                    var sumExp: Float = 0
-                    for j in 0...jMax {
-                        let e = exp(scores[j] - maxScore)
-                        scores[j] = e
-                        sumExp += e
-                    }
-                    let inv = sumExp > 0 ? 1 / sumExp : 0
-                    let oBase = i * stride + hOff
-                    for j in 0...jMax {
-                        let w = scores[j] * inv
-                        let vBase = j * stride + hOff
-                        for d in 0..<headDim { outPtr[oBase + d] += w * vb[vBase + d] }
+                ka.withUnsafeBufferPointer { kPtr in
+                    va.withUnsafeBufferPointer { vPtr in
+                        let qb = qPtr.baseAddress!
+                        let kb = kPtr.baseAddress!
+                        let vb = vPtr.baseAddress!
+                        DispatchQueue.concurrentPerform(iterations: nHeads * nQuery) { work in
+                            let head = work / nQuery
+                            let i = work % nQuery
+                            let hOff = head * headDim
+                            let jMax = causal ? min(i, nKV - 1) : nKV - 1
+                            var scores = [Float](repeating: 0, count: jMax + 1)
+                            var maxScore = -Float.greatestFiniteMagnitude
+                            let qBase = i * stride + hOff
+                            for j in 0 ... jMax {
+                                var dot: Float = 0
+                                let kBase = j * stride + hOff
+                                for d in 0 ..< headDim { dot += qb[qBase + d] * kb[kBase + d] }
+                                let s = dot * scale
+                                scores[j] = s
+                                if s > maxScore { maxScore = s }
+                            }
+                            var sumExp: Float = 0
+                            for j in 0 ... jMax {
+                                let e = exp(scores[j] - maxScore)
+                                scores[j] = e
+                                sumExp += e
+                            }
+                            let inv = sumExp > 0 ? 1 / sumExp : 0
+                            let oBase = i * stride + hOff
+                            for j in 0 ... jMax {
+                                let w = scores[j] * inv
+                                let vBase = j * stride + hOff
+                                for d in 0 ..< headDim { outPtr[oBase + d] += w * vb[vBase + d] }
+                            }
+                        }
                     }
                 }
-            }}}
+            }
         }
-        let result = Tensor.empty(shape: [nQuery, stride], dtype: dtype,
-                                  device: device)
+        let result = Tensor.empty(
+            shape: [nQuery, stride], dtype: dtype,
+            device: device)
         AudioPreprocessing.copyFloats(out, into: result)
         return result
     }
@@ -513,7 +552,8 @@ extension WhisperModel {
     /// `model.decoder.`; `proj_out.weight` (or the tied token embedding)
     /// is the vocabulary projection.
     public static func load(directory: URL, device: Device = .shared)
-        throws -> WhisperModel {
+        throws -> WhisperModel
+    {
         let config = try ModelConfig.load(from: directory)
         guard let wc = WhisperConfig.from(config) else {
             throw ModelError.unsupportedModelType(
@@ -525,10 +565,13 @@ extension WhisperModel {
 
     /// Assemble a `WhisperModel` from a decoded config + a weight
     /// bundle. Factored out of `load` so tests can drive it directly.
-    public static func build(config wc: WhisperConfig,
-                             bundle: SafeTensorsBundle) throws -> WhisperModel {
+    public static func build(
+        config wc: WhisperConfig,
+        bundle: SafeTensorsBundle
+    ) throws -> WhisperModel {
         // The first weight tensor sets the activation dtype.
-        let probeKey = bundle.has("model.encoder.conv1.weight")
+        let probeKey =
+            bundle.has("model.encoder.conv1.weight")
             ? "model.encoder.conv1.weight" : "encoder.conv1.weight"
         let dtype = try bundle.tensor(named: probeKey).dtype
         // HF Whisper prefixes encoder/decoder weights with `model.`;
@@ -539,31 +582,34 @@ extension WhisperModel {
             try bundle.tensor(named: prefix + name)
         }
         func ln(_ base: String) throws -> LayerNorm {
-            LayerNorm(weight: try t("\(base).weight"),
-                      bias: try t("\(base).bias"), eps: 1e-5)
+            LayerNorm(
+                weight: try t("\(base).weight"),
+                bias: try t("\(base).bias"), eps: 1e-5)
         }
         func linear(_ base: String, hasBias: Bool = true) throws -> Linear {
             let w = try t("\(base).weight")
-            let b = hasBias && bundle.has(prefix + "\(base).bias")
+            let b =
+                hasBias && bundle.has(prefix + "\(base).bias")
                 ? try t("\(base).bias") : nil
             return Linear(weight: w, bias: b)
         }
 
         // ── Audio encoder ──
         var encLayers: [AudioEncoderLayer] = []
-        for i in 0..<wc.encoderLayers {
+        for i in 0 ..< wc.encoderLayers {
             let base = "encoder.layers.\(i)"
-            encLayers.append(AudioEncoderLayer(
-                layerNorm1: try ln("\(base).self_attn_layer_norm"),
-                qProj: try linear("\(base).self_attn.q_proj"),
-                kProj: try linear("\(base).self_attn.k_proj", hasBias: false),
-                vProj: try linear("\(base).self_attn.v_proj"),
-                oProj: try linear("\(base).self_attn.out_proj"),
-                layerNorm2: try ln("\(base).final_layer_norm"),
-                fc1: try linear("\(base).fc1"),
-                fc2: try linear("\(base).fc2"),
-                hidden: wc.hidden, nHeads: wc.encoderHeads,
-                intermediate: wc.intermediate))
+            encLayers.append(
+                AudioEncoderLayer(
+                    layerNorm1: try ln("\(base).self_attn_layer_norm"),
+                    qProj: try linear("\(base).self_attn.q_proj"),
+                    kProj: try linear("\(base).self_attn.k_proj", hasBias: false),
+                    vProj: try linear("\(base).self_attn.v_proj"),
+                    oProj: try linear("\(base).self_attn.out_proj"),
+                    layerNorm2: try ln("\(base).final_layer_norm"),
+                    fc1: try linear("\(base).fc1"),
+                    fc2: try linear("\(base).fc2"),
+                    hidden: wc.hidden, nHeads: wc.encoderHeads,
+                    intermediate: wc.intermediate))
         }
         let encoderConfig = AudioEncoderConfig(
             nMels: wc.nMels, hidden: wc.hidden, intermediate: wc.intermediate,
@@ -582,24 +628,25 @@ extension WhisperModel {
 
         // ── Decoder ──
         var decLayers: [WhisperDecoderLayer] = []
-        for i in 0..<wc.decoderLayers {
+        for i in 0 ..< wc.decoderLayers {
             let base = "decoder.layers.\(i)"
-            decLayers.append(WhisperDecoderLayer(
-                selfAttnLayerNorm: try ln("\(base).self_attn_layer_norm"),
-                qProj: try linear("\(base).self_attn.q_proj"),
-                kProj: try linear("\(base).self_attn.k_proj", hasBias: false),
-                vProj: try linear("\(base).self_attn.v_proj"),
-                oProj: try linear("\(base).self_attn.out_proj"),
-                crossAttnLayerNorm: try ln("\(base).encoder_attn_layer_norm"),
-                crossQProj: try linear("\(base).encoder_attn.q_proj"),
-                crossKProj: try linear("\(base).encoder_attn.k_proj", hasBias: false),
-                crossVProj: try linear("\(base).encoder_attn.v_proj"),
-                crossOProj: try linear("\(base).encoder_attn.out_proj"),
-                finalLayerNorm: try ln("\(base).final_layer_norm"),
-                fc1: try linear("\(base).fc1"),
-                fc2: try linear("\(base).fc2"),
-                hidden: wc.hidden, nHeads: wc.decoderHeads,
-                intermediate: wc.intermediate))
+            decLayers.append(
+                WhisperDecoderLayer(
+                    selfAttnLayerNorm: try ln("\(base).self_attn_layer_norm"),
+                    qProj: try linear("\(base).self_attn.q_proj"),
+                    kProj: try linear("\(base).self_attn.k_proj", hasBias: false),
+                    vProj: try linear("\(base).self_attn.v_proj"),
+                    oProj: try linear("\(base).self_attn.out_proj"),
+                    crossAttnLayerNorm: try ln("\(base).encoder_attn_layer_norm"),
+                    crossQProj: try linear("\(base).encoder_attn.q_proj"),
+                    crossKProj: try linear("\(base).encoder_attn.k_proj", hasBias: false),
+                    crossVProj: try linear("\(base).encoder_attn.v_proj"),
+                    crossOProj: try linear("\(base).encoder_attn.out_proj"),
+                    finalLayerNorm: try ln("\(base).final_layer_norm"),
+                    fc1: try linear("\(base).fc1"),
+                    fc2: try linear("\(base).fc2"),
+                    hidden: wc.hidden, nHeads: wc.decoderHeads,
+                    intermediate: wc.intermediate))
         }
 
         return WhisperModel(

@@ -62,9 +62,11 @@ public enum PhiError: Error, CustomStringConvertible {
         switch self {
         case .missingConfig: return "Phi: required config field missing"
         case .unsupportedRopeScaling(let t):
-            return "Phi: rope_scaling type '\(t)' not supported yet (SuScaledRoPE is a follow-up); use Phi-3-mini-4k-instruct or wait"
+            return
+                "Phi: rope_scaling type '\(t)' not supported yet (SuScaledRoPE is a follow-up); use Phi-3-mini-4k-instruct or wait"
         case .quantizedFusedNotSupported:
-            return "Phi: quantized fused qkv_proj / gate_up_proj not supported yet; load the raw bf16 / f16 checkpoint or convert with split projections"
+            return
+                "Phi: quantized fused qkv_proj / gate_up_proj not supported yet; load the raw bf16 / f16 checkpoint or convert with split projections"
         }
     }
 }

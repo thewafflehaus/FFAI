@@ -31,9 +31,10 @@
 // A missing checkpoint FAILS the suite.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("CohereTranscribe Integration", .serialized)
 struct CohereTranscribeIntegrationTests {
@@ -79,8 +80,8 @@ struct CohereTranscribeIntegrationTests {
     /// stack to process without hitting edge cases.
     private func syntheticTone(hz: Float = 440, seconds: Double = 1.0) -> [Float] {
         let sr = 16_000
-        let n  = Int(Double(sr) * seconds)
-        return (0..<n).map { 0.3 * sin(2 * Float.pi * hz * Float($0) / Float(sr)) }
+        let n = Int(Double(sr) * seconds)
+        return (0 ..< n).map { 0.3 * sin(2 * Float.pi * hz * Float($0) / Float(sr)) }
     }
 
     // ─── Tests ───────────────────────────────────────────────────────────
@@ -92,16 +93,16 @@ struct CohereTranscribeIntegrationTests {
         let dc = model.config.decoder
 
         // Encoder defaults for the published CohereTranscribe checkpoint.
-        #expect(ec.nLayers              >= 1)
-        #expect(ec.nHeads               >= 1)
-        #expect(ec.dModel               >= 1)
-        #expect(ec.featIn               == 128)
-        #expect(ec.subsamplingFactor    == 8)
+        #expect(ec.nLayers >= 1)
+        #expect(ec.nHeads >= 1)
+        #expect(ec.dModel >= 1)
+        #expect(ec.featIn == 128)
+        #expect(ec.subsamplingFactor == 8)
 
         // Decoder hyper-parameters.
-        #expect(dc.numLayers            >= 1)
-        #expect(dc.numAttentionHeads    >= 1)
-        #expect(dc.hiddenSize           >= 1)
+        #expect(dc.numLayers >= 1)
+        #expect(dc.numAttentionHeads >= 1)
+        #expect(dc.hiddenSize >= 1)
 
         // Layer counts must match config.
         #expect(model.encoderLayers.count == ec.nLayers)
@@ -111,36 +112,41 @@ struct CohereTranscribeIntegrationTests {
         let expectedRelLen = 2 * ec.posEmbMaxLen - 1
         #expect(model.relPETable.count == expectedRelLen * ec.dModel)
 
-        print("[CohereTranscribe integration] config enc=\(ec.nLayers)L "
-              + "dec=\(dc.numLayers)L dModel=\(ec.dModel) "
-              + "dtype=\(model.dtype)")
+        print(
+            "[CohereTranscribe integration] config enc=\(ec.nLayers)L "
+                + "dec=\(dc.numLayers)L dModel=\(ec.dModel) "
+                + "dtype=\(model.dtype)")
     }
 
     @Test("encodeAudio — produces finite, non-degenerate encoder outputs")
     func encodeAudioFiniteFeatures() async throws {
         let model = try await loadModel()
-        let wave  = syntheticTone(seconds: 1.0)
+        let wave = syntheticTone(seconds: 1.0)
 
         let encoded = model.encodeAudio(waveform: wave)
 
         #expect(!encoded.isEmpty, "encodeAudio produced zero outputs")
 
-        let encDim = model.bridgeProj != nil
+        let encDim =
+            model.bridgeProj != nil
             ? model.config.decoder.hiddenSize
             : model.config.encoder.dModel
         let nFrames = encoded.count / encDim
         #expect(nFrames > 0, "encoder produced zero frames")
-        #expect(encoded.count == nFrames * encDim,
-                "encoder output size not a multiple of encDim")
+        #expect(
+            encoded.count == nFrames * encDim,
+            "encoder output size not a multiple of encDim")
 
-        #expect(encoded.allSatisfy { $0.isFinite },
-                "encoder output contains NaN or Inf")
+        #expect(
+            encoded.allSatisfy { $0.isFinite },
+            "encoder output contains NaN or Inf")
 
         let variance = encoded.map { $0 * $0 }.reduce(0, +) / Float(encoded.count)
         #expect(variance > 1e-6, "encoder output is degenerate (near-zero)")
 
-        print("[CohereTranscribe integration] encoder: \(nFrames) frames "
-              + "× \(encDim) dim")
+        print(
+            "[CohereTranscribe integration] encoder: \(nFrames) frames "
+                + "× \(encDim) dim")
     }
 
     @Test("transcribe — real speech produces a non-degenerate transcript")
@@ -170,14 +176,15 @@ struct CohereTranscribeIntegrationTests {
 
         // Non-degenerate: a genuine decode visits several distinct words.
         let words = transcript.split(separator: " ")
-        #expect(words.count >= 2,
-                "CohereTranscribe transcript is degenerate: \(transcript.debugDescription)")
+        #expect(
+            words.count >= 2,
+            "CohereTranscribe transcript is degenerate: \(transcript.debugDescription)")
     }
 
     @Test("transcribe — synthetic tone does not crash or produce NaN")
     func transcribeSyntheticTone() async throws {
         let model = try await loadModel()
-        let wave  = syntheticTone(seconds: 1.0)
+        let wave = syntheticTone(seconds: 1.0)
 
         guard let tok = model.tokenizer else {
             Issue.record("CohereTranscribe checkpoint did not include a tokenizer")
@@ -192,8 +199,9 @@ struct CohereTranscribeIntegrationTests {
             language: "en",
             maxTokens: 50
         )
-        print("[CohereTranscribe integration] synthetic tone → "
-              + transcript.debugDescription)
+        print(
+            "[CohereTranscribe integration] synthetic tone → "
+                + transcript.debugDescription)
         // Nothing to assert on content — reaching here means no crash / NaN.
     }
 
@@ -207,7 +215,8 @@ struct CohereTranscribeIntegrationTests {
             return
         }
         #expect(loaded.capabilities == Capability.speechToText)
-        print("[CohereTranscribe integration] registry routed correctly, "
-              + "capabilities=\(loaded.capabilities)")
+        print(
+            "[CohereTranscribe integration] registry routed correctly, "
+                + "capabilities=\(loaded.capabilities)")
     }
 }

@@ -53,9 +53,10 @@ struct VisionTowerOpsAddRowBiasTests {
     @Test("broadcasts [rowSize] bias across nRows rows")
     func broadcastsBias() {
         let device = Device.shared
-        let nRows = 3, rowSize = 4
+        let nRows = 3
+        let rowSize = 4
         // x = row-major [0..11].
-        let xVals: [Float] = (0..<(nRows * rowSize)).map { Float($0) }
+        let xVals: [Float] = (0 ..< (nRows * rowSize)).map { Float($0) }
         let x = ImagePreprocessing.makeTensor(
             from: xVals, shape: [nRows, rowSize], dtype: .f32, device: device)
         // bias = [10, 20, 30, 40] — distinct per column so we can detect
@@ -65,18 +66,20 @@ struct VisionTowerOpsAddRowBiasTests {
             from: biasVals, shape: [rowSize], dtype: .f32, device: device)
 
         let cmd = device.makeCommandBuffer()
-        let out = addRowBias(x, bias: bias, nRows: nRows,
-                             rowSize: rowSize, on: cmd)
+        let out = addRowBias(
+            x, bias: bias, nRows: nRows,
+            rowSize: rowSize, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
 
         let got = out.toArray(as: Float.self)
-        for r in 0..<nRows {
-            for c in 0..<rowSize {
+        for r in 0 ..< nRows {
+            for c in 0 ..< rowSize {
                 let expected = xVals[r * rowSize + c] + biasVals[c]
                 let actual = got[r * rowSize + c]
-                #expect(abs(actual - expected) < 1e-5,
-                        "(r=\(r), c=\(c)): expected \(expected), got \(actual)")
+                #expect(
+                    abs(actual - expected) < 1e-5,
+                    "(r=\(r), c=\(c)): expected \(expected), got \(actual)")
             }
         }
     }
@@ -118,8 +121,7 @@ struct VisionTowerOpsPadRowsTests {
 
         let out = padLinearRows(lin, toRows: 4, device: device)
         #expect(out.weight.shape == [4, 2])
-        #expect(out.weight.toArray(as: Float.self) ==
-                [1, 2, 3, 4, 0, 0, 0, 0])
+        #expect(out.weight.toArray(as: Float.self) == [1, 2, 3, 4, 0, 0, 0, 0])
         #expect(out.bias?.shape == [4])
         #expect(out.bias?.toArray(as: Float.self) == [10, 20, 0, 0])
     }
@@ -157,8 +159,7 @@ struct VisionTowerOpsPadColsTests {
         let out = padLinearCols(lin, toCols: 4, device: device)
         #expect(out.weight.shape == [2, 4])
         // Row 0: 1, 2, 0, 0. Row 1: 3, 4, 0, 0.
-        #expect(out.weight.toArray(as: Float.self) ==
-                [1, 2, 0, 0, 3, 4, 0, 0])
+        #expect(out.weight.toArray(as: Float.self) == [1, 2, 0, 0, 3, 4, 0, 0])
         // Bias is the unmodified original (input-col pad doesn't touch it).
         #expect(out.bias?.shape == [2])
         #expect(out.bias?.toArray(as: Float.self) == [10, 20])
@@ -189,8 +190,7 @@ struct VisionTowerOpsPadColsTensorTests {
             from: [1, 2, 3, 4], shape: [2, 2], dtype: .f32, device: device)
         let out = padLinearColsTo(w, toCols: 4, device: device)
         #expect(out.shape == [2, 4])
-        #expect(out.toArray(as: Float.self) ==
-                [1, 2, 0, 0, 3, 4, 0, 0])
+        #expect(out.toArray(as: Float.self) == [1, 2, 0, 0, 3, 4, 0, 0])
     }
 }
 
@@ -208,12 +208,15 @@ struct VisionTowerOpsFlattenPatchEmbedTests {
         let device = Device.shared
         // hidden=1, tP=1, p=2, inCh=2 → patchDim = 1·2·2·2 = 8.
         // Pad to 16 so the K-tile padding columns also get checked.
-        let hidden = 1, tP = 1, p = 2, inCh = 2
-        let patchDim = tP * p * p * inCh    // 8
+        let hidden = 1
+        let tP = 1
+        let p = 2
+        let inCh = 2
+        let patchDim = tP * p * p * inCh  // 8
         let patchDimPadded = 16
         // Walk the source contiguously so each cell is obvious.
         let srcVals: [Float] =
-            (0..<(hidden * tP * p * p * inCh)).map { Float($0) }
+            (0 ..< (hidden * tP * p * p * inCh)).map { Float($0) }
         let w = ImagePreprocessing.makeTensor(
             from: srcVals, shape: [hidden, tP, p, p, inCh], dtype: .f32,
             device: device)
@@ -228,11 +231,11 @@ struct VisionTowerOpsFlattenPatchEmbedTests {
         // Source index s = ((((o·tP + t)·p + py)·p + px)·inCh + ch).
         // Dest column col = (((t·inCh + ch)·p + py)·p + px).
         var expected = [Float](repeating: 0, count: hidden * patchDimPadded)
-        for o in 0..<hidden {
-            for t in 0..<tP {
-                for py in 0..<p {
-                    for px in 0..<p {
-                        for ch in 0..<inCh {
+        for o in 0 ..< hidden {
+            for t in 0 ..< tP {
+                for py in 0 ..< p {
+                    for px in 0 ..< p {
+                        for ch in 0 ..< inCh {
                             let s = ((((o * tP + t) * p + py) * p + px) * inCh + ch)
                             let col = (((t * inCh + ch) * p + py) * p + px)
                             expected[o * patchDimPadded + col] = srcVals[s]
@@ -243,9 +246,10 @@ struct VisionTowerOpsFlattenPatchEmbedTests {
         }
         #expect(got == expected)
         // Trailing pad columns are zero.
-        for col in patchDim..<patchDimPadded {
-            #expect(got[col] == 0,
-                    "pad column \(col) should be zero, got \(got[col])")
+        for col in patchDim ..< patchDimPadded {
+            #expect(
+                got[col] == 0,
+                "pad column \(col) should be zero, got \(got[col])")
         }
     }
 
@@ -259,11 +263,14 @@ struct VisionTowerOpsFlattenPatchEmbedTests {
         let device = Device.shared
         // hidden=1, inCh=2, tP=1, p=5 → patchDim = 1·5·5·2 = 50.
         // Detector trips on shape[4] (= p = 5) > 4 → channel-first branch.
-        let hidden = 1, inCh = 2, tP = 1, p = 5
-        let patchDim = tP * p * p * inCh    // 50
-        let patchDimPadded = 64             // next K-tile multiple ≥ 50
+        let hidden = 1
+        let inCh = 2
+        let tP = 1
+        let p = 5
+        let patchDim = tP * p * p * inCh  // 50
+        let patchDimPadded = 64  // next K-tile multiple ≥ 50
         let srcVals: [Float] =
-            (0..<(hidden * inCh * tP * p * p)).map { Float($0) }
+            (0 ..< (hidden * inCh * tP * p * p)).map { Float($0) }
         let w = ImagePreprocessing.makeTensor(
             from: srcVals, shape: [hidden, inCh, tP, p, p], dtype: .f32,
             device: device)
@@ -276,11 +283,11 @@ struct VisionTowerOpsFlattenPatchEmbedTests {
 
         // PyTorch layout source index: ((((o·inCh + ch)·tP + t)·p + py)·p + px).
         var expected = [Float](repeating: 0, count: hidden * patchDimPadded)
-        for o in 0..<hidden {
-            for ch in 0..<inCh {
-                for t in 0..<tP {
-                    for py in 0..<p {
-                        for px in 0..<p {
+        for o in 0 ..< hidden {
+            for ch in 0 ..< inCh {
+                for t in 0 ..< tP {
+                    for py in 0 ..< p {
+                        for px in 0 ..< p {
                             let s = ((((o * inCh + ch) * tP + t) * p + py) * p + px)
                             let col = (((t * inCh + ch) * p + py) * p + px)
                             expected[o * patchDimPadded + col] = srcVals[s]
@@ -291,9 +298,10 @@ struct VisionTowerOpsFlattenPatchEmbedTests {
         }
         #expect(got == expected)
         // Trailing pad columns are zero.
-        for col in patchDim..<patchDimPadded {
-            #expect(got[col] == 0,
-                    "pad column \(col) should be zero, got \(got[col])")
+        for col in patchDim ..< patchDimPadded {
+            #expect(
+                got[col] == 0,
+                "pad column \(col) should be zero, got \(got[col])")
         }
     }
 }

@@ -110,11 +110,10 @@ public struct ChatTemplateOptions: Sendable, Equatable {
     }
 
     public static func == (lhs: ChatTemplateOptions, rhs: ChatTemplateOptions) -> Bool {
-        lhs.addGenerationPrompt == rhs.addGenerationPrompt &&
-        lhs.enableThinking == rhs.enableThinking &&
-        lhs.reasoningEffort == rhs.reasoningEffort &&
-        lhs.maxLength == rhs.maxLength &&
-        lhs.truncation == rhs.truncation
+        lhs.addGenerationPrompt == rhs.addGenerationPrompt
+            && lhs.enableThinking == rhs.enableThinking
+            && lhs.reasoningEffort == rhs.reasoningEffort && lhs.maxLength == rhs.maxLength
+            && lhs.truncation == rhs.truncation
         // extraContext intentionally not compared — `any Sendable` isn't
         // Equatable. Two options with different `extraContext` will read
         // as equal here; callers that care should compare the dicts
@@ -129,19 +128,22 @@ public enum ChatTemplateError: Error, CustomStringConvertible {
     public var description: String {
         switch self {
         case .noTemplateOnTokenizer:
-            return "Tokenizer has no chat template — render the prompt manually or load a different tokenizer."
+            return
+                "Tokenizer has no chat template — render the prompt manually or load a different tokenizer."
         case .renderFailed(let e):
             return "Chat template render failed: \(e)"
         }
     }
 }
 
-public extension Model {
+extension Model {
     /// Render `messages` through the tokenizer's chat template and
     /// return the resulting token ids — same input the model would
     /// receive if you'd encoded the rendered string yourself.
-    func renderChatTemplate(messages: [ChatMessage],
-                            options: ChatTemplateOptions = .init()) throws -> [Int] {
+    public func renderChatTemplate(
+        messages: [ChatMessage],
+        options: ChatTemplateOptions = .init()
+    ) throws -> [Int] {
         guard tokenizer.hasChatTemplate else {
             throw ChatTemplateError.noTemplateOnTokenizer
         }
@@ -169,30 +171,39 @@ public extension Model {
     /// Buffered chat-shaped generation. Renders `messages` through the
     /// tokenizer's chat template, then drives the standard
     /// generate loop.
-    func generate(messages: [ChatMessage],
-                  templateOptions: ChatTemplateOptions = .init(),
-                  parameters: GenerationParameters? = nil,
-                  profile: Profile = .shared) async throws -> GenerationResult {
-        let promptTokens = try renderChatTemplate(messages: messages,
-                                                  options: templateOptions)
+    public func generate(
+        messages: [ChatMessage],
+        templateOptions: ChatTemplateOptions = .init(),
+        parameters: GenerationParameters? = nil,
+        profile: Profile = .shared
+    ) async throws -> GenerationResult {
+        let promptTokens = try renderChatTemplate(
+            messages: messages,
+            options: templateOptions)
         let params = parameters ?? defaultGenerationParameters
-        let stream = generateStreamInternal(promptTokens: promptTokens,
-                                            parameters: params, profile: profile)
+        let stream = generateStreamInternal(
+            promptTokens: promptTokens,
+            parameters: params, profile: profile)
         return try await collectStream(stream, promptTokens: promptTokens)
     }
 
     /// Streaming chat-shaped generation. Same shape as
     /// `generateStream(prompt:parameters:)` but the prompt is built by
     /// rendering `messages` through the tokenizer's chat template.
-    func generateStream(messages: [ChatMessage],
-                        templateOptions: ChatTemplateOptions = .init(),
-                        parameters: GenerationParameters? = nil,
-                        profile: Profile = .shared)
-        throws -> AsyncThrowingStream<GenerationChunk, Error> {
-        let promptTokens = try renderChatTemplate(messages: messages,
-                                                  options: templateOptions)
+    public func generateStream(
+        messages: [ChatMessage],
+        templateOptions: ChatTemplateOptions = .init(),
+        parameters: GenerationParameters? = nil,
+        profile: Profile = .shared
+    )
+        throws -> AsyncThrowingStream<GenerationChunk, Error>
+    {
+        let promptTokens = try renderChatTemplate(
+            messages: messages,
+            options: templateOptions)
         let params = parameters ?? defaultGenerationParameters
-        return generateStreamInternal(promptTokens: promptTokens,
-                                      parameters: params, profile: profile)
+        return generateStreamInternal(
+            promptTokens: promptTokens,
+            parameters: params, profile: profile)
     }
 }

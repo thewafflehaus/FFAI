@@ -23,6 +23,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Llama Family Root")
@@ -38,8 +39,9 @@ struct LlamaRootTests {
 
     @Test("variant(for:) returns LlamaDense for any llama config")
     func variantDispatch() throws {
-        let cfg = ModelConfig(architecture: "LlamaForCausalLM",
-                              modelType: "llama", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "LlamaForCausalLM",
+            modelType: "llama", raw: [:])
         let v = try Llama.variant(for: cfg)
         // Metatype comparison via String(describing:) — value-type
         // metatypes don't conform to Equatable.

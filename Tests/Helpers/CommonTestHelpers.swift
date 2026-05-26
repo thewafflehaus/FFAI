@@ -18,8 +18,8 @@
 // can be a dependency of both test targets without source duplication.
 // Helpers only touch FFAI's public API — no `@testable` import.
 
-import Foundation
 import FFAI
+import Foundation
 
 // MARK: - ModelLoadLock
 
@@ -113,8 +113,8 @@ public func loadModel(
 /// working directory the test runner uses.
 public func resourceURL(_ name: String, file: StaticString = #filePath) -> URL {
     URL(fileURLWithPath: "\(file)")
-        .deletingLastPathComponent()      // Tests/Helpers/
-        .deletingLastPathComponent()      // Tests/
+        .deletingLastPathComponent()  // Tests/Helpers/
+        .deletingLastPathComponent()  // Tests/
         .appendingPathComponent("Resources")
         .appendingPathComponent(name)
 }

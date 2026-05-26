@@ -104,10 +104,15 @@ public struct LFMAudioPreprocessorConfig: Sendable {
         preemph: Float = 0.97, dither: Float = 1e-5,
         normalise: String = "per_feature", logGuard: Float = 5.96e-8
     ) {
-        self.sampleRate = sampleRate; self.nMels = nMels; self.nFFT = nFFT
-        self.winLength = winLength; self.hopLength = hopLength
-        self.preemph = preemph; self.dither = dither
-        self.normalise = normalise; self.logGuard = logGuard
+        self.sampleRate = sampleRate
+        self.nMels = nMels
+        self.nFFT = nFFT
+        self.winLength = winLength
+        self.hopLength = hopLength
+        self.preemph = preemph
+        self.dither = dither
+        self.normalise = normalise
+        self.logGuard = logGuard
     }
 }
 
@@ -141,11 +146,15 @@ public struct LFMAudioEncoderConfig: Sendable {
         subsamplingFactor: Int = 8, subsamplingConvChannels: Int = 256,
         posEmbMaxLen: Int = 5000, convKernelSize: Int = 9
     ) {
-        self.featIn = featIn; self.nLayers = nLayers; self.dModel = dModel
-        self.nHeads = nHeads; self.ffExpansionFactor = ffExpansionFactor
+        self.featIn = featIn
+        self.nLayers = nLayers
+        self.dModel = dModel
+        self.nHeads = nHeads
+        self.ffExpansionFactor = ffExpansionFactor
         self.subsamplingFactor = subsamplingFactor
         self.subsamplingConvChannels = subsamplingConvChannels
-        self.posEmbMaxLen = posEmbMaxLen; self.convKernelSize = convKernelSize
+        self.posEmbMaxLen = posEmbMaxLen
+        self.convKernelSize = convKernelSize
     }
 }
 
@@ -173,11 +182,14 @@ public struct LFMAudioConfig: Sendable {
         encoder: LFMAudioEncoderConfig = LFMAudioEncoderConfig(),
         lfmHidden: Int = 2048
     ) {
-        self.modelType = modelType; self.sampleRate = sampleRate
-        self.codebooks = codebooks; self.audioVocabSize = audioVocabSize
+        self.modelType = modelType
+        self.sampleRate = sampleRate
+        self.codebooks = codebooks
+        self.audioVocabSize = audioVocabSize
         self.adapterHiddenDims = adapterHiddenDims
         self.adapterUseLayerNorm = adapterUseLayerNorm
-        self.preprocessor = preprocessor; self.encoder = encoder
+        self.preprocessor = preprocessor
+        self.encoder = encoder
         self.lfmHidden = lfmHidden
     }
 
@@ -185,37 +197,37 @@ public struct LFMAudioConfig: Sendable {
     public static func from(_ config: ModelConfig) throws -> LFMAudioConfig {
         guard let prepRaw = config.raw["preprocessor"] as? [String: Any]
         else { throw LFMAudioError.missingConfig("preprocessor") }
-        guard let encRaw  = config.raw["encoder"]       as? [String: Any]
+        guard let encRaw = config.raw["encoder"] as? [String: Any]
         else { throw LFMAudioError.missingConfig("encoder") }
-        guard let lfmRaw  = config.raw["lfm"]           as? [String: Any]
+        guard let lfmRaw = config.raw["lfm"] as? [String: Any]
         else { throw LFMAudioError.missingConfig("lfm") }
 
         // ── Preprocessor ─────────────────────────────────────────────
         let sr = prepRaw["sample_rate"] as? Int ?? 16_000
         let nMels = prepRaw["features"] as? Int ?? 128
         let nFFT = prepRaw["n_fft"] as? Int ?? 512
-        let windowSize   = prepRaw["window_size"]   as? Double ?? 0.025
+        let windowSize = prepRaw["window_size"] as? Double ?? 0.025
         let windowStride = prepRaw["window_stride"] as? Double ?? 0.01
-        let winLength  = Int((windowSize   * Double(sr)).rounded())
-        let hopLength  = Int((windowStride * Double(sr)).rounded())
-        let preemph    = prepRaw["preemph"]     as? Double ?? 0.97
-        let dither     = prepRaw["dither"]      as? Double ?? 1e-5
-        let normalise  = prepRaw["normalize"]   as? String ?? "per_feature"
+        let winLength = Int((windowSize * Double(sr)).rounded())
+        let hopLength = Int((windowStride * Double(sr)).rounded())
+        let preemph = prepRaw["preemph"] as? Double ?? 0.97
+        let dither = prepRaw["dither"] as? Double ?? 1e-5
+        let normalise = prepRaw["normalize"] as? String ?? "per_feature"
         let prep = LFMAudioPreprocessorConfig(
             sampleRate: sr, nMels: nMels, nFFT: nFFT,
             winLength: winLength, hopLength: hopLength,
             preemph: Float(preemph), dither: Float(dither), normalise: normalise)
 
         // ── ConformerEncoder ─────────────────────────────────────────
-        let featIn     = encRaw["feat_in"]                    as? Int ?? 128
-        let nLayers    = encRaw["n_layers"]                   as? Int ?? 17
-        let dModel     = encRaw["d_model"]                    as? Int ?? 512
-        let nHeads     = encRaw["n_heads"]                    as? Int ?? 8
-        let ffExp      = encRaw["ff_expansion_factor"]        as? Int ?? 4
-        let subFactor  = encRaw["subsampling_factor"]         as? Int ?? 8
-        let subConvCh  = encRaw["subsampling_conv_channels"]  as? Int ?? 256
-        let posMax     = encRaw["pos_emb_max_len"]            as? Int ?? 5000
-        let convKernel = encRaw["conv_kernel_size"]           as? Int ?? 9
+        let featIn = encRaw["feat_in"] as? Int ?? 128
+        let nLayers = encRaw["n_layers"] as? Int ?? 17
+        let dModel = encRaw["d_model"] as? Int ?? 512
+        let nHeads = encRaw["n_heads"] as? Int ?? 8
+        let ffExp = encRaw["ff_expansion_factor"] as? Int ?? 4
+        let subFactor = encRaw["subsampling_factor"] as? Int ?? 8
+        let subConvCh = encRaw["subsampling_conv_channels"] as? Int ?? 256
+        let posMax = encRaw["pos_emb_max_len"] as? Int ?? 5000
+        let convKernel = encRaw["conv_kernel_size"] as? Int ?? 9
         let enc = LFMAudioEncoderConfig(
             featIn: featIn, nLayers: nLayers, dModel: dModel,
             nHeads: nHeads, ffExpansionFactor: ffExp,
@@ -223,14 +235,15 @@ public struct LFMAudioConfig: Sendable {
             posEmbMaxLen: posMax, convKernelSize: convKernel)
 
         // ── LFM2 backbone hidden dim ─────────────────────────────────
-        let lfmHidden = lfmRaw["hidden_size"] as? Int
+        let lfmHidden =
+            lfmRaw["hidden_size"] as? Int
             ?? lfmRaw["block_dim"] as? Int
             ?? 2048
 
-        let modelType       = config.modelType ?? "lfm_audio"
-        let topSampleRate   = config.int("sample_rate") ?? 24_000
-        let codebooks       = config.int("codebooks") ?? 8
-        let audioVocabSize  = config.int("audio_vocab_size") ?? 2049
+        let modelType = config.modelType ?? "lfm_audio"
+        let topSampleRate = config.int("sample_rate") ?? 24_000
+        let codebooks = config.int("codebooks") ?? 8
+        let audioVocabSize = config.int("audio_vocab_size") ?? 2049
         let adapterDims: [Int]
         if let raw = config.raw["adapter_hidden_dims"] as? [Int] {
             adapterDims = raw
@@ -259,55 +272,78 @@ public struct LFMAudioConfig: Sendable {
 /// stride-2 stages). Input layout: [T, F, 1] → [T/8, d_model].
 struct LFMAudioSubsamplingWeights: Sendable {
     // conv.0: [convCh, 1, 3, 3] stored as [convCh * 9]
-    let conv0W: [Float]; let conv0B: [Float]
+    let conv0W: [Float]
+    let conv0B: [Float]
     // conv.2: depthwise [convCh, 1, 3, 3] + conv.3: pointwise [convCh, convCh, 1, 1]
-    let conv2W: [Float]; let conv2B: [Float]
-    let conv3W: [Float]; let conv3B: [Float]
+    let conv2W: [Float]
+    let conv2B: [Float]
+    let conv3W: [Float]
+    let conv3B: [Float]
     // conv.5: depthwise [convCh, 1, 3, 3] + conv.6: pointwise [convCh, convCh, 1, 1]
-    let conv5W: [Float]; let conv5B: [Float]
-    let conv6W: [Float]; let conv6B: [Float]
+    let conv5W: [Float]
+    let conv5B: [Float]
+    let conv6W: [Float]
+    let conv6B: [Float]
     // out: [dModel, convCh * (featIn / 8)]
-    let outW: [Float]; let outB: [Float]
-    let convCh: Int; let dModel: Int
+    let outW: [Float]
+    let outB: [Float]
+    let convCh: Int
+    let dModel: Int
 }
 
 /// Weights for the relative multi-head attention sub-block within a
 /// Conformer layer. All projections are [dModel × dModel] dense matrices.
 struct LFMAudioConformerAttnWeights: Sendable {
-    let qW: [Float]; let qB: [Float]
-    let kW: [Float]; let kB: [Float]
-    let vW: [Float]; let vB: [Float]
-    let outW: [Float]; let outB: [Float]
-    let posW: [Float]                   // pos_proj (no bias)
-    let posBiasU: [Float]               // [nHeads, headDim]
-    let posBiasV: [Float]               // [nHeads, headDim]
+    let qW: [Float]
+    let qB: [Float]
+    let kW: [Float]
+    let kB: [Float]
+    let vW: [Float]
+    let vB: [Float]
+    let outW: [Float]
+    let outB: [Float]
+    let posW: [Float]  // pos_proj (no bias)
+    let posBiasU: [Float]  // [nHeads, headDim]
+    let posBiasV: [Float]  // [nHeads, headDim]
 }
 
 /// Weights for the Conformer convolution sub-block (batch-norm instead
 /// of layer-norm for the conv normalisation).
 struct LFMAudioConformerConvWeights: Sendable {
-    let pw1W: [Float]; let pw1B: [Float]   // pointwise_conv1: dModel → 2*dModel
-    let dwW: [Float]; let dwB: [Float]     // depthwise_conv: dModel, kernel
+    let pw1W: [Float]
+    let pw1B: [Float]  // pointwise_conv1: dModel → 2*dModel
+    let dwW: [Float]
+    let dwB: [Float]  // depthwise_conv: dModel, kernel
     // Batch-norm params
-    let bnW: [Float]; let bnB: [Float]
-    let bnMean: [Float]; let bnVar: [Float]
-    let pw2W: [Float]; let pw2B: [Float]   // pointwise_conv2: dModel → dModel
+    let bnW: [Float]
+    let bnB: [Float]
+    let bnMean: [Float]
+    let bnVar: [Float]
+    let pw2W: [Float]
+    let pw2B: [Float]  // pointwise_conv2: dModel → dModel
 }
 
 /// Weights for a ConformerFeedForward sub-block.
 struct LFMAudioConformerFFWeights: Sendable {
-    let linear1W: [Float]; let linear1B: [Float]
-    let linear2W: [Float]; let linear2B: [Float]
+    let linear1W: [Float]
+    let linear1B: [Float]
+    let linear2W: [Float]
+    let linear2B: [Float]
 }
 
 /// Weights for all sub-blocks of one Conformer block, plus their norms.
 struct LFMAudioConformerBlockWeights: Sendable {
     // Pre-norm LayerNorm (weight + bias)
-    let ff1NormW: [Float]; let ff1NormB: [Float]
-    let attnNormW: [Float]; let attnNormB: [Float]
-    let convNormW: [Float]; let convNormB: [Float]
-    let ff2NormW: [Float]; let ff2NormB: [Float]
-    let finalNormW: [Float]; let finalNormB: [Float]
+    let ff1NormW: [Float]
+    let ff1NormB: [Float]
+    let attnNormW: [Float]
+    let attnNormB: [Float]
+    let convNormW: [Float]
+    let convNormB: [Float]
+    let ff2NormW: [Float]
+    let ff2NormB: [Float]
+    let finalNormW: [Float]
+    let finalNormB: [Float]
     // Sub-blocks
     let ff1: LFMAudioConformerFFWeights
     let attn: LFMAudioConformerAttnWeights
@@ -318,9 +354,12 @@ struct LFMAudioConformerBlockWeights: Sendable {
 
 /// Weights for the AdapterMLP that projects encoder output to LFM2 dim.
 struct LFMAudioAdapterWeights: Sendable {
-    let normW: [Float]?; let normB: [Float]?   // optional LayerNorm
-    let linearWs: [[Float]]; let linearBs: [[Float]]
-    let inDim: Int; let outDim: Int
+    let normW: [Float]?
+    let normB: [Float]?  // optional LayerNorm
+    let linearWs: [[Float]]
+    let linearBs: [[Float]]
+    let inDim: Int
+    let outDim: Int
 }
 
 // ─── LFMAudio model ───────────────────────────────────────────────────
@@ -340,12 +379,14 @@ public final class LFMAudioModel: @unchecked Sendable {
     var relPosTable: [Float]
     var relPosMaxLen: Int
 
-    init(config: LFMAudioConfig,
-         subsampling: LFMAudioSubsamplingWeights,
-         blocks: [LFMAudioConformerBlockWeights],
-         adapter: LFMAudioAdapterWeights,
-         lfm: LFM2Model, dtype: DType,
-         relPosTable: [Float], relPosMaxLen: Int) {
+    init(
+        config: LFMAudioConfig,
+        subsampling: LFMAudioSubsamplingWeights,
+        blocks: [LFMAudioConformerBlockWeights],
+        adapter: LFMAudioAdapterWeights,
+        lfm: LFM2Model, dtype: DType,
+        relPosTable: [Float], relPosMaxLen: Int
+    ) {
         self.config = config
         self.subsampling = subsampling
         self.blocks = blocks
@@ -375,15 +416,17 @@ public final class LFMAudioModel: @unchecked Sendable {
     /// - Returns a `Tensor` of shape `[nTokens, lfmHidden]` suitable for
     ///   splicing into an LFM2 prompt embedding stream.
     public func encodeAudio(waveform: [Float], device: Device = .shared)
-        -> Tensor {
+        -> Tensor
+    {
         let prep = config.preprocessor
-        let enc  = config.encoder
+        let enc = config.encoder
 
         // 1. NeMo log-Mel front-end → [nFrames, nMels] (CPU float)
         let mel = lfmAudioLogMel(waveform: waveform, cfg: prep)
         guard !mel.isEmpty else {
-            return Tensor.empty(shape: [0, config.lfmHidden], dtype: dtype,
-                                device: device)
+            return Tensor.empty(
+                shape: [0, config.lfmHidden], dtype: dtype,
+                device: device)
         }
         let nFrames = mel.count / prep.nMels
 
@@ -391,8 +434,9 @@ public final class LFMAudioModel: @unchecked Sendable {
         let (encoded, nTokens) = conformerEncode(
             mel: mel, nFrames: nFrames, enc: enc)
         guard nTokens > 0 else {
-            return Tensor.empty(shape: [0, config.lfmHidden], dtype: dtype,
-                                device: device)
+            return Tensor.empty(
+                shape: [0, config.lfmHidden], dtype: dtype,
+                device: device)
         }
 
         // 3. AdapterMLP → [nTokens, lfmHidden]
@@ -404,15 +448,17 @@ public final class LFMAudioModel: @unchecked Sendable {
         let outF32: [Float]
         switch dtype {
         case .f32: outF32 = adapted
-        default:   outF32 = adapted  // copyIn handles dtype conversion below
+        default: outF32 = adapted  // copyIn handles dtype conversion below
         }
         _ = outF32  // suppress warning — written via switch below
         switch dtype {
         case .f32:
             outT.copyIn(from: adapted)
         case .bf16:
-            outT.copyIn(from: adapted.map {
-                UInt16(truncatingIfNeeded: $0.bitPattern >> 16) })
+            outT.copyIn(
+                from: adapted.map {
+                    UInt16(truncatingIfNeeded: $0.bitPattern >> 16)
+                })
         case .f16:
             outT.copyIn(from: adapted.map { Float16($0) })
         default:
@@ -438,8 +484,10 @@ public final class LFMAudioModel: @unchecked Sendable {
         waveform: [Float], cfg: LFMAudioPreprocessorConfig
     ) -> [Float] {
         guard !waveform.isEmpty else { return [] }
-        let nMels = cfg.nMels; let nFFT = cfg.nFFT
-        let winLen = cfg.winLength; let hop = cfg.hopLength
+        let nMels = cfg.nMels
+        let nFFT = cfg.nFFT
+        let winLen = cfg.winLength
+        let hop = cfg.hopLength
 
         // ── Pre-emphasis ────────────────────────────────────────────
         var sig = waveform
@@ -452,17 +500,17 @@ public final class LFMAudioModel: @unchecked Sendable {
         // ── Constant-pad (nFFT/2 zeros on each side) ────────────────
         let pad = nFFT / 2
         var padded = [Float](repeating: 0, count: sig.count + 2 * pad)
-        for i in 0..<sig.count { padded[i + pad] = sig[i] }
+        for i in 0 ..< sig.count { padded[i + pad] = sig[i] }
 
         // ── Hann window ─────────────────────────────────────────────
         var window = [Float](repeating: 0, count: winLen)
-        for i in 0..<winLen {
+        for i in 0 ..< winLen {
             window[i] = 0.5 * (1 - cos(2 * Float.pi * Float(i) / Float(winLen)))
         }
         // Zero-pad window to nFFT if winLen < nFFT
         var fullWindow = [Float](repeating: 0, count: nFFT)
         let padLeft = (nFFT - winLen) / 2
-        for i in 0..<winLen { fullWindow[padLeft + i] = window[i] }
+        for i in 0 ..< winLen { fullWindow[padLeft + i] = window[i] }
 
         // ── Number of frames ────────────────────────────────────────
         let nFrames = 1 + (padded.count - nFFT) / hop
@@ -477,50 +525,53 @@ public final class LFMAudioModel: @unchecked Sendable {
         let nFreq = nFFT / 2 + 1
         var melFrames = [Float](repeating: 0, count: nFrames * nMels)
 
-        for f in 0..<nFrames {
+        for f in 0 ..< nFrames {
             let start = f * hop
 
             // Windowed frame
             var frame = [Float](repeating: 0, count: nFFT)
-            for i in 0..<nFFT { frame[i] = padded[start + i] * fullWindow[i] }
+            for i in 0 ..< nFFT { frame[i] = padded[start + i] * fullWindow[i] }
 
             // DFT (real-valued input → nFreq bins)
             let spec = lfmAudioRealDFT(frame, nFFT: nFFT)
 
             // Power spectrum |X[k]|²
             var power = [Float](repeating: 0, count: nFreq)
-            for k in 0..<nFreq {
-                let re = spec[2 * k], im = spec[2 * k + 1]
+            for k in 0 ..< nFreq {
+                let re = spec[2 * k]
+                let im = spec[2 * k + 1]
                 power[k] = re * re + im * im
             }
 
             // Mel projection: mel[m] = sum_k power[k] * fb[m, k]
-            for m in 0..<nMels {
+            for m in 0 ..< nMels {
                 var val: Float = 0
                 let base = m * nFreq
-                for k in 0..<nFreq { val += power[k] * melFB[base + k] }
+                for k in 0 ..< nFreq { val += power[k] * melFB[base + k] }
                 melFrames[f * nMels + m] = log(val + cfg.logGuard)
             }
         }
 
         // ── Per-feature z-score normalisation ────────────────────────
         if cfg.normalise == "per_feature" {
-            for m in 0..<nMels {
-                var sum: Float = 0; var sum2: Float = 0
-                for f in 0..<nFrames {
+            for m in 0 ..< nMels {
+                var sum: Float = 0
+                var sum2: Float = 0
+                for f in 0 ..< nFrames {
                     let v = melFrames[f * nMels + m]
-                    sum += v; sum2 += v * v
+                    sum += v
+                    sum2 += v * v
                 }
                 let mean = sum / Float(nFrames)
                 let variance = max((sum2 / Float(nFrames)) - mean * mean, 0)
                 let std = sqrt(variance) + 1e-5
-                for f in 0..<nFrames {
+                for f in 0 ..< nFrames {
                     melFrames[f * nMels + m] = (melFrames[f * nMels + m] - mean) / std
                 }
             }
         }
 
-        return melFrames   // [nFrames, nMels] row-major
+        return melFrames  // [nFrames, nMels] row-major
     }
 
     // ─── DFT helpers ─────────────────────────────────────────────────
@@ -532,15 +583,17 @@ public final class LFMAudioModel: @unchecked Sendable {
         let nFreq = nFFT / 2 + 1
         var out = [Float](repeating: 0, count: 2 * nFreq)
         let twoPiOverN = -2.0 * Float.pi / Float(nFFT)
-        for k in 0..<nFreq {
-            var re: Float = 0, im: Float = 0
+        for k in 0 ..< nFreq {
+            var re: Float = 0
+            var im: Float = 0
             let factor = twoPiOverN * Float(k)
-            for n in 0..<nFFT {
+            for n in 0 ..< nFFT {
                 let angle = factor * Float(n)
                 re += input[n] * cos(angle)
                 im += input[n] * sin(angle)
             }
-            out[2 * k] = re; out[2 * k + 1] = im
+            out[2 * k] = re
+            out[2 * k + 1] = im
         }
         return out
     }
@@ -553,7 +606,8 @@ public final class LFMAudioModel: @unchecked Sendable {
         nMels: Int, nFFT: Int, sampleRate: Int
     ) -> [Float] {
         let nFreq = nFFT / 2 + 1
-        let fMin = 0.0, fMax = Double(sampleRate) / 2.0
+        let fMin = 0.0
+        let fMax = Double(sampleRate) / 2.0
 
         func hzToMel(_ hz: Double) -> Double {
             // Slaney formula (linear below 1kHz, log above)
@@ -584,7 +638,7 @@ public final class LFMAudioModel: @unchecked Sendable {
 
         // nMels+2 evenly-spaced Mel values
         var melPts = [Double](repeating: 0, count: nMels + 2)
-        for i in 0..<(nMels + 2) {
+        for i in 0 ..< (nMels + 2) {
             melPts[i] = melMin + Double(i) * (melMax - melMin) / Double(nMels + 1)
         }
         // Convert to Hz then to bin index
@@ -592,17 +646,19 @@ public final class LFMAudioModel: @unchecked Sendable {
         var bins = melPts.map { Int(melToHz($0) / freqStep + 0.5) }
 
         var fb = [Float](repeating: 0, count: nMels * nFreq)
-        for m in 0..<nMels {
-            let lo = bins[m]; let center = bins[m + 1]; let hi = bins[m + 2]
+        for m in 0 ..< nMels {
+            let lo = bins[m]
+            let center = bins[m + 1]
+            let hi = bins[m + 2]
             // Rising slope: lo..center
-            for k in lo..<center {
+            for k in lo ..< center {
                 guard k >= 0 && k < nFreq else { continue }
                 let num = Double(k - lo)
                 let den = Double(center - lo)
                 fb[m * nFreq + k] = den > 0 ? Float(num / den) : 0
             }
             // Falling slope: center..hi
-            for k in center..<hi {
+            for k in center ..< hi {
                 guard k >= 0 && k < nFreq else { continue }
                 let num = Double(hi - k)
                 let den = Double(hi - center)
@@ -612,7 +668,7 @@ public final class LFMAudioModel: @unchecked Sendable {
             let loHz = melToHz(melPts[m])
             let hiHz = melToHz(melPts[m + 2])
             let norm = hiHz > loHz ? Float(2.0 / (hiHz - loHz)) : 1
-            for k in 0..<nFreq { fb[m * nFreq + k] *= norm }
+            for k in 0 ..< nFreq { fb[m * nFreq + k] *= norm }
         }
         return fb
     }
@@ -639,14 +695,19 @@ public final class LFMAudioModel: @unchecked Sendable {
 
         // Reshape to [T, F, 1]
         var current = mel
-        var curT = nFrames, curF = nMels, curCh = 1
+        var curT = nFrames
+        var curF = nMels
+        var curCh = 1
 
         // ── Stage 1: conv0 (1→convCh, 3×3, stride 2, pad 1) + ReLU ──
         var (out1, t1, f1, ch1) = conv2DTHFReLU(
             input: current, T: curT, F: curF, inCh: curCh,
             weight: sub.conv0W, bias: sub.conv0B, outCh: convCh,
             kH: 3, kW: 3, strideH: 2, strideW: 2, padH: 1, padW: 1, relu: true)
-        current = out1; curT = t1; curF = f1; curCh = ch1
+        current = out1
+        curT = t1
+        curF = f1
+        curCh = ch1
 
         // ── Stage 2: depthwise + pointwise + ReLU ────────────────────
         var (out2a, t2a, f2a, ch2a) = conv2DTHFReLU(
@@ -654,12 +715,18 @@ public final class LFMAudioModel: @unchecked Sendable {
             weight: sub.conv2W, bias: sub.conv2B, outCh: convCh,
             kH: 3, kW: 3, strideH: 2, strideW: 2, padH: 1, padW: 1, relu: false,
             depthwise: true)
-        current = out2a; curT = t2a; curF = f2a; curCh = ch2a
+        current = out2a
+        curT = t2a
+        curF = f2a
+        curCh = ch2a
         var (out2b, t2b, f2b, ch2b) = conv2DTHFReLU(
             input: current, T: curT, F: curF, inCh: curCh,
             weight: sub.conv3W, bias: sub.conv3B, outCh: convCh,
             kH: 1, kW: 1, strideH: 1, strideW: 1, padH: 0, padW: 0, relu: true)
-        current = out2b; curT = t2b; curF = f2b; curCh = ch2b
+        current = out2b
+        curT = t2b
+        curF = f2b
+        curCh = ch2b
 
         // ── Stage 3: depthwise + pointwise + ReLU ────────────────────
         var (out3a, t3a, f3a, ch3a) = conv2DTHFReLU(
@@ -667,20 +734,26 @@ public final class LFMAudioModel: @unchecked Sendable {
             weight: sub.conv5W, bias: sub.conv5B, outCh: convCh,
             kH: 3, kW: 3, strideH: 2, strideW: 2, padH: 1, padW: 1, relu: false,
             depthwise: true)
-        current = out3a; curT = t3a; curF = f3a; curCh = ch3a
+        current = out3a
+        curT = t3a
+        curF = f3a
+        curCh = ch3a
         let (out3b, t3b, f3b, ch3b) = conv2DTHFReLU(
             input: current, T: curT, F: curF, inCh: curCh,
             weight: sub.conv6W, bias: sub.conv6B, outCh: convCh,
             kH: 1, kW: 1, strideH: 1, strideW: 1, padH: 0, padW: 0, relu: true)
-        current = out3b; curT = t3b; curF = f3b; curCh = ch3b
+        current = out3b
+        curT = t3b
+        curF = f3b
+        curCh = ch3b
 
         // ── Flatten + linear → [curT, dModel] ────────────────────────
         // current = [curT, curF, convCh] → flatten last two → [curT, curF*convCh]
         let flatDim = curF * curCh
         var flat = [Float](repeating: 0, count: curT * flatDim)
-        for t in 0..<curT {
-            for f in 0..<curF {
-                for c in 0..<curCh {
+        for t in 0 ..< curT {
+            for f in 0 ..< curF {
+                for c in 0 ..< curCh {
                     flat[t * flatDim + f * curCh + c] =
                         current[t * curF * curCh + f * curCh + c]
                 }
@@ -690,11 +763,12 @@ public final class LFMAudioModel: @unchecked Sendable {
         // Linear: out[t, d] = sum_k flat[t, k] * outW[d, k] + outB[d]
         let dModel = sub.outW.count / flatDim
         var outLinear = [Float](repeating: 0, count: curT * dModel)
-        for t in 0..<curT {
-            for d in 0..<dModel {
+        for t in 0 ..< curT {
+            for d in 0 ..< dModel {
                 var acc = sub.outB[d]
-                let wBase = d * flatDim; let fBase = t * flatDim
-                for k in 0..<flatDim { acc += flat[fBase + k] * sub.outW[wBase + k] }
+                let wBase = d * flatDim
+                let fBase = t * flatDim
+                for k in 0 ..< flatDim { acc += flat[fBase + k] * sub.outW[wBase + k] }
                 outLinear[t * dModel + d] = acc
             }
         }
@@ -722,27 +796,28 @@ public final class LFMAudioModel: @unchecked Sendable {
         let outChPerGroup = outCh / groups
         let inChPerGroup = inCh / groups
 
-        for g in 0..<groups {
-            for oc in 0..<outChPerGroup {
+        for g in 0 ..< groups {
+            for oc in 0 ..< outChPerGroup {
                 let globalOC = g * outChPerGroup + oc
-                for ot in 0..<outT {
-                    for of_ in 0..<outF {
+                for ot in 0 ..< outT {
+                    for of_ in 0 ..< outF {
                         var acc = bias[globalOC]
                         let inTStart = ot * strideH - padH
                         let inFStart = of_ * strideW - padW
-                        for kt in 0..<kH {
+                        for kt in 0 ..< kH {
                             let it = inTStart + kt
                             guard it >= 0 && it < T else { continue }
-                            for kf in 0..<kW {
+                            for kf in 0 ..< kW {
                                 let iF = inFStart + kf
                                 guard iF >= 0 && iF < F else { continue }
-                                for ic in 0..<inChPerGroup {
+                                for ic in 0 ..< inChPerGroup {
                                     let globalIC = g * inChPerGroup + ic
                                     let inIdx = it * F * inCh + iF * inCh + globalIC
                                     // Weight layout: [outCh, inChPerGroup, kH, kW]
-                                    let wIdx = globalOC * (inChPerGroup * kH * kW)
-                                               + ic * (kH * kW)
-                                               + kt * kW + kf
+                                    let wIdx =
+                                        globalOC * (inChPerGroup * kH * kW)
+                                        + ic * (kH * kW)
+                                        + kt * kW + kf
                                     acc += input[inIdx] * weight[wIdx]
                                 }
                             }
@@ -763,8 +838,9 @@ public final class LFMAudioModel: @unchecked Sendable {
     private func ensureRelPos(minLen: Int) {
         let needed = 2 * minLen - 1
         if relPosTable.count >= needed * config.encoder.dModel { return }
-        relPosTable = lfmAudioBuildRelPos(maxLen: max(minLen, relPosMaxLen),
-                                          dModel: config.encoder.dModel)
+        relPosTable = lfmAudioBuildRelPos(
+            maxLen: max(minLen, relPosMaxLen),
+            dModel: config.encoder.dModel)
         relPosMaxLen = max(minLen, relPosMaxLen)
     }
 
@@ -773,9 +849,9 @@ public final class LFMAudioModel: @unchecked Sendable {
         let tableLen = 2 * relPosMaxLen - 1
         let dModel = config.encoder.dModel
         let center = tableLen / 2
-        let start  = center - seqLen + 1
-        let len    = 2 * seqLen - 1
-        let out    = Array(relPosTable[(start * dModel)..<((start + len) * dModel)])
+        let start = center - seqLen + 1
+        let len = 2 * seqLen - 1
+        let out = Array(relPosTable[(start * dModel) ..< ((start + len) * dModel)])
         return out
     }
 
@@ -821,35 +897,41 @@ public final class LFMAudioModel: @unchecked Sendable {
         var h = input
 
         // ── FF1 (half-step) ──────────────────────────────────────────
-        let ln1 = layerNorm(h, weight: block.ff1NormW, bias: block.ff1NormB,
-                            T: nTokens, D: dModel)
+        let ln1 = layerNorm(
+            h, weight: block.ff1NormW, bias: block.ff1NormB,
+            T: nTokens, D: dModel)
         let ff1out = conformerFF(ln1, ff: block.ff1, T: nTokens, D: dModel)
-        for i in 0..<h.count { h[i] += 0.5 * ff1out[i] }
+        for i in 0 ..< h.count { h[i] += 0.5 * ff1out[i] }
 
         // ── Attention ────────────────────────────────────────────────
-        let ln2 = layerNorm(h, weight: block.attnNormW, bias: block.attnNormB,
-                            T: nTokens, D: dModel)
+        let ln2 = layerNorm(
+            h, weight: block.attnNormW, bias: block.attnNormB,
+            T: nTokens, D: dModel)
         let attnOut = conformerRelAttn(
             ln2, posEmb: posEmb, nTokens: nTokens,
             attn: block.attn, enc: enc)
-        for i in 0..<h.count { h[i] += attnOut[i] }
+        for i in 0 ..< h.count { h[i] += attnOut[i] }
 
         // ── Conv ─────────────────────────────────────────────────────
-        let ln3 = layerNorm(h, weight: block.convNormW, bias: block.convNormB,
-                            T: nTokens, D: dModel)
-        let convOut = conformerConv(ln3, nTokens: nTokens, dModel: dModel,
-                                    conv: block.conv, enc: enc)
-        for i in 0..<h.count { h[i] += convOut[i] }
+        let ln3 = layerNorm(
+            h, weight: block.convNormW, bias: block.convNormB,
+            T: nTokens, D: dModel)
+        let convOut = conformerConv(
+            ln3, nTokens: nTokens, dModel: dModel,
+            conv: block.conv, enc: enc)
+        for i in 0 ..< h.count { h[i] += convOut[i] }
 
         // ── FF2 (half-step) ──────────────────────────────────────────
-        let ln4 = layerNorm(h, weight: block.ff2NormW, bias: block.ff2NormB,
-                            T: nTokens, D: dModel)
+        let ln4 = layerNorm(
+            h, weight: block.ff2NormW, bias: block.ff2NormB,
+            T: nTokens, D: dModel)
         let ff2out = conformerFF(ln4, ff: block.ff2, T: nTokens, D: dModel)
-        for i in 0..<h.count { h[i] += 0.5 * ff2out[i] }
+        for i in 0 ..< h.count { h[i] += 0.5 * ff2out[i] }
 
         // ── Final LayerNorm ──────────────────────────────────────────
-        h = layerNorm(h, weight: block.finalNormW, bias: block.finalNormB,
-                      T: nTokens, D: dModel)
+        h = layerNorm(
+            h, weight: block.finalNormW, bias: block.finalNormB,
+            T: nTokens, D: dModel)
         return h
     }
 
@@ -861,14 +943,19 @@ public final class LFMAudioModel: @unchecked Sendable {
     ) -> [Float] {
         var out = [Float](repeating: 0, count: T * D)
         let eps: Float = 1e-5
-        for t in 0..<T {
+        for t in 0 ..< T {
             let base = t * D
-            var sum: Float = 0; var sum2: Float = 0
-            for d in 0..<D { let v = x[base + d]; sum += v; sum2 += v * v }
+            var sum: Float = 0
+            var sum2: Float = 0
+            for d in 0 ..< D {
+                let v = x[base + d]
+                sum += v
+                sum2 += v * v
+            }
             let mean = sum / Float(D)
             let variance = max(sum2 / Float(D) - mean * mean, 0)
             let invStd = 1 / sqrt(variance + eps)
-            for d in 0..<D {
+            for d in 0 ..< D {
                 out[base + d] = (x[base + d] - mean) * invStd * weight[d] + bias[d]
             }
         }
@@ -885,21 +972,23 @@ public final class LFMAudioModel: @unchecked Sendable {
         let hidDim = ff.linear1B.count
         // Linear1: [T, D] → [T, hidDim]
         var h = [Float](repeating: 0, count: T * hidDim)
-        for t in 0..<T {
-            for j in 0..<hidDim {
+        for t in 0 ..< T {
+            for j in 0 ..< hidDim {
                 var acc = ff.linear1B[j]
-                let wBase = j * D; let xBase = t * D
-                for d in 0..<D { acc += x[xBase + d] * ff.linear1W[wBase + d] }
+                let wBase = j * D
+                let xBase = t * D
+                for d in 0 ..< D { acc += x[xBase + d] * ff.linear1W[wBase + d] }
                 h[t * hidDim + j] = silu(acc)
             }
         }
         // Linear2: [T, hidDim] → [T, D]
         var out = [Float](repeating: 0, count: T * D)
-        for t in 0..<T {
-            for d in 0..<D {
+        for t in 0 ..< T {
+            for d in 0 ..< D {
                 var acc = ff.linear2B[d]
-                let wBase = d * hidDim; let hBase = t * hidDim
-                for j in 0..<hidDim { acc += h[hBase + j] * ff.linear2W[wBase + j] }
+                let wBase = d * hidDim
+                let hBase = t * hidDim
+                for j in 0 ..< hidDim { acc += h[hBase + j] * ff.linear2W[wBase + j] }
                 out[t * D + d] = acc
             }
         }
@@ -913,18 +1002,21 @@ public final class LFMAudioModel: @unchecked Sendable {
         attn: LFMAudioConformerAttnWeights,
         enc: LFMAudioEncoderConfig
     ) -> [Float] {
-        let D = enc.dModel; let H = enc.nHeads; let Dh = enc.headDim
+        let D = enc.dModel
+        let H = enc.nHeads
+        let Dh = enc.headDim
         let scale = 1.0 / sqrt(Float(Dh))
         let posLen = 2 * T - 1
 
         // Linear projections
         func project(_ w: [Float], _ b: [Float], inDim: Int, outDim: Int) -> [Float] {
             var r = [Float](repeating: 0, count: T * outDim)
-            for t in 0..<T {
-                for d in 0..<outDim {
+            for t in 0 ..< T {
+                for d in 0 ..< outDim {
                     var acc = b[d]
-                    let base = d * inDim; let xBase = t * inDim
-                    for k in 0..<inDim { acc += x[xBase + k] * w[base + k] }
+                    let base = d * inDim
+                    let xBase = t * inDim
+                    for k in 0 ..< inDim { acc += x[xBase + k] * w[base + k] }
                     r[t * outDim + d] = acc
                 }
             }
@@ -936,36 +1028,37 @@ public final class LFMAudioModel: @unchecked Sendable {
 
         // Positional: pos_proj (no bias) applied to posEmb [posLen, D]
         var pFlat = [Float](repeating: 0, count: posLen * D)
-        for p in 0..<posLen {
-            for d in 0..<D {
+        for p in 0 ..< posLen {
+            for d in 0 ..< D {
                 var acc: Float = 0
-                let base = d * D; let pBase = p * D
-                for k in 0..<D { acc += posEmb[pBase + k] * attn.posW[base + k] }
+                let base = d * D
+                let pBase = p * D
+                for k in 0 ..< D { acc += posEmb[pBase + k] * attn.posW[base + k] }
                 pFlat[p * D + d] = acc
             }
         }
 
         // Per-head scaled dot-product (full attention — no mask)
         var outFlat = [Float](repeating: 0, count: T * D)
-        for h in 0..<H {
+        for h in 0 ..< H {
             let hBase = h * Dh
             // Add position biases to Q before dot-product
             // qWithBiasU = q + posBiasU  (for AC term)
             // qWithBiasV = q + posBiasV  (for BD term)
             var qU = [Float](repeating: 0, count: T * Dh)
             var qV = [Float](repeating: 0, count: T * Dh)
-            for t in 0..<T {
-                for d in 0..<Dh {
+            for t in 0 ..< T {
+                for d in 0 ..< Dh {
                     qU[t * Dh + d] = qFlat[t * D + hBase + d] + attn.posBiasU[h * Dh + d]
                     qV[t * Dh + d] = qFlat[t * D + hBase + d] + attn.posBiasV[h * Dh + d]
                 }
             }
             // AC = qU [T, Dh] × kT [Dh, T]
             var scores = [Float](repeating: 0, count: T * T)
-            for i in 0..<T {
-                for j in 0..<T {
+            for i in 0 ..< T {
+                for j in 0 ..< T {
                     var acc: Float = 0
-                    for d in 0..<Dh {
+                    for d in 0 ..< Dh {
                         acc += qU[i * Dh + d] * kFlat[j * D + hBase + d]
                     }
                     scores[i * T + j] = acc * scale
@@ -974,10 +1067,10 @@ public final class LFMAudioModel: @unchecked Sendable {
 
             // BD = qV [T, Dh] × posT [Dh, posLen], then relShift
             var bd = [Float](repeating: 0, count: T * posLen)
-            for i in 0..<T {
-                for p in 0..<posLen {
+            for i in 0 ..< T {
+                for p in 0 ..< posLen {
                     var acc: Float = 0
-                    for d in 0..<Dh {
+                    for d in 0 ..< Dh {
                         acc += qV[i * Dh + d] * pFlat[p * D + hBase + d]
                     }
                     bd[i * posLen + p] = acc * scale
@@ -987,8 +1080,8 @@ public final class LFMAudioModel: @unchecked Sendable {
             // posEmb is indexed [posLen-1..0] from center, so:
             // acScore[i,j] corresponds to bd[i, posLen-1-j+i mod posLen]
             let center = posLen / 2  // T-1
-            for i in 0..<T {
-                for j in 0..<T {
+            for i in 0 ..< T {
+                for j in 0 ..< T {
                     let posIdx = center - j + i
                     if posIdx >= 0 && posIdx < posLen {
                         scores[i * T + j] += bd[i * posLen + posIdx]
@@ -997,24 +1090,24 @@ public final class LFMAudioModel: @unchecked Sendable {
             }
 
             // Softmax along rows
-            for i in 0..<T {
+            for i in 0 ..< T {
                 let base = i * T
                 var maxVal = scores[base]
-                for j in 1..<T { if scores[base + j] > maxVal { maxVal = scores[base + j] } }
+                for j in 1 ..< T { if scores[base + j] > maxVal { maxVal = scores[base + j] } }
                 var sumExp: Float = 0
-                for j in 0..<T {
+                for j in 0 ..< T {
                     scores[base + j] = exp(scores[base + j] - maxVal)
                     sumExp += scores[base + j]
                 }
                 let inv = 1 / sumExp
-                for j in 0..<T { scores[base + j] *= inv }
+                for j in 0 ..< T { scores[base + j] *= inv }
             }
 
             // Weighted sum over V: out[T, Dh] = scores[T, T] × v[T, Dh]
-            for i in 0..<T {
-                for d in 0..<Dh {
+            for i in 0 ..< T {
+                for d in 0 ..< Dh {
                     var acc: Float = 0
-                    for j in 0..<T {
+                    for j in 0 ..< T {
                         acc += scores[i * T + j] * vFlat[j * D + hBase + d]
                     }
                     outFlat[i * D + hBase + d] = acc
@@ -1024,11 +1117,12 @@ public final class LFMAudioModel: @unchecked Sendable {
 
         // out_proj: [T, D] → [T, D]
         var result = [Float](repeating: 0, count: T * D)
-        for t in 0..<T {
-            for d in 0..<D {
+        for t in 0 ..< T {
+            for d in 0 ..< D {
                 var acc = attn.outB[d]
-                let base = d * D; let oBase = t * D
-                for k in 0..<D { acc += outFlat[oBase + k] * attn.outW[base + k] }
+                let base = d * D
+                let oBase = t * D
+                for k in 0 ..< D { acc += outFlat[oBase + k] * attn.outW[base + k] }
                 result[t * D + d] = acc
             }
         }
@@ -1047,18 +1141,18 @@ public final class LFMAudioModel: @unchecked Sendable {
         // ── Pointwise conv1: [T, D] → [T, 2*D] (GLU split) ──────────
         let pw1Out = D * 2
         var h = [Float](repeating: 0, count: T * pw1Out)
-        for t in 0..<T {
-            for d in 0..<pw1Out {
+        for t in 0 ..< T {
+            for d in 0 ..< pw1Out {
                 var acc = conv.pw1B[d]
                 let base = d * D
-                for k in 0..<D { acc += x[t * D + k] * conv.pw1W[base + k] }
+                for k in 0 ..< D { acc += x[t * D + k] * conv.pw1W[base + k] }
                 h[t * pw1Out + d] = acc
             }
         }
         // GLU: split into gate and input, apply sigmoid to gate
         var gated = [Float](repeating: 0, count: T * D)
-        for t in 0..<T {
-            for d in 0..<D {
+        for t in 0 ..< T {
+            for d in 0 ..< D {
                 let gateVal = 1 / (1 + exp(-h[t * pw1Out + D + d]))
                 gated[t * D + d] = h[t * pw1Out + d] * gateVal
             }
@@ -1067,10 +1161,10 @@ public final class LFMAudioModel: @unchecked Sendable {
         // ── Depthwise conv1d (causal padding, kernel K) ───────────────
         // Input: [T, D] treated as D independent channels × T time steps
         var dwOut = [Float](repeating: 0, count: T * D)
-        for d in 0..<D {
-            for t in 0..<T {
+        for d in 0 ..< D {
+            for t in 0 ..< T {
                 var acc = conv.dwB[d]
-                for k in 0..<K {
+                for k in 0 ..< K {
                     let src = t - pad + k
                     guard src >= 0 && src < T else { continue }
                     acc += gated[src * D + d] * conv.dwW[d * K + k]
@@ -1081,25 +1175,27 @@ public final class LFMAudioModel: @unchecked Sendable {
 
         // ── Batch-norm ───────────────────────────────────────────────
         let eps: Float = 1e-5
-        for d in 0..<D {
-            let mean = conv.bnMean[d]; let variance = conv.bnVar[d]
+        for d in 0 ..< D {
+            let mean = conv.bnMean[d]
+            let variance = conv.bnVar[d]
             let invStd = 1 / sqrt(variance + eps)
-            let gamma = conv.bnW[d]; let beta = conv.bnB[d]
-            for t in 0..<T {
+            let gamma = conv.bnW[d]
+            let beta = conv.bnB[d]
+            for t in 0 ..< T {
                 dwOut[t * D + d] = (dwOut[t * D + d] - mean) * invStd * gamma + beta
             }
         }
 
         // SiLU activation
-        for i in 0..<dwOut.count { dwOut[i] = silu(dwOut[i]) }
+        for i in 0 ..< dwOut.count { dwOut[i] = silu(dwOut[i]) }
 
         // ── Pointwise conv2: [T, D] → [T, D] ─────────────────────────
         var out = [Float](repeating: 0, count: T * D)
-        for t in 0..<T {
-            for d in 0..<D {
+        for t in 0 ..< T {
+            for d in 0 ..< D {
                 var acc = conv.pw2B[d]
                 let base = d * D
-                for k in 0..<D { acc += dwOut[t * D + k] * conv.pw2W[base + k] }
+                for k in 0 ..< D { acc += dwOut[t * D + k] * conv.pw2W[base + k] }
                 out[t * D + d] = acc
             }
         }
@@ -1109,7 +1205,7 @@ public final class LFMAudioModel: @unchecked Sendable {
     // ─── AdapterMLP ──────────────────────────────────────────────────
 
     private func adapterForward(_ x: [Float], nTokens T: Int) -> [Float] {
-        let inDim  = adapter.inDim
+        let inDim = adapter.inDim
         let outDim = adapter.outDim
         var h = x
 
@@ -1123,17 +1219,20 @@ public final class LFMAudioModel: @unchecked Sendable {
         for (li, (lW, lB)) in zip(adapter.linearWs, adapter.linearBs).enumerated() {
             let nextDim = lW.count / curDim
             var out = [Float](repeating: 0, count: T * nextDim)
-            for t in 0..<T {
-                for d in 0..<nextDim {
+            for t in 0 ..< T {
+                for d in 0 ..< nextDim {
                     var acc = lB[d]
-                    let base = d * curDim; let hBase = t * curDim
-                    for k in 0..<curDim { acc += h[hBase + k] * lW[base + k] }
+                    let base = d * curDim
+                    let hBase = t * curDim
+                    for k in 0 ..< curDim { acc += h[hBase + k] * lW[base + k] }
                     // GELU on all but the last layer
-                    out[t * nextDim + d] = li < adapter.linearWs.count - 1
+                    out[t * nextDim + d] =
+                        li < adapter.linearWs.count - 1
                         ? geluApprox(acc) : acc
                 }
             }
-            h = out; curDim = nextDim
+            h = out
+            curDim = nextDim
         }
         return h
     }
@@ -1154,11 +1253,11 @@ func lfmAudioBuildRelPos(maxLen: Int, dModel: Int) -> [Float] {
     // Positions from (maxLen-1) down to -(maxLen-1)
     let halfD = dModel / 2
     var table = [Float](repeating: 0, count: size * dModel)
-    for p in 0..<size {
+    for p in 0 ..< size {
         let pos = Double(maxLen - 1 - p)
-        for i in 0..<halfD {
+        for i in 0 ..< halfD {
             let freq = pow(10000.0, Double(2 * i) / Double(dModel))
-            table[p * dModel + 2 * i]     = Float(sin(pos / freq))
+            table[p * dModel + 2 * i] = Float(sin(pos / freq))
             table[p * dModel + 2 * i + 1] = Float(cos(pos / freq))
         }
     }
@@ -1180,8 +1279,9 @@ extension LFMAudioModel {
         let modelConfig = try ModelConfig.load(from: directory)
         let cfg = try LFMAudioConfig.from(modelConfig)
         let bundle = try SafeTensorsBundle(directory: directory, device: device)
-        return try build(config: cfg, modelConfig: modelConfig,
-                         bundle: bundle, device: device)
+        return try build(
+            config: cfg, modelConfig: modelConfig,
+            bundle: bundle, device: device)
     }
 
     /// Assemble an `LFMAudioModel` from a config + weight bundle.
@@ -1249,20 +1349,20 @@ extension LFMAudioModel {
 
         // ── Conformer block weights ───────────────────────────────────
         var blocks: [LFMAudioConformerBlockWeights] = []
-        for i in 0..<enc.nLayers {
+        for i in 0 ..< enc.nLayers {
             let p = "audio_encoder.layers.\(i)"
 
             // Norms
-            let ff1NormW  = try floats("\(p).ff1_norm.weight")
-            let ff1NormB  = try floats("\(p).ff1_norm.bias")
+            let ff1NormW = try floats("\(p).ff1_norm.weight")
+            let ff1NormB = try floats("\(p).ff1_norm.bias")
             let attnNormW = try floats("\(p).attn_norm.weight")
             let attnNormB = try floats("\(p).attn_norm.bias")
             let convNormW = try floats("\(p).conv_norm.weight")
             let convNormB = try floats("\(p).conv_norm.bias")
-            let ff2NormW  = try floats("\(p).ff2_norm.weight")
-            let ff2NormB  = try floats("\(p).ff2_norm.bias")
-            let finNormW  = try floats("\(p).final_norm.weight")
-            let finNormB  = try floats("\(p).final_norm.bias")
+            let ff2NormW = try floats("\(p).ff2_norm.weight")
+            let ff2NormB = try floats("\(p).ff2_norm.bias")
+            let finNormW = try floats("\(p).final_norm.weight")
+            let finNormB = try floats("\(p).final_norm.bias")
 
             // Feed-forwards
             let ff1 = LFMAudioConformerFFWeights(
@@ -1292,9 +1392,10 @@ extension LFMAudioModel {
 
             // Convolution + BatchNorm
             let convConvKey = "\(p).conv.depthwise_conv"
-            let dwW = try lfmAudioDepthwiseConv1dWeight(bundle, key: convConvKey,
-                                                        kernelSize: enc.convKernelSize,
-                                                        channels: enc.dModel)
+            let dwW = try lfmAudioDepthwiseConv1dWeight(
+                bundle, key: convConvKey,
+                kernelSize: enc.convKernelSize,
+                channels: enc.dModel)
             let dwB: [Float]
             if bundle.has("\(convConvKey).bias") {
                 dwB = try floats("\(convConvKey).bias")
@@ -1305,21 +1406,22 @@ extension LFMAudioModel {
                 pw1W: try floats("\(p).conv.pointwise_conv1.weight"),
                 pw1B: try floats("\(p).conv.pointwise_conv1.bias"),
                 dwW: dwW, dwB: dwB,
-                bnW:    try floats("\(p).conv.norm.weight"),
-                bnB:    try floats("\(p).conv.norm.bias"),
+                bnW: try floats("\(p).conv.norm.weight"),
+                bnB: try floats("\(p).conv.norm.bias"),
                 bnMean: try floats("\(p).conv.norm.running_mean"),
-                bnVar:  try floats("\(p).conv.norm.running_var"),
+                bnVar: try floats("\(p).conv.norm.running_var"),
                 pw2W: try floats("\(p).conv.pointwise_conv2.weight"),
                 pw2B: try floats("\(p).conv.pointwise_conv2.bias"))
 
-            blocks.append(LFMAudioConformerBlockWeights(
-                ff1NormW: ff1NormW, ff1NormB: ff1NormB,
-                attnNormW: attnNormW, attnNormB: attnNormB,
-                convNormW: convNormW, convNormB: convNormB,
-                ff2NormW: ff2NormW, ff2NormB: ff2NormB,
-                finalNormW: finNormW, finalNormB: finNormB,
-                ff1: ff1, attn: attn, conv: conv, ff2: ff2,
-                dModel: enc.dModel))
+            blocks.append(
+                LFMAudioConformerBlockWeights(
+                    ff1NormW: ff1NormW, ff1NormB: ff1NormB,
+                    attnNormW: attnNormW, attnNormB: attnNormB,
+                    convNormW: convNormW, convNormB: convNormB,
+                    ff2NormW: ff2NormW, ff2NormB: ff2NormB,
+                    finalNormW: finNormW, finalNormB: finNormB,
+                    ff1: ff1, attn: attn, conv: conv, ff2: ff2,
+                    dModel: enc.dModel))
         }
 
         // ── AdapterMLP weights ────────────────────────────────────────
@@ -1331,7 +1433,7 @@ extension LFMAudioModel {
 
         var adapterLinearWs: [[Float]] = []
         var adapterLinearBs: [[Float]] = []
-        for li in 0..<(config.adapterHiddenDims.count + 1) {
+        for li in 0 ..< (config.adapterHiddenDims.count + 1) {
             let key = "audio_adapter.linears.\(li)"
             guard bundle.has("\(key).weight") else { break }
             adapterLinearWs.append(
@@ -1342,12 +1444,15 @@ extension LFMAudioModel {
 
         // Fallback: try legacy `layers.N` naming if `linears.N` is empty
         if adapterLinearWs.isEmpty {
-            for li in 0..<4 {
+            for li in 0 ..< 4 {
                 let key = "audio_adapter.layers.\(li)"
                 guard bundle.has("\(key).weight") else { break }
                 // Skip norms (1D weight tensors)
                 if let t = try? bundle.tensor(named: "\(key).weight"),
-                   t.shape.count == 1 { continue }
+                    t.shape.count == 1
+                {
+                    continue
+                }
                 adapterLinearWs.append(
                     try lfmAudioDequantLinear(bundle, key: key))
                 if bundle.has("\(key).bias") {
@@ -1359,7 +1464,7 @@ extension LFMAudioModel {
             }
         }
 
-        let adapterInDim  = enc.dModel
+        let adapterInDim = enc.dModel
         let adapterOutDim = config.lfmHidden
         let adapter = LFMAudioAdapterWeights(
             normW: adapterNormW, normB: adapterNormB,
@@ -1417,7 +1522,7 @@ func lfmAudioDequantLinear(
     }
     // Affine quantized: weight (int) + scales + biases
     guard bundle.has("\(key).scales"),
-          bundle.has("\(key).biases")
+        bundle.has("\(key).biases")
     else {
         // Fallback — try to read as float anyway
         return lfmAudioReadFloats(w)
@@ -1459,7 +1564,8 @@ private func lfmAudioDequantAffine(
         let vpe = 32 / b  // values per element
         let inFeaturesCandidate = packedW * vpe
         if inFeaturesCandidate % numGroups == 0 {
-            bits = b; break
+            bits = b
+            break
         }
     }
     let vpe = 32 / bits
@@ -1469,12 +1575,12 @@ private func lfmAudioDequantAffine(
     let zeroPoint = Float(1 << (bits - 1))  // 128 for 8-bit, 8 for 4-bit
 
     var out = [Float](repeating: 0, count: outFeatures * inFeatures)
-    for row in 0..<outFeatures {
-        for g in 0..<numGroups {
+    for row in 0 ..< outFeatures {
+        for g in 0 ..< numGroups {
             let s = scalesF[row * numGroups + g]
             let b_ = biasesF[row * numGroups + g]
             let colStart = g * groupSize
-            for c in 0..<groupSize {
+            for c in 0 ..< groupSize {
                 let col = colStart + c
                 guard col < inFeatures else { continue }
                 let elemIdx = col / vpe
@@ -1492,10 +1598,12 @@ private func lfmAudioDequantAffine(
 /// Read float values from a tensor regardless of storage dtype.
 func lfmAudioReadFloats(_ t: Tensor) -> [Float] {
     switch t.dtype {
-    case .f32:  return t.toArray(as: Float.self)
-    case .f16:  return t.toArray(as: Float16.self).map { Float($0) }
-    case .bf16: return t.toArray(as: UInt16.self).map {
-        Float(bitPattern: UInt32($0) << 16) }
+    case .f32: return t.toArray(as: Float.self)
+    case .f16: return t.toArray(as: Float16.self).map { Float($0) }
+    case .bf16:
+        return t.toArray(as: UInt16.self).map {
+            Float(bitPattern: UInt32($0) << 16)
+        }
     default:
         // Integer dtypes — try as uint32 and convert
         return t.toArray(as: UInt32.self).map { Float($0) }
@@ -1538,4 +1646,3 @@ private func lfmAudioDepthwiseConv1dWeight(
     }
     return floats
 }
-

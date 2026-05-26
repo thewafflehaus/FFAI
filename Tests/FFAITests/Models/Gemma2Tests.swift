@@ -21,6 +21,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Gemma2 Family Root")
@@ -40,8 +41,9 @@ struct Gemma2RootTests {
 
     @Test("variant(for:) returns Gemma2Dense (the only variant today)")
     func variantDispatch() throws {
-        let cfg = ModelConfig(architecture: "Gemma2ForCausalLM",
-                              modelType: "gemma2", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "Gemma2ForCausalLM",
+            modelType: "gemma2", raw: [:])
         let v = try Gemma2.variant(for: cfg)
         #expect(String(describing: v) == String(describing: Gemma2Dense.self))
     }

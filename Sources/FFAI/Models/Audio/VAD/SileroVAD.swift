@@ -67,8 +67,10 @@ public struct SileroVADBranchConfig: Sendable {
     public let contextSize: Int
     public let chunkSize: Int
 
-    public init(sampleRate: Int, filterLength: Int, hopLength: Int,
-                pad: Int, cutoff: Int, contextSize: Int, chunkSize: Int) {
+    public init(
+        sampleRate: Int, filterLength: Int, hopLength: Int,
+        pad: Int, cutoff: Int, contextSize: Int, chunkSize: Int
+    ) {
         self.sampleRate = sampleRate
         self.filterLength = filterLength
         self.hopLength = hopLength
@@ -100,12 +102,14 @@ public struct SileroVADConfig: Sendable {
     public let branch16k: SileroVADBranchConfig
     public let branch8k: SileroVADBranchConfig
 
-    public init(threshold: Float = 0.5,
-                minSpeechDurationMs: Int = 250,
-                minSilenceDurationMs: Int = 100,
-                speechPadMs: Int = 30,
-                branch16k: SileroVADBranchConfig = .default16k,
-                branch8k: SileroVADBranchConfig = .default8k) {
+    public init(
+        threshold: Float = 0.5,
+        minSpeechDurationMs: Int = 250,
+        minSilenceDurationMs: Int = 100,
+        speechPadMs: Int = 30,
+        branch16k: SileroVADBranchConfig = .default16k,
+        branch8k: SileroVADBranchConfig = .default8k
+    ) {
         self.threshold = threshold
         self.minSpeechDurationMs = minSpeechDurationMs
         self.minSilenceDurationMs = minSilenceDurationMs
@@ -156,8 +160,10 @@ final class SileroVADBranch: Sendable {
     ///   - prefix: weight-name prefix (`branch16k` / `branch8k`).
     ///   - lookup: resolves a branch-relative weight name to a Tensor,
     ///     or returns nil if absent.
-    init(config: SileroVADBranchConfig, prefix: String,
-         lookup: (String) -> Tensor?) throws {
+    init(
+        config: SileroVADBranchConfig, prefix: String,
+        lookup: (String) -> Tensor?
+    ) throws {
         self.config = config
 
         func tensor(_ name: String) throws -> Tensor {
@@ -187,14 +193,15 @@ final class SileroVADBranch: Sendable {
         func convWeight(_ name: String, outC: Int, inC: Int, k: Int) throws -> [Float] {
             let t = try tensor(name)
             let raw = t.toFloatArray()
-            precondition(raw.count == outC * inC * k,
-                         "SileroVAD: \(prefix).\(name) count \(raw.count) != \(outC)*\(inC)*\(k)")
+            precondition(
+                raw.count == outC * inC * k,
+                "SileroVAD: \(prefix).\(name) count \(raw.count) != \(outC)*\(inC)*\(k)")
             // Stored MLX layout [outC, K, inC] → transpose to [outC, inC, K].
             if t.shape.count == 3, t.shape[1] == k, t.shape[2] == inC, inC != k {
                 var out = [Float](repeating: 0, count: raw.count)
-                for o in 0..<outC {
-                    for kk in 0..<k {
-                        for ic in 0..<inC {
+                for o in 0 ..< outC {
+                    for kk in 0 ..< k {
+                        for ic in 0 ..< inC {
                             // src [o, kk, ic] → dst [o, ic, kk]
                             out[(o * inC + ic) * k + kk] = raw[(o * k + kk) * inC + ic]
                         }
@@ -243,7 +250,8 @@ final class SileroVADBranch: Sendable {
         // with `biasHH` left nil — it is then applied exactly once. The
         // earlier loader only looked for `bias_ih*` keys, so the fused
         // `lstm.bias` was dropped and the LSTM ran bias-free.
-        let lstmBiasIH = floatsOpt("lstm.bias_ih") ?? floatsOpt("lstm.bias_ih_l0")
+        let lstmBiasIH =
+            floatsOpt("lstm.bias_ih") ?? floatsOpt("lstm.bias_ih_l0")
             ?? floatsOpt("lstm.bias")
         let lstmBiasHH = floatsOpt("lstm.bias_hh") ?? floatsOpt("lstm.bias_hh_l0")
         self.lstm = VADLSTM(
@@ -260,8 +268,10 @@ final class SileroVADBranch: Sendable {
     /// Forward one context+chunk window → (speech probability, final
     /// LSTM hidden, final LSTM cell). `window` is `[contextSize +
     /// chunkSize]` mono samples.
-    func forward(window: [Float],
-                 lstmHidden: [Float]?, lstmCell: [Float]?)
+    func forward(
+        window: [Float],
+        lstmHidden: [Float]?, lstmCell: [Float]?
+    )
         -> (prob: Float, hidden: [Float], cell: [Float])
     {
         // reflect-pad on the right by `pad` samples.
@@ -272,10 +282,10 @@ final class SileroVADBranch: Sendable {
         // stft layout: [cutoff*2, stftLen]. First `cutoff` channels are
         // real, next `cutoff` are imaginary.
         var mag = [Float](repeating: 0, count: config.cutoff * stftLen)
-        for c in 0..<config.cutoff {
+        for c in 0 ..< config.cutoff {
             let reBase = c * stftLen
             let imBase = (config.cutoff + c) * stftLen
-            for t in 0..<stftLen {
+            for t in 0 ..< stftLen {
                 let re = stft[reBase + t]
                 let im = stft[imBase + t]
                 mag[reBase + t] = (re * re + im * im).squareRoot()
@@ -295,8 +305,8 @@ final class SileroVADBranch: Sendable {
         // LSTM expects [seqLen, features]; conv output is [features=128,
         // seqLen=hLen] channel-major. Transpose to time-major.
         var seq = [Float](repeating: 0, count: hLen * 128)
-        for f in 0..<128 {
-            for t in 0..<hLen {
+        for f in 0 ..< 128 {
+            for t in 0 ..< hLen {
                 seq[t * 128 + f] = h[f * hLen + t]
             }
         }
@@ -307,8 +317,8 @@ final class SileroVADBranch: Sendable {
         var post = hiddenSeq
         VADMath.reluInPlace(&post)
         var chMajor = [Float](repeating: 0, count: 128 * hLen)
-        for t in 0..<hLen {
-            for f in 0..<128 {
+        for t in 0 ..< hLen {
+            for f in 0 ..< 128 {
                 chMajor[f * hLen + t] = post[t * 128 + f]
             }
         }
@@ -316,7 +326,7 @@ final class SileroVADBranch: Sendable {
 
         // sigmoid → mean over time = single speech probability.
         var sum: Float = 0
-        for t in 0..<fcLen { sum += VADMath.sigmoid(fc[t]) }
+        for t in 0 ..< fcLen { sum += VADMath.sigmoid(fc[t]) }
         let prob = fcLen > 0 ? sum / Float(fcLen) : 0
         return (prob, finalH, finalC)
     }
@@ -332,7 +342,7 @@ func reflectPadRight(_ x: [Float], pad: Int) -> [Float] {
     precondition(n > pad, "reflect pad of \(pad) needs more than \(pad) samples (got \(n))")
     var out = x
     out.reserveCapacity(n + pad)
-    for i in 0..<pad {
+    for i in 0 ..< pad {
         out.append(x[n - 2 - i])
     }
     return out
@@ -376,8 +386,9 @@ public final class SileroVADModel: @unchecked Sendable {
         let ctx = b.config.contextSize
 
         if audio.isEmpty {
-            return VADOutput(probabilities: [], frameStrideSamples: cs,
-                             sampleRate: sampleRate, segments: [])
+            return VADOutput(
+                probabilities: [], frameStrideSamples: cs,
+                sampleRate: sampleRate, segments: [])
         }
 
         // Right-pad audio to a whole number of chunks, then prepend a
@@ -393,7 +404,7 @@ public final class SileroVADModel: @unchecked Sendable {
         var lstmCell: [Float]? = nil
         var pos = ctx
         while pos < a.count {
-            let window = Array(a[(pos - ctx)..<(pos + cs)])
+            let window = Array(a[(pos - ctx) ..< (pos + cs)])
             let (p, h, c) = b.forward(window: window, lstmHidden: lstmHidden, lstmCell: lstmCell)
             probs.append(p)
             lstmHidden = h
@@ -408,8 +419,9 @@ public final class SileroVADModel: @unchecked Sendable {
             minSilenceDurationMs: config.minSilenceDurationMs,
             speechPadMs: config.speechPadMs)
 
-        return VADOutput(probabilities: probs, frameStrideSamples: cs,
-                         sampleRate: sampleRate, segments: segments)
+        return VADOutput(
+            probabilities: probs, frameStrideSamples: cs,
+            sampleRate: sampleRate, segments: segments)
     }
 
     // ─── Probability stream → segments ───────────────────────────────
@@ -428,7 +440,10 @@ public final class SileroVADModel: @unchecked Sendable {
         // Hysteresis: a lower threshold ends a speech run than starts it.
         let negThreshold = max(threshold - 0.15, 0.01)
 
-        struct Run { var start: Int; var end: Int }
+        struct Run {
+            var start: Int
+            var end: Int
+        }
         var speeches: [Run] = []
         var triggered = false
         var currentStart = 0
@@ -496,13 +511,16 @@ public final class SileroVADModel: @unchecked Sendable {
     }
 
     /// Load a SileroVAD checkpoint from a local snapshot directory.
-    public static func loadFromDirectory(_ directory: URL,
-                                         device: Device = .shared) throws -> SileroVADModel {
+    public static func loadFromDirectory(
+        _ directory: URL,
+        device: Device = .shared
+    ) throws -> SileroVADModel {
         // config.json is optional — every field has a published default.
         var config = SileroVADConfig()
         let configURL = directory.appendingPathComponent("config.json")
         if let data = try? Data(contentsOf: configURL),
-           let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        {
             config = SileroVADConfig.decode(from: raw)
         }
 
@@ -527,8 +545,10 @@ public final class SileroVADModel: @unchecked Sendable {
 
     /// Download (or hit cache) a SileroVAD checkpoint from HuggingFace
     /// and load it.
-    public static func fromPretrained(_ idOrPath: String,
-                                      device: Device = .shared) async throws -> SileroVADModel {
+    public static func fromPretrained(
+        _ idOrPath: String,
+        device: Device = .shared
+    ) async throws -> SileroVADModel {
         let locator = ModelLocator()
         let dir = try await locator.resolve(idOrPath: idOrPath)
         return try loadFromDirectory(dir, device: device)

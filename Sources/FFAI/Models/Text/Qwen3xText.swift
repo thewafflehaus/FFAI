@@ -128,8 +128,8 @@ import Metal
 
 /// The two mixer kinds a Qwen3.5 hybrid layer can take.
 enum Qwen35LayerKind: Equatable {
-    case gdn         // "linear_attention" — Gated Delta Net recurrent mixer
-    case attention   // "full_attention"   — multi-head attention
+    case gdn  // "linear_attention" — Gated Delta Net recurrent mixer
+    case attention  // "full_attention"   — multi-head attention
 
     init(from name: String) throws {
         switch name {
@@ -185,9 +185,9 @@ public struct Qwen35Hybrid: Qwen35Variant {
         }
 
         guard let hidden = tcInt("hidden_size"),
-              let vocab = tcInt("vocab_size"),
-              let nHeads = tcInt("num_attention_heads"),
-              let nLayers = tcInt("num_hidden_layers")
+            let vocab = tcInt("vocab_size"),
+            let nHeads = tcInt("num_attention_heads"),
+            let nLayers = tcInt("num_hidden_layers")
         else {
             throw Qwen35Error.missingConfig(
                 "hidden_size / vocab_size / num_attention_heads / num_hidden_layers")
@@ -195,8 +195,9 @@ public struct Qwen35Hybrid: Qwen35Variant {
         let nKVHeads = tcInt("num_key_value_heads") ?? nHeads
         let headDim = tcInt("head_dim") ?? (hidden / nHeads)
         let eps = Float(tcFloat("rms_norm_eps") ?? 1e-6)
-        let tieEmbed = (tcBool("tie_word_embeddings")
-            ?? config.bool("tie_word_embeddings")) ?? false
+        let tieEmbed =
+            (tcBool("tie_word_embeddings")
+                ?? config.bool("tie_word_embeddings")) ?? false
         let intermediate = tcInt("intermediate_size") ?? (4 * hidden)
         let maxSeq = tcInt("max_position_embeddings") ?? 262_144
         let fullAttnInterval = tcInt("full_attention_interval") ?? 4
@@ -207,26 +208,26 @@ public struct Qwen35Hybrid: Qwen35Variant {
         let ropeParams = tc?["rope_parameters"] as? [String: Any]
         let ropeTheta = Float(
             (ropeParams?["rope_theta"] as? Double)
-            ?? (ropeParams?["rope_theta"] as? Int).map(Double.init)
-            ?? tcFloat("rope_theta")
-            ?? 10_000_000)
+                ?? (ropeParams?["rope_theta"] as? Int).map(Double.init)
+                ?? tcFloat("rope_theta")
+                ?? 10_000_000)
         let partialRotaryFactor = Float(
             (ropeParams?["partial_rotary_factor"] as? Double)
-            ?? tcFloat("partial_rotary_factor")
-            ?? 0.25)
+                ?? tcFloat("partial_rotary_factor")
+                ?? 0.25)
         // rotaryDim must be even (rotate-half pairs); clamp to headDim.
         var rotaryDim = Int(Float(headDim) * partialRotaryFactor)
         rotaryDim = min(headDim, max(2, rotaryDim - (rotaryDim % 2)))
 
         // ── GDN (linear-attention) mixer geometry ─────────────────────
         guard let linearNumKeyHeads = tcInt("linear_num_key_heads"),
-              let linearNumValueHeads = tcInt("linear_num_value_heads"),
-              let linearKeyHeadDim = tcInt("linear_key_head_dim"),
-              let linearValueHeadDim = tcInt("linear_value_head_dim")
+            let linearNumValueHeads = tcInt("linear_num_value_heads"),
+            let linearKeyHeadDim = tcInt("linear_key_head_dim"),
+            let linearValueHeadDim = tcInt("linear_value_head_dim")
         else {
             throw Qwen35Error.missingConfig(
                 "linear_num_key_heads / linear_num_value_heads / "
-                + "linear_key_head_dim / linear_value_head_dim")
+                    + "linear_key_head_dim / linear_value_head_dim")
         }
         let convKernel = tcInt("linear_conv_kernel_dim") ?? 4
         let keyDim = linearKeyHeadDim * linearNumKeyHeads
@@ -250,8 +251,8 @@ public struct Qwen35Hybrid: Qwen35Variant {
         guard linearValueHeadDim % 128 == 0, linearValueHeadDim <= 4096 else {
             throw Qwen35Error.unsupportedConfig(
                 "GDN gated-norm row size linear_value_head_dim = "
-                + "\(linearValueHeadDim) must be a multiple of 128 and ≤ 4096 "
-                + "(rmsNormRows kernel invariant)")
+                    + "\(linearValueHeadDim) must be a multiple of 128 and ≤ 4096 "
+                    + "(rmsNormRows kernel invariant)")
         }
         // SDPA full-attention head_dim must have an emitted kernel.
         if let reason = OpsValidation.validateSdpaDecode(
@@ -276,29 +277,33 @@ public struct Qwen35Hybrid: Qwen35Variant {
         // `(i + 1) % full_attention_interval == 0` interval rule.
         let kinds: [Qwen35LayerKind]
         if let names = tc?["layer_types"] as? [String],
-           !names.isEmpty {
+            !names.isEmpty
+        {
             kinds = try names.map { try Qwen35LayerKind(from: $0) }
         } else if let names = config.raw["layer_types"] as? [String],
-                  !names.isEmpty {
+            !names.isEmpty
+        {
             kinds = try names.map { try Qwen35LayerKind(from: $0) }
         } else {
-            kinds = (0..<nLayers).map { i in
+            kinds = (0 ..< nLayers).map { i in
                 (i + 1) % fullAttnInterval == 0 ? .attention : .gdn
             }
         }
         guard kinds.count == nLayers else {
             throw Qwen35Error.unsupportedConfig(
                 "layer_types has \(kinds.count) entries, "
-                + "num_hidden_layers is \(nLayers)")
+                    + "num_hidden_layers is \(nLayers)")
         }
 
         // ── Weight prefix — VLM-wrapped checkpoints prefix every text
         //    weight with `language_model.model.`; a text-only conversion
         //    would use `model.`. Detect from the embedding key. ──────────
         let prefixCandidates = ["language_model.model", "model"]
-        guard let modelPrefix = prefixCandidates.first(where: {
-            weights.has("\($0).embed_tokens.weight")
-        }) else {
+        guard
+            let modelPrefix = prefixCandidates.first(where: {
+                weights.has("\($0).embed_tokens.weight")
+            })
+        else {
             throw Qwen35Error.missingConfig("embed_tokens.weight (model prefix)")
         }
         // ── lm_head prefix — VLM-wrapped Qwen3.6 ships lm_head under
@@ -350,17 +355,19 @@ public struct Qwen35Hybrid: Qwen35Variant {
             // ── Feed-forward half ─────────────────────────────────────
             // A layer in `mlp_only_layers`, or one off the sparse-step
             // cadence, gets a dense MLP even on an MoE checkpoint.
-            let layerUsesMoE = useMoE
+            let layerUsesMoE =
+                useMoE
                 && !mlpOnlyLayers.contains(i)
                 && (i + 1) % decoderSparseStep == 0
             let ffn: Qwen35FFN
             if layerUsesMoE {
-                ffn = .moe(try buildMoE(
-                    prefix: "\(p).mlp", weights: weights,
-                    hidden: hidden, moeIntermediate: moeIntermediate,
-                    sharedIntermediate: sharedExpertIntermediate,
-                    numExperts: numExperts, topK: numExpertsPerToken,
-                    normTopkProb: normTopkProb, quant: quant))
+                ffn = .moe(
+                    try buildMoE(
+                        prefix: "\(p).mlp", weights: weights,
+                        hidden: hidden, moeIntermediate: moeIntermediate,
+                        sharedIntermediate: sharedExpertIntermediate,
+                        numExperts: numExperts, topK: numExpertsPerToken,
+                        normTopkProb: normTopkProb, quant: quant))
             } else {
                 let gate = try loadLinear(
                     base: "\(p).mlp.gate_proj", in: weights, quantization: quant)
@@ -368,8 +375,9 @@ public struct Qwen35Hybrid: Qwen35Variant {
                     base: "\(p).mlp.up_proj", in: weights, quantization: quant)
                 let down = try loadLinear(
                     base: "\(p).mlp.down_proj", in: weights, quantization: quant)
-                ffn = .dense(Qwen35DenseMLP(
-                    gateProj: gate, upProj: up, downProj: down))
+                ffn = .dense(
+                    Qwen35DenseMLP(
+                        gateProj: gate, upProj: up, downProj: down))
             }
 
             switch kind {
@@ -384,9 +392,10 @@ public struct Qwen35Hybrid: Qwen35Variant {
                     convKernel: convKernel, eps: eps,
                     invKeyScale: invKeyScale,
                     dtype: activationDtype, device: device)
-                layers.append(Qwen35GDNLayer(
-                    inputNorm: inputNorm, postNorm: postNorm,
-                    mixer: mixer, ffn: ffn, hidden: hidden))
+                layers.append(
+                    Qwen35GDNLayer(
+                        inputNorm: inputNorm, postNorm: postNorm,
+                        mixer: mixer, ffn: ffn, hidden: hidden))
 
             case .attention:
                 let qProj = try loadLinear(
@@ -409,9 +418,10 @@ public struct Qwen35Hybrid: Qwen35Variant {
                     nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
                     rotaryDim: rotaryDim, ropeTheta: ropeTheta,
                     attnOutputGate: attnOutputGate)
-                layers.append(Qwen35AttentionLayer(
-                    inputNorm: inputNorm, postNorm: postNorm,
-                    mixer: mixer, ffn: ffn, hidden: hidden))
+                layers.append(
+                    Qwen35AttentionLayer(
+                        inputNorm: inputNorm, postNorm: postNorm,
+                        mixer: mixer, ffn: ffn, hidden: hidden))
             }
         }
 
@@ -437,9 +447,10 @@ public struct Qwen35Hybrid: Qwen35Variant {
                 weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
                 scaleCols: t.scales.shape[t.scales.shape.count - 1],
                 groupSize: q.groupSize)
-            lmHead = AnyLinear(QuantizedLinear(
-                weight: t.weight, scales: t.scales, biases: t.biases,
-                bits: bits, groupSize: q.groupSize))
+            lmHead = AnyLinear(
+                QuantizedLinear(
+                    weight: t.weight, scales: t.scales, biases: t.biases,
+                    bits: bits, groupSize: q.groupSize))
         } else {
             // Tied to a raw (unquantized) embedding — straight Linear.
             lmHead = AnyLinear(Linear(weight: embedW))
@@ -493,8 +504,9 @@ public struct Qwen35Hybrid: Qwen35Variant {
         // conv1d.weight ships [conv_dim, kernel, 1]; the metaltile kernel
         // wants [kernel, conv_dim].
         let convWSrc = try weights.tensor(named: "\(p).conv1d.weight")
-        precondition(convWSrc.elementCount == convDim * convKernel,
-                     "Qwen3.5: conv1d.weight count mismatch: \(convWSrc.shape)")
+        precondition(
+            convWSrc.elementCount == convDim * convKernel,
+            "Qwen3.5: conv1d.weight count mismatch: \(convWSrc.shape)")
         let convW = transposeConv1dWeight35(
             src: convWSrc, kernel: convKernel, channels: convDim,
             dtype: dtype, device: device)
@@ -509,10 +521,12 @@ public struct Qwen35Hybrid: Qwen35Variant {
         // A_log + dt_bias drive the per-step gate; read to host fp32.
         let aLog = readFloats35(try weights.tensor(named: "\(p).A_log"))
         let dtBias = readFloats35(try weights.tensor(named: "\(p).dt_bias"))
-        precondition(aLog.count == numValueHeads,
-                     "Qwen3.5: A_log expected [num_value_heads]")
-        precondition(dtBias.count == numValueHeads,
-                     "Qwen3.5: dt_bias expected [num_value_heads]")
+        precondition(
+            aLog.count == numValueHeads,
+            "Qwen3.5: A_log expected [num_value_heads]")
+        precondition(
+            dtBias.count == numValueHeads,
+            "Qwen3.5: dt_bias expected [num_value_heads]")
 
         return Qwen35GDNMixer(
             inProjQKV: inProjQKV, inProjZ: inProjZ,
@@ -622,9 +636,9 @@ public struct Qwen35Hybrid: Qwen35Variant {
         numExperts: Int, moeIntermediate: Int, hidden: Int
     ) -> MoELayer.StackedInt4Experts? {
         guard let q = quant,
-              weights.isQuantized("\(base).gate_proj"),
-              weights.isQuantized("\(base).up_proj"),
-              weights.isQuantized("\(base).down_proj")
+            weights.isQuantized("\(base).gate_proj"),
+            weights.isQuantized("\(base).up_proj"),
+            weights.isQuantized("\(base).down_proj")
         else { return nil }
         // bm16 tile contract — N must be multiple of 32, K must be
         // multiple of 32. Gate / up: N=moeIntermediate K=hidden. Down:
@@ -701,27 +715,33 @@ public struct Qwen35Hybrid: Qwen35Variant {
             let bits = deriveAffineQuantBits(
                 weightPackedCols: packedCols, scaleCols: groupCols,
                 groupSize: q.groupSize)
-            precondition([3, 4, 5, 6, 8].contains(bits),
-                         "sliceStackedExperts: derived \(bits)-bit for "
-                         + "\(base) — unsupported quantization bit-width")
-            for e in 0..<numExperts {
+            precondition(
+                [3, 4, 5, 6, 8].contains(bits),
+                "sliceStackedExperts: derived \(bits)-bit for "
+                    + "\(base) — unsupported quantization bit-width")
+            for e in 0 ..< numExperts {
                 let w = stackedW.slicedRows(start: e, count: 1)
                     .reshaped(to: [outDim, packedCols])
                 let s = stackedS.slicedRows(start: e, count: 1)
                     .reshaped(to: [outDim, groupCols])
                 let b = stackedB.slicedRows(start: e, count: 1)
                     .reshaped(to: [outDim, groupCols])
-                out.append(AnyLinear(QuantizedLinear(
-                    weight: w, scales: s, biases: b,
-                    bits: bits, groupSize: q.groupSize)))
+                out.append(
+                    AnyLinear(
+                        QuantizedLinear(
+                            weight: w, scales: s, biases: b,
+                            bits: bits, groupSize: q.groupSize)))
             }
         } else {
             // Raw stack: weight [E, outDim, inDim].
             let stacked = try weights.tensor(named: "\(base).weight")
-            for e in 0..<numExperts {
-                out.append(AnyLinear(Linear(weight:
-                    stacked.slicedRows(start: e, count: 1)
-                        .reshaped(to: [outDim, inDim]))))
+            for e in 0 ..< numExperts {
+                out.append(
+                    AnyLinear(
+                        Linear(
+                            weight:
+                                stacked.slicedRows(start: e, count: 1)
+                                .reshaped(to: [outDim, inDim]))))
             }
         }
         return out
@@ -744,7 +764,9 @@ public final class Qwen35DenseMLP: Module {
     let gateProj, upProj, downProj: AnyLinear
 
     init(gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear) {
-        self.gateProj = gateProj; self.upProj = upProj; self.downProj = downProj
+        self.gateProj = gateProj
+        self.upProj = upProj
+        self.downProj = downProj
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -766,8 +788,10 @@ public final class Qwen35DenseMLP: Module {
     /// T-batched: down(silu(gate(x)) * up(x)) over T rows. Returns
     /// `[T, hidden]` flat. Three batched projections + one elementwise
     /// SwiGLU pass.
-    func forwardMany(_ xNormFlat: Tensor, t: Int,
-                     cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forwardMany(
+        _ xNormFlat: Tensor, t: Int,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let xRows = xNormFlat.reshaped(to: [t, xNormFlat.elementCount / t])
         let g = gateProj.callMany(xRows, t: t, on: cmd, device: device)
         let u = upProj.callMany(xRows, t: t, on: cmd, device: device)
@@ -793,10 +817,12 @@ public final class Qwen35MoEFFN: Module {
     let sharedExpertGate: AnyLinear
     let hidden: Int
 
-    init(moe: MoELayer,
-         sharedGateProj: AnyLinear, sharedUpProj: AnyLinear,
-         sharedDownProj: AnyLinear, sharedExpertGate: AnyLinear,
-         hidden: Int) {
+    init(
+        moe: MoELayer,
+        sharedGateProj: AnyLinear, sharedUpProj: AnyLinear,
+        sharedDownProj: AnyLinear, sharedExpertGate: AnyLinear,
+        hidden: Int
+    ) {
         self.moe = moe
         self.sharedGateProj = sharedGateProj
         self.sharedUpProj = sharedUpProj
@@ -827,12 +853,15 @@ public final class Qwen35MoEFFN: Module {
     /// Run the MoE FFN. `MoELayer.decode` commits the passed `cmd`; the
     /// shared expert + the final add run on fresh private buffers, so
     /// the returned tensor never depends on the now-dead `cmd`.
-    func forward(_ xNorm: Tensor, position: Int,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forward(
+        _ xNorm: Tensor, position: Int,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // Routed top-K experts — commits `cmd`.
-        let routed = moe.decode(xNorm, position: position,
-                                cache: StatelessLayerCache(),
-                                cmd: cmd, device: device)
+        let routed = moe.decode(
+            xNorm, position: position,
+            cache: StatelessLayerCache(),
+            cmd: cmd, device: device)
         // Shared expert on a fresh buffer: SwiGLU + scalar gate logit.
         // The fused-sigmoid kernel keeps the scalar on the GPU, so this
         // buffer no longer needs a `waitUntilCompleted` — it just needs
@@ -866,8 +895,10 @@ public final class Qwen35MoEFFN: Module {
     /// the single-token `forward`'s commit pattern; the returned
     /// `outFlat` is in-flight on the last committed `fmaCmd` and
     /// downstream reads hazard-track against it.
-    func forwardMany(_ xNormFlat: Tensor, t: Int,
-                     cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forwardMany(
+        _ xNormFlat: Tensor, t: Int,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let dt = xNormFlat.dtype
         let dtBytes = dt.byteSize
 
@@ -881,11 +912,13 @@ public final class Qwen35MoEFFN: Module {
         let sgAll = sharedGateProj.callMany(xRows, t: t, on: work, device: device)
         let suAll = sharedUpProj.callMany(xRows, t: t, on: work, device: device)
         let sharedInnerAll = Ops.mul(Ops.silu(sgAll, on: work), suAll, on: work)
-        let sharedOutAll = sharedDownProj.callMany(sharedInnerAll, t: t,
-                                                    on: work, device: device)
+        let sharedOutAll = sharedDownProj.callMany(
+            sharedInnerAll, t: t,
+            on: work, device: device)
         // sharedExpertGate is `hidden → 1`; per row this is one scalar.
-        let gateLogitsAll = sharedExpertGate.callMany(xRows, t: t,
-                                                      on: work, device: device)
+        let gateLogitsAll = sharedExpertGate.callMany(
+            xRows, t: t,
+            on: work, device: device)
         work.commit()
 
         // ── Per-row sigmoidScalarFMA fan-out ─────────────────────────────
@@ -893,19 +926,23 @@ public final class Qwen35MoEFFN: Module {
         // each token's gate logit + run the FMA. T fmaCmd commits but
         // each is one small kernel that pipelines on the queue.
         let outFlat = Tensor.empty(shape: [t * hidden], dtype: dt, device: device)
-        for r in 0..<t {
-            let gateRow = Tensor(buffer: gateLogitsAll.buffer,
-                                 offset: gateLogitsAll.offset + r * dtBytes,
-                                 shape: [1], dtype: dt)
-            let sharedRow = Tensor(buffer: sharedOutAll.buffer,
-                                   offset: sharedOutAll.offset + r * hidden * dtBytes,
-                                   shape: [hidden], dtype: dt)
-            let routedRow = Tensor(buffer: routed.buffer,
-                                   offset: routed.offset + r * hidden * dtBytes,
-                                   shape: [hidden], dtype: dt)
-            let outRow = Tensor(buffer: outFlat.buffer,
-                                offset: outFlat.offset + r * hidden * dtBytes,
-                                shape: [hidden], dtype: dt)
+        for r in 0 ..< t {
+            let gateRow = Tensor(
+                buffer: gateLogitsAll.buffer,
+                offset: gateLogitsAll.offset + r * dtBytes,
+                shape: [1], dtype: dt)
+            let sharedRow = Tensor(
+                buffer: sharedOutAll.buffer,
+                offset: sharedOutAll.offset + r * hidden * dtBytes,
+                shape: [hidden], dtype: dt)
+            let routedRow = Tensor(
+                buffer: routed.buffer,
+                offset: routed.offset + r * hidden * dtBytes,
+                shape: [hidden], dtype: dt)
+            let outRow = Tensor(
+                buffer: outFlat.buffer,
+                offset: outFlat.offset + r * hidden * dtBytes,
+                shape: [hidden], dtype: dt)
             let fmaCmd = device.makeCommandBuffer()
             Ops.sigmoidScalarFMA(
                 gate: gateRow, value: sharedRow, base: routedRow,
@@ -943,17 +980,21 @@ public final class Qwen35GDNLayerCache: LayerCacheProtocol, @unchecked Sendable 
     public private(set) var length: Int = 0
     public let maxSeq: Int = .max
 
-    public init(numKeyHeads: Int, numValueHeads: Int,
-                keyHeadDim: Int, valueHeadDim: Int,
-                convDim: Int, convKernelSize: Int,
-                dtype: DType, device: Device = .shared) {
-        self.conv = ConvStateCache(nChannels: convDim,
-                                   kernelSize: convKernelSize,
-                                   dtype: dtype, device: device)
-        self.gdn = GDNStateCache(numValueHeads: numValueHeads,
-                                 valueHeadDim: valueHeadDim,
-                                 keyHeadDim: keyHeadDim,
-                                 device: device)
+    public init(
+        numKeyHeads: Int, numValueHeads: Int,
+        keyHeadDim: Int, valueHeadDim: Int,
+        convDim: Int, convKernelSize: Int,
+        dtype: DType, device: Device = .shared
+    ) {
+        self.conv = ConvStateCache(
+            nChannels: convDim,
+            kernelSize: convKernelSize,
+            dtype: dtype, device: device)
+        self.gdn = GDNStateCache(
+            numValueHeads: numValueHeads,
+            valueHeadDim: valueHeadDim,
+            keyHeadDim: keyHeadDim,
+            device: device)
     }
 
     public func reset() {
@@ -985,11 +1026,11 @@ public final class Qwen35GDNLayerCache: LayerCacheProtocol, @unchecked Sendable 
 
 public final class Qwen35GDNMixer: Module {
     let inProjQKV, inProjZ, inProjB, inProjA, outProj: AnyLinear
-    let convW: Tensor        // [kernel, conv_dim]
-    let convB: Tensor        // [conv_dim]
-    let mixerNorm: RMSNorm   // gated mixer RMSNorm weight [value_head_dim]
-    let aLog: [Float]        // [num_value_heads]   raw A_log
-    let dtBias: [Float]      // [num_value_heads]
+    let convW: Tensor  // [kernel, conv_dim]
+    let convB: Tensor  // [conv_dim]
+    let mixerNorm: RMSNorm  // gated mixer RMSNorm weight [value_head_dim]
+    let aLog: [Float]  // [num_value_heads]   raw A_log
+    let dtBias: [Float]  // [num_value_heads]
     let hidden, numKeyHeads, numValueHeads, keyHeadDim, valueHeadDim: Int
     let keyDim, valueDim, convDim, convKernel: Int
     let eps, invKeyScale: Float
@@ -1045,33 +1086,46 @@ public final class Qwen35GDNMixer: Module {
     let yF32Scratch: Tensor
     let yGatedScratch: Tensor
 
-    init(inProjQKV: AnyLinear, inProjZ: AnyLinear,
-         inProjB: AnyLinear, inProjA: AnyLinear, outProj: AnyLinear,
-         convW: Tensor, convB: Tensor, mixerNorm: RMSNorm,
-         aLog: [Float], dtBias: [Float],
-         hidden: Int,
-         numKeyHeads: Int, numValueHeads: Int,
-         keyHeadDim: Int, valueHeadDim: Int,
-         keyDim: Int, valueDim: Int, convDim: Int,
-         convKernel: Int, eps: Float, invKeyScale: Float,
-         dtype: DType,
-         device: Device = .shared) {
-        self.inProjQKV = inProjQKV; self.inProjZ = inProjZ
-        self.inProjB = inProjB; self.inProjA = inProjA; self.outProj = outProj
-        self.convW = convW; self.convB = convB; self.mixerNorm = mixerNorm
-        self.aLog = aLog; self.dtBias = dtBias
+    init(
+        inProjQKV: AnyLinear, inProjZ: AnyLinear,
+        inProjB: AnyLinear, inProjA: AnyLinear, outProj: AnyLinear,
+        convW: Tensor, convB: Tensor, mixerNorm: RMSNorm,
+        aLog: [Float], dtBias: [Float],
+        hidden: Int,
+        numKeyHeads: Int, numValueHeads: Int,
+        keyHeadDim: Int, valueHeadDim: Int,
+        keyDim: Int, valueDim: Int, convDim: Int,
+        convKernel: Int, eps: Float, invKeyScale: Float,
+        dtype: DType,
+        device: Device = .shared
+    ) {
+        self.inProjQKV = inProjQKV
+        self.inProjZ = inProjZ
+        self.inProjB = inProjB
+        self.inProjA = inProjA
+        self.outProj = outProj
+        self.convW = convW
+        self.convB = convB
+        self.mixerNorm = mixerNorm
+        self.aLog = aLog
+        self.dtBias = dtBias
         self.hidden = hidden
-        self.numKeyHeads = numKeyHeads; self.numValueHeads = numValueHeads
-        self.keyHeadDim = keyHeadDim; self.valueHeadDim = valueHeadDim
-        self.keyDim = keyDim; self.valueDim = valueDim
-        self.convDim = convDim; self.convKernel = convKernel
-        self.eps = eps; self.invKeyScale = invKeyScale
+        self.numKeyHeads = numKeyHeads
+        self.numValueHeads = numValueHeads
+        self.keyHeadDim = keyHeadDim
+        self.valueHeadDim = valueHeadDim
+        self.keyDim = keyDim
+        self.valueDim = valueDim
+        self.convDim = convDim
+        self.convKernel = convKernel
+        self.eps = eps
+        self.invKeyScale = invKeyScale
         self.dtype = dtype
 
         // ── Pre-build the fused-path constant tensors (fp32) ────────
         let hkDk = numKeyHeads * keyHeadDim
-        let qScale = invKeyScale * invKeyScale          // unweighted RMSNorm × invKeyScale²
-        let kScale = invKeyScale                        // unweighted RMSNorm × invKeyScale
+        let qScale = invKeyScale * invKeyScale  // unweighted RMSNorm × invKeyScale²
+        let kScale = invKeyScale  // unweighted RMSNorm × invKeyScale
         self.qNormWeightF32 = makeF32Tensor35(
             [Float](repeating: qScale, count: hkDk), device: device)
         self.kNormWeightF32 = makeF32Tensor35(
@@ -1090,8 +1144,9 @@ public final class Qwen35GDNMixer: Module {
         self.convActF32Scratch = Tensor.empty(shape: [convDim], dtype: .f32, device: device)
         self.aRawF32Scratch = Tensor.empty(shape: [numValueHeads], dtype: .f32, device: device)
         self.bRawF32Scratch = Tensor.empty(shape: [numValueHeads], dtype: .f32, device: device)
-        self.yF32Scratch = Tensor.empty(shape: [numValueHeads, valueHeadDim],
-                                        dtype: .f32, device: device)
+        self.yF32Scratch = Tensor.empty(
+            shape: [numValueHeads, valueHeadDim],
+            dtype: .f32, device: device)
         self.yGatedScratch = Tensor.empty(shape: [valueDim], dtype: dtype, device: device)
     }
 
@@ -1122,19 +1177,21 @@ public final class Qwen35GDNMixer: Module {
     /// layer input `[hidden]`. Commits `cmd` mid-way (the host gate prep
     /// needs the GPU projections on the CPU) and returns a resident
     /// `[hidden]` tensor produced on a fresh command buffer.
-    func forward(_ xNorm: Tensor, cache: Qwen35GDNLayerCache,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forward(
+        _ xNorm: Tensor, cache: Qwen35GDNLayerCache,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // ── GPU phase 1: projections + conv + SiLU ────────────────────
-        let qkv = inProjQKV(xNorm, on: cmd)        // [conv_dim]
-        let z = inProjZ(xNorm, on: cmd)            // [value_dim]
-        let bRaw = inProjB(xNorm, on: cmd)         // [num_value_heads]
-        let aRaw = inProjA(xNorm, on: cmd)         // [num_value_heads]
+        let qkv = inProjQKV(xNorm, on: cmd)  // [conv_dim]
+        let z = inProjZ(xNorm, on: cmd)  // [value_dim]
+        let bRaw = inProjB(xNorm, on: cmd)  // [num_value_heads]
+        let aRaw = inProjA(xNorm, on: cmd)  // [num_value_heads]
 
         Ops.conv1dCausalStep(
             x: qkv, w: convW, b: convB,
             state: cache.conv.state, into: convOutScratch,
             nChannels: convDim, kernelSize: convKernel, on: cmd)
-        let convAct = Ops.silu(convOutScratch, on: cmd)   // [conv_dim]
+        let convAct = Ops.silu(convOutScratch, on: cmd)  // [conv_dim]
 
         // ── Fused GDN prep + recurrence path (opt-in) ─────────────────
         //
@@ -1193,14 +1250,14 @@ public final class Qwen35GDNMixer: Module {
             cmd.waitUntilCompleted()
 
             // ── Host phase: split q|k|v, q/k norm + scale, g / beta ───
-            let convHost = convAct.toFloatArray()      // [conv_dim]
-            let aHost = aRaw.toFloatArray()            // [num_value_heads]
-            let bHost = bRaw.toFloatArray()            // [num_value_heads]
+            let convHost = convAct.toFloatArray()  // [conv_dim]
+            let aHost = aRaw.toFloatArray()  // [num_value_heads]
+            let bHost = bRaw.toFloatArray()  // [num_value_heads]
 
             // Split the conv output: q | k | v.
-            let qFlat = Array(convHost[0..<keyDim])
-            let kFlat = Array(convHost[keyDim..<(2 * keyDim)])
-            let vFlat = Array(convHost[(2 * keyDim)..<(2 * keyDim + valueDim)])
+            let qFlat = Array(convHost[0 ..< keyDim])
+            let kFlat = Array(convHost[keyDim ..< (2 * keyDim)])
+            let vFlat = Array(convHost[(2 * keyDim) ..< (2 * keyDim + valueDim)])
 
             // Per-head unweighted RMSNorm (eps 1e-6) of q / k, then scale.
             // q ×invScale², k ×invScale  (invScale = key_head_dim^-0.5) —
@@ -1217,7 +1274,7 @@ public final class Qwen35GDNMixer: Module {
             //   beta = sigmoid(b)
             var gHost = [Float](repeating: 0, count: numValueHeads)
             var betaHost = [Float](repeating: 0, count: numValueHeads)
-            for hv in 0..<numValueHeads {
+            for hv in 0 ..< numValueHeads {
                 let dt = softplus35(aHost[hv] + dtBias[hv])
                 gHost[hv] = Foundation.exp(-Foundation.exp(aLog[hv]) * dt)
                 betaHost[hv] = sigmoid35(bHost[hv])
@@ -1231,8 +1288,9 @@ public final class Qwen35GDNMixer: Module {
             let vTen = makeF32Tensor35(vFlat, device: device)
             let gT = makeF32Tensor35(gHost, device: device)
             let betaT = makeF32Tensor35(betaHost, device: device)
-            let yLegacy = Tensor.empty(shape: [numValueHeads, valueHeadDim],
-                                       dtype: .f32, device: device)
+            let yLegacy = Tensor.empty(
+                shape: [numValueHeads, valueHeadDim],
+                dtype: .f32, device: device)
             Ops.gatedDeltaStep(
                 q: qT, k: kT, v: vTen, g: gT, beta: betaT,
                 stateIn: cache.gdn.current, into: yLegacy, stateOut: cache.gdn.next,
@@ -1279,18 +1337,19 @@ public final class Qwen35GDNMixer: Module {
             // per GDN layer instead of two (mixer + FFN), saving ~30
             // commits per decode token.
         } else {
-            let yHost = yT.toFloatArray()              // [value_dim] fp32
-            let zHost = z.toFloatArray()               // [value_dim] activation
-            let normW = readFloats35(mixerNorm.weight) // [value_head_dim]
+            let yHost = yT.toFloatArray()  // [value_dim] fp32
+            let zHost = z.toFloatArray()  // [value_dim] activation
+            let normW = readFloats35(mixerNorm.weight)  // [value_head_dim]
             var yGatedHost = [Float](repeating: 0, count: valueDim)
-            for hv in 0..<numValueHeads {
+            for hv in 0 ..< numValueHeads {
                 let base = hv * valueHeadDim
                 var sumSq: Float = 0
-                for i in 0..<valueHeadDim {
-                    let v = yHost[base + i]; sumSq += v * v
+                for i in 0 ..< valueHeadDim {
+                    let v = yHost[base + i]
+                    sumSq += v * v
                 }
                 let inv = 1.0 / (sumSq / Float(valueHeadDim) + eps).squareRoot()
-                for i in 0..<valueHeadDim {
+                for i in 0 ..< valueHeadDim {
                     let normed = yHost[base + i] * inv * normW[i]
                     yGatedHost[base + i] = normed * siluScalar35(zHost[base + i])
                 }
@@ -1332,14 +1391,20 @@ public final class Qwen35GDNMixer: Module {
     ///
     /// All work queued on `cmd`; no commit inside. Mirrors the fused
     /// single-token path's cmd ownership.
-    func forwardMany(_ xNormFlat: Tensor, t: Int,
-                     cache: Qwen35GDNLayerCache,
-                     cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(fused,
-                     "Qwen35GDNMixer.forwardMany: requires FFAI_GDN_FUSED_PREP=1; legacy host-prep path can't run on a single in-flight cmd. Set the env or fall back to a per-token loop in the caller.")
+    func forwardMany(
+        _ xNormFlat: Tensor, t: Int,
+        cache: Qwen35GDNLayerCache,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            fused,
+            "Qwen35GDNMixer.forwardMany: requires FFAI_GDN_FUSED_PREP=1; legacy host-prep path can't run on a single in-flight cmd. Set the env or fall back to a per-token loop in the caller."
+        )
         precondition(t > 0, "Qwen35GDNMixer.forwardMany: T must be positive")
-        precondition(xNormFlat.elementCount == t * hidden,
-                     "Qwen35GDNMixer.forwardMany: xNormFlat size \(xNormFlat.elementCount) ≠ T·hidden = \(t * hidden)")
+        precondition(
+            xNormFlat.elementCount == t * hidden,
+            "Qwen35GDNMixer.forwardMany: xNormFlat size \(xNormFlat.elementCount) ≠ T·hidden = \(t * hidden)"
+        )
 
         let dt = xNormFlat.dtype
         let dtBytes = dt.byteSize
@@ -1352,19 +1417,23 @@ public final class Qwen35GDNMixer: Module {
 
         // ── Per-token recurrence — scratches reused, T-loop on `cmd`. ────
         let yGatedAll = Tensor.empty(shape: [t * valueDim], dtype: dt, device: device)
-        for r in 0..<t {
-            let qkvRow = Tensor(buffer: qkvAll.buffer,
-                                offset: qkvAll.offset + r * convDim * dtBytes,
-                                shape: [convDim], dtype: dt)
-            let zRow = Tensor(buffer: zAll.buffer,
-                              offset: zAll.offset + r * valueDim * dtBytes,
-                              shape: [valueDim], dtype: dt)
-            let bRawRow = Tensor(buffer: bRawAll.buffer,
-                                 offset: bRawAll.offset + r * numValueHeads * dtBytes,
-                                 shape: [numValueHeads], dtype: dt)
-            let aRawRow = Tensor(buffer: aRawAll.buffer,
-                                 offset: aRawAll.offset + r * numValueHeads * dtBytes,
-                                 shape: [numValueHeads], dtype: dt)
+        for r in 0 ..< t {
+            let qkvRow = Tensor(
+                buffer: qkvAll.buffer,
+                offset: qkvAll.offset + r * convDim * dtBytes,
+                shape: [convDim], dtype: dt)
+            let zRow = Tensor(
+                buffer: zAll.buffer,
+                offset: zAll.offset + r * valueDim * dtBytes,
+                shape: [valueDim], dtype: dt)
+            let bRawRow = Tensor(
+                buffer: bRawAll.buffer,
+                offset: bRawAll.offset + r * numValueHeads * dtBytes,
+                shape: [numValueHeads], dtype: dt)
+            let aRawRow = Tensor(
+                buffer: aRawAll.buffer,
+                offset: aRawAll.offset + r * numValueHeads * dtBytes,
+                shape: [numValueHeads], dtype: dt)
 
             Ops.conv1dCausalStep(
                 x: qkvRow, w: convW, b: convB,
@@ -1398,9 +1467,10 @@ public final class Qwen35GDNMixer: Module {
             cache.gdn.swap()
             cache.advance()
 
-            let yGatedRow = Tensor(buffer: yGatedAll.buffer,
-                                   offset: yGatedAll.offset + r * valueDim * dtBytes,
-                                   shape: [valueDim], dtype: dt)
+            let yGatedRow = Tensor(
+                buffer: yGatedAll.buffer,
+                offset: yGatedAll.offset + r * valueDim * dtBytes,
+                shape: [valueDim], dtype: dt)
             Ops.gatedMixerNorm(
                 y: yF32Scratch, z: zRow, weight: mixerNorm.weight,
                 epsBuf: epsBufFused,
@@ -1430,14 +1500,23 @@ public final class Qwen35AttentionMixer: Module {
     let attnOutputGate: Bool
     let scale: Float
 
-    init(qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
-         qNorm: RMSNorm, kNorm: RMSNorm,
-         nHeads: Int, nKVHeads: Int, headDim: Int, rotaryDim: Int,
-         ropeTheta: Float, attnOutputGate: Bool) {
-        self.qProj = qProj; self.kProj = kProj; self.vProj = vProj; self.oProj = oProj
-        self.qNorm = qNorm; self.kNorm = kNorm
-        self.nHeads = nHeads; self.nKVHeads = nKVHeads; self.headDim = headDim
-        self.rotaryDim = rotaryDim; self.ropeTheta = ropeTheta
+    init(
+        qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
+        qNorm: RMSNorm, kNorm: RMSNorm,
+        nHeads: Int, nKVHeads: Int, headDim: Int, rotaryDim: Int,
+        ropeTheta: Float, attnOutputGate: Bool
+    ) {
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
+        self.qNorm = qNorm
+        self.kNorm = kNorm
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.rotaryDim = rotaryDim
+        self.ropeTheta = ropeTheta
         self.attnOutputGate = attnOutputGate
         self.scale = 1.0 / Float(Double(headDim).squareRoot())
     }
@@ -1456,8 +1535,10 @@ public final class Qwen35AttentionMixer: Module {
     /// Single-token attention forward. Returns the post-o_proj
     /// contribution (residual add done by the enclosing layer). All work
     /// queued on `cmd`; no commit inside.
-    func forward(_ xNorm: Tensor, position: Int, cache kv: KVCache,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forward(
+        _ xNorm: Tensor, position: Int, cache kv: KVCache,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // q_proj projects 2× heads when attn_output_gate is set: the
         // first `nHeads · headDim` elements are the queries, the second
         // half is the per-head sigmoid gate.
@@ -1491,16 +1572,19 @@ public final class Qwen35AttentionMixer: Module {
 
         // Partial RoPE — rotate only the first `rotaryDim` dims of each
         // head, in place.
-        Ops.ropePartial(qNormed, position: position,
-                        headDim: headDim, rotaryDim: rotaryDim,
-                        thetaBase: ropeTheta, on: cmd)
-        Ops.ropePartial(kNormed, position: position,
-                        headDim: headDim, rotaryDim: rotaryDim,
-                        thetaBase: ropeTheta, on: cmd)
+        Ops.ropePartial(
+            qNormed, position: position,
+            headDim: headDim, rotaryDim: rotaryDim,
+            thetaBase: ropeTheta, on: cmd)
+        Ops.ropePartial(
+            kNormed, position: position,
+            headDim: headDim, rotaryDim: rotaryDim,
+            thetaBase: ropeTheta, on: cmd)
 
         // GPU KV cache update.
-        kv.appendOnGPU(kFlat: kNormed.reshaped(to: [nKVHeads, headDim]),
-                       vFlat: v.reshaped(to: [nKVHeads, headDim]), on: cmd)
+        kv.appendOnGPU(
+            kFlat: kNormed.reshaped(to: [nKVHeads, headDim]),
+            vFlat: v.reshaped(to: [nKVHeads, headDim]), on: cmd)
 
         let (cacheK, cacheV) = kv.prepareForAttention(on: cmd)
         let attnOut = Ops.sdpaDecode(
@@ -1537,9 +1621,11 @@ public final class Qwen35AttentionMixer: Module {
     /// KV append) keep their counts but ride the same in-flight buffer.
     ///
     /// All work queued on `cmd`; no commit inside.
-    func forwardMany(_ xNormFlat: Tensor, t: Int, startPosition: Int,
-                     cache kv: KVCache,
-                     cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forwardMany(
+        _ xNormFlat: Tensor, t: Int, startPosition: Int,
+        cache kv: KVCache,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         precondition(t > 0, "Qwen35AttentionMixer.forwardMany: T must be positive")
         let dt = xNormFlat.dtype
         let dtBytes = dt.byteSize
@@ -1552,8 +1638,8 @@ public final class Qwen35AttentionMixer: Module {
         let vOut = vProj.callMany(xNormFlat, t: t, on: cmd, device: device)
 
         // ── Gate split — one gather (vs T) when attnOutputGate ───────────
-        let queriesFlat: Tensor   // `[T, nHeads, headDim]` flat
-        let gateFlat: Tensor?     // `[T, nHeads, headDim]` flat
+        let queriesFlat: Tensor  // `[T, nHeads, headDim]` flat
+        let gateFlat: Tensor?  // `[T, nHeads, headDim]` flat
         if attnOutputGate {
             let q2T = qOut.reshaped(to: [t, nHeads, 2 * headDim])
             queriesFlat = sliceHeadHalvesMany35(
@@ -1582,24 +1668,31 @@ public final class Qwen35AttentionMixer: Module {
         // small enough that T launches at T≤256 cost less than one big
         // qmm. KV append uses appendRangeOnGPU for the single length-lock
         // path; each step is one Ops.kvCacheUpdate dispatch.
-        var kRows: [Tensor] = []; kRows.reserveCapacity(t)
-        var vRows: [Tensor] = []; vRows.reserveCapacity(t)
-        for r in 0..<t {
-            let qRow = Tensor(buffer: qNormed.buffer,
-                              offset: qNormed.offset + r * qDim * dtBytes,
-                              shape: [qDim], dtype: dt)
-            let kRow = Tensor(buffer: kNormed.buffer,
-                              offset: kNormed.offset + r * kvDim * dtBytes,
-                              shape: [kvDim], dtype: dt)
-            let vRow = Tensor(buffer: vOut.buffer,
-                              offset: vOut.offset + r * kvDim * dtBytes,
-                              shape: [kvDim], dtype: dt)
-            Ops.ropePartial(qRow, position: startPosition + r,
-                            headDim: headDim, rotaryDim: rotaryDim,
-                            thetaBase: ropeTheta, on: cmd)
-            Ops.ropePartial(kRow, position: startPosition + r,
-                            headDim: headDim, rotaryDim: rotaryDim,
-                            thetaBase: ropeTheta, on: cmd)
+        var kRows: [Tensor] = []
+        kRows.reserveCapacity(t)
+        var vRows: [Tensor] = []
+        vRows.reserveCapacity(t)
+        for r in 0 ..< t {
+            let qRow = Tensor(
+                buffer: qNormed.buffer,
+                offset: qNormed.offset + r * qDim * dtBytes,
+                shape: [qDim], dtype: dt)
+            let kRow = Tensor(
+                buffer: kNormed.buffer,
+                offset: kNormed.offset + r * kvDim * dtBytes,
+                shape: [kvDim], dtype: dt)
+            let vRow = Tensor(
+                buffer: vOut.buffer,
+                offset: vOut.offset + r * kvDim * dtBytes,
+                shape: [kvDim], dtype: dt)
+            Ops.ropePartial(
+                qRow, position: startPosition + r,
+                headDim: headDim, rotaryDim: rotaryDim,
+                thetaBase: ropeTheta, on: cmd)
+            Ops.ropePartial(
+                kRow, position: startPosition + r,
+                headDim: headDim, rotaryDim: rotaryDim,
+                thetaBase: ropeTheta, on: cmd)
             kRows.append(kRow.reshaped(to: [nKVHeads, headDim]))
             vRows.append(vRow.reshaped(to: [nKVHeads, headDim]))
         }
@@ -1614,13 +1707,15 @@ public final class Qwen35AttentionMixer: Module {
         // these T launches into one.
         let (cacheK, cacheV) = kv.prepareForAttention(on: cmd)
         let attnAll = Tensor.empty(shape: [t * qDim], dtype: dt, device: device)
-        for r in 0..<t {
-            let qRow = Tensor(buffer: qNormed.buffer,
-                              offset: qNormed.offset + r * qDim * dtBytes,
-                              shape: [nHeads, headDim], dtype: dt)
-            let outRow = Tensor(buffer: attnAll.buffer,
-                                offset: attnAll.offset + r * qDim * dtBytes,
-                                shape: [nHeads, headDim], dtype: dt)
+        for r in 0 ..< t {
+            let qRow = Tensor(
+                buffer: qNormed.buffer,
+                offset: qNormed.offset + r * qDim * dtBytes,
+                shape: [nHeads, headDim], dtype: dt)
+            let outRow = Tensor(
+                buffer: attnAll.buffer,
+                offset: attnAll.offset + r * qDim * dtBytes,
+                shape: [nHeads, headDim], dtype: dt)
             _ = Ops.sdpaDecode(
                 q: qRow, k: cacheK, v: cacheV,
                 nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
@@ -1655,10 +1750,15 @@ public final class Qwen35GDNLayer: Module, DecoderLayer {
 
     public let commitsCommandBuffer: Bool = true
 
-    init(inputNorm: RMSNorm, postNorm: RMSNorm,
-         mixer: Qwen35GDNMixer, ffn: Qwen35FFN, hidden: Int) {
-        self.inputNorm = inputNorm; self.postNorm = postNorm
-        self.mixer = mixer; self.ffn = ffn; self.hidden = hidden
+    init(
+        inputNorm: RMSNorm, postNorm: RMSNorm,
+        mixer: Qwen35GDNMixer, ffn: Qwen35FFN, hidden: Int
+    ) {
+        self.inputNorm = inputNorm
+        self.postNorm = postNorm
+        self.mixer = mixer
+        self.ffn = ffn
+        self.hidden = hidden
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -1675,12 +1775,15 @@ public final class Qwen35GDNLayer: Module, DecoderLayer {
     /// `DecoderLayer` conformance. Cache slot is a `GDNStateCache`.
     /// IMPORTANT: commits `cmd` (the GDN host gate prep + an MoE FFN
     /// both need a CPU sync). The host model refreshes `cmd` afterwards.
-    public func decode(_ h: Tensor, position: Int,
-                       cache: any LayerCacheProtocol,
-                       cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func decode(
+        _ h: Tensor, position: Int,
+        cache: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         guard let gc = cache as? Qwen35GDNLayerCache else {
-            fatalError("Qwen35GDNLayer: expected Qwen35GDNLayerCache, "
-                       + "got \(type(of: cache))")
+            fatalError(
+                "Qwen35GDNLayer: expected Qwen35GDNLayerCache, "
+                    + "got \(type(of: cache))")
         }
         // ── Mixer half — pre-norm + GDN mixer + residual add ──────────
         let xNorm = inputNorm(h, on: cmd)
@@ -1693,9 +1796,10 @@ public final class Qwen35GDNLayer: Module, DecoderLayer {
 
         let ffnCmd = mixer.fused ? cmd : device.makeCommandBuffer()
         let postMix = Ops.add(h, mixerOut, on: ffnCmd)
-        return qwen35ApplyFFN(ffn, postMix: postMix, postNorm: postNorm,
-                              position: position, cmd: ffnCmd,
-                              commitCmd: true, device: device)
+        return qwen35ApplyFFN(
+            ffn, postMix: postMix, postNorm: postNorm,
+            position: position, cmd: ffnCmd,
+            commitCmd: true, device: device)
     }
 
     /// T-batched layer forward for batched prefill. Mirrors the attention
@@ -1710,18 +1814,25 @@ public final class Qwen35GDNLayer: Module, DecoderLayer {
     /// rotates `workCmd`. `commitsCommandBuffer = true` always (the GDN
     /// layer's contract — MoE FFN commits inside, dense FFN ends with a
     /// fresh fully-committed addCmd).
-    public func decodeMany(_ hFlat: Tensor, t: Int, startPosition: Int,
-                           cache: any LayerCacheProtocol,
-                           cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func decodeMany(
+        _ hFlat: Tensor, t: Int, startPosition: Int,
+        cache: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         guard let gc = cache as? Qwen35GDNLayerCache else {
-            fatalError("Qwen35GDNLayer.decodeMany: expected Qwen35GDNLayerCache, "
-                       + "got \(type(of: cache))")
+            fatalError(
+                "Qwen35GDNLayer.decodeMany: expected Qwen35GDNLayerCache, "
+                    + "got \(type(of: cache))")
         }
-        precondition(mixer.fused,
-                     "Qwen35GDNLayer.decodeMany: requires FFAI_GDN_FUSED_PREP=1; legacy GDN path commits cmd mid-way and can't compose into a single in-flight cmd across the T-loop.")
+        precondition(
+            mixer.fused,
+            "Qwen35GDNLayer.decodeMany: requires FFAI_GDN_FUSED_PREP=1; legacy GDN path commits cmd mid-way and can't compose into a single in-flight cmd across the T-loop."
+        )
         precondition(t > 0, "Qwen35GDNLayer.decodeMany: T must be positive")
-        precondition(hFlat.elementCount == t * hidden,
-                     "Qwen35GDNLayer.decodeMany: hFlat size \(hFlat.elementCount) ≠ T·hidden = \(t * hidden)")
+        precondition(
+            hFlat.elementCount == t * hidden,
+            "Qwen35GDNLayer.decodeMany: hFlat size \(hFlat.elementCount) ≠ T·hidden = \(t * hidden)"
+        )
 
         let dt = hFlat.dtype
         let dtBytes = dt.byteSize
@@ -1744,9 +1855,10 @@ public final class Qwen35GDNLayer: Module, DecoderLayer {
         // gate/up/down at mTotal=T·topK + scatter-sum). For dense FFN
         // it dispatches `mlp.forwardMany` (3 gemms). Mirrors the
         // attention-layer's FFN dispatch.
-        return qwen35ApplyFFNMany(ffn, postMix: postMix, t: t,
-                                  postNorm: postNorm, hidden: hidden,
-                                  cmd: cmd, device: device)
+        return qwen35ApplyFFNMany(
+            ffn, postMix: postMix, t: t,
+            postNorm: postNorm, hidden: hidden,
+            cmd: cmd, device: device)
     }
 }
 
@@ -1766,12 +1878,20 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
 
     public let commitsCommandBuffer: Bool
 
-    init(inputNorm: RMSNorm, postNorm: RMSNorm,
-         mixer: Qwen35AttentionMixer, ffn: Qwen35FFN, hidden: Int) {
-        self.inputNorm = inputNorm; self.postNorm = postNorm
-        self.mixer = mixer; self.ffn = ffn; self.hidden = hidden
-        if case .moe = ffn { self.commitsCommandBuffer = true }
-        else { self.commitsCommandBuffer = false }
+    init(
+        inputNorm: RMSNorm, postNorm: RMSNorm,
+        mixer: Qwen35AttentionMixer, ffn: Qwen35FFN, hidden: Int
+    ) {
+        self.inputNorm = inputNorm
+        self.postNorm = postNorm
+        self.mixer = mixer
+        self.ffn = ffn
+        self.hidden = hidden
+        if case .moe = ffn {
+            self.commitsCommandBuffer = true
+        } else {
+            self.commitsCommandBuffer = false
+        }
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -1787,17 +1907,21 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
 
     /// `DecoderLayer` conformance. Cache slot is a `KVCache`. Commits
     /// `cmd` only when the FFN is an MoE block.
-    public func decode(_ h: Tensor, position: Int,
-                       cache: any LayerCacheProtocol,
-                       cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func decode(
+        _ h: Tensor, position: Int,
+        cache: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         guard let kv = cache as? KVCache else {
-            fatalError("Qwen35AttentionLayer: expected KVCache, "
-                       + "got \(type(of: cache))")
+            fatalError(
+                "Qwen35AttentionLayer: expected KVCache, "
+                    + "got \(type(of: cache))")
         }
         // ── Mixer half — pre-norm + attention + residual add ──────────
         let xNorm = inputNorm(h, on: cmd)
-        let mixerOut = mixer.forward(xNorm, position: position, cache: kv,
-                                     cmd: cmd, device: device)
+        let mixerOut = mixer.forward(
+            xNorm, position: position, cache: kv,
+            cmd: cmd, device: device)
 
         // Fused residual add + post-mix RMSNorm via mt_add_rms_norm
         // (hidden ≤ 4096). Validator gate falls through for wider
@@ -1819,10 +1943,11 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
         // `cmd` is the host model's `workCmd`; the model owns its commit
         // (or swaps it after an MoE FFN). This layer does not commit it
         // for the dense path.
-        return qwen35ApplyFFN(ffn, postMix: postMix, postNorm: postNorm,
-                              position: position, cmd: cmd,
-                              commitCmd: false, device: device,
-                              preNormed: ffnNorm)
+        return qwen35ApplyFFN(
+            ffn, postMix: postMix, postNorm: postNorm,
+            position: position, cmd: cmd,
+            commitCmd: false, device: device,
+            preNormed: ffnNorm)
     }
 
     /// T-batched layer forward for batched prefill. `hFlat` is
@@ -1847,17 +1972,21 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
     ///     `commitsCommandBuffer = true` contract triggers the model-
     ///     level `workCmd` refresh; the next layer reads via Metal hazard
     ///     tracking.
-    public func decodeMany(_ hFlat: Tensor, t: Int, startPosition: Int,
-                           cache: any LayerCacheProtocol,
-                           cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func decodeMany(
+        _ hFlat: Tensor, t: Int, startPosition: Int,
+        cache: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         guard let kv = cache as? KVCache else {
-            fatalError("Qwen35AttentionLayer.decodeMany: expected KVCache, "
-                       + "got \(type(of: cache))")
+            fatalError(
+                "Qwen35AttentionLayer.decodeMany: expected KVCache, "
+                    + "got \(type(of: cache))")
         }
         precondition(t > 0, "Qwen35AttentionLayer.decodeMany: T must be positive")
-        precondition(hFlat.elementCount == t * hidden,
-                     "Qwen35AttentionLayer.decodeMany: hFlat size \(hFlat.elementCount) "
-                     + "≠ T·hidden = \(t * hidden)")
+        precondition(
+            hFlat.elementCount == t * hidden,
+            "Qwen35AttentionLayer.decodeMany: hFlat size \(hFlat.elementCount) "
+                + "≠ T·hidden = \(t * hidden)")
 
         let dt = hFlat.dtype
         let dtBytes = dt.byteSize
@@ -1896,10 +2025,11 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
         // For MoE FFN this dispatches `moe.decodeMany` (one BGEMM per
         // gate/up/down at mTotal=T·topK + scatter-sum). For dense FFN
         // it dispatches `mlp.forwardMany` (3 gemms).
-        return qwen35ApplyFFNMany(ffn, postMix: postMix, t: t,
-                                  postNorm: postNorm, hidden: hidden,
-                                  cmd: cmd, device: device,
-                                  preNormed: ffnNorm)
+        return qwen35ApplyFFNMany(
+            ffn, postMix: postMix, t: t,
+            postNorm: postNorm, hidden: hidden,
+            cmd: cmd, device: device,
+            preNormed: ffnNorm)
     }
 }
 
@@ -1925,17 +2055,21 @@ private func qwen35FFNParameters(_ ffn: Qwen35FFN) -> [(String, Tensor)] {
 /// (MoE) or leave the layer's residual on the caller's cmd (dense —
 /// the dense-FFN add lives on `cmd` here, mirror commit-Cmd contract
 /// of `qwen35ApplyFFN`).
-private func qwen35ApplyFFNMany(_ ffn: Qwen35FFN, postMix: Tensor, t: Int,
-                                postNorm: RMSNorm, hidden: Int,
-                                cmd: MTLCommandBuffer, device: Device,
-                                preNormed: Tensor? = nil) -> Tensor {
+private func qwen35ApplyFFNMany(
+    _ ffn: Qwen35FFN, postMix: Tensor, t: Int,
+    postNorm: RMSNorm, hidden: Int,
+    cmd: MTLCommandBuffer, device: Device,
+    preNormed: Tensor? = nil
+) -> Tensor {
     let dt = postMix.dtype
     // Post-norm over T rows of [hidden]. One rmsNormRows kernel —
     // unless the caller already produced the normed tensor via the
     // fused `mt_add_rms_norm` kernel.
-    let ffnNorm = preNormed ?? Ops.rmsNormRows(
-        postMix, weight: postNorm.weight, eps: postNorm.eps,
-        nRows: t, rowSize: hidden, on: cmd)
+    let ffnNorm =
+        preNormed
+        ?? Ops.rmsNormRows(
+            postMix, weight: postNorm.weight, eps: postNorm.eps,
+            nRows: t, rowSize: hidden, on: cmd)
     switch ffn {
     case .dense(let mlp):
         let ffnOut = mlp.forwardMany(ffnNorm, t: t, cmd: cmd, device: device)
@@ -1963,10 +2097,12 @@ private func qwen35ApplyFFNMany(_ ffn: Qwen35FFN, postMix: Tensor, t: Int,
 ///   `cmd` is the host model's `workCmd`). When the FFN is an MoE block,
 ///   it commits `cmd` regardless; the residual add then runs on a fresh,
 ///   locally-committed buffer so the returned tensor is resident.
-private func qwen35ApplyFFN(_ ffn: Qwen35FFN, postMix: Tensor, postNorm: RMSNorm,
-                            position: Int, cmd: MTLCommandBuffer,
-                            commitCmd: Bool, device: Device,
-                            preNormed: Tensor? = nil) -> Tensor {
+private func qwen35ApplyFFN(
+    _ ffn: Qwen35FFN, postMix: Tensor, postNorm: RMSNorm,
+    position: Int, cmd: MTLCommandBuffer,
+    commitCmd: Bool, device: Device,
+    preNormed: Tensor? = nil
+) -> Tensor {
     // `preNormed` lets the attention-layer caller supply the
     // fused-kernel output of `mt_add_rms_norm` (postMix already +
     // post-norm in one dispatch). When nil, we run the separate norm.
@@ -1990,8 +2126,9 @@ private func qwen35ApplyFFN(_ ffn: Qwen35FFN, postMix: Tensor, postNorm: RMSNorm
         // fresh buffer. We commit without waiting: the residual add
         // tensor is the layer's output; the next layer queues onto a
         // fresh workCmd and Metal hazard-tracks the read.
-        let ffnOut = moe.forward(ffnNorm, position: position,
-                                 cmd: cmd, device: device)
+        let ffnOut = moe.forward(
+            ffnNorm, position: position,
+            cmd: cmd, device: device)
         let addCmd = device.makeCommandBuffer()
         let result = Ops.add(postMix, ffnOut, on: addCmd)
         addCmd.commit()
@@ -2030,23 +2167,33 @@ public final class Qwen35Model: LanguageModel {
         hasMoE ? 4096 : 1024
     }
 
-    init(embedTokens: AnyEmbedding, layers: [any DecoderLayer],
-         finalNorm: RMSNorm, lmHead: AnyLinear,
-         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         numKeyHeads: Int, numValueHeads: Int,
-         keyHeadDim: Int, valueHeadDim: Int,
-         convDim: Int, convKernel: Int,
-         vocab: Int, maxSeq: Int, dtype: DType) {
+    init(
+        embedTokens: AnyEmbedding, layers: [any DecoderLayer],
+        finalNorm: RMSNorm, lmHead: AnyLinear,
+        hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        numKeyHeads: Int, numValueHeads: Int,
+        keyHeadDim: Int, valueHeadDim: Int,
+        convDim: Int, convKernel: Int,
+        vocab: Int, maxSeq: Int, dtype: DType
+    ) {
         self.embedTokens = embedTokens
         self.layers = layers
         self.finalNorm = finalNorm
         self.lmHead = lmHead
-        self.hidden = hidden; self.nLayers = nLayers
-        self.nHeads = nHeads; self.nKVHeads = nKVHeads; self.headDim = headDim
-        self.numKeyHeads = numKeyHeads; self.numValueHeads = numValueHeads
-        self.keyHeadDim = keyHeadDim; self.valueHeadDim = valueHeadDim
-        self.convDim = convDim; self.convKernel = convKernel
-        self.vocab = vocab; self.maxSeq = maxSeq; self.dtype = dtype
+        self.hidden = hidden
+        self.nLayers = nLayers
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.numKeyHeads = numKeyHeads
+        self.numValueHeads = numValueHeads
+        self.keyHeadDim = keyHeadDim
+        self.valueHeadDim = valueHeadDim
+        self.convDim = convDim
+        self.convKernel = convKernel
+        self.vocab = vocab
+        self.maxSeq = maxSeq
+        self.dtype = dtype
         self.layerKinds = layers.map { layer in
             switch layer {
             case is Qwen35GDNLayer: return .gdn
@@ -2116,9 +2263,11 @@ public final class Qwen35Model: LanguageModel {
     /// internal `workCmd` buffers (committed by the layers themselves /
     /// refreshed after each committing layer), and ONLY the final
     /// `norm` + `lm_head` queue onto the caller's pristine `cmd`.
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let tokenBuf = device.makeBuffer(length: 4)
         var tid = UInt32(tokenId)
         memcpy(tokenBuf.contents(), &tid, 4)
@@ -2129,8 +2278,9 @@ public final class Qwen35Model: LanguageModel {
         var h = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
 
         for (i, layer) in layers.enumerated() {
-            h = layer.decode(h, position: position, cache: caches[i],
-                             cmd: workCmd, device: device)
+            h = layer.decode(
+                h, position: position, cache: caches[i],
+                cmd: workCmd, device: device)
             // Refresh `workCmd` if the layer committed it.
             let committed: Bool
             switch layer {
@@ -2147,8 +2297,9 @@ public final class Qwen35Model: LanguageModel {
         // it. (A GDN or MoE-bearing last layer already left `h`
         // resident and a fresh `workCmd` pending.)
         if let last = layers.last,
-           !((last as? Qwen35GDNLayer)?.commitsCommandBuffer ?? false),
-           !((last as? Qwen35AttentionLayer)?.commitsCommandBuffer ?? false) {
+            !((last as? Qwen35GDNLayer)?.commitsCommandBuffer ?? false),
+            !((last as? Qwen35AttentionLayer)?.commitsCommandBuffer ?? false)
+        {
             workCmd.commit()
             workCmd.waitUntilCompleted()
         }
@@ -2167,11 +2318,14 @@ public final class Qwen35Model: LanguageModel {
     /// forwardMulti stub that loops `forward(tokenId:)`. Tom's
     /// `forwardMany` already does the real chunked work, so the
     /// protocol method just delegates.)
-    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                             caches: [any LayerCacheProtocol],
-                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        forwardMany(tokenIds: tokenIds, startPosition: position,
-                    caches: caches, on: cmd, device: device)
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        forwardMany(
+            tokenIds: tokenIds, startPosition: position,
+            caches: caches, on: cmd, device: device)
     }
 
     /// Multi-token forward over `tokenIds[startPosition .. startPosition+T)`
@@ -2203,14 +2357,18 @@ public final class Qwen35Model: LanguageModel {
     /// existing decode path. The shape of the API is the same, so a
     /// future agent can swap the loop body without changing callers
     /// (the bench harness, the `Generate.swift` prefill driver).
-    public func forwardMany(tokenIds: [Int], startPosition: Int,
-                            caches: [any LayerCacheProtocol],
-                            on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(!tokenIds.isEmpty,
-                     "Qwen35Model.forwardMany: tokenIds must not be empty")
+    public func forwardMany(
+        tokenIds: [Int], startPosition: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "Qwen35Model.forwardMany: tokenIds must not be empty")
         if tokenIds.count == 1 {
-            return forward(tokenId: tokenIds[0], position: startPosition,
-                           caches: caches, on: cmd, device: device)
+            return forward(
+                tokenId: tokenIds[0], position: startPosition,
+                caches: caches, on: cmd, device: device)
         }
         // ─── Batched-T forward (mixed dispatch) ──────────────────────────
         // Attention layers dispatch `Qwen35AttentionLayer.decodeMany`
@@ -2224,15 +2382,17 @@ public final class Qwen35Model: LanguageModel {
         // sdpaMulti, gate-split gather from T to 1. Compounds across
         // every attention layer in the stack.
         if ProcessInfo.processInfo.environment["FFAI_LEGACY_FORWARDMANY"] != nil {
-            return _forwardManyPerTokenLegacy(tokenIds: tokenIds,
-                                              startPosition: startPosition,
-                                              caches: caches,
-                                              on: cmd, device: device)
+            return _forwardManyPerTokenLegacy(
+                tokenIds: tokenIds,
+                startPosition: startPosition,
+                caches: caches,
+                on: cmd, device: device)
         }
-        return _forwardManyBatched(tokenIds: tokenIds,
-                                   startPosition: startPosition,
-                                   caches: caches,
-                                   on: cmd, device: device)
+        return _forwardManyBatched(
+            tokenIds: tokenIds,
+            startPosition: startPosition,
+            caches: caches,
+            on: cmd, device: device)
     }
 
     /// Legacy per-token-loop path retained behind `FFAI_LEGACY_FORWARDMANY=1`
@@ -2247,15 +2407,17 @@ public final class Qwen35Model: LanguageModel {
         // onto the caller's `cmd` so the default `forwardSample` /
         // `forwardSampleCategorical` overlay their output kernels.
         let prefix = tokenIds.count - 1
-        for i in 0..<prefix {
+        for i in 0 ..< prefix {
             let stepCmd = device.makeCommandBuffer()
-            _ = forward(tokenId: tokenIds[i], position: startPosition + i,
-                        caches: caches, on: stepCmd, device: device)
+            _ = forward(
+                tokenId: tokenIds[i], position: startPosition + i,
+                caches: caches, on: stepCmd, device: device)
             stepCmd.commit()
             stepCmd.waitUntilCompleted()
         }
-        return forward(tokenId: tokenIds[prefix], position: startPosition + prefix,
-                       caches: caches, on: cmd, device: device)
+        return forward(
+            tokenId: tokenIds[prefix], position: startPosition + prefix,
+            caches: caches, on: cmd, device: device)
     }
 
     /// Mixed-dispatch batched forwardMany. Attention layers fan to
@@ -2288,17 +2450,19 @@ public final class Qwen35Model: LanguageModel {
 
         for (i, layer) in layers.enumerated() {
             if let attn = layer as? Qwen35AttentionLayer {
-                h = attn.decodeMany(h, t: t, startPosition: startPosition,
-                                    cache: caches[i],
-                                    cmd: workCmd, device: device)
+                h = attn.decodeMany(
+                    h, t: t, startPosition: startPosition,
+                    cache: caches[i],
+                    cmd: workCmd, device: device)
                 // attn.decodeMany commits workCmd if MoE FFN. Refresh.
                 if attn.commitsCommandBuffer {
                     workCmd = device.makeCommandBuffer()
                 }
             } else if let gdn = layer as? Qwen35GDNLayer, gdn.mixer.fused {
-                h = gdn.decodeMany(h, t: t, startPosition: startPosition,
-                                   cache: caches[i],
-                                   cmd: workCmd, device: device)
+                h = gdn.decodeMany(
+                    h, t: t, startPosition: startPosition,
+                    cache: caches[i],
+                    cmd: workCmd, device: device)
                 // GDN's commitsCommandBuffer is always true; refresh.
                 workCmd = device.makeCommandBuffer()
             } else {
@@ -2309,13 +2473,15 @@ public final class Qwen35Model: LanguageModel {
                 // back, and blit it into `h[r]`. All T blits queue onto
                 // one `blitCmd` that commits at the end of this layer.
                 let blitCmd = device.makeCommandBuffer()
-                for r in 0..<t {
-                    let hRow = Tensor(buffer: h.buffer,
-                                      offset: h.offset + r * hidden * dtBytes,
-                                      shape: [hidden], dtype: dt)
-                    let rowOut = layer.decode(hRow, position: startPosition + r,
-                                              cache: caches[i],
-                                              cmd: workCmd, device: device)
+                for r in 0 ..< t {
+                    let hRow = Tensor(
+                        buffer: h.buffer,
+                        offset: h.offset + r * hidden * dtBytes,
+                        shape: [hidden], dtype: dt)
+                    let rowOut = layer.decode(
+                        hRow, position: startPosition + r,
+                        cache: caches[i],
+                        cmd: workCmd, device: device)
                     Ops.copy(rowOut, into: hRow, on: blitCmd)
                     // GDN layers commit workCmd inside .decode; refresh.
                     let committed: Bool
@@ -2335,16 +2501,18 @@ public final class Qwen35Model: LanguageModel {
         // If the last layer was non-committing (dense FFN attention),
         // its work still sits on `workCmd`. Commit + wait.
         if let last = layers.last,
-           !((last as? Qwen35GDNLayer)?.commitsCommandBuffer ?? false),
-           !((last as? Qwen35AttentionLayer)?.commitsCommandBuffer ?? false) {
+            !((last as? Qwen35GDNLayer)?.commitsCommandBuffer ?? false),
+            !((last as? Qwen35AttentionLayer)?.commitsCommandBuffer ?? false)
+        {
             workCmd.commit()
             workCmd.waitUntilCompleted()
         }
 
         // ── Final norm + lm_head on the LAST row only ────────────────────
-        let lastRow = Tensor(buffer: h.buffer,
-                             offset: h.offset + (t - 1) * hidden * dtBytes,
-                             shape: [hidden], dtype: dt)
+        let lastRow = Tensor(
+            buffer: h.buffer,
+            offset: h.offset + (t - 1) * hidden * dtBytes,
+            shape: [hidden], dtype: dt)
         let normed = finalNorm(lastRow, on: cmd)
         return lmHead(normed, on: cmd)
     }
@@ -2361,19 +2529,23 @@ public final class Qwen35Model: LanguageModel {
 
     public var supportsEmbeddingInput: Bool { true }
 
-    public func forward(inputEmbedding: Tensor, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(inputEmbedding.elementCount == hidden,
-                     "Qwen35Model.forward(inputEmbedding:): expected [\(hidden)], "
-                     + "got \(inputEmbedding.shape)")
+    public func forward(
+        inputEmbedding: Tensor, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            inputEmbedding.elementCount == hidden,
+            "Qwen35Model.forward(inputEmbedding:): expected [\(hidden)], "
+                + "got \(inputEmbedding.shape)")
         var h = inputEmbedding.reshaped(to: [hidden])
 
         // Layers run on internal buffers — never the caller's `cmd`.
         var workCmd = device.makeCommandBuffer()
         for (i, layer) in layers.enumerated() {
-            h = layer.decode(h, position: position, cache: caches[i],
-                             cmd: workCmd, device: device)
+            h = layer.decode(
+                h, position: position, cache: caches[i],
+                cmd: workCmd, device: device)
             let committed: Bool
             switch layer {
             case let l as Qwen35GDNLayer: committed = l.commitsCommandBuffer
@@ -2385,8 +2557,9 @@ public final class Qwen35Model: LanguageModel {
         // Flush a trailing non-committing layer's pending work so `h` is
         // resident before the caller's `cmd` reads it.
         if let last = layers.last,
-           !((last as? Qwen35GDNLayer)?.commitsCommandBuffer ?? false),
-           !((last as? Qwen35AttentionLayer)?.commitsCommandBuffer ?? false) {
+            !((last as? Qwen35GDNLayer)?.commitsCommandBuffer ?? false),
+            !((last as? Qwen35AttentionLayer)?.commitsCommandBuffer ?? false)
+        {
             workCmd.commit()
             workCmd.waitUntilCompleted()
         }
@@ -2433,13 +2606,15 @@ private func zeroVector35(_ n: Int, dtype: DType, device: Device) -> Tensor {
 /// Transpose HF conv1d.weight `[C, K, 1]` → `[K, C]` for the metaltile
 /// conv kernel. The trailing `1` is the depthwise group dim; row-major
 /// the source is `[c][k]`-ordered.
-private func transposeConv1dWeight35(src: Tensor, kernel K: Int, channels C: Int,
-                                     dtype: DType, device: Device) -> Tensor {
+private func transposeConv1dWeight35(
+    src: Tensor, kernel K: Int, channels C: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     let floats = readFloats35(src)
     precondition(floats.count == K * C, "Qwen3.5: conv1d.weight count mismatch")
     var dst = [Float](repeating: 0, count: K * C)
-    for c in 0..<C {
-        for k in 0..<K { dst[k * C + c] = floats[c * K + k] }
+    for c in 0 ..< C {
+        for k in 0 ..< K { dst[k * C + c] = floats[c * K + k] }
     }
     let t = Tensor.empty(shape: [K, C], dtype: dtype, device: device)
     writeFloats35(dst, into: t)
@@ -2453,12 +2628,13 @@ private func writeFloats35(_ values: [Float], into t: Tensor) {
     case .f32:
         t.copyIn(from: values)
     case .bf16:
-        t.copyIn(from: values.map { v -> UInt16 in
-            // Round-to-nearest before truncating the low 16 bits.
-            let bits = v.bitPattern
-            let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
-            return UInt16(rounded >> 16)
-        })
+        t.copyIn(
+            from: values.map { v -> UInt16 in
+                // Round-to-nearest before truncating the low 16 bits.
+                let bits = v.bitPattern
+                let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
+                return UInt16(rounded >> 16)
+            })
     case .f16:
         t.copyIn(from: values.map { Float16($0) })
     default:
@@ -2469,18 +2645,24 @@ private func writeFloats35(_ values: [Float], into t: Tensor) {
 /// Per-head unweighted RMSNorm (eps 1e-6) of a flat `[nHeads · headDim]`
 /// host vector, scaled by `scale`. Matches the standard (non-fused) GDN
 /// path's `scale · rmsNorm(x, weight=None)`.
-private func perHeadRMSNormScale35(_ x: [Float], nHeads: Int, headDim: Int,
-                                   scale: Float) -> [Float] {
-    precondition(x.count == nHeads * headDim,
-                 "Qwen3.5: perHeadRMSNorm size mismatch")
+private func perHeadRMSNormScale35(
+    _ x: [Float], nHeads: Int, headDim: Int,
+    scale: Float
+) -> [Float] {
+    precondition(
+        x.count == nHeads * headDim,
+        "Qwen3.5: perHeadRMSNorm size mismatch")
     let eps: Float = 1e-6
     var out = [Float](repeating: 0, count: x.count)
-    for h in 0..<nHeads {
+    for h in 0 ..< nHeads {
         let base = h * headDim
         var sumSq: Float = 0
-        for i in 0..<headDim { let v = x[base + i]; sumSq += v * v }
+        for i in 0 ..< headDim {
+            let v = x[base + i]
+            sumSq += v * v
+        }
         let inv = scale / (sumSq / Float(headDim) + eps).squareRoot()
-        for i in 0..<headDim { out[base + i] = x[base + i] * inv }
+        for i in 0 ..< headDim { out[base + i] = x[base + i] * inv }
     }
     return out
 }
@@ -2511,16 +2693,19 @@ private func siluScalar35(_ x: Float) -> Float {
 /// rows are the even indices `2h` and the gate rows the odd indices
 /// `2h + 1`. `Ops.gather` row-copies them into a contiguous
 /// `[nHeads · headDim]` result on the GPU — no host sync, no commit.
-private func sliceHeadHalves35(_ q2: Tensor, nHeads: Int, headDim: Int,
-                               takeFirst: Bool,
-                               on cmd: MTLCommandBuffer,
-                               device: Device) -> Tensor {
-    precondition(q2.elementCount == nHeads * 2 * headDim,
-                 "sliceHeadHalves35: q2 must be [nHeads, 2·headDim]")
+private func sliceHeadHalves35(
+    _ q2: Tensor, nHeads: Int, headDim: Int,
+    takeFirst: Bool,
+    on cmd: MTLCommandBuffer,
+    device: Device
+) -> Tensor {
+    precondition(
+        q2.elementCount == nHeads * 2 * headDim,
+        "sliceHeadHalves35: q2 must be [nHeads, 2·headDim]")
     let table = q2.reshaped(to: [nHeads * 2, headDim])
     // Row indices: even rows = queries, odd rows = gates.
     var rows = [UInt32](repeating: 0, count: nHeads)
-    for h in 0..<nHeads { rows[h] = UInt32(2 * h + (takeFirst ? 0 : 1)) }
+    for h in 0 ..< nHeads { rows[h] = UInt32(2 * h + (takeFirst ? 0 : 1)) }
     let idxBuf = device.makeBuffer(length: nHeads * 4)
     rows.withUnsafeBytes { _ = memcpy(idxBuf.contents(), $0.baseAddress!, nHeads * 4) }
     let idx = Tensor(buffer: idxBuf, offset: 0, shape: [nHeads], dtype: .u32)
@@ -2542,21 +2727,25 @@ private func sliceHeadHalves35(_ q2: Tensor, nHeads: Int, headDim: Int,
 ///
 /// Unblocks `Qwen35AttentionMixer.forwardMany` for the
 /// `attnOutputGate=true` path (every shipped Qwen3.6-A3B config).
-private func sliceHeadHalvesMany35(_ q2T: Tensor, t: Int,
-                                   nHeads: Int, headDim: Int,
-                                   takeFirst: Bool,
-                                   on cmd: MTLCommandBuffer,
-                                   device: Device) -> Tensor {
-    precondition(q2T.elementCount == t * nHeads * 2 * headDim,
-                 "sliceHeadHalvesMany35: q2T must be [T, nHeads, 2·headDim] (got elements=\(q2T.elementCount), expected \(t * nHeads * 2 * headDim))")
+private func sliceHeadHalvesMany35(
+    _ q2T: Tensor, t: Int,
+    nHeads: Int, headDim: Int,
+    takeFirst: Bool,
+    on cmd: MTLCommandBuffer,
+    device: Device
+) -> Tensor {
+    precondition(
+        q2T.elementCount == t * nHeads * 2 * headDim,
+        "sliceHeadHalvesMany35: q2T must be [T, nHeads, 2·headDim] (got elements=\(q2T.elementCount), expected \(t * nHeads * 2 * headDim))"
+    )
     let table = q2T.reshaped(to: [t * nHeads * 2, headDim])
     let nIdx = t * nHeads
     var rows = [UInt32](repeating: 0, count: nIdx)
     let half: UInt32 = takeFirst ? 0 : 1
-    for r in 0..<t {
+    for r in 0 ..< t {
         let base = UInt32(r * 2 * nHeads)
         let rowBase = r * nHeads
-        for h in 0..<nHeads {
+        for h in 0 ..< nHeads {
             rows[rowBase + h] = base + UInt32(2 * h) + half
         }
     }

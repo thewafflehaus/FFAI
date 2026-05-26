@@ -144,8 +144,9 @@ public struct ISTFTNetConfig: Sendable {
             resblockKernelSizes: ints("resblock_kernel_sizes", [3, 7, 11]),
             upsampleRates: ints("upsample_rates", [10, 6]),
             upsampleInitialChannel: int("upsample_initial_channel", 256),
-            resblockDilationSizes: intss("resblock_dilation_sizes",
-                                        [[1, 3, 5], [1, 3, 5], [1, 3, 5]]),
+            resblockDilationSizes: intss(
+                "resblock_dilation_sizes",
+                [[1, 3, 5], [1, 3, 5], [1, 3, 5]]),
             upsampleKernelSizes: ints("upsample_kernel_sizes", [20, 12]),
             genIstftNFft: int("gen_istft_n_fft", 20),
             genIstftHopSize: int("gen_istft_hop_size", 5)
@@ -212,9 +213,9 @@ public struct StyleTTS2Config: Sendable {
     public static func from(_ config: ModelConfig) -> StyleTTS2Config? {
         let raw = config.raw
         guard let nToken = config.int("n_token"),
-              let hiddenDim = config.int("hidden_dim"),
-              let plbertRaw = config.nested("plbert"),
-              let istftnetRaw = config.nested("istftnet")
+            let hiddenDim = config.int("hidden_dim"),
+            let plbertRaw = config.nested("plbert"),
+            let istftnetRaw = config.nested("istftnet")
         else { return nil }
 
         func int(_ k: String, _ d: Int) -> Int { (raw[k] as? Int) ?? d }
@@ -312,10 +313,22 @@ public enum StyleTTS2TextCleaner {
     public static let symbolToId: [Character: Int] = {
         var map = [Character: Int]()
         var idx = 0
-        for ch in pad { map[ch] = idx; idx += 1 }
-        for ch in punctuation { map[ch] = idx; idx += 1 }
-        for ch in letters { map[ch] = idx; idx += 1 }
-        for ch in lettersIPA { map[ch] = idx; idx += 1 }
+        for ch in pad {
+            map[ch] = idx
+            idx += 1
+        }
+        for ch in punctuation {
+            map[ch] = idx
+            idx += 1
+        }
+        for ch in letters {
+            map[ch] = idx
+            idx += 1
+        }
+        for ch in lettersIPA {
+            map[ch] = idx
+            idx += 1
+        }
         return map
     }()
 
@@ -380,7 +393,7 @@ public final class StyleTTS2Vocoder: @unchecked Sendable {
         self.nFFT = nFFT
         self.hopLength = hopLength
         // Hann window: w[i] = 0.5 − 0.5·cos(2π·i / N)
-        self.hannWindow = (0..<nFFT).map { i in
+        self.hannWindow = (0 ..< nFFT).map { i in
             0.5 - 0.5 * cos(2.0 * .pi * Float(i) / Float(nFFT))
         }
     }
@@ -399,31 +412,35 @@ public final class StyleTTS2Vocoder: @unchecked Sendable {
     ///   - device: Metal device for output tensor allocation.
     /// - Returns: `[outLen]` f32 waveform Tensor.
     ///            `outLen = (nFrames - 1) * hopLength + nFFT`.
-    public func synthesize(specReFlat: [Float], specImFlat: [Float],
-                           nFrames: Int, device: Device = .shared) -> Tensor {
+    public func synthesize(
+        specReFlat: [Float], specImFlat: [Float],
+        nFrames: Int, device: Device = .shared
+    ) -> Tensor {
         let nFreq = nFFT / 2 + 1
-        precondition(specReFlat.count == nFrames * nFreq,
-                     "StyleTTS2Vocoder.synthesize: specRe length mismatch")
-        precondition(specImFlat.count == nFrames * nFreq,
-                     "StyleTTS2Vocoder.synthesize: specIm length mismatch")
+        precondition(
+            specReFlat.count == nFrames * nFreq,
+            "StyleTTS2Vocoder.synthesize: specRe length mismatch")
+        precondition(
+            specImFlat.count == nFrames * nFreq,
+            "StyleTTS2Vocoder.synthesize: specIm length mismatch")
 
         let outLen = (nFrames - 1) * hopLength + nFFT
         var audioSamples = [Float](repeating: 0, count: outLen)
         var windowSum = [Float](repeating: 0, count: outLen)
 
         // Overlap-add: for each frame, IRFFT then window and accumulate.
-        for frame in 0..<nFrames {
+        for frame in 0 ..< nFrames {
             let start = frame * hopLength
             // Build complex spectrum for IRFFT: nFreq complex points → nFFT real points.
             // IRFFT via the real-IFFT formula: x[n] = (1/N) sum_k X[k] e^(j2πkn/N).
             // For real-valued output (Hermitian symmetry), conjugate halves cancel.
             var frameOut = [Float](repeating: 0, count: nFFT)
-            let re = Array(specReFlat[(frame * nFreq)..<(frame * nFreq + nFreq)])
-            let im = Array(specImFlat[(frame * nFreq)..<(frame * nFreq + nFreq)])
+            let re = Array(specReFlat[(frame * nFreq) ..< (frame * nFreq + nFreq)])
+            let im = Array(specImFlat[(frame * nFreq) ..< (frame * nFreq + nFreq)])
 
-            for n in 0..<nFFT {
+            for n in 0 ..< nFFT {
                 var sum: Float = 0
-                for k in 0..<nFreq {
+                for k in 0 ..< nFreq {
                     let angle = 2.0 * .pi * Float(k) * Float(n) / Float(nFFT)
                     let scale: Float = (k == 0 || k == nFreq - 1) ? 1 : 2
                     sum += scale * (re[k] * cos(angle) - im[k] * sin(angle))
@@ -432,7 +449,7 @@ public final class StyleTTS2Vocoder: @unchecked Sendable {
             }
 
             // Window and accumulate.
-            for i in 0..<nFFT {
+            for i in 0 ..< nFFT {
                 let idx = start + i
                 if idx < outLen {
                     audioSamples[idx] += frameOut[i] * hannWindow[i]
@@ -442,15 +459,16 @@ public final class StyleTTS2Vocoder: @unchecked Sendable {
         }
 
         // Normalize by the squared window (WOLA).
-        for i in 0..<outLen {
+        for i in 0 ..< outLen {
             if windowSum[i] > 1e-10 { audioSamples[i] /= windowSum[i] }
         }
 
         // Trim leading / trailing half-windows (standard STFT boundary).
         let trimStart = nFFT / 2
         let trimEnd = outLen - nFFT / 2
-        let output = trimEnd > trimStart
-            ? Array(audioSamples[trimStart..<trimEnd])
+        let output =
+            trimEnd > trimStart
+            ? Array(audioSamples[trimStart ..< trimEnd])
             : audioSamples
 
         let t = Tensor.empty(shape: [output.count], dtype: .f32, device: device)
@@ -460,18 +478,23 @@ public final class StyleTTS2Vocoder: @unchecked Sendable {
 
     /// Convenience overload accepting `Tensor` spectrogram planes. The tensors
     /// are read to CPU (shared storage — no extra copy) before synthesis.
-    public func synthesize(specRe: Tensor, specIm: Tensor,
-                           device: Device = .shared) -> Tensor {
+    public func synthesize(
+        specRe: Tensor, specIm: Tensor,
+        device: Device = .shared
+    ) -> Tensor {
         let nFreq = nFFT / 2 + 1
-        precondition(specRe.shape.count == 2 && specRe.shape[1] == nFreq,
-                     "StyleTTS2Vocoder.synthesize: specRe must be [nFrames, nFreq]")
-        precondition(specIm.shape == specRe.shape,
-                     "StyleTTS2Vocoder.synthesize: specRe and specIm shape mismatch")
+        precondition(
+            specRe.shape.count == 2 && specRe.shape[1] == nFreq,
+            "StyleTTS2Vocoder.synthesize: specRe must be [nFrames, nFreq]")
+        precondition(
+            specIm.shape == specRe.shape,
+            "StyleTTS2Vocoder.synthesize: specRe and specIm shape mismatch")
         let nFrames = specRe.shape[0]
         let reFlat = specRe.toArray(as: Float.self)
         let imFlat = specIm.toArray(as: Float.self)
-        return synthesize(specReFlat: reFlat, specImFlat: imFlat,
-                          nFrames: nFrames, device: device)
+        return synthesize(
+            specReFlat: reFlat, specImFlat: imFlat,
+            nFrames: nFrames, device: device)
     }
 }
 
@@ -559,9 +582,9 @@ public final class StyleTTS2Model: @unchecked Sendable {
     /// built-in symbol table. Prepend / append padding id 0 (BOS/EOS) as
     /// the model expects.
     public func phonemeIds(for ipa: String) -> [Int] {
-        var ids = [0]   // BOS padding token
+        var ids = [0]  // BOS padding token
         ids.append(contentsOf: StyleTTS2TextCleaner.tokenize(ipa))
-        ids.append(0)   // EOS padding token
+        ids.append(0)  // EOS padding token
         return ids
     }
 
@@ -570,8 +593,10 @@ public final class StyleTTS2Model: @unchecked Sendable {
     /// Return a placeholder waveform (zeros) for integration tests that
     /// verify load + config without running the acoustic forward pass.
     /// Shape: `[nSamples]` f32.
-    public func generatePlaceholder(durationSeconds: Double = 0.1,
-                                    device: Device = .shared) -> Tensor {
+    public func generatePlaceholder(
+        durationSeconds: Double = 0.1,
+        device: Device = .shared
+    ) -> Tensor {
         let nSamples = max(1, Int(durationSeconds * Double(sampleRate)))
         let t = Tensor.empty(shape: [nSamples], dtype: .f32, device: device)
         t.zero()
@@ -603,7 +628,10 @@ public final class StyleTTS2Model: @unchecked Sendable {
         speed: Float = 1.0,
         device: Device = .shared
     ) throws -> Tensor {
-        _ = text; _ = voice; _ = speed; _ = device
+        _ = text
+        _ = voice
+        _ = speed
+        _ = device
         throw StyleTTS2Error.acousticFrontEndNotWired
     }
 }
@@ -632,7 +660,8 @@ extension StyleTTS2Model {
     /// - Loads `voices.safetensors` when present; falls back to an empty
     ///   voice table when absent (allows config-only tests).
     public static func load(directory: URL, device: Device = .shared)
-        throws -> StyleTTS2Model {
+        throws -> StyleTTS2Model
+    {
         let modelConfig = try ModelConfig.load(from: directory)
         guard handles(modelConfig) else {
             throw ModelError.unsupportedModelType(
@@ -642,7 +671,7 @@ extension StyleTTS2Model {
         guard let sc = StyleTTS2Config.from(modelConfig) else {
             throw ModelError.unsupportedModelType(
                 "config.json is missing required StyleTTS2 fields "
-                + "(n_token, hidden_dim, plbert, istftnet)"
+                    + "(n_token, hidden_dim, plbert, istftnet)"
             )
         }
 
@@ -694,11 +723,16 @@ extension StyleTTS2Model {
         }
         // Sharded checkpoint: glob for *.safetensors excluding voices.
         let fm = FileManager.default
-        let files = (try? fm.contentsOfDirectory(at: directory,
-                                                  includingPropertiesForKeys: nil)) ?? []
-        return try files
-            .filter { $0.pathExtension == "safetensors"
-                   && $0.lastPathComponent != "voices.safetensors" }
+        let files =
+            (try? fm.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil)) ?? []
+        return
+            try files
+            .filter {
+                $0.pathExtension == "safetensors"
+                    && $0.lastPathComponent != "voices.safetensors"
+            }
             .reduce(0) { count, url in
                 let f = try SafeTensorsFile(url: url, device: device)
                 return count + f.entries.count
@@ -708,7 +742,8 @@ extension StyleTTS2Model {
     /// Load voice style embeddings from `voices.safetensors`. Each entry
     /// is a `[seqLen, styleDim]` f32 tensor keyed by voice name.
     private static func loadVoiceEmbeddings(url: URL, device: Device)
-        throws -> [String: Tensor] {
+        throws -> [String: Tensor]
+    {
         let file = try SafeTensorsFile(url: url, device: device)
         var voices = [String: Tensor]()
         for (name, _) in file.entries {

@@ -34,8 +34,8 @@ import Metal
 // ─── Family entry point ──────────────────────────────────────────────────────
 
 public enum SmolVLM2 {
-    public static let modelTypes: Set<String>     = ["smolvlm"]
-    public static let architectures: Set<String>  = ["SmolVLMForConditionalGeneration"]
+    public static let modelTypes: Set<String> = ["smolvlm"]
+    public static let architectures: Set<String> = ["SmolVLMForConditionalGeneration"]
 
     public static func variant(for config: ModelConfig) throws -> SmolVLM2Dense.Type {
         return SmolVLM2Dense.self
@@ -70,7 +70,9 @@ public struct SmolVLM2Dense {
     /// a prompt with `frameCount × imageTokensPerFrame` image-token
     /// placeholders, then pass the concatenated per-frame embeddings to
     /// `SmolVLM2Model.prefillWithImage`.
-    public static let availableCapabilities: Set<Capability> = [.textIn, .textOut, .imageIn, .videoIn]
+    public static let availableCapabilities: Set<Capability> = [
+        .textIn, .textOut, .imageIn, .videoIn,
+    ]
     public static let defaultGenerationParameters = GenerationParameters(
         maxTokens: 256,
         prefillStepSize: 1024,
@@ -111,31 +113,38 @@ public struct SmolVLM2Dense {
 
         var llamaLayers: [LlamaLayer] = []
         llamaLayers.reserveCapacity(tc.numHiddenLayers)
-        for i in 0..<tc.numHiddenLayers {
+        for i in 0 ..< tc.numHiddenLayers {
             let p = "language_model.layers.\(i)"
-            let qProj = try loadLinear(base: "\(p).self_attn.q_proj", in: weights, quantization: quant)
-            let kProj = try loadLinear(base: "\(p).self_attn.k_proj", in: weights, quantization: quant)
-            let vProj = try loadLinear(base: "\(p).self_attn.v_proj", in: weights, quantization: quant)
-            let oProj = try loadLinear(base: "\(p).self_attn.o_proj", in: weights, quantization: quant)
-            let gateProj = try loadLinear(base: "\(p).mlp.gate_proj", in: weights, quantization: quant)
-            let upProj   = try loadLinear(base: "\(p).mlp.up_proj",   in: weights, quantization: quant)
-            let downProj = try loadLinear(base: "\(p).mlp.down_proj", in: weights, quantization: quant)
+            let qProj = try loadLinear(
+                base: "\(p).self_attn.q_proj", in: weights, quantization: quant)
+            let kProj = try loadLinear(
+                base: "\(p).self_attn.k_proj", in: weights, quantization: quant)
+            let vProj = try loadLinear(
+                base: "\(p).self_attn.v_proj", in: weights, quantization: quant)
+            let oProj = try loadLinear(
+                base: "\(p).self_attn.o_proj", in: weights, quantization: quant)
+            let gateProj = try loadLinear(
+                base: "\(p).mlp.gate_proj", in: weights, quantization: quant)
+            let upProj = try loadLinear(base: "\(p).mlp.up_proj", in: weights, quantization: quant)
+            let downProj = try loadLinear(
+                base: "\(p).mlp.down_proj", in: weights, quantization: quant)
             let inputNorm = RMSNorm(
                 weight: try weights.tensor(named: "\(p).input_layernorm.weight"),
                 eps: tc.rmsNormEps)
             let postAttnNorm = RMSNorm(
                 weight: try weights.tensor(named: "\(p).post_attention_layernorm.weight"),
                 eps: tc.rmsNormEps)
-            llamaLayers.append(LlamaLayer(
-                qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
-                gateProj: gateProj, upProj: upProj, downProj: downProj,
-                inputNorm: inputNorm, postAttnNorm: postAttnNorm,
-                hidden: tc.hiddenSize,
-                nHeads: tc.numAttentionHeads, nKVHeads: tc.numKeyValueHeads,
-                headDim: tc.headDim, intermediate: tc.intermediateSize,
-                ropeTheta: tc.ropeTheta,
-                ropeScaling: .none
-            ))
+            llamaLayers.append(
+                LlamaLayer(
+                    qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
+                    gateProj: gateProj, upProj: upProj, downProj: downProj,
+                    inputNorm: inputNorm, postAttnNorm: postAttnNorm,
+                    hidden: tc.hiddenSize,
+                    nHeads: tc.numAttentionHeads, nKVHeads: tc.numKeyValueHeads,
+                    headDim: tc.headDim, intermediate: tc.intermediateSize,
+                    ropeTheta: tc.ropeTheta,
+                    ropeScaling: .none
+                ))
         }
 
         let finalNorm = RMSNorm(
@@ -145,20 +154,23 @@ public struct SmolVLM2Dense {
         // LM head — SmolVLM2-500M uses tieWordEmbeddings == false and has lm_head.weight
         let lmHead: AnyLinear
         if !tc.tieWordEmbeddings, weights.has("language_model.lm_head.weight") {
-            lmHead = try loadLinear(base: "language_model.lm_head", in: weights, quantization: quant)
+            lmHead = try loadLinear(
+                base: "language_model.lm_head", in: weights, quantization: quant)
         } else if let q = quant, weights.isQuantized("language_model.embed_tokens") {
             let t = try weights.quantizedTriplet("language_model.embed_tokens")
-            lmHead = AnyLinear(QuantizedLinear(
-                weight: t.weight, scales: t.scales, biases: t.biases,
-                bits: q.bits, groupSize: q.groupSize
-            ))
+            lmHead = AnyLinear(
+                QuantizedLinear(
+                    weight: t.weight, scales: t.scales, biases: t.biases,
+                    bits: q.bits, groupSize: q.groupSize
+                ))
         } else {
             lmHead = AnyLinear(Linear(weight: embedTokens.weight))
         }
 
         let activationDtype: DType
         if weights.isQuantized("language_model.embed_tokens"),
-           let scales = try? weights.tensor(named: "language_model.embed_tokens.scales") {
+            let scales = try? weights.tensor(named: "language_model.embed_tokens.scales")
+        {
             activationDtype = scales.dtype
         } else {
             activationDtype = embedTokens.weight.dtype

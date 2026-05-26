@@ -26,6 +26,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("FishSpeechLayers")
@@ -69,8 +70,9 @@ struct FishSpeechLayersTests {
     func ropeTableShape() {
         let headDim = 128
         let maxSeq = 32
-        let cache = FishSpeechRoPECache(headDim: headDim, ropeBase: 10_000,
-                                        maxSeq: maxSeq)
+        let cache = FishSpeechRoPECache(
+            headDim: headDim, ropeBase: 10_000,
+            maxSeq: maxSeq)
         #expect(cache.headDim == headDim)
         #expect(cache.maxSeq == maxSeq)
         #expect(cache.cosTable.count == maxSeq * (headDim / 2))
@@ -81,14 +83,17 @@ struct FishSpeechLayersTests {
     func ropePositionZero() {
         let headDim = 16
         let maxSeq = 4
-        let cache = FishSpeechRoPECache(headDim: headDim, ropeBase: 10_000,
-                                        maxSeq: maxSeq)
+        let cache = FishSpeechRoPECache(
+            headDim: headDim, ropeBase: 10_000,
+            maxSeq: maxSeq)
         let half = headDim / 2
-        for i in 0..<half {
-            #expect(abs(cache.cosTable[i] - 1.0) < 1e-6,
-                    "cos[pos=0, i=\(i)] should be 1, got \(cache.cosTable[i])")
-            #expect(abs(cache.sinTable[i]) < 1e-6,
-                    "sin[pos=0, i=\(i)] should be 0, got \(cache.sinTable[i])")
+        for i in 0 ..< half {
+            #expect(
+                abs(cache.cosTable[i] - 1.0) < 1e-6,
+                "cos[pos=0, i=\(i)] should be 1, got \(cache.cosTable[i])")
+            #expect(
+                abs(cache.sinTable[i]) < 1e-6,
+                "sin[pos=0, i=\(i)] should be 0, got \(cache.sinTable[i])")
         }
     }
 
@@ -96,8 +101,9 @@ struct FishSpeechLayersTests {
     func ropePositionOneFirstFreq() {
         let headDim = 4
         // ropeBase ^ (0 / headDim) = 1, so the first frequency is exp(0) = 1.
-        let cache = FishSpeechRoPECache(headDim: headDim, ropeBase: 10_000,
-                                        maxSeq: 4)
+        let cache = FishSpeechRoPECache(
+            headDim: headDim, ropeBase: 10_000,
+            maxSeq: 4)
         let half = headDim / 2
         let base = 1 * half  // pos=1 row
         // At i=0: angle = 1 * 1 = 1 radian.

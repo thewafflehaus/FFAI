@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // Unit tests for the Qwen3ASR speech-to-text family.
@@ -29,15 +30,23 @@ struct Qwen3ASRTests {
         let config = ModelConfig(
             architecture: "Qwen3ASRForConditionalGeneration",
             modelType: "qwen3_asr",
-            raw: ["model_type": "qwen3_asr",
-                  "thinker_config": [
-                    "audio_config": ["d_model": 896, "encoder_layers": 18,
-                                     "num_mel_bins": 128],
-                    "text_config": ["hidden_size": 1024,
-                                    "num_hidden_layers": 28]]])
+            raw: [
+                "model_type": "qwen3_asr",
+                "thinker_config": [
+                    "audio_config": [
+                        "d_model": 896, "encoder_layers": 18,
+                        "num_mel_bins": 128,
+                    ],
+                    "text_config": [
+                        "hidden_size": 1024,
+                        "num_hidden_layers": 28,
+                    ],
+                ],
+            ])
         #expect(Qwen3ASRModel.handles(config))
         #expect(AudioModelRegistry.handles(config))
-        #expect(AudioModelRegistry.capabilities(for: config)
+        #expect(
+            AudioModelRegistry.capabilities(for: config)
                 == Capability.speechToText)
     }
 
@@ -48,10 +57,13 @@ struct Qwen3ASRTests {
         let config = ModelConfig(
             architecture: "Qwen3ASRForConditionalGeneration",
             modelType: nil,
-            raw: ["architectures": ["Qwen3ASRForConditionalGeneration"],
-                  "thinker_config": [
+            raw: [
+                "architectures": ["Qwen3ASRForConditionalGeneration"],
+                "thinker_config": [
                     "audio_config": ["d_model": 896, "encoder_layers": 18],
-                    "text_config": ["hidden_size": 1024]]])
+                    "text_config": ["hidden_size": 1024],
+                ],
+            ])
         #expect(Qwen3ASRModel.handles(config))
     }
 
@@ -59,11 +71,15 @@ struct Qwen3ASRTests {
     func qwen3ASRCapability() {
         let config = ModelConfig(
             architecture: nil, modelType: "qwen3_asr",
-            raw: ["model_type": "qwen3_asr",
-                  "thinker_config": [
+            raw: [
+                "model_type": "qwen3_asr",
+                "thinker_config": [
                     "audio_config": ["d_model": 896],
-                    "text_config": ["hidden_size": 1024]]])
-        #expect(AudioModelRegistry.capabilities(for: config)
+                    "text_config": ["hidden_size": 1024],
+                ],
+            ])
+        #expect(
+            AudioModelRegistry.capabilities(for: config)
                 == Capability.speechToText)
     }
 
@@ -73,13 +89,17 @@ struct Qwen3ASRTests {
         // routed to Qwen3ASR — not QwenOmni — based on model_type.
         let config = ModelConfig(
             architecture: nil, modelType: "qwen3_asr",
-            raw: ["model_type": "qwen3_asr",
-                  "thinker_config": [
+            raw: [
+                "model_type": "qwen3_asr",
+                "thinker_config": [
                     "audio_config": ["d_model": 896],
-                    "text_config": ["hidden_size": 1024]]])
+                    "text_config": ["hidden_size": 1024],
+                ],
+            ])
         #expect(Qwen3ASRModel.handles(config))
         // Qwen3ASR capability is speechToText — not omniAudio.
-        #expect(AudioModelRegistry.capabilities(for: config)
+        #expect(
+            AudioModelRegistry.capabilities(for: config)
                 != Capability.omniAudio)
     }
 
@@ -99,8 +119,9 @@ struct Qwen3ASRTests {
         let config = ModelConfig(
             architecture: "Qwen3ASRForConditionalGeneration",
             modelType: "qwen3_asr",
-            raw: ["model_type": "qwen3_asr",
-                  "thinker_config": [
+            raw: [
+                "model_type": "qwen3_asr",
+                "thinker_config": [
                     "audio_config": [
                         "d_model": 896,
                         "encoder_layers": 18,
@@ -127,7 +148,8 @@ struct Qwen3ASRTests {
                     "audio_token_id": 151676,
                     "eos_token_id": [151643, 151645],
                     "pad_token_id": 151643,
-                  ]])
+                ],
+            ])
         let qc = Qwen3ASRConfig.from(config)
         #expect(qc != nil)
 
@@ -164,10 +186,13 @@ struct Qwen3ASRTests {
         // detection; all values fall back to the 0.6B defaults.
         let config = ModelConfig(
             architecture: nil, modelType: "qwen3_asr",
-            raw: ["model_type": "qwen3_asr",
-                  "thinker_config": [
+            raw: [
+                "model_type": "qwen3_asr",
+                "thinker_config": [
                     "audio_config": [:] as [String: Any],
-                    "text_config": [:] as [String: Any]]])
+                    "text_config": [:] as [String: Any],
+                ],
+            ])
         let qc = Qwen3ASRConfig.from(config)
         #expect(qc != nil)
         // Published 0.6B defaults.
@@ -191,11 +216,14 @@ struct Qwen3ASRTests {
     func configSingleEos() {
         let config = ModelConfig(
             architecture: nil, modelType: "qwen3_asr",
-            raw: ["model_type": "qwen3_asr",
-                  "thinker_config": [
+            raw: [
+                "model_type": "qwen3_asr",
+                "thinker_config": [
                     "audio_config": ["d_model": 896],
                     "text_config": ["hidden_size": 1024],
-                    "eos_token_id": 151643]])
+                    "eos_token_id": 151643,
+                ],
+            ])
         let qc = Qwen3ASRConfig.from(config)
         #expect(qc?.eosTokenIds == [151643])
     }

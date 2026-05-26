@@ -30,9 +30,10 @@
 // to serialize model loads and avoid GPU memory pressure.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("FastVLM Vision Integration", .serialized)
 struct FastVLMIntegrationTests {
@@ -49,8 +50,8 @@ struct FastVLMIntegrationTests {
         // available, and the text backbone is a Qwen2-0.5B engine.
         #expect(m.vlModel != nil)
         #expect(m.availableCapabilities.contains(.imageIn))
-        #expect(m.engine.hidden == 896)          // Qwen2-0.5B text hidden
-        #expect(m.engine.supportsEmbeddingInput) // VLM splice prerequisite
+        #expect(m.engine.hidden == 896)  // Qwen2-0.5B text hidden
+        #expect(m.engine.supportsEmbeddingInput)  // VLM splice prerequisite
 
         let vlm = try #require(m.vlModel)
         // 1024px input: 4× stem + 4 stride-2 PEs → 16×16 = 256 tokens.
@@ -74,8 +75,10 @@ struct FastVLMIntegrationTests {
         let imageTokenId = vlm.imageTokenId  // -200
         let questionTokens = m.tokenizer.encode(
             text: "What animal is in the image?\nAssistant:")
-        let promptTokens = Array(repeating: imageTokenId,
-                                 count: vlm.imageTokenCount) + questionTokens
+        let promptTokens =
+            Array(
+                repeating: imageTokenId,
+                count: vlm.imageTokenCount) + questionTokens
 
         // A real photograph — the golden-retriever fixture.
         let image = try VisionTestHelpers.dogImage()
@@ -85,8 +88,9 @@ struct FastVLMIntegrationTests {
             maxTokens: 200, eosTokenId: m.config.eosTokenId, eosTokenIds: m.config.eosTokenIds)
 
         // Coherence first, then the content check.
-        expectCoherentOutput(generated, minTokens: 4,
-                             label: "FastVLM image+text")
+        expectCoherentOutput(
+            generated, minTokens: 4,
+            label: "FastVLM image+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("FastVLM generated: \(text)")
         VisionTestHelpers.expectMentionsDog(text, label: "FastVLM")

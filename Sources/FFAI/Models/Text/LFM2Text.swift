@@ -42,14 +42,16 @@ public enum LFM2LayerKind: Equatable, Sendable {
 /// `full_attn_idxs` integer list naming the attention-layer indices —
 /// older `LFM2-*` configs ship the latter, `LFM2.5-*` the former. This
 /// resolver accepts both and is unit-tested directly.
-func lfm2LayerKinds(layerTypes: [String]?, fullAttnIdxs: [Int]?,
-                    numLayers: Int) throws -> [LFM2LayerKind] {
+func lfm2LayerKinds(
+    layerTypes: [String]?, fullAttnIdxs: [Int]?,
+    numLayers: Int
+) throws -> [LFM2LayerKind] {
     precondition(numLayers > 0, "lfm2LayerKinds: numLayers must be positive")
     if let names = layerTypes, !names.isEmpty {
         guard names.count == numLayers else {
             throw LFM2Error.unsupportedConfig(
                 "layer_types has \(names.count) entries, "
-                + "num_hidden_layers is \(numLayers)")
+                    + "num_hidden_layers is \(numLayers)")
         }
         return try names.map { name in
             switch name {
@@ -63,7 +65,7 @@ func lfm2LayerKinds(layerTypes: [String]?, fullAttnIdxs: [Int]?,
     }
     if let idxs = fullAttnIdxs {
         let attn = Set(idxs)
-        return (0..<numLayers).map { attn.contains($0) ? .attention : .conv }
+        return (0 ..< numLayers).map { attn.contains($0) ? .attention : .conv }
     }
     throw LFM2Error.missingConfig("layer_types / full_attn_idxs")
 }
@@ -77,13 +79,19 @@ public final class LFM2ConvCache: LayerCacheProtocol, @unchecked Sendable {
     public private(set) var length: Int = 0
     public let maxSeq: Int = .max
 
-    public init(channels: Int, kernelSize: Int, dtype: DType,
-                device: Device = .shared) {
-        self.conv = ConvStateCache(nChannels: channels, kernelSize: kernelSize,
-                                   dtype: dtype, device: device)
+    public init(
+        channels: Int, kernelSize: Int, dtype: DType,
+        device: Device = .shared
+    ) {
+        self.conv = ConvStateCache(
+            nChannels: channels, kernelSize: kernelSize,
+            dtype: dtype, device: device)
     }
 
-    public func reset() { conv.reset(); length = 0 }
+    public func reset() {
+        conv.reset()
+        length = 0
+    }
     /// Advance the step counter (storage is constant-size).
     public func advance() { length += 1 }
 
@@ -115,8 +123,9 @@ public struct LFM2Dense: LFM2Variant {
         config: ModelConfig, weights: SafeTensorsBundle,
         options _: LoadOptions, device: Device
     ) throws -> LFM2Model {
-        try lfm2LoadModel(config: config, weights: weights,
-                          moe: false, device: device)
+        try lfm2LoadModel(
+            config: config, weights: weights,
+            moe: false, device: device)
     }
 }
 
@@ -130,8 +139,9 @@ public struct LFM2MoE: LFM2Variant {
         config: ModelConfig, weights: SafeTensorsBundle,
         options _: LoadOptions, device: Device
     ) throws -> LFM2Model {
-        try lfm2LoadModel(config: config, weights: weights,
-                          moe: true, device: device)
+        try lfm2LoadModel(
+            config: config, weights: weights,
+            moe: true, device: device)
     }
 }
 
@@ -141,12 +151,14 @@ public struct LFM2MoE: LFM2Variant {
 /// feed-forward shape: `false` → a dense SwiGLU MLP on every layer
 /// (`lfm2`); `true` → an MoE block on every layer at index ≥
 /// `num_dense_layers`, dense before that (`lfm2_moe`).
-func lfm2LoadModel(config: ModelConfig, weights: SafeTensorsBundle,
-                   moe: Bool, device: Device) throws -> LFM2Model {
+func lfm2LoadModel(
+    config: ModelConfig, weights: SafeTensorsBundle,
+    moe: Bool, device: Device
+) throws -> LFM2Model {
     guard let hidden = config.hiddenSize,
-          let nLayers = config.numLayers,
-          let nHeads = config.numAttentionHeads,
-          let vocab = config.vocabSize
+        let nLayers = config.numLayers,
+        let nHeads = config.numAttentionHeads,
+        let vocab = config.vocabSize
     else {
         throw LFM2Error.missingConfig(
             "hidden_size / num_hidden_layers / num_attention_heads / vocab_size")
@@ -158,8 +170,8 @@ func lfm2LoadModel(config: ModelConfig, weights: SafeTensorsBundle,
     // rope_theta is flat on LFM2, nested under rope_parameters on LFM2.5.
     let theta = Float(
         config.ropeTheta
-        ?? (config.nested("rope_parameters")?["rope_theta"] as? Double)
-        ?? 1_000_000.0)
+            ?? (config.nested("rope_parameters")?["rope_theta"] as? Double)
+            ?? 1_000_000.0)
     let maxSeq = config.int("max_position_embeddings") ?? 128_000
     let convKernel = config.int("conv_L_cache") ?? 3
     let convBias = config.bool("conv_bias") ?? false
@@ -168,15 +180,17 @@ func lfm2LoadModel(config: ModelConfig, weights: SafeTensorsBundle,
         throw LFM2Error.unsupportedConfig(
             "conv_L_cache (\(convKernel)) must be ≥ 2")
     }
-    guard headDim == 64 || headDim == 128
-            || headDim == 256 || headDim == 512 else {
+    guard
+        headDim == 64 || headDim == 128
+            || headDim == 256 || headDim == 512
+    else {
         throw LFM2Error.unsupportedConfig(
             "head_dim \(headDim) — Ops.sdpaDecode supports {64,128,256,512}")
     }
     guard config.quantization == nil else {
         throw LFM2Error.unsupportedConfig(
             "quantized LFM2 checkpoints not yet supported — "
-            + "load a raw bf16/f16 variant")
+                + "load a raw bf16/f16 variant")
     }
 
     // ── MoE geometry ──────────────────────────────────────────────────
@@ -204,7 +218,7 @@ func lfm2LoadModel(config: ModelConfig, weights: SafeTensorsBundle,
     let activationDtype = embedW.dtype
     precondition(
         activationDtype == .f32 || activationDtype == .bf16
-        || activationDtype == .f16,
+            || activationDtype == .f16,
         "LFM2: unexpected activation dtype \(activationDtype)")
     let embedTokens = AnyEmbedding(Embedding(weight: embedW))
 
@@ -223,16 +237,19 @@ func lfm2LoadModel(config: ModelConfig, weights: SafeTensorsBundle,
         let mixer: LFM2Mixer
         switch kind {
         case .conv:
-            let inProj = AnyLinear(Linear(
-                weight: try weights.tensor(named: "\(p).conv.in_proj.weight")))
-            let outProj = AnyLinear(Linear(
-                weight: try weights.tensor(named: "\(p).conv.out_proj.weight")))
+            let inProj = AnyLinear(
+                Linear(
+                    weight: try weights.tensor(named: "\(p).conv.in_proj.weight")))
+            let outProj = AnyLinear(
+                Linear(
+                    weight: try weights.tensor(named: "\(p).conv.out_proj.weight")))
             // HF Conv1d weight ships [hidden, 1, kernel]; the metaltile
             // conv1d kernel wants [kernel, hidden].
             let convWSrc = try weights.tensor(named: "\(p).conv.conv.weight")
-            precondition(convWSrc.elementCount == hidden * convKernel,
-                         "LFM2: conv.conv.weight count \(convWSrc.elementCount) "
-                         + "≠ hidden·kernel \(hidden * convKernel)")
+            precondition(
+                convWSrc.elementCount == hidden * convKernel,
+                "LFM2: conv.conv.weight count \(convWSrc.elementCount) "
+                    + "≠ hidden·kernel \(hidden * convKernel)")
             let convW = lfm2TransposeConvWeight(
                 convWSrc, kernel: convKernel, channels: hidden,
                 dtype: activationDtype, device: device)
@@ -242,58 +259,74 @@ func lfm2LoadModel(config: ModelConfig, weights: SafeTensorsBundle,
                     try weights.tensor(named: "\(p).conv.conv.bias"),
                     count: hidden, dtype: activationDtype, device: device)
             } else {
-                convB = lfm2ZeroVector(hidden, dtype: activationDtype,
-                                       device: device)
+                convB = lfm2ZeroVector(
+                    hidden, dtype: activationDtype,
+                    device: device)
             }
-            mixer = .conv(LFM2ConvMixer(
-                inProj: inProj, outProj: outProj,
-                convW: convW, convB: convB,
-                hidden: hidden, kernel: convKernel, dtype: activationDtype))
+            mixer = .conv(
+                LFM2ConvMixer(
+                    inProj: inProj, outProj: outProj,
+                    convW: convW, convB: convB,
+                    hidden: hidden, kernel: convKernel, dtype: activationDtype))
         case .attention:
-            let qProj = AnyLinear(Linear(
-                weight: try weights.tensor(named: "\(p).self_attn.q_proj.weight")))
-            let kProj = AnyLinear(Linear(
-                weight: try weights.tensor(named: "\(p).self_attn.k_proj.weight")))
-            let vProj = AnyLinear(Linear(
-                weight: try weights.tensor(named: "\(p).self_attn.v_proj.weight")))
-            let outProj = AnyLinear(Linear(
-                weight: try weights.tensor(named: "\(p).self_attn.out_proj.weight")))
+            let qProj = AnyLinear(
+                Linear(
+                    weight: try weights.tensor(named: "\(p).self_attn.q_proj.weight")))
+            let kProj = AnyLinear(
+                Linear(
+                    weight: try weights.tensor(named: "\(p).self_attn.k_proj.weight")))
+            let vProj = AnyLinear(
+                Linear(
+                    weight: try weights.tensor(named: "\(p).self_attn.v_proj.weight")))
+            let outProj = AnyLinear(
+                Linear(
+                    weight: try weights.tensor(named: "\(p).self_attn.out_proj.weight")))
             let qNormW = lfm2CastVector(
                 try weights.tensor(named: "\(p).self_attn.q_layernorm.weight"),
                 count: headDim, dtype: activationDtype, device: device)
             let kNormW = lfm2CastVector(
                 try weights.tensor(named: "\(p).self_attn.k_layernorm.weight"),
                 count: headDim, dtype: activationDtype, device: device)
-            mixer = .attention(LFM2AttentionMixer(
-                qProj: qProj, kProj: kProj, vProj: vProj, outProj: outProj,
-                qNormW: qNormW, kNormW: kNormW, normEps: eps,
-                nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-                ropeTheta: theta))
+            mixer = .attention(
+                LFM2AttentionMixer(
+                    qProj: qProj, kProj: kProj, vProj: vProj, outProj: outProj,
+                    qNormW: qNormW, kNormW: kNormW, normEps: eps,
+                    nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
+                    ropeTheta: theta))
         }
 
         // ── Feed-forward half ──────────────────────────────────────────
         let ffn: LFM2FFN
         if moe, i >= numDenseLayers {
-            ffn = .moe(try buildLFM2MoE(
-                prefix: p, weights: weights,
-                hidden: hidden, moeIntermediate: moeIntermediate,
-                numExperts: numExperts, topK: numExpertsPerTok,
-                normTopKProb: normTopKProb, useExpertBias: useExpertBias))
+            ffn = .moe(
+                try buildLFM2MoE(
+                    prefix: p, weights: weights,
+                    hidden: hidden, moeIntermediate: moeIntermediate,
+                    numExperts: numExperts, topK: numExpertsPerTok,
+                    normTopKProb: normTopKProb, useExpertBias: useExpertBias))
         } else {
             // Dense SwiGLU — LFM2 names the projections w1 (gate) / w3
             // (up) / w2 (down).
-            ffn = .dense(LFM2MLP(
-                w1: AnyLinear(Linear(weight: try lfm2MLPWeight(
-                    "\(p).feed_forward", "gate", in: weights))),
-                w3: AnyLinear(Linear(weight: try lfm2MLPWeight(
-                    "\(p).feed_forward", "up", in: weights))),
-                w2: AnyLinear(Linear(weight: try lfm2MLPWeight(
-                    "\(p).feed_forward", "down", in: weights)))))
+            ffn = .dense(
+                LFM2MLP(
+                    w1: AnyLinear(
+                        Linear(
+                            weight: try lfm2MLPWeight(
+                                "\(p).feed_forward", "gate", in: weights))),
+                    w3: AnyLinear(
+                        Linear(
+                            weight: try lfm2MLPWeight(
+                                "\(p).feed_forward", "up", in: weights))),
+                    w2: AnyLinear(
+                        Linear(
+                            weight: try lfm2MLPWeight(
+                                "\(p).feed_forward", "down", in: weights)))))
         }
 
-        layers.append(LFM2Layer(
-            operatorNorm: operatorNorm, ffnNorm: ffnNorm,
-            mixer: mixer, ffn: ffn, hidden: hidden))
+        layers.append(
+            LFM2Layer(
+                operatorNorm: operatorNorm, ffnNorm: ffnNorm,
+                mixer: mixer, ffn: ffn, hidden: hidden))
     }
 
     // LFM2's final norm is `model.embedding_norm` (not `model.norm`).
@@ -306,8 +339,9 @@ func lfm2LoadModel(config: ModelConfig, weights: SafeTensorsBundle,
     // `lm_head.weight` is honoured if a checkpoint ever ships one.
     let lmHead: AnyLinear
     if weights.has("lm_head.weight") {
-        lmHead = AnyLinear(Linear(
-            weight: try weights.tensor(named: "lm_head.weight")))
+        lmHead = AnyLinear(
+            Linear(
+                weight: try weights.tensor(named: "lm_head.weight")))
     } else {
         lmHead = AnyLinear(Linear(weight: embedW))
     }
@@ -331,8 +365,9 @@ private func buildLFM2MoE(
     numExperts: Int, topK: Int,
     normTopKProb: Bool, useExpertBias: Bool
 ) throws -> MoELayer {
-    let gate = AnyLinear(Linear(
-        weight: try weights.tensor(named: "\(p).feed_forward.gate.weight")))
+    let gate = AnyLinear(
+        Linear(
+            weight: try weights.tensor(named: "\(p).feed_forward.gate.weight")))
 
     var gateProj: [AnyLinear] = []
     var upProj: [AnyLinear] = []
@@ -340,14 +375,20 @@ private func buildLFM2MoE(
     gateProj.reserveCapacity(numExperts)
     upProj.reserveCapacity(numExperts)
     downProj.reserveCapacity(numExperts)
-    for e in 0..<numExperts {
+    for e in 0 ..< numExperts {
         let eb = "\(p).feed_forward.experts.\(e)"
-        gateProj.append(AnyLinear(Linear(
-            weight: try lfm2MLPWeight(eb, "gate", in: weights))))
-        upProj.append(AnyLinear(Linear(
-            weight: try lfm2MLPWeight(eb, "up", in: weights))))
-        downProj.append(AnyLinear(Linear(
-            weight: try lfm2MLPWeight(eb, "down", in: weights))))
+        gateProj.append(
+            AnyLinear(
+                Linear(
+                    weight: try lfm2MLPWeight(eb, "gate", in: weights))))
+        upProj.append(
+            AnyLinear(
+                Linear(
+                    weight: try lfm2MLPWeight(eb, "up", in: weights))))
+        downProj.append(
+            AnyLinear(
+                Linear(
+                    weight: try lfm2MLPWeight(eb, "down", in: weights))))
     }
 
     // Per-expert load-balancing bias — added to the post-softmax gate
@@ -356,9 +397,10 @@ private func buildLFM2MoE(
     if useExpertBias, weights.has("\(p).feed_forward.expert_bias") {
         let bias = lfm2ReadFloats(
             try weights.tensor(named: "\(p).feed_forward.expert_bias"))
-        precondition(bias.count == numExperts,
-                     "LFM2: expert_bias has \(bias.count) entries, "
-                     + "num_experts is \(numExperts)")
+        precondition(
+            bias.count == numExperts,
+            "LFM2: expert_bias has \(bias.count) entries, "
+                + "num_experts is \(numExperts)")
         expertBias = bias
     }
 
@@ -376,13 +418,22 @@ private func buildLFM2MoE(
 /// `w3` (up) / `w2` (down); some conversions rename them to
 /// `gate_proj` / `up_proj` / `down_proj`. Accept either.
 /// `which` ∈ {`gate`, `up`, `down`}.
-private func lfm2MLPWeight(_ base: String, _ which: String,
-                           in weights: SafeTensorsBundle) throws -> Tensor {
-    let wName: String, projName: String
+private func lfm2MLPWeight(
+    _ base: String, _ which: String,
+    in weights: SafeTensorsBundle
+) throws -> Tensor {
+    let wName: String
+    let projName: String
     switch which {
-    case "gate": wName = "w1"; projName = "gate_proj"
-    case "up": wName = "w3"; projName = "up_proj"
-    case "down": wName = "w2"; projName = "down_proj"
+    case "gate":
+        wName = "w1"
+        projName = "gate_proj"
+    case "up":
+        wName = "w3"
+        projName = "up_proj"
+    case "down":
+        wName = "w2"
+        projName = "down_proj"
     default: fatalError("lfm2MLPWeight: unknown projection '\(which)'")
     }
     if weights.has("\(base).\(wName).weight") {
@@ -409,17 +460,23 @@ enum LFM2FFN {
 
 public final class LFM2ConvMixer: Module {
     let inProj, outProj: AnyLinear
-    let convW: Tensor    // [kernel, hidden]
-    let convB: Tensor    // [hidden]
+    let convW: Tensor  // [kernel, hidden]
+    let convB: Tensor  // [hidden]
     let hidden, kernel: Int
     let dtype: DType
 
-    init(inProj: AnyLinear, outProj: AnyLinear,
-         convW: Tensor, convB: Tensor,
-         hidden: Int, kernel: Int, dtype: DType) {
-        self.inProj = inProj; self.outProj = outProj
-        self.convW = convW; self.convB = convB
-        self.hidden = hidden; self.kernel = kernel; self.dtype = dtype
+    init(
+        inProj: AnyLinear, outProj: AnyLinear,
+        convW: Tensor, convB: Tensor,
+        hidden: Int, kernel: Int, dtype: DType
+    ) {
+        self.inProj = inProj
+        self.outProj = outProj
+        self.convW = convW
+        self.convB = convB
+        self.hidden = hidden
+        self.kernel = kernel
+        self.dtype = dtype
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -433,8 +490,10 @@ public final class LFM2ConvMixer: Module {
     /// layer input. Returns the post-`out_proj` contribution (the
     /// residual add is the enclosing layer's job). All work queues onto
     /// `cmd` — no commit (conv layers carry no CPU sync point).
-    func forward(_ xNorm: Tensor, cache: LFM2ConvCache,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forward(
+        _ xNorm: Tensor, cache: LFM2ConvCache,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // in_proj → [3·hidden], split into B / C / x.
         let bcx = inProj(xNorm, on: cmd)
         let b = bcx.slicedRows(start: 0, count: hidden)
@@ -460,19 +519,27 @@ public final class LFM2ConvMixer: Module {
 
 public final class LFM2AttentionMixer: Module {
     let qProj, kProj, vProj, outProj: AnyLinear
-    let qNormW, kNormW: Tensor    // [headDim]
+    let qNormW, kNormW: Tensor  // [headDim]
     let normEps: Float
     let nHeads, nKVHeads, headDim: Int
     let ropeTheta: Float
     let scale: Float
 
-    init(qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, outProj: AnyLinear,
-         qNormW: Tensor, kNormW: Tensor, normEps: Float,
-         nHeads: Int, nKVHeads: Int, headDim: Int, ropeTheta: Float) {
-        self.qProj = qProj; self.kProj = kProj; self.vProj = vProj
+    init(
+        qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, outProj: AnyLinear,
+        qNormW: Tensor, kNormW: Tensor, normEps: Float,
+        nHeads: Int, nKVHeads: Int, headDim: Int, ropeTheta: Float
+    ) {
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
         self.outProj = outProj
-        self.qNormW = qNormW; self.kNormW = kNormW; self.normEps = normEps
-        self.nHeads = nHeads; self.nKVHeads = nKVHeads; self.headDim = headDim
+        self.qNormW = qNormW
+        self.kNormW = kNormW
+        self.normEps = normEps
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
         self.ropeTheta = ropeTheta
         self.scale = 1.0 / Float(Double(headDim).squareRoot())
     }
@@ -493,8 +560,10 @@ public final class LFM2AttentionMixer: Module {
     /// per-head RMSNorm (head_dim 64 is not 128-aligned — the GPU
     /// reduction kernel cannot run it). Returns the post-`out_proj`
     /// contribution on a fresh, locally-committed buffer.
-    func forward(_ xNorm: Tensor, position: Int, cache kv: KVCache,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forward(
+        _ xNorm: Tensor, position: Int, cache kv: KVCache,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let q = qProj(xNorm, on: cmd)
         let k = kProj(xNorm, on: cmd)
         let v = vProj(xNorm, on: cmd)
@@ -512,14 +581,17 @@ public final class LFM2AttentionMixer: Module {
 
         // GPU phase 2: RoPE → KV append → SDPA → out_proj.
         let c2 = device.makeCommandBuffer()
-        let qRot = Ops.rope(qNormed.reshaped(to: [nHeads, headDim]),
-                            position: position, headDim: headDim,
-                            thetaBase: ropeTheta, on: c2)
-        let kRot = Ops.rope(kNormed.reshaped(to: [nKVHeads, headDim]),
-                            position: position, headDim: headDim,
-                            thetaBase: ropeTheta, on: c2)
-        kv.appendOnGPU(kFlat: kRot,
-                       vFlat: v.reshaped(to: [nKVHeads, headDim]), on: c2)
+        let qRot = Ops.rope(
+            qNormed.reshaped(to: [nHeads, headDim]),
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, on: c2)
+        let kRot = Ops.rope(
+            kNormed.reshaped(to: [nKVHeads, headDim]),
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, on: c2)
+        kv.appendOnGPU(
+            kFlat: kRot,
+            vFlat: v.reshaped(to: [nKVHeads, headDim]), on: c2)
         let (cacheK, cacheV) = kv.prepareForAttention(on: c2)
         let attnOut = Ops.sdpaDecode(
             q: qRot, k: cacheK, v: cacheV,
@@ -538,7 +610,9 @@ public final class LFM2MLP: Module {
     let w1, w3, w2: AnyLinear
 
     init(w1: AnyLinear, w3: AnyLinear, w2: AnyLinear) {
-        self.w1 = w1; self.w3 = w3; self.w2 = w2
+        self.w1 = w1
+        self.w3 = w3
+        self.w2 = w2
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -577,13 +651,17 @@ public final class LFM2Layer: Module, DecoderLayer {
     /// refreshes `cmd` after any such layer.
     public let commitsCommandBuffer: Bool
 
-    init(operatorNorm: RMSNorm, ffnNorm: RMSNorm,
-         mixer: LFM2Mixer, ffn: LFM2FFN, hidden: Int) {
-        self.operatorNorm = operatorNorm; self.ffnNorm = ffnNorm
-        self.mixer = mixer; self.ffn = ffn; self.hidden = hidden
+    init(
+        operatorNorm: RMSNorm, ffnNorm: RMSNorm,
+        mixer: LFM2Mixer, ffn: LFM2FFN, hidden: Int
+    ) {
+        self.operatorNorm = operatorNorm
+        self.ffnNorm = ffnNorm
+        self.mixer = mixer
+        self.ffn = ffn
+        self.hidden = hidden
         let attentionMixer: Bool
-        if case .attention = mixer { attentionMixer = true }
-        else { attentionMixer = false }
+        if case .attention = mixer { attentionMixer = true } else { attentionMixer = false }
         let moeFFN: Bool
         if case .moe = ffn { moeFFN = true } else { moeFFN = false }
         self.commitsCommandBuffer = attentionMixer || moeFFN
@@ -628,9 +706,11 @@ public final class LFM2Layer: Module, DecoderLayer {
     /// they are handed; the work after a committing sub-block runs on a
     /// fresh, locally-committed buffer. A conv layer with a dense FFN
     /// queues everything onto `cmd` and never commits.
-    public func decode(_ h: Tensor, position: Int,
-                       cache: any LayerCacheProtocol,
-                       cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func decode(
+        _ h: Tensor, position: Int,
+        cache: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let xNorm = operatorNorm(h, on: cmd)
 
         // ── Mixer half ────────────────────────────────────────────────
@@ -644,21 +724,24 @@ public final class LFM2Layer: Module, DecoderLayer {
         switch mixer {
         case .conv(let m):
             guard let cc = cache as? LFM2ConvCache else {
-                fatalError("LFM2Layer: conv layer expected LFM2ConvCache, "
-                           + "got \(type(of: cache))")
+                fatalError(
+                    "LFM2Layer: conv layer expected LFM2ConvCache, "
+                        + "got \(type(of: cache))")
             }
             let mixerOut = m.forward(xNorm, cache: cc, cmd: workCmd, device: device)
             cc.advance()
             postMix = Ops.add(h, mixerOut, on: workCmd)
         case .attention(let a):
             guard let kv = cache as? KVCache else {
-                fatalError("LFM2Layer: attention layer expected KVCache, "
-                           + "got \(type(of: cache))")
+                fatalError(
+                    "LFM2Layer: attention layer expected KVCache, "
+                        + "got \(type(of: cache))")
             }
             // The mixer commits `cmd` and returns a resident tensor —
             // continue the layer on a fresh buffer.
-            let mixerOut = a.forward(xNorm, position: position,
-                                     cache: kv, cmd: workCmd, device: device)
+            let mixerOut = a.forward(
+                xNorm, position: position,
+                cache: kv, cmd: workCmd, device: device)
             workCmd = device.makeCommandBuffer()
             if OpsValidation.validateAddRmsNorm(n: hidden) == nil {
                 let fused = Ops.addAndRmsNorm(
@@ -691,9 +774,10 @@ public final class LFM2Layer: Module, DecoderLayer {
             // tensor. `postMix` is resident afterwards (workCmd was
             // committed + waited). The residual add runs on a fresh
             // buffer so the result does not depend on the dead workCmd.
-            let ffnOut = moe.decode(ffnInput, position: position,
-                                    cache: StatelessLayerCache(),
-                                    cmd: workCmd, device: device)
+            let ffnOut = moe.decode(
+                ffnInput, position: position,
+                cache: StatelessLayerCache(),
+                cmd: workCmd, device: device)
             let addCmd = device.makeCommandBuffer()
             let result = Ops.add(postMix, ffnOut, on: addCmd)
             addCmd.commit()
@@ -722,19 +806,27 @@ public final class LFM2Model: LanguageModel {
     /// True when any layer carries a MoE feed-forward block.
     public let hasMoE: Bool
 
-    init(embedTokens: AnyEmbedding, layers: [any DecoderLayer],
-         finalNorm: RMSNorm, lmHead: AnyLinear,
-         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         convDim: Int, convKernel: Int,
-         vocab: Int, maxSeq: Int, dtype: DType) {
+    init(
+        embedTokens: AnyEmbedding, layers: [any DecoderLayer],
+        finalNorm: RMSNorm, lmHead: AnyLinear,
+        hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        convDim: Int, convKernel: Int,
+        vocab: Int, maxSeq: Int, dtype: DType
+    ) {
         self.embedTokens = embedTokens
         self.layers = layers
         self.finalNorm = finalNorm
         self.lmHead = lmHead
-        self.hidden = hidden; self.nLayers = nLayers
-        self.nHeads = nHeads; self.nKVHeads = nKVHeads; self.headDim = headDim
-        self.convDim = convDim; self.convKernel = convKernel
-        self.vocab = vocab; self.maxSeq = maxSeq; self.dtype = dtype
+        self.hidden = hidden
+        self.nLayers = nLayers
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.convDim = convDim
+        self.convKernel = convKernel
+        self.vocab = vocab
+        self.maxSeq = maxSeq
+        self.dtype = dtype
         self.layerKinds = layers.map { ($0 as? LFM2Layer)?.kind ?? .conv }
         self.hasMoE = layers.contains { ($0 as? LFM2Layer)?.isMoELayer == true }
     }
@@ -764,11 +856,13 @@ public final class LFM2Model: LanguageModel {
         return layerKinds.map { kind in
             switch kind {
             case .conv:
-                return LFM2ConvCache(channels: convDim, kernelSize: convKernel,
-                                     dtype: dtype, device: device)
+                return LFM2ConvCache(
+                    channels: convDim, kernelSize: convKernel,
+                    dtype: dtype, device: device)
             case .attention:
-                return KVCache(nKVHeads: nKVHeads, headDim: headDim,
-                               maxSeq: cap, dtype: dtype, device: device)
+                return KVCache(
+                    nKVHeads: nKVHeads, headDim: headDim,
+                    maxSeq: cap, dtype: dtype, device: device)
             }
         }
     }
@@ -783,9 +877,11 @@ public final class LFM2Model: LanguageModel {
     /// handed to a layer: the embedding + every layer run on internal
     /// `workCmd` buffers, refreshed after each committing layer; only
     /// the final norm + lm_head queue onto `cmd`.
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let tokenBuf = device.makeBuffer(length: 4)
         var tid = UInt32(tokenId)
         memcpy(tokenBuf.contents(), &tid, 4)
@@ -795,8 +891,9 @@ public final class LFM2Model: LanguageModel {
         var h = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
 
         for (i, layer) in layers.enumerated() {
-            h = layer.decode(h, position: position, cache: caches[i],
-                             cmd: workCmd, device: device)
+            h = layer.decode(
+                h, position: position, cache: caches[i],
+                cmd: workCmd, device: device)
             if let l = layer as? LFM2Layer, l.commitsCommandBuffer {
                 workCmd = device.makeCommandBuffer()
             }
@@ -806,7 +903,8 @@ public final class LFM2Model: LanguageModel {
         // resident. After a non-committing (conv + dense) layer `workCmd`
         // still carries uncommitted work — commit it so `h` is resident
         // before the caller's `cmd` reads it.
-        let lastCommitted = (layers.last as? LFM2Layer)?
+        let lastCommitted =
+            (layers.last as? LFM2Layer)?
             .commitsCommandBuffer ?? false
         if !lastCommitted {
             workCmd.commit()
@@ -830,18 +928,22 @@ public final class LFM2Model: LanguageModel {
     /// queue onto the caller's pristine `cmd`.
     public var supportsEmbeddingInput: Bool { true }
 
-    public func forward(inputEmbedding: Tensor, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(inputEmbedding.elementCount == hidden,
-                     "LFM2Model.forward(inputEmbedding:): expected [\(hidden)], "
-                     + "got \(inputEmbedding.shape)")
+    public func forward(
+        inputEmbedding: Tensor, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            inputEmbedding.elementCount == hidden,
+            "LFM2Model.forward(inputEmbedding:): expected [\(hidden)], "
+                + "got \(inputEmbedding.shape)")
         var workCmd = device.makeCommandBuffer()
         var h = inputEmbedding.reshaped(to: [hidden])
 
         for (i, layer) in layers.enumerated() {
-            h = layer.decode(h, position: position, cache: caches[i],
-                             cmd: workCmd, device: device)
+            h = layer.decode(
+                h, position: position, cache: caches[i],
+                cmd: workCmd, device: device)
             if let l = layer as? LFM2Layer, l.commitsCommandBuffer {
                 workCmd = device.makeCommandBuffer()
             }
@@ -851,7 +953,8 @@ public final class LFM2Model: LanguageModel {
         // resident. After a non-committing (conv + dense) layer `workCmd`
         // still carries uncommitted work — commit it so `h` is resident
         // before the caller's `cmd` reads it.
-        let lastCommitted = (layers.last as? LFM2Layer)?
+        let lastCommitted =
+            (layers.last as? LFM2Layer)?
             .commitsCommandBuffer ?? false
         if !lastCommitted {
             workCmd.commit()
@@ -885,15 +988,19 @@ public final class LFM2Model: LanguageModel {
     /// would adopt the Llama chunked path; the conv-layer kind keeps
     /// the per-token default (the causal conv1d is single-position).
     /// Today this override is commit-count-batched only.
-    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                             caches: [any LayerCacheProtocol],
-                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(!tokenIds.isEmpty,
-                     "LFM2Model.forwardMulti: tokenIds must be non-empty")
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "LFM2Model.forwardMulti: tokenIds must be non-empty")
         var logits: Tensor!
         for (i, tok) in tokenIds.enumerated() {
-            logits = forward(tokenId: tok, position: position + i,
-                             caches: caches, on: cmd, device: device)
+            logits = forward(
+                tokenId: tok, position: position + i,
+                caches: caches, on: cmd, device: device)
         }
         return logits
     }
@@ -916,8 +1023,10 @@ func lfm2ReadFloats(_ t: Tensor) -> [Float] {
 }
 
 /// Write a `[Float]` into a fresh tensor of the requested dtype.
-private func lfm2WriteFloats(_ values: [Float], shape: [Int],
-                             dtype: DType, device: Device) -> Tensor {
+private func lfm2WriteFloats(
+    _ values: [Float], shape: [Int],
+    dtype: DType, device: Device
+) -> Tensor {
     let t = Tensor.empty(shape: shape, dtype: dtype, device: device)
     switch dtype {
     case .f32:
@@ -934,23 +1043,27 @@ private func lfm2WriteFloats(_ values: [Float], shape: [Int],
 
 /// Transpose an HF Conv1d weight `[channels, 1, kernel]` → `[kernel,
 /// channels]` for the metaltile `conv1d_causal_step` kernel.
-private func lfm2TransposeConvWeight(_ src: Tensor, kernel K: Int,
-                                     channels C: Int,
-                                     dtype: DType, device: Device) -> Tensor {
+private func lfm2TransposeConvWeight(
+    _ src: Tensor, kernel K: Int,
+    channels C: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     let floats = lfm2ReadFloats(src)
     precondition(floats.count == K * C, "LFM2: conv weight count mismatch")
     var dst = [Float](repeating: 0, count: K * C)
     // Source flattens [C, 1, K] as floats[c*K + k]; destination is
     // [K, C] as dst[k*C + c].
-    for c in 0..<C {
-        for k in 0..<K { dst[k * C + c] = floats[c * K + k] }
+    for c in 0 ..< C {
+        for k in 0 ..< K { dst[k * C + c] = floats[c * K + k] }
     }
     return lfm2WriteFloats(dst, shape: [K, C], dtype: dtype, device: device)
 }
 
 /// Cast a per-channel / per-head vector to the activation dtype.
-private func lfm2CastVector(_ src: Tensor, count: Int,
-                            dtype: DType, device: Device) -> Tensor {
+private func lfm2CastVector(
+    _ src: Tensor, count: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     if src.dtype == dtype { return src }
     let floats = lfm2ReadFloats(src)
     precondition(floats.count == count, "LFM2: vector size mismatch")
@@ -969,27 +1082,31 @@ private func lfm2ZeroVector(_ n: Int, dtype: DType, device: Device) -> Tensor {
 /// kernel cannot run; a per-head norm over one decode token is trivial
 /// on the CPU. `weight` is `[headDim]`, shared across heads. Returns a
 /// fresh resident `[nHeads · headDim]` tensor in `x`'s dtype.
-func lfm2HostPerHeadRMSNorm(_ x: Tensor, weight: Tensor, eps: Float,
-                            nHeads: Int, headDim: Int,
-                            device: Device) -> Tensor {
+func lfm2HostPerHeadRMSNorm(
+    _ x: Tensor, weight: Tensor, eps: Float,
+    nHeads: Int, headDim: Int,
+    device: Device
+) -> Tensor {
     let xs = lfm2ReadFloats(x)
     let ws = lfm2ReadFloats(weight)
-    precondition(xs.count == nHeads * headDim,
-                 "LFM2 perHeadRMSNorm: x has \(xs.count) elements, "
-                 + "expected \(nHeads * headDim)")
-    precondition(ws.count == headDim,
-                 "LFM2 perHeadRMSNorm: weight has \(ws.count) elements, "
-                 + "expected headDim \(headDim)")
+    precondition(
+        xs.count == nHeads * headDim,
+        "LFM2 perHeadRMSNorm: x has \(xs.count) elements, "
+            + "expected \(nHeads * headDim)")
+    precondition(
+        ws.count == headDim,
+        "LFM2 perHeadRMSNorm: weight has \(ws.count) elements, "
+            + "expected headDim \(headDim)")
     var out = [Float](repeating: 0, count: xs.count)
-    for h in 0..<nHeads {
+    for h in 0 ..< nHeads {
         let base = h * headDim
         var sumSq: Float = 0
-        for d in 0..<headDim {
+        for d in 0 ..< headDim {
             let v = xs[base + d]
             sumSq += v * v
         }
         let inv = 1.0 / (sumSq / Float(headDim) + eps).squareRoot()
-        for d in 0..<headDim {
+        for d in 0 ..< headDim {
             out[base + d] = xs[base + d] * inv * ws[d]
         }
     }

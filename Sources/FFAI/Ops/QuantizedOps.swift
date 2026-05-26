@@ -62,10 +62,12 @@ public enum QuantizedOps {
         bits: Int, groupSize: Int,
         on cmd: MTLCommandBuffer
     ) {
-        precondition(weight.dtype == .u32,
-                     "QuantizedOps.dequantizeAffine: weight must be u32 (packed)")
-        precondition(scales.dtype == out.dtype && biases.dtype == out.dtype,
-                     "QuantizedOps.dequantizeAffine: scales/biases dtype must match out")
+        precondition(
+            weight.dtype == .u32,
+            "QuantizedOps.dequantizeAffine: weight must be u32 (packed)")
+        precondition(
+            scales.dtype == out.dtype && biases.dtype == out.dtype,
+            "QuantizedOps.dequantizeAffine: scales/biases dtype must match out")
         if let reason = QuantizedOpsValidation.validateAffineDequantize(
             numel: out.elementCount,
             packedCount: weight.elementCount,
@@ -146,7 +148,9 @@ public enum QuantizedOps {
                 out: out.buffer, outOffset: out.offset,
                 group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
         default:
-            fatalError("QuantizedOps.dequantizeAffine: unsupported (bits=\(bits), dtype=\(out.dtype)); int3/5/6 not wrapped at this layer (see OpsCoverageNotes.swift)")
+            fatalError(
+                "QuantizedOps.dequantizeAffine: unsupported (bits=\(bits), dtype=\(out.dtype)); int3/5/6 not wrapped at this layer (see OpsCoverageNotes.swift)"
+            )
         }
     }
 
@@ -160,10 +164,12 @@ public enum QuantizedOps {
         bits: Int, groupSize: Int,
         on cmd: MTLCommandBuffer
     ) {
-        precondition(packed.dtype == .u32,
-                     "QuantizedOps.quantizeAffine: packed must be u32")
-        precondition(scales.dtype == weight.dtype && biases.dtype == weight.dtype,
-                     "QuantizedOps.quantizeAffine: scales/biases dtype must match input")
+        precondition(
+            packed.dtype == .u32,
+            "QuantizedOps.quantizeAffine: packed must be u32")
+        precondition(
+            scales.dtype == weight.dtype && biases.dtype == weight.dtype,
+            "QuantizedOps.quantizeAffine: scales/biases dtype must match input")
         if let reason = QuantizedOpsValidation.validateAffineQuantize(
             numel: weight.elementCount,
             packedCount: packed.elementCount,
@@ -244,7 +250,9 @@ public enum QuantizedOps {
                 biases: biases.buffer, biasesOffset: biases.offset,
                 group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
         default:
-            fatalError("QuantizedOps.quantizeAffine: unsupported (bits=\(bits), dtype=\(weight.dtype)); int3/5/6 not wrapped at this layer (see OpsCoverageNotes.swift)")
+            fatalError(
+                "QuantizedOps.quantizeAffine: unsupported (bits=\(bits), dtype=\(weight.dtype)); int3/5/6 not wrapped at this layer (see OpsCoverageNotes.swift)"
+            )
         }
     }
 }

@@ -33,8 +33,8 @@ import Metal
 
 /// The two mixer kinds a `layers_block_type` entry can name.
 enum JambaLayerKind: Equatable {
-    case mamba       // "mamba"
-    case attention   // "attention"
+    case mamba  // "mamba"
+    case attention  // "attention"
 
     init(from name: String) throws {
         switch name {
@@ -71,9 +71,9 @@ public struct JambaHybrid: JambaVariant {
         device: Device
     ) throws -> JambaModel {
         guard let hidden = config.hiddenSize,
-              let vocab = config.vocabSize,
-              let nHeads = config.numAttentionHeads,
-              let nLayers = config.numLayers
+            let vocab = config.vocabSize,
+            let nHeads = config.numAttentionHeads,
+            let nLayers = config.numLayers
         else {
             throw JambaError.missingConfig(
                 "hidden_size / vocab_size / num_attention_heads / num_hidden_layers")
@@ -86,7 +86,7 @@ public struct JambaHybrid: JambaVariant {
         guard config.quantization == nil else {
             throw JambaError.unsupportedConfig(
                 "quantized Jamba checkpoints not yet supported — load a raw "
-                + "bf16/f16 variant (e.g. mlx-community/AI21-Jamba-Reasoning-3B-bf16)")
+                    + "bf16/f16 variant (e.g. mlx-community/AI21-Jamba-Reasoning-3B-bf16)")
         }
 
         // ── Mamba (Mamba 1) mixer geometry ────────────────────────────
@@ -100,7 +100,8 @@ public struct JambaHybrid: JambaVariant {
         let dInner = expand * hidden
         // dt_rank: the low-rank dimension of the dt projection. mlx-lm
         // defaults it to ceil(hidden / 16) when the config omits it.
-        let dtRank = config.int("mamba_dt_rank")
+        let dtRank =
+            config.int("mamba_dt_rank")
             ?? Int((Double(hidden) / 16.0).rounded(.up))
 
         // ── Feed-forward geometry ─────────────────────────────────────
@@ -118,19 +119,19 @@ public struct JambaHybrid: JambaVariant {
             kinds = try names.map { try JambaLayerKind(from: $0) }
         } else {
             guard let attnPeriod = config.int("attn_layer_period"),
-                  let attnOffset = config.int("attn_layer_offset")
+                let attnOffset = config.int("attn_layer_offset")
             else {
                 throw JambaError.missingConfig(
                     "layers_block_type (or attn_layer_period + attn_layer_offset)")
             }
-            kinds = (0..<nLayers).map { i in
+            kinds = (0 ..< nLayers).map { i in
                 (i % attnPeriod == attnOffset) ? .attention : .mamba
             }
         }
         guard kinds.count == nLayers else {
             throw JambaError.unsupportedConfig(
                 "layers_block_type has \(kinds.count) entries, "
-                + "num_hidden_layers is \(nLayers)")
+                    + "num_hidden_layers is \(nLayers)")
         }
 
         // ── Activation dtype — taken from the embedding table ─────────
@@ -156,18 +157,20 @@ public struct JambaHybrid: JambaVariant {
             // ── Feed-forward half — dense SwiGLU MLP or MoE ───────────
             let ffn: JambaFFN
             if useMoE {
-                ffn = .moe(try buildMoE(
-                    prefix: p, weights: weights,
-                    hidden: hidden, moeIntermediate: intermediate,
-                    numExperts: numExperts, topK: numExpertsPerToken))
+                ffn = .moe(
+                    try buildMoE(
+                        prefix: p, weights: weights,
+                        hidden: hidden, moeIntermediate: intermediate,
+                        numExperts: numExperts, topK: numExpertsPerToken))
             } else {
                 let gateW = try weights.tensor(named: "\(p).feed_forward.gate_proj.weight")
                 let upW = try weights.tensor(named: "\(p).feed_forward.up_proj.weight")
                 let downW = try weights.tensor(named: "\(p).feed_forward.down_proj.weight")
-                ffn = .dense(JambaDenseMLP(
-                    gateProj: AnyLinear(Linear(weight: gateW)),
-                    upProj: AnyLinear(Linear(weight: upW)),
-                    downProj: AnyLinear(Linear(weight: downW))))
+                ffn = .dense(
+                    JambaDenseMLP(
+                        gateProj: AnyLinear(Linear(weight: gateW)),
+                        upProj: AnyLinear(Linear(weight: upW)),
+                        downProj: AnyLinear(Linear(weight: downW))))
             }
 
             switch kind {
@@ -178,25 +181,31 @@ public struct JambaHybrid: JambaVariant {
                     dtRank: dtRank, convKernel: convKernel,
                     useConvBias: useConvBias, useProjBias: useProjBias, eps: eps,
                     dtype: activationDtype, device: device)
-                layers.append(JambaMambaLayer(
-                    inputNorm: inputNorm, preFFNorm: preFFNorm,
-                    mixer: mixer, ffn: ffn, hidden: hidden))
+                layers.append(
+                    JambaMambaLayer(
+                        inputNorm: inputNorm, preFFNorm: preFFNorm,
+                        mixer: mixer, ffn: ffn, hidden: hidden))
 
             case .attention:
-                let qProj = AnyLinear(Linear(
-                    weight: try weights.tensor(named: "\(p).self_attn.q_proj.weight")))
-                let kProj = AnyLinear(Linear(
-                    weight: try weights.tensor(named: "\(p).self_attn.k_proj.weight")))
-                let vProj = AnyLinear(Linear(
-                    weight: try weights.tensor(named: "\(p).self_attn.v_proj.weight")))
-                let oProj = AnyLinear(Linear(
-                    weight: try weights.tensor(named: "\(p).self_attn.o_proj.weight")))
+                let qProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).self_attn.q_proj.weight")))
+                let kProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).self_attn.k_proj.weight")))
+                let vProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).self_attn.v_proj.weight")))
+                let oProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).self_attn.o_proj.weight")))
                 let mixer = JambaAttentionMixer(
                     qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
                     nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim)
-                layers.append(JambaAttentionLayer(
-                    inputNorm: inputNorm, preFFNorm: preFFNorm,
-                    mixer: mixer, ffn: ffn, hidden: hidden))
+                layers.append(
+                    JambaAttentionLayer(
+                        inputNorm: inputNorm, preFFNorm: preFFNorm,
+                        mixer: mixer, ffn: ffn, hidden: hidden))
             }
         }
 
@@ -240,18 +249,21 @@ public struct JambaHybrid: JambaVariant {
         let outProjB = useProjBias ? try? weights.tensor(named: "\(p).out_proj.bias") : nil
         let outProj = AnyLinear(Linear(weight: outProjW, bias: outProjB))
         // x_proj: d_inner → dt_rank + 2*d_state  (split into dt | B | C).
-        let xProj = AnyLinear(Linear(
-            weight: try weights.tensor(named: "\(p).x_proj.weight")))
+        let xProj = AnyLinear(
+            Linear(
+                weight: try weights.tensor(named: "\(p).x_proj.weight")))
         // dt_proj: dt_rank → d_inner, always biased.
-        let dtProj = AnyLinear(Linear(
-            weight: try weights.tensor(named: "\(p).dt_proj.weight"),
-            bias: try weights.tensor(named: "\(p).dt_proj.bias")))
+        let dtProj = AnyLinear(
+            Linear(
+                weight: try weights.tensor(named: "\(p).dt_proj.weight"),
+                bias: try weights.tensor(named: "\(p).dt_proj.bias")))
 
         // conv1d.weight ships [d_inner, 1, kernel]; the metaltile kernel
         // wants [kernel, d_inner].
         let convWSrc = try weights.tensor(named: "\(p).conv1d.weight")
-        precondition(convWSrc.elementCount == dInner * convKernel,
-                     "Jamba: conv1d.weight count mismatch: \(convWSrc.shape)")
+        precondition(
+            convWSrc.elementCount == dInner * convKernel,
+            "Jamba: conv1d.weight count mismatch: \(convWSrc.shape)")
         let convW = transposeConv1dWeightJamba(
             src: convWSrc, kernel: convKernel, channels: dInner,
             dtype: dtype, device: device)
@@ -268,9 +280,10 @@ public struct JambaHybrid: JambaVariant {
         // A_eff = -exp(A_log), full [d_inner, d_state] host array. D is
         // [d_inner] host array. Both feed the CPU selective scan.
         let aLogT = try weights.tensor(named: "\(p).A_log")
-        precondition(aLogT.elementCount == dInner * dState,
-                     "Jamba: A_log expected [d_inner, d_state] = "
-                     + "[\(dInner), \(dState)], got \(aLogT.shape)")
+        precondition(
+            aLogT.elementCount == dInner * dState,
+            "Jamba: A_log expected [d_inner, d_state] = "
+                + "[\(dInner), \(dState)], got \(aLogT.shape)")
         let aEff = readFloatsJamba(aLogT).map { -Foundation.exp($0) }
         let dHost = readFloatsJamba(try weights.tensor(named: "\(p).D"))
         precondition(dHost.count == dInner, "Jamba: D expected [d_inner]")
@@ -302,8 +315,9 @@ public struct JambaHybrid: JambaVariant {
         numExperts: Int, topK: Int
     ) throws -> MoELayer {
         // Router: hidden → numExperts logits.
-        let gate = AnyLinear(Linear(
-            weight: try weights.tensor(named: "\(p).feed_forward.router.weight")))
+        let gate = AnyLinear(
+            Linear(
+                weight: try weights.tensor(named: "\(p).feed_forward.router.weight")))
 
         var gateProj: [AnyLinear] = []
         var upProj: [AnyLinear] = []
@@ -322,27 +336,42 @@ public struct JambaHybrid: JambaVariant {
                 named: "\(p).feed_forward.switch_mlp.up_proj.weight")
             let stackedDown = try weights.tensor(
                 named: "\(p).feed_forward.switch_mlp.down_proj.weight")
-            for e in 0..<numExperts {
-                gateProj.append(AnyLinear(Linear(weight:
-                    stackedGate.slicedRows(start: e, count: 1)
-                        .reshaped(to: [moeIntermediate, hidden]))))
-                upProj.append(AnyLinear(Linear(weight:
-                    stackedUp.slicedRows(start: e, count: 1)
-                        .reshaped(to: [moeIntermediate, hidden]))))
-                downProj.append(AnyLinear(Linear(weight:
-                    stackedDown.slicedRows(start: e, count: 1)
-                        .reshaped(to: [hidden, moeIntermediate]))))
+            for e in 0 ..< numExperts {
+                gateProj.append(
+                    AnyLinear(
+                        Linear(
+                            weight:
+                                stackedGate.slicedRows(start: e, count: 1)
+                                .reshaped(to: [moeIntermediate, hidden]))))
+                upProj.append(
+                    AnyLinear(
+                        Linear(
+                            weight:
+                                stackedUp.slicedRows(start: e, count: 1)
+                                .reshaped(to: [moeIntermediate, hidden]))))
+                downProj.append(
+                    AnyLinear(
+                        Linear(
+                            weight:
+                                stackedDown.slicedRows(start: e, count: 1)
+                                .reshaped(to: [hidden, moeIntermediate]))))
             }
         } else {
             // Per-expert tensor layout.
-            for e in 0..<numExperts {
+            for e in 0 ..< numExperts {
                 let ep = "\(p).feed_forward.experts.\(e)"
-                gateProj.append(AnyLinear(Linear(
-                    weight: try weights.tensor(named: "\(ep).gate_proj.weight"))))
-                upProj.append(AnyLinear(Linear(
-                    weight: try weights.tensor(named: "\(ep).up_proj.weight"))))
-                downProj.append(AnyLinear(Linear(
-                    weight: try weights.tensor(named: "\(ep).down_proj.weight"))))
+                gateProj.append(
+                    AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(named: "\(ep).gate_proj.weight"))))
+                upProj.append(
+                    AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(named: "\(ep).up_proj.weight"))))
+                downProj.append(
+                    AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(named: "\(ep).down_proj.weight"))))
             }
         }
 
@@ -377,31 +406,43 @@ enum JambaFFN {
 
 public final class JambaMambaMixer: Module {
     let inProj, outProj, xProj, dtProj: AnyLinear
-    let convW: Tensor        // [kernel, d_inner]
-    let convB: Tensor        // [d_inner]
-    let aEff: [Float]        // [d_inner * d_state]  = -exp(A_log), row-major
-    let dHost: [Float]       // [d_inner]
-    let dtNorm: [Float]      // [dt_rank]   dt_layernorm weight
-    let bNorm: [Float]       // [d_state]   b_layernorm weight
-    let cNorm: [Float]       // [d_state]   c_layernorm weight
+    let convW: Tensor  // [kernel, d_inner]
+    let convB: Tensor  // [d_inner]
+    let aEff: [Float]  // [d_inner * d_state]  = -exp(A_log), row-major
+    let dHost: [Float]  // [d_inner]
+    let dtNorm: [Float]  // [dt_rank]   dt_layernorm weight
+    let bNorm: [Float]  // [d_state]   b_layernorm weight
+    let cNorm: [Float]  // [d_state]   c_layernorm weight
     let hidden, dInner, dState, dtRank, convKernel: Int
     let eps: Float
     let dtype: DType
 
-    init(inProj: AnyLinear, outProj: AnyLinear, xProj: AnyLinear, dtProj: AnyLinear,
-         convW: Tensor, convB: Tensor,
-         aEff: [Float], dHost: [Float],
-         dtNorm: [Float], bNorm: [Float], cNorm: [Float],
-         hidden: Int, dInner: Int, dState: Int, dtRank: Int,
-         convKernel: Int, eps: Float, dtype: DType) {
-        self.inProj = inProj; self.outProj = outProj
-        self.xProj = xProj; self.dtProj = dtProj
-        self.convW = convW; self.convB = convB
-        self.aEff = aEff; self.dHost = dHost
-        self.dtNorm = dtNorm; self.bNorm = bNorm; self.cNorm = cNorm
-        self.hidden = hidden; self.dInner = dInner; self.dState = dState
-        self.dtRank = dtRank; self.convKernel = convKernel
-        self.eps = eps; self.dtype = dtype
+    init(
+        inProj: AnyLinear, outProj: AnyLinear, xProj: AnyLinear, dtProj: AnyLinear,
+        convW: Tensor, convB: Tensor,
+        aEff: [Float], dHost: [Float],
+        dtNorm: [Float], bNorm: [Float], cNorm: [Float],
+        hidden: Int, dInner: Int, dState: Int, dtRank: Int,
+        convKernel: Int, eps: Float, dtype: DType
+    ) {
+        self.inProj = inProj
+        self.outProj = outProj
+        self.xProj = xProj
+        self.dtProj = dtProj
+        self.convW = convW
+        self.convB = convB
+        self.aEff = aEff
+        self.dHost = dHost
+        self.dtNorm = dtNorm
+        self.bNorm = bNorm
+        self.cNorm = cNorm
+        self.hidden = hidden
+        self.dInner = dInner
+        self.dState = dState
+        self.dtRank = dtRank
+        self.convKernel = convKernel
+        self.eps = eps
+        self.dtype = dtype
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -417,10 +458,12 @@ public final class JambaMambaMixer: Module {
     /// layer input. Commits `cmd` mid-way (the host scan needs the GPU
     /// projections on the CPU) and returns a fully-resident `[hidden]`
     /// tensor produced on a fresh command buffer.
-    func forward(_ xNorm: Tensor, cache: ConvStateCache, ssmState: SSMScanState,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forward(
+        _ xNorm: Tensor, cache: ConvStateCache, ssmState: SSMScanState,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // ── GPU phase 1: in_proj → x | z, conv1d(x) + SiLU, x_proj ────
-        let proj = inProj(xNorm, on: cmd)            // [2 * d_inner]
+        let proj = inProj(xNorm, on: cmd)  // [2 * d_inner]
         let x = proj.slicedRows(start: 0, count: dInner)
         let z = proj.slicedRows(start: dInner, count: dInner)
 
@@ -429,7 +472,7 @@ public final class JambaMambaMixer: Module {
             x: x, w: convW, b: convB,
             state: cache.state, into: convOut,
             nChannels: dInner, kernelSize: convKernel, on: cmd)
-        let convAct = Ops.silu(convOut, on: cmd)     // [d_inner]
+        let convAct = Ops.silu(convOut, on: cmd)  // [d_inner]
 
         // x_proj(convAct) → [dt_rank + 2*d_state]; the host reads its
         // slices for the dt/B/C layernorms.
@@ -440,15 +483,15 @@ public final class JambaMambaMixer: Module {
         cmd.waitUntilCompleted()
 
         // ── Host phase: dt/B/C layernorms + dt_proj input prep ────────
-        let convHost = convAct.toFloatArray()        // [d_inner]
-        let zHost = z.toFloatArray()                 // [d_inner]
-        let deltaBCHost = deltaBC.toFloatArray()     // [dt_rank + 2*d_state]
+        let convHost = convAct.toFloatArray()  // [d_inner]
+        let zHost = z.toFloatArray()  // [d_inner]
+        let deltaBCHost = deltaBC.toFloatArray()  // [dt_rank + 2*d_state]
 
         // Split dt_raw | B | C, then RMSNorm each (matches mlx-lm:
         // dt_layernorm / b_layernorm / c_layernorm are weighted RMSNorm).
-        var dtRaw = Array(deltaBCHost[0..<dtRank])
-        var bVec = Array(deltaBCHost[dtRank..<(dtRank + dState)])
-        var cVec = Array(deltaBCHost[(dtRank + dState)..<(dtRank + 2 * dState)])
+        var dtRaw = Array(deltaBCHost[0 ..< dtRank])
+        var bVec = Array(deltaBCHost[dtRank ..< (dtRank + dState)])
+        var cVec = Array(deltaBCHost[(dtRank + dState) ..< (dtRank + 2 * dState)])
         dtRaw = Self.rmsNorm(dtRaw, weight: dtNorm, eps: eps)
         bVec = Self.rmsNorm(bVec, weight: bNorm, eps: eps)
         cVec = Self.rmsNorm(cVec, weight: cNorm, eps: eps)
@@ -457,7 +500,7 @@ public final class JambaMambaMixer: Module {
         let phase2 = device.makeCommandBuffer()
         let dtRawT = Tensor.empty(shape: [dtRank], dtype: dtype, device: device)
         writeFloatsJamba(dtRaw, into: dtRawT)
-        let dtProjOut = dtProj(dtRawT, on: phase2)   // [d_inner]
+        let dtProjOut = dtProj(dtRawT, on: phase2)  // [d_inner]
         phase2.commit()
         phase2.waitUntilCompleted()
 
@@ -469,13 +512,13 @@ public final class JambaMambaMixer: Module {
         // then y *= silu(z).
         var yGated = [Float](repeating: 0, count: dInner)
         ssmState.h.withUnsafeMutableBufferPointer { state in
-            for c in 0..<dInner {
+            for c in 0 ..< dInner {
                 let xc = convHost[c]
                 let dtc = dtHost[c]
                 let dtx = dtc * xc
                 let base = c * dState
                 var yc: Float = 0
-                for n in 0..<dState {
+                for n in 0 ..< dState {
                     let decay = Foundation.exp(aEff[base + n] * dtc)
                     let s = decay * state[base + n] + dtx * bVec[n]
                     state[base + n] = s
@@ -490,7 +533,7 @@ public final class JambaMambaMixer: Module {
         let phase3 = device.makeCommandBuffer()
         let yGatedT = Tensor.empty(shape: [dInner], dtype: dtype, device: device)
         writeFloatsJamba(yGated, into: yGatedT)
-        let result = outProj(yGatedT, on: phase3)    // [hidden]
+        let result = outProj(yGatedT, on: phase3)  // [hidden]
         phase3.commit()
         phase3.waitUntilCompleted()
         return result
@@ -514,10 +557,17 @@ public final class JambaAttentionMixer: Module {
     let nHeads, nKVHeads, headDim: Int
     let scale: Float
 
-    init(qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
-         nHeads: Int, nKVHeads: Int, headDim: Int) {
-        self.qProj = qProj; self.kProj = kProj; self.vProj = vProj; self.oProj = oProj
-        self.nHeads = nHeads; self.nKVHeads = nKVHeads; self.headDim = headDim
+    init(
+        qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
+        nHeads: Int, nKVHeads: Int, headDim: Int
+    ) {
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
         self.scale = 1.0 / Float(Double(headDim).squareRoot())
     }
 
@@ -532,15 +582,18 @@ public final class JambaAttentionMixer: Module {
 
     /// Single-token attention forward. Returns the post-o_proj
     /// contribution (residual add done by the enclosing layer).
-    func forward(_ xNorm: Tensor, cache kv: KVCache,
-                 cmd: MTLCommandBuffer, device _: Device) -> Tensor {
+    func forward(
+        _ xNorm: Tensor, cache kv: KVCache,
+        cmd: MTLCommandBuffer, device _: Device
+    ) -> Tensor {
         let q = qProj(xNorm, on: cmd)
         let k = kProj(xNorm, on: cmd)
         let v = vProj(xNorm, on: cmd)
 
         // No RoPE — Jamba attention attends without positional rotation.
-        kv.appendOnGPU(kFlat: k.reshaped(to: [nKVHeads, headDim]),
-                       vFlat: v.reshaped(to: [nKVHeads, headDim]), on: cmd)
+        kv.appendOnGPU(
+            kFlat: k.reshaped(to: [nKVHeads, headDim]),
+            vFlat: v.reshaped(to: [nKVHeads, headDim]), on: cmd)
 
         let (cacheK, cacheV) = kv.prepareForAttention(on: cmd)
         let attnOut = Ops.sdpaDecode(
@@ -559,7 +612,9 @@ public final class JambaDenseMLP: Module {
     let gateProj, upProj, downProj: AnyLinear
 
     init(gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear) {
-        self.gateProj = gateProj; self.upProj = upProj; self.downProj = downProj
+        self.gateProj = gateProj
+        self.upProj = upProj
+        self.downProj = downProj
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -603,7 +658,7 @@ public final class SSMScanState: @unchecked Sendable {
     }
 
     func reset() {
-        for i in 0..<h.count { h[i] = 0 }
+        for i in 0 ..< h.count { h[i] = 0 }
     }
 
     var bytesAllocated: Int { h.count * MemoryLayout<Float>.stride }
@@ -623,11 +678,14 @@ public final class JambaMambaLayerCache: LayerCacheProtocol, @unchecked Sendable
     public private(set) var length: Int = 0
     public let maxSeq: Int = .max
 
-    public init(dInner: Int, dState: Int,
-                convKernelSize: Int, dtype: DType, device: Device = .shared) {
-        self.conv = ConvStateCache(nChannels: dInner,
-                                   kernelSize: convKernelSize,
-                                   dtype: dtype, device: device)
+    public init(
+        dInner: Int, dState: Int,
+        convKernelSize: Int, dtype: DType, device: Device = .shared
+    ) {
+        self.conv = ConvStateCache(
+            nChannels: dInner,
+            kernelSize: convKernelSize,
+            dtype: dtype, device: device)
         self.scan = SSMScanState(dInner: dInner, dState: dState)
     }
 
@@ -666,10 +724,15 @@ public final class JambaMambaLayer: Module, DecoderLayer {
 
     public let commitsCommandBuffer: Bool = true
 
-    init(inputNorm: RMSNorm, preFFNorm: RMSNorm,
-         mixer: JambaMambaMixer, ffn: JambaFFN, hidden: Int) {
-        self.inputNorm = inputNorm; self.preFFNorm = preFFNorm
-        self.mixer = mixer; self.ffn = ffn; self.hidden = hidden
+    init(
+        inputNorm: RMSNorm, preFFNorm: RMSNorm,
+        mixer: JambaMambaMixer, ffn: JambaFFN, hidden: Int
+    ) {
+        self.inputNorm = inputNorm
+        self.preFFNorm = preFFNorm
+        self.mixer = mixer
+        self.ffn = ffn
+        self.hidden = hidden
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -684,18 +747,22 @@ public final class JambaMambaLayer: Module, DecoderLayer {
     /// `DecoderLayer` conformance. Cache slot is a `JambaMambaLayerCache`.
     /// IMPORTANT: commits `cmd` (the host scan + an MoE FFN both need a
     /// CPU sync). The host model refreshes `cmd` afterwards.
-    public func decode(_ h: Tensor, position: Int,
-                       cache: any LayerCacheProtocol,
-                       cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func decode(
+        _ h: Tensor, position: Int,
+        cache: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         guard let mc = cache as? JambaMambaLayerCache else {
-            fatalError("JambaMambaLayer: expected JambaMambaLayerCache, "
-                       + "got \(type(of: cache))")
+            fatalError(
+                "JambaMambaLayer: expected JambaMambaLayerCache, "
+                    + "got \(type(of: cache))")
         }
         // ── Mixer half — pre-norm + Mamba 1 mixer + residual add ──────
         let xNorm = inputNorm(h, on: cmd)
         // mixer.forward commits `cmd` and returns a resident tensor.
-        let mixerOut = mixer.forward(xNorm, cache: mc.conv, ssmState: mc.scan,
-                                     cmd: cmd, device: device)
+        let mixerOut = mixer.forward(
+            xNorm, cache: mc.conv, ssmState: mc.scan,
+            cmd: cmd, device: device)
         mc.advance()
 
         // `h` was produced on the now-committed `cmd`; it is resident.
@@ -703,9 +770,10 @@ public final class JambaMambaLayer: Module, DecoderLayer {
         // layer owns and must commit (the host model swapped `cmd` away).
         let ffnCmd = device.makeCommandBuffer()
         let postMix = Ops.add(h, mixerOut, on: ffnCmd)
-        return jambaApplyFFN(ffn, postMix: postMix, preFFNorm: preFFNorm,
-                             position: position, cmd: ffnCmd,
-                             commitCmd: true, device: device)
+        return jambaApplyFFN(
+            ffn, postMix: postMix, preFFNorm: preFFNorm,
+            position: position, cmd: ffnCmd,
+            commitCmd: true, device: device)
     }
 }
 
@@ -725,12 +793,20 @@ public final class JambaAttentionLayer: Module, DecoderLayer {
 
     public let commitsCommandBuffer: Bool
 
-    init(inputNorm: RMSNorm, preFFNorm: RMSNorm,
-         mixer: JambaAttentionMixer, ffn: JambaFFN, hidden: Int) {
-        self.inputNorm = inputNorm; self.preFFNorm = preFFNorm
-        self.mixer = mixer; self.ffn = ffn; self.hidden = hidden
-        if case .moe = ffn { self.commitsCommandBuffer = true }
-        else { self.commitsCommandBuffer = false }
+    init(
+        inputNorm: RMSNorm, preFFNorm: RMSNorm,
+        mixer: JambaAttentionMixer, ffn: JambaFFN, hidden: Int
+    ) {
+        self.inputNorm = inputNorm
+        self.preFFNorm = preFFNorm
+        self.mixer = mixer
+        self.ffn = ffn
+        self.hidden = hidden
+        if case .moe = ffn {
+            self.commitsCommandBuffer = true
+        } else {
+            self.commitsCommandBuffer = false
+        }
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -744,9 +820,11 @@ public final class JambaAttentionLayer: Module, DecoderLayer {
 
     /// `DecoderLayer` conformance. Cache slot is a `KVCache`. Commits
     /// `cmd` only when the FFN is an `MoELayer`.
-    public func decode(_ h: Tensor, position: Int,
-                       cache: any LayerCacheProtocol,
-                       cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func decode(
+        _ h: Tensor, position: Int,
+        cache: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         guard let kv = cache as? KVCache else {
             fatalError("JambaAttentionLayer: expected KVCache, got \(type(of: cache))")
         }
@@ -773,10 +851,11 @@ public final class JambaAttentionLayer: Module, DecoderLayer {
         // ── Feed-forward half ─────────────────────────────────────────
         // `cmd` is the host model's `workCmd`; the model owns its commit
         // (or swaps it after an MoE FFN). This layer does not commit it.
-        return jambaApplyFFN(ffn, postMix: postMix, preFFNorm: preFFNorm,
-                             position: position, cmd: cmd,
-                             commitCmd: false, device: device,
-                             preNormed: ffnNorm)
+        return jambaApplyFFN(
+            ffn, postMix: postMix, preFFNorm: preFFNorm,
+            position: position, cmd: cmd,
+            commitCmd: false, device: device,
+            preNormed: ffnNorm)
     }
 }
 
@@ -811,10 +890,12 @@ private func jambaFFNParameters(_ ffn: JambaFFN) -> [(String, Tensor)] {
 ///   When the FFN is an `MoELayer`, `decode` commits `cmd` regardless;
 ///   the residual add then runs on a fresh, locally-committed buffer so
 ///   the returned tensor is resident either way.
-private func jambaApplyFFN(_ ffn: JambaFFN, postMix: Tensor, preFFNorm: RMSNorm,
-                           position: Int, cmd: MTLCommandBuffer,
-                           commitCmd: Bool, device: Device,
-                           preNormed: Tensor? = nil) -> Tensor {
+private func jambaApplyFFN(
+    _ ffn: JambaFFN, postMix: Tensor, preFFNorm: RMSNorm,
+    position: Int, cmd: MTLCommandBuffer,
+    commitCmd: Bool, device: Device,
+    preNormed: Tensor? = nil
+) -> Tensor {
     // `preNormed` lets the attention-layer caller supply the
     // fused-kernel output of `mt_add_rms_norm` (postMix already +
     // pre-FF norm in one dispatch). When nil, we run the separate norm.
@@ -832,9 +913,10 @@ private func jambaApplyFFN(_ ffn: JambaFFN, postMix: Tensor, preFFNorm: RMSNorm,
         // MoELayer.decode commits `cmd`; run the residual add on a
         // fresh buffer so the returned tensor does not depend on a dead
         // command buffer.
-        let ffnOut = moe.decode(ffnNorm, position: position,
-                                cache: StatelessLayerCache(),
-                                cmd: cmd, device: device)
+        let ffnOut = moe.decode(
+            ffnNorm, position: position,
+            cache: StatelessLayerCache(),
+            cmd: cmd, device: device)
         let addCmd = device.makeCommandBuffer()
         let result = Ops.add(postMix, ffnOut, on: addCmd)
         addCmd.commit()
@@ -864,20 +946,30 @@ public final class JambaModel: LanguageModel {
     /// every mamba layer commits regardless).
     public let hasMoE: Bool
 
-    init(embedTokens: AnyEmbedding, layers: [any DecoderLayer],
-         finalNorm: RMSNorm, lmHead: AnyLinear,
-         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         dInner: Int, dState: Int, dtRank: Int, convDim: Int, convKernel: Int,
-         vocab: Int, maxSeq: Int, dtype: DType) {
+    init(
+        embedTokens: AnyEmbedding, layers: [any DecoderLayer],
+        finalNorm: RMSNorm, lmHead: AnyLinear,
+        hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        dInner: Int, dState: Int, dtRank: Int, convDim: Int, convKernel: Int,
+        vocab: Int, maxSeq: Int, dtype: DType
+    ) {
         self.embedTokens = embedTokens
         self.layers = layers
         self.finalNorm = finalNorm
         self.lmHead = lmHead
-        self.hidden = hidden; self.nLayers = nLayers
-        self.nHeads = nHeads; self.nKVHeads = nKVHeads; self.headDim = headDim
-        self.dInner = dInner; self.dState = dState; self.dtRank = dtRank
-        self.convDim = convDim; self.convKernel = convKernel
-        self.vocab = vocab; self.maxSeq = maxSeq; self.dtype = dtype
+        self.hidden = hidden
+        self.nLayers = nLayers
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.dInner = dInner
+        self.dState = dState
+        self.dtRank = dtRank
+        self.convDim = convDim
+        self.convKernel = convKernel
+        self.vocab = vocab
+        self.maxSeq = maxSeq
+        self.dtype = dtype
         self.layerKinds = layers.map { layer in
             switch layer {
             case is JambaMambaLayer: return .mamba
@@ -947,9 +1039,11 @@ public final class JambaModel: LanguageModel {
     /// `cmd`. The hidden state `h` handed to the final norm is already
     /// resident (the last layer committed its buffer), so the caller's
     /// single commit of `cmd` produces correct logits.
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let tokenBuf = device.makeBuffer(length: 4)
         var tid = UInt32(tokenId)
         memcpy(tokenBuf.contents(), &tid, 4)
@@ -960,8 +1054,9 @@ public final class JambaModel: LanguageModel {
         var h = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
 
         for (i, layer) in layers.enumerated() {
-            h = layer.decode(h, position: position, cache: caches[i],
-                             cmd: workCmd, device: device)
+            h = layer.decode(
+                h, position: position, cache: caches[i],
+                cmd: workCmd, device: device)
             // Refresh `workCmd` if the layer committed it.
             let committed: Bool
             switch layer {
@@ -979,8 +1074,9 @@ public final class JambaModel: LanguageModel {
         // that layer's uncommitted work — commit it so `h` is resident
         // before the caller's `cmd` reads it.
         if let last = layers.last,
-           !((last as? JambaMambaLayer)?.commitsCommandBuffer ?? false),
-           !((last as? JambaAttentionLayer)?.commitsCommandBuffer ?? false) {
+            !((last as? JambaMambaLayer)?.commitsCommandBuffer ?? false),
+            !((last as? JambaAttentionLayer)?.commitsCommandBuffer ?? false)
+        {
             workCmd.commit()
             workCmd.waitUntilCompleted()
         }
@@ -999,15 +1095,19 @@ public final class JambaModel: LanguageModel {
     /// per-attention-layer `decodeMulti` follow-up will need to
     /// reproduce the per-layer cmd-refresh in `forward(tokenId:)`.
     /// Today this override is commit-count-batched only.
-    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                             caches: [any LayerCacheProtocol],
-                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(!tokenIds.isEmpty,
-                     "JambaModel.forwardMulti: tokenIds must be non-empty")
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "JambaModel.forwardMulti: tokenIds must be non-empty")
         var logits: Tensor!
         for (i, tok) in tokenIds.enumerated() {
-            logits = forward(tokenId: tok, position: position + i,
-                             caches: caches, on: cmd, device: device)
+            logits = forward(
+                tokenId: tok, position: position + i,
+                caches: caches, on: cmd, device: device)
         }
         return logits
     }
@@ -1036,12 +1136,13 @@ private func writeFloatsJamba(_ values: [Float], into t: Tensor) {
     case .f32:
         t.copyIn(from: values)
     case .bf16:
-        t.copyIn(from: values.map { v -> UInt16 in
-            // Round-to-nearest before truncating the low 16 bits.
-            let bits = v.bitPattern
-            let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
-            return UInt16(rounded >> 16)
-        })
+        t.copyIn(
+            from: values.map { v -> UInt16 in
+                // Round-to-nearest before truncating the low 16 bits.
+                let bits = v.bitPattern
+                let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
+                return UInt16(rounded >> 16)
+            })
     case .f16:
         t.copyIn(from: values.map { Float16($0) })
     default:
@@ -1050,8 +1151,10 @@ private func writeFloatsJamba(_ values: [Float], into t: Tensor) {
 }
 
 /// Cast a per-channel vector to the activation dtype.
-private func castVectorJamba(_ src: Tensor, count: Int,
-                             dtype: DType, device: Device) -> Tensor {
+private func castVectorJamba(
+    _ src: Tensor, count: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     if src.dtype == dtype { return src }
     let floats = readFloatsJamba(src)
     precondition(floats.count == count, "Jamba: vector size mismatch")
@@ -1069,13 +1172,15 @@ private func zeroVectorJamba(_ n: Int, dtype: DType, device: Device) -> Tensor {
 
 /// Transpose HF conv1d.weight `[C, 1, K]` → `[K, C]` for the metaltile
 /// conv kernel.
-private func transposeConv1dWeightJamba(src: Tensor, kernel K: Int, channels C: Int,
-                                        dtype: DType, device: Device) -> Tensor {
+private func transposeConv1dWeightJamba(
+    src: Tensor, kernel K: Int, channels C: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     let floats = readFloatsJamba(src)
     precondition(floats.count == K * C, "Jamba: conv1d.weight count mismatch")
     var dst = [Float](repeating: 0, count: K * C)
-    for c in 0..<C {
-        for k in 0..<K { dst[k * C + c] = floats[c * K + k] }
+    for c in 0 ..< C {
+        for k in 0 ..< K { dst[k * C + c] = floats[c * K + k] }
     }
     let t = Tensor.empty(shape: [K, C], dtype: dtype, device: device)
     writeFloatsJamba(dst, into: t)

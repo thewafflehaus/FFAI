@@ -79,22 +79,22 @@ public protocol AudioModel: Module {
 // to expose their voice catalogue and override `setVoice` to swap the
 // active style vector.
 
-public extension AudioModel {
+extension AudioModel {
     /// Names of voices this model can use. Default is a single
     /// `"default"` entry — multi-voice families (Kokoro, FishSpeech, …)
     /// override this to expose their voice catalogue by name.
-    var availableVoices: [String] { ["default"] }
+    public var availableVoices: [String] { ["default"] }
 
     /// The voice activated when the caller passes
     /// `AudioGenerationParameters.voice == "default"`. Override per
     /// family — e.g. Kokoro defaults to `"af_heart"`.
-    var defaultVoice: String { "default" }
+    public var defaultVoice: String { "default" }
 
     /// Activate a named voice. The default implementation accepts only
     /// `"default"` (matching the single-voice protocol-extension surface);
     /// multi-voice families override it to hot-load and cache the
     /// requested style vector.
-    func setVoice(_ name: String) throws {
+    public func setVoice(_ name: String) throws {
         let valid = availableVoices
         guard valid.contains(name) || name == "default" else {
             throw AudioGenerationError.voiceNotAvailable(

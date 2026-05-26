@@ -39,9 +39,9 @@
 // an `"encoder"` block with `"feat_in"` — a signature no other
 // FFAI-registered model family carries.
 
+import Accelerate
 import Foundation
 import Metal
-import Accelerate
 
 // ─── Configuration ───────────────────────────────────────────────────
 
@@ -51,7 +51,7 @@ import Accelerate
 /// 128 Mel bins, 512-point FFT, per-feature normalisation.
 public struct ParakeetPreprocessorConfig: Sendable {
     public let sampleRate: Int
-    public let nMels: Int      // "features"
+    public let nMels: Int  // "features"
     public let nFFT: Int
     public let winLength: Int  // derived: window_size * sample_rate
     public let hopLength: Int  // derived: window_stride * sample_rate
@@ -94,7 +94,7 @@ public struct ParakeetJointConfig: Sendable {
     public let encoderHidden: Int
     public let predHidden: Int
     public let jointHidden: Int
-    public let numClasses: Int     // vocab + 1
+    public let numClasses: Int  // vocab + 1
     public let numExtraOutputs: Int  // TDT duration outputs (5 for 0-4)
 }
 
@@ -125,22 +125,23 @@ public enum ParakeetConfigError: Error, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .missingPreprocessor:  return "Parakeet config: missing 'preprocessor' block"
-        case .missingEncoder:       return "Parakeet config: missing 'encoder' block"
-        case .missingDecoder:       return "Parakeet config: missing 'decoder' block"
-        case .missingJoint:         return "Parakeet config: missing 'joint' block"
+        case .missingPreprocessor: return "Parakeet config: missing 'preprocessor' block"
+        case .missingEncoder: return "Parakeet config: missing 'encoder' block"
+        case .missingDecoder: return "Parakeet config: missing 'decoder' block"
+        case .missingJoint: return "Parakeet config: missing 'joint' block"
         case .missingModelDefaults: return "Parakeet config: missing 'model_defaults' block"
-        case .missingTDTDurations:  return "Parakeet config: missing 'tdt_durations' in model_defaults"
-        case .missingVocabulary:    return "Parakeet config: missing 'vocabulary' in joint block"
+        case .missingTDTDurations:
+            return "Parakeet config: missing 'tdt_durations' in model_defaults"
+        case .missingVocabulary: return "Parakeet config: missing 'vocabulary' in joint block"
         }
     }
 }
 
-public extension ParakeetConfig {
+extension ParakeetConfig {
     /// Decode a resolved checkpoint `config.json` into a `ParakeetConfig`.
     /// Both V2 and V3 are handled by the same parser — they differ only
     /// in vocab_size (1024 vs 8192) and the vocabulary list.
-    static func from(_ config: ModelConfig) throws -> ParakeetConfig {
+    public static func from(_ config: ModelConfig) throws -> ParakeetConfig {
         guard let prep = config.raw["preprocessor"] as? [String: Any]
         else { throw ParakeetConfigError.missingPreprocessor }
         guard let enc = config.raw["encoder"] as? [String: Any]
@@ -263,7 +264,7 @@ enum ParakeetFrontEnd {
     /// Periodic Hann window of length `n`.
     static func hannWindow(_ n: Int) -> [Float] {
         guard n > 1 else { return [Float](repeating: 1, count: max(n, 0)) }
-        return (0..<n).map { Float(0.5 - 0.5 * cos(2 * Double.pi * Double($0) / Double(n))) }
+        return (0 ..< n).map { Float(0.5 - 0.5 * cos(2 * Double.pi * Double($0) / Double(n))) }
     }
 
     // ── Mel filterbank ───────────────────────────────────────────────
@@ -285,19 +286,21 @@ enum ParakeetFrontEnd {
         let melLo = hzToMel(0)
         let melHi = hzToMel(fMax)
         var edgeHz = [Double](repeating: 0, count: nMels + 2)
-        for i in 0..<(nMels + 2) {
+        for i in 0 ..< (nMels + 2) {
             let m = melLo + (melHi - melLo) * Double(i) / Double(nMels + 1)
             edgeHz[i] = melToHz(m)
         }
         var fftFreqs = [Double](repeating: 0, count: nFreq)
-        for k in 0..<nFreq {
+        for k in 0 ..< nFreq {
             fftFreqs[k] = Double(k) * Double(sampleRate) / Double(nFFT)
         }
         var bank = [Float](repeating: 0, count: nMels * nFreq)
-        for m in 0..<nMels {
-            let lo = edgeHz[m]; let ctr = edgeHz[m + 1]; let hi = edgeHz[m + 2]
+        for m in 0 ..< nMels {
+            let lo = edgeHz[m]
+            let ctr = edgeHz[m + 1]
+            let hi = edgeHz[m + 2]
             let enorm = 2.0 / (hi - lo)
-            for k in 0..<nFreq {
+            for k in 0 ..< nFreq {
                 let f = fftFreqs[k]
                 let lower = (f - lo) / max(ctr - lo, 1e-9)
                 let upper = (hi - f) / max(hi - ctr, 1e-9)
@@ -320,12 +323,13 @@ enum ParakeetFrontEnd {
         let nSrc = min(frame.count, window.count, nFFT)
         // Windowed frame: w[n] * x[n]
         var windowed = [Float](repeating: 0, count: nFFT)
-        for i in 0..<nSrc { windowed[i] = frame[i] * window[i] }
+        for i in 0 ..< nSrc { windowed[i] = frame[i] * window[i] }
 
         let twoPiOverN = 2.0 * Double.pi / Double(nFFT)
-        for k in 0..<nFreq {
-            var re: Double = 0; var im: Double = 0
-            for n in 0..<nFFT {
+        for k in 0 ..< nFreq {
+            var re: Double = 0
+            var im: Double = 0
+            for n in 0 ..< nFFT {
                 let angle = twoPiOverN * Double(k) * Double(n)
                 re += Double(windowed[n]) * cos(angle)
                 im -= Double(windowed[n]) * sin(angle)
@@ -354,7 +358,7 @@ enum ParakeetFrontEnd {
         var samples = [Float](repeating: 0, count: waveform.count)
         if cfg.preemph > 0 && waveform.count > 1 {
             samples[0] = waveform[0]
-            for i in 1..<waveform.count {
+            for i in 1 ..< waveform.count {
                 samples[i] = waveform[i] - cfg.preemph * waveform[i - 1]
             }
         } else {
@@ -377,20 +381,20 @@ enum ParakeetFrontEnd {
         var mel = [Float](repeating: 0, count: nFrames * cfg.nMels)
         var frameBuf = [Float](repeating: 0, count: cfg.winLength)
 
-        for t in 0..<nFrames {
+        for t in 0 ..< nFrames {
             let start = t * cfg.hopLength
             let end = min(start + cfg.winLength, samples.count)
             let len = end - start
-            for i in 0..<len { frameBuf[i] = samples[start + i] }
-            for i in len..<cfg.winLength { frameBuf[i] = 0 }
+            for i in 0 ..< len { frameBuf[i] = samples[start + i] }
+            for i in len ..< cfg.winLength { frameBuf[i] = 0 }
 
             let power = framePowerSpectrum(
                 frame: frameBuf, window: window, nFFT: cfg.nFFT)
 
             // Project onto Mel filterbank
-            for m in 0..<cfg.nMels {
+            for m in 0 ..< cfg.nMels {
                 var sum: Float = 0
-                for k in 0..<nFreq {
+                for k in 0 ..< nFreq {
                     sum += bank[m * nFreq + k] * power[k]
                 }
                 mel[t * cfg.nMels + m] = sum
@@ -399,29 +403,40 @@ enum ParakeetFrontEnd {
 
         // 4. Log (with guard floor)
         let logGuard = cfg.logZeroGuardValue
-        for i in 0..<mel.count {
+        for i in 0 ..< mel.count {
             mel[i] = log(max(mel[i], logGuard))
         }
 
         // 5. Normalise
         if cfg.normalise == "per_feature" {
             // Z-score each Mel bin across time
-            for m in 0..<cfg.nMels {
-                var sum: Float = 0; var sum2: Float = 0
-                for t in 0..<nFrames { let v = mel[t * cfg.nMels + m]; sum += v; sum2 += v * v }
+            for m in 0 ..< cfg.nMels {
+                var sum: Float = 0
+                var sum2: Float = 0
+                for t in 0 ..< nFrames {
+                    let v = mel[t * cfg.nMels + m]
+                    sum += v
+                    sum2 += v * v
+                }
                 let mean = sum / Float(nFrames)
                 let denom = max(Float(nFrames) - 1, 1)
                 let variance = (sum2 - Float(nFrames) * mean * mean) / denom
                 let std = sqrt(max(variance, 0)) + 1e-5
-                for t in 0..<nFrames { mel[t * cfg.nMels + m] = (mel[t * cfg.nMels + m] - mean) / std }
+                for t in 0 ..< nFrames {
+                    mel[t * cfg.nMels + m] = (mel[t * cfg.nMels + m] - mean) / std
+                }
             }
         } else {
-            var sum: Float = 0; var sum2: Float = 0
-            for v in mel { sum += v; sum2 += v * v }
+            var sum: Float = 0
+            var sum2: Float = 0
+            for v in mel {
+                sum += v
+                sum2 += v * v
+            }
             let mean = sum / Float(mel.count)
             let variance = max((sum2 / Float(mel.count)) - mean * mean, 0)
             let std = sqrt(variance) + 1e-5
-            for i in 0..<mel.count { mel[i] = (mel[i] - mean) / std }
+            for i in 0 ..< mel.count { mel[i] = (mel[i] - mean) / std }
         }
 
         return mel  // [nFrames, nMels] row-major
@@ -439,8 +454,8 @@ public final class ParakeetModel: @unchecked Sendable {
     // ── Subsampling (DwStridingSubsampling) ─────────────────────────
 
     // conv0: [convCh, 1, 3, 3] — 2D Conv on [T, F, 1] inputs
-    let conv0W: Tensor     // [convCh, 3, 3]  (per-input-channel, so inCh=1)
-    let conv0B: Tensor     // [convCh]
+    let conv0W: Tensor  // [convCh, 3, 3]  (per-input-channel, so inCh=1)
+    let conv0B: Tensor  // [convCh]
 
     // depthwise layers: each [convCh, 3, 3] + [convCh] bias (groups=convCh)
     let dwWeights: [Tensor]
@@ -471,11 +486,11 @@ public final class ParakeetModel: @unchecked Sendable {
 
     // ── Joint network ───────────────────────────────────────────────
 
-    let jointEncWeight: Tensor   // [jointHidden, encoderHidden]
+    let jointEncWeight: Tensor  // [jointHidden, encoderHidden]
     let jointEncBias: Tensor
     let jointPredWeight: Tensor  // [jointHidden, predHidden]
     let jointPredBias: Tensor
-    let jointOutWeight: Tensor   // [numClasses + numExtraOutputs, jointHidden]
+    let jointOutWeight: Tensor  // [numClasses + numExtraOutputs, jointHidden]
     let jointOutBias: Tensor
 
     public init(
@@ -493,17 +508,25 @@ public final class ParakeetModel: @unchecked Sendable {
         jointOutWeight: Tensor, jointOutBias: Tensor
     ) {
         self.config = config
-        self.conv0W = conv0W; self.conv0B = conv0B
-        self.dwWeights = dwWeights; self.dwBiases = dwBiases
-        self.pwWeights = pwWeights; self.pwBiases = pwBiases
-        self.subOutWeight = subOutWeight; self.subOutBias = subOutBias
-        self.relPosTable = relPosTable; self.relPosMaxLen = relPosMaxLen
+        self.conv0W = conv0W
+        self.conv0B = conv0B
+        self.dwWeights = dwWeights
+        self.dwBiases = dwBiases
+        self.pwWeights = pwWeights
+        self.pwBiases = pwBiases
+        self.subOutWeight = subOutWeight
+        self.subOutBias = subOutBias
+        self.relPosTable = relPosTable
+        self.relPosMaxLen = relPosMaxLen
         self.blocks = blocks
         self.predEmbedWeight = predEmbedWeight
         self.lstmLayers = lstmLayers
-        self.jointEncWeight = jointEncWeight; self.jointEncBias = jointEncBias
-        self.jointPredWeight = jointPredWeight; self.jointPredBias = jointPredBias
-        self.jointOutWeight = jointOutWeight; self.jointOutBias = jointOutBias
+        self.jointEncWeight = jointEncWeight
+        self.jointEncBias = jointEncBias
+        self.jointPredWeight = jointPredWeight
+        self.jointPredBias = jointPredBias
+        self.jointOutWeight = jointOutWeight
+        self.jointOutBias = jointOutBias
     }
 
     /// `true` when `config` describes a Parakeet checkpoint.
@@ -511,8 +534,8 @@ public final class ParakeetModel: @unchecked Sendable {
     /// with `tdt_durations` — a combination no other family carries.
     public static func handles(_ config: ModelConfig) -> Bool {
         guard config.raw["encoder"] as? [String: Any] != nil,
-              let defaults = config.raw["model_defaults"] as? [String: Any],
-              defaults["tdt_durations"] != nil
+            let defaults = config.raw["model_defaults"] as? [String: Any],
+            defaults["tdt_durations"] != nil
         else { return false }
         return true
     }
@@ -594,7 +617,9 @@ public final class ParakeetModel: @unchecked Sendable {
         let enc = config.encoder
         let samplingNum = Int(log2(Double(enc.subsamplingFactor)))
         let convCh = enc.subsamplingConvChannels
-        let stride = 2; let kernelSize = 3; let pad = 1
+        let stride = 2
+        let kernelSize = 3
+        let pad = 1
 
         // Treat input as [nFrames, featIn, 1] — last dim is input channels
         var currentT = nFrames
@@ -615,7 +640,7 @@ public final class ParakeetModel: @unchecked Sendable {
         )
 
         // Additional depthwise + pointwise steps
-        for i in 0..<dwWeights.count {
+        for i in 0 ..< dwWeights.count {
             let dwW = dwWeights[i].toArray(as: Float.self)
             let dwB = dwBiases[i].toArray(as: Float.self)
             (current, currentT, currentF, currentCh) = conv2DReLU(
@@ -644,9 +669,9 @@ public final class ParakeetModel: @unchecked Sendable {
         let flatDim = currentF * currentCh
         var reshaped = [Float](repeating: 0, count: outT * flatDim)
         // current is [T, F, Ch]; we want [T, Ch * F] = transpose last two dims
-        for t in 0..<outT {
-            for f in 0..<currentF {
-                for c in 0..<currentCh {
+        for t in 0 ..< outT {
+            for f in 0 ..< currentF {
+                for c in 0 ..< currentCh {
                     let srcIdx = t * (currentF * currentCh) + f * currentCh + c
                     let dstIdx = t * flatDim + c * currentF + f
                     reshaped[dstIdx] = current[srcIdx]
@@ -655,7 +680,7 @@ public final class ParakeetModel: @unchecked Sendable {
         }
 
         let soW = subOutWeight.toArray(as: Float.self)  // [dModel, flatDim]
-        let soB = subOutBias.toArray(as: Float.self)    // [dModel]
+        let soB = subOutBias.toArray(as: Float.self)  // [dModel]
         let dModel = enc.dModel
         var out = [Float](repeating: 0, count: outT * dModel)
         // Matrix multiply: [outT, flatDim] × [flatDim, dModel] (= [dModel, flatDim]^T)
@@ -666,8 +691,8 @@ public final class ParakeetModel: @unchecked Sendable {
             transB: true
         )
         // Add bias to each row
-        for t in 0..<outT {
-            for d in 0..<dModel { out[t * dModel + d] += soB[d] }
+        for t in 0 ..< outT {
+            for d in 0 ..< dModel { out[t * dModel + d] += soB[d] }
         }
 
         guard outT > 0 else { return ([], 0) }
@@ -697,19 +722,19 @@ public final class ParakeetModel: @unchecked Sendable {
         let chPerGroup = outCh / groups
         let inChPerGroup = inCh / groups
 
-        for g in 0..<groups {
+        for g in 0 ..< groups {
             let outChBase = g * chPerGroup
             let inChBase = g * inChPerGroup
-            for oc in outChBase..<(outChBase + chPerGroup) {
+            for oc in outChBase ..< (outChBase + chPerGroup) {
                 let b = bias[oc]
                 // Weight layout: [outCh, inChPerGroup, kernelH, kernelW]
                 let wBase = oc * inChPerGroup * kernelH * kernelW
-                for ot in 0..<T_out {
-                    for of_ in 0..<F_out {
+                for ot in 0 ..< T_out {
+                    for of_ in 0 ..< F_out {
                         var acc: Float = b
-                        for ic in 0..<inChPerGroup {
-                            for kh in 0..<kernelH {
-                                for kw in 0..<kernelW {
+                        for ic in 0 ..< inChPerGroup {
+                            for kh in 0 ..< kernelH {
+                                for kw in 0 ..< kernelW {
                                     let it = ot * strideH + kh - padH
                                     let if_ = of_ * strideW + kw - padW
                                     guard it >= 0, it < T, if_ >= 0, if_ < F else { continue }
@@ -736,7 +761,7 @@ public final class ParakeetModel: @unchecked Sendable {
         let rows = 2 * maxLen - 1
         var table = [Float](repeating: 0, count: rows * dModel)
         let logDiv = Float(log(10000.0)) / Float(dModel)
-        for r in 0..<rows {
+        for r in 0 ..< rows {
             let pos = Float(maxLen - 1 - r)
             for c in stride(from: 0, to: dModel, by: 2) {
                 let div = exp(-Float(c) * logDiv)
@@ -765,7 +790,7 @@ public final class ParakeetModel: @unchecked Sendable {
         guard start >= 0, end <= bufLen else {
             return [Float](repeating: 0, count: rows * dModel)
         }
-        return Array(relPosTable[(start * dModel)..<(end * dModel)])
+        return Array(relPosTable[(start * dModel) ..< (end * dModel)])
     }
 
     // ─── Conformer block forward ──────────────────────────────────────
@@ -782,24 +807,27 @@ public final class ParakeetModel: @unchecked Sendable {
         // 0.5 × feedForward1
         var h = input
         let ff1Out = feedForward(
-            input: layerNorm(input, weight: bw.normFF1Weight, bias: bw.normFF1Bias,
-                             rows: nFrames, cols: dModel),
+            input: layerNorm(
+                input, weight: bw.normFF1Weight, bias: bw.normFF1Bias,
+                rows: nFrames, cols: dModel),
             nFrames: nFrames,
             w1: bw.ff1W1, b1: bw.ff1B1,
             w2: bw.ff1W2, b2: bw.ff1B2
         )
-        for i in 0..<h.count { h[i] += 0.5 * ff1Out[i] }
+        for i in 0 ..< h.count { h[i] += 0.5 * ff1Out[i] }
 
         // Relative-position self-attention
-        let attnNorm = layerNorm(h, weight: bw.normAttnWeight, bias: bw.normAttnBias,
-                                 rows: nFrames, cols: dModel)
+        let attnNorm = layerNorm(
+            h, weight: bw.normAttnWeight, bias: bw.normAttnBias,
+            rows: nFrames, cols: dModel)
         let attnOut = relPosAttention(
             x: attnNorm, nFrames: nFrames, posEmb: posEmb, bw: bw)
-        for i in 0..<h.count { h[i] += attnOut[i] }
+        for i in 0 ..< h.count { h[i] += attnOut[i] }
 
         // Conformer convolution module
-        let convNorm = layerNorm(h, weight: bw.normConvWeight, bias: bw.normConvBias,
-                                 rows: nFrames, cols: dModel)
+        let convNorm = layerNorm(
+            h, weight: bw.normConvWeight, bias: bw.normConvBias,
+            rows: nFrames, cols: dModel)
         let convOut = conformerConvModule(
             input: convNorm, nFrames: nFrames, dModel: dModel,
             convKernel: enc.convKernelSize,
@@ -809,21 +837,23 @@ public final class ParakeetModel: @unchecked Sendable {
             bnMean: bw.convBNMean, bnVar: bw.convBNVar,
             pw2W: bw.convPW2W, pw2B: bw.convPW2B
         )
-        for i in 0..<h.count { h[i] += convOut[i] }
+        for i in 0 ..< h.count { h[i] += convOut[i] }
 
         // 0.5 × feedForward2
         let ff2Out = feedForward(
-            input: layerNorm(h, weight: bw.normFF2Weight, bias: bw.normFF2Bias,
-                             rows: nFrames, cols: dModel),
+            input: layerNorm(
+                h, weight: bw.normFF2Weight, bias: bw.normFF2Bias,
+                rows: nFrames, cols: dModel),
             nFrames: nFrames,
             w1: bw.ff2W1, b1: bw.ff2B1,
             w2: bw.ff2W2, b2: bw.ff2B2
         )
-        for i in 0..<h.count { h[i] += 0.5 * ff2Out[i] }
+        for i in 0 ..< h.count { h[i] += 0.5 * ff2Out[i] }
 
         // Final LayerNorm
-        return layerNorm(h, weight: bw.normOutWeight, bias: bw.normOutBias,
-                         rows: nFrames, cols: dModel)
+        return layerNorm(
+            h, weight: bw.normOutWeight, bias: bw.normOutBias,
+            rows: nFrames, cols: dModel)
     }
 
     // ─── Relative-position multi-head attention ───────────────────────
@@ -865,8 +895,8 @@ public final class ParakeetModel: @unchecked Sendable {
                 // q+u, q+v for this head
                 var qU = [Float](repeating: 0, count: nFrames * headDim)
                 var qV = [Float](repeating: 0, count: nFrames * headDim)
-                for t in 0..<nFrames {
-                    for d in 0..<headDim {
+                for t in 0 ..< nFrames {
+                    for d in 0 ..< headDim {
                         qU[t * headDim + d] = qFlat[t * dModel + hOff + d] + biasU[hOff + d]
                         qV[t * headDim + d] = qFlat[t * dModel + hOff + d] + biasV[hOff + d]
                     }
@@ -875,14 +905,14 @@ public final class ParakeetModel: @unchecked Sendable {
                 var kH = [Float](repeating: 0, count: nFrames * headDim)
                 var vH = [Float](repeating: 0, count: nFrames * headDim)
                 var pH = [Float](repeating: 0, count: posLen * headDim)
-                for t in 0..<nFrames {
-                    for d in 0..<headDim {
+                for t in 0 ..< nFrames {
+                    for d in 0 ..< headDim {
                         kH[t * headDim + d] = kFlat[t * dModel + hOff + d]
                         vH[t * headDim + d] = vFlat[t * dModel + hOff + d]
                     }
                 }
-                for p in 0..<posLen {
-                    for d in 0..<headDim { pH[p * headDim + d] = pFlat[p * dModel + hOff + d] }
+                for p in 0 ..< posLen {
+                    for d in 0 ..< headDim { pH[p * headDim + d] = pFlat[p * dModel + hOff + d] }
                 }
 
                 // matrixAC = qU × K^T  [nFrames × nFrames]
@@ -897,7 +927,7 @@ public final class ParakeetModel: @unchecked Sendable {
 
                 // Sum and scale
                 var scores = [Float](repeating: 0, count: nFrames * nFrames)
-                for i in 0..<(nFrames * nFrames) {
+                for i in 0 ..< (nFrames * nFrames) {
                     scores[i] = (matAC[i] + shifted[i]) * scale
                 }
 
@@ -906,12 +936,14 @@ public final class ParakeetModel: @unchecked Sendable {
 
                 // Weighted sum of values
                 var ctx = [Float](repeating: 0, count: nFrames * headDim)
-                matmul(A: attnWeights, B: vH, C: &ctx, M: nFrames, K: nFrames, N: headDim, transB: false)
+                matmul(
+                    A: attnWeights, B: vH, C: &ctx, M: nFrames, K: nFrames, N: headDim,
+                    transB: false)
 
                 // Write to output — disjoint `[hOff, hOff + headDim)` slice
                 // per head, so the parallel writes can't collide.
-                for t in 0..<nFrames {
-                    for d in 0..<headDim { outPtr[t * dModel + hOff + d] = ctx[t * headDim + d] }
+                for t in 0 ..< nFrames {
+                    for d in 0 ..< headDim { outPtr[t * dModel + hOff + d] = ctx[t * headDim + d] }
                 }
             }
         }
@@ -926,9 +958,9 @@ public final class ParakeetModel: @unchecked Sendable {
     private func relShift(_ bd: [Float], tq: Int, posLen: Int) -> [Float] {
         // bd: [tq, posLen]; posLen = 2*tq - 1
         // Pad left: [tq, posLen+1]
-        let padded: [[Float]] = (0..<tq).map { row in
+        let padded: [[Float]] = (0 ..< tq).map { row in
             var r = [Float](repeating: 0, count: posLen + 1)
-            for c in 0..<posLen { r[c + 1] = bd[row * posLen + c] }
+            for c in 0 ..< posLen { r[c + 1] = bd[row * posLen + c] }
             return r
         }
         // Reshape to [posLen+1, tq], take rows 1...
@@ -937,8 +969,8 @@ public final class ParakeetModel: @unchecked Sendable {
         // shift(bd)[i,j] = bd[i, posLen - tq + j]  (from Transformer-XL)
         let halfLen = posLen / 2  // = tq - 1
         var out = [Float](repeating: 0, count: tq * tq)
-        for i in 0..<tq {
-            for j in 0..<tq {
+        for i in 0 ..< tq {
+            for j in 0 ..< tq {
                 // position index: tq - 1 - (j - i) maps into the 2*tq-1 range
                 let posIdx = halfLen + i - j
                 if posIdx >= 0 && posIdx < posLen {
@@ -960,13 +992,14 @@ public final class ParakeetModel: @unchecked Sendable {
         pw2W: [Float], pw2B: [Float]
     ) -> [Float] {
         // Pointwise 1: [nFrames, dModel] → [nFrames, 2*dModel]
-        let pw1Out = linear(input, weight: pw1W, bias: pw1B,
-                            M: nFrames, K: dModel, N: dModel * 2)
+        let pw1Out = linear(
+            input, weight: pw1W, bias: pw1B,
+            M: nFrames, K: dModel, N: dModel * 2)
 
         // GLU: split into two halves, gate with sigmoid
         var gluOut = [Float](repeating: 0, count: nFrames * dModel)
-        for t in 0..<nFrames {
-            for d in 0..<dModel {
+        for t in 0 ..< nFrames {
+            for d in 0 ..< dModel {
                 let x1 = pw1Out[t * dModel * 2 + d]
                 let x2 = pw1Out[t * dModel * 2 + d + dModel]
                 gluOut[t * dModel + d] = x1 * sigmoid1D(x2)
@@ -977,12 +1010,12 @@ public final class ParakeetModel: @unchecked Sendable {
         let pad = (convKernel - 1) / 2
         var dwOut = [Float](repeating: 0, count: nFrames * dModel)
         // dwW: [dModel, 1, convKernel] (groups = dModel, depthwise)
-        for ch in 0..<dModel {
+        for ch in 0 ..< dModel {
             let wOffset = ch * convKernel  // dwW[ch * convKernel ...]
             let b = dwB[ch]
-            for t in 0..<nFrames {
+            for t in 0 ..< nFrames {
                 var acc: Float = b
-                for k in 0..<convKernel {
+                for k in 0 ..< convKernel {
                     let src = t + k - pad
                     guard src >= 0, src < nFrames else { continue }
                     acc += gluOut[src * dModel + ch] * dwW[wOffset + k]
@@ -995,19 +1028,22 @@ public final class ParakeetModel: @unchecked Sendable {
         // Then SiLU activation
         var bnOut = [Float](repeating: 0, count: nFrames * dModel)
         let bnEps: Float = 1e-5
-        for d in 0..<dModel {
-            let w = bnWeight[d]; let bias_ = bnBias[d]
-            let mean = bnMean[d]; let varVal = bnVar[d]
+        for d in 0 ..< dModel {
+            let w = bnWeight[d]
+            let bias_ = bnBias[d]
+            let mean = bnMean[d]
+            let varVal = bnVar[d]
             let invStd = 1.0 / sqrt(varVal + bnEps)
-            for t in 0..<nFrames {
+            for t in 0 ..< nFrames {
                 let normed = (dwOut[t * dModel + d] - mean) * invStd * w + bias_
                 bnOut[t * dModel + d] = silu1D(normed)
             }
         }
 
         // Pointwise 2: [nFrames, dModel] → [nFrames, dModel]
-        return linear(bnOut, weight: pw2W, bias: pw2B,
-                      M: nFrames, K: dModel, N: dModel)
+        return linear(
+            bnOut, weight: pw2W, bias: pw2B,
+            M: nFrames, K: dModel, N: dModel)
     }
 
     // ─── Feed-forward module ─────────────────────────────────────────
@@ -1021,7 +1057,7 @@ public final class ParakeetModel: @unchecked Sendable {
         let dModel = config.encoder.dModel
         let ffHidden = config.encoder.ffHidden
         var h = linear(input, weight: w1, bias: b1, M: nFrames, K: dModel, N: ffHidden)
-        for i in 0..<h.count { h[i] = silu1D(h[i]) }
+        for i in 0 ..< h.count { h[i] = silu1D(h[i]) }
         return linear(h, weight: w2, bias: b2, M: nFrames, K: ffHidden, N: dModel)
     }
 
@@ -1036,10 +1072,12 @@ public final class ParakeetModel: @unchecked Sendable {
         let numLstmLayers = config.predNet.predRnnLayers
 
         // LSTM state: [numLayers, hiddenSize]
-        var hiddens = [[Float]](repeating: [Float](repeating: 0, count: predH),
-                                count: numLstmLayers)
-        var cells   = [[Float]](repeating: [Float](repeating: 0, count: predH),
-                                count: numLstmLayers)
+        var hiddens = [[Float]](
+            repeating: [Float](repeating: 0, count: predH),
+            count: numLstmLayers)
+        var cells = [[Float]](
+            repeating: [Float](repeating: 0, count: predH),
+            count: numLstmLayers)
 
         var lastToken = blankId
         var hypothesis: [Int] = []
@@ -1047,14 +1085,14 @@ public final class ParakeetModel: @unchecked Sendable {
         var newSymbols = 0
 
         while t < encodedLen {
-            let encFrame = Array(encoded[(t * dModel)..<((t + 1) * dModel)])
+            let encFrame = Array(encoded[(t * dModel) ..< ((t + 1) * dModel)])
 
             // Predict network: embedding + stacked LSTM
             let embedded = embedToken(lastToken, blankId: blankId)
             var predOut = embedded
             var nextHiddens = hiddens
             var nextCells = cells
-            for layer in 0..<numLstmLayers {
+            for layer in 0 ..< numLstmLayers {
                 let (out, h, c) = lstmStep(
                     input: predOut,
                     hidden: hiddens[layer],
@@ -1069,7 +1107,7 @@ public final class ParakeetModel: @unchecked Sendable {
             // Joint network
             let logits = jointForward(enc: encFrame, pred: predOut)
             let totalOut = logits.count
-            let numTokenLogits = blankId + 1   // vocab + blank
+            let numTokenLogits = blankId + 1  // vocab + blank
             let numDurLogits = totalOut - numTokenLogits
 
             // Token decision
@@ -1086,13 +1124,15 @@ public final class ParakeetModel: @unchecked Sendable {
             }
 
             // TDT step logic
-            let jump = durations.indices.contains(durationArgmax)
+            let jump =
+                durations.indices.contains(durationArgmax)
                 ? durations[durationArgmax] : 1
             var nextTime = t + jump
             var nextNewSymbols = newSymbols + 1
 
-            if jump != 0 { nextNewSymbols = 0 }
-            else if let ms = maxSymbols, nextNewSymbols >= ms {
+            if jump != 0 {
+                nextNewSymbols = 0
+            } else if let ms = maxSymbols, nextNewSymbols >= ms {
                 nextTime += 1
                 nextNewSymbols = 0
             }
@@ -1123,7 +1163,7 @@ public final class ParakeetModel: @unchecked Sendable {
         let tableSize = predEmbedWeight.shape[0]
         let safeIdx = min(max(token, 0), tableSize - 1)
         let w = predEmbedWeight.toArray(as: Float.self)
-        return Array(w[(safeIdx * predH)..<((safeIdx + 1) * predH)])
+        return Array(w[(safeIdx * predH) ..< ((safeIdx + 1) * predH)])
     }
 
     /// One LSTM cell step.
@@ -1139,16 +1179,16 @@ public final class ParakeetModel: @unchecked Sendable {
         let hhW = weights.hhWeight.toArray(as: Float.self)
         let ihB = weights.ihBias.toArray(as: Float.self)
         let hhB = weights.hhBias.toArray(as: Float.self)
-        for j in 0..<(4 * H) {
+        for j in 0 ..< (4 * H) {
             var acc = ihB[j] + hhB[j]
-            for i in 0..<I { acc += ihW[j * I + i] * input[i] }
-            for h in 0..<H { acc += hhW[j * H + h] * hidden[h] }
+            for i in 0 ..< I { acc += ihW[j * I + i] * input[i] }
+            for h in 0 ..< H { acc += hhW[j * H + h] * hidden[h] }
             gates[j] = acc
         }
         // Apply activations: i=sigmoid, f=sigmoid, g=tanh, o=sigmoid
         var newCell = [Float](repeating: 0, count: H)
         var newHidden = [Float](repeating: 0, count: H)
-        for idx in 0..<H {
+        for idx in 0 ..< H {
             let i_gate = sigmoid1D(gates[idx])
             let f_gate = sigmoid1D(gates[H + idx])
             let g_gate = tanh(gates[2 * H + idx])
@@ -1172,28 +1212,28 @@ public final class ParakeetModel: @unchecked Sendable {
 
         // Project encoder and predictor into joint space
         var encProj = [Float](repeating: 0, count: cfg.jointHidden)
-        for j in 0..<cfg.jointHidden {
+        for j in 0 ..< cfg.jointHidden {
             var acc = encB[j]
-            for i in 0..<enc.count { acc += encW[j * enc.count + i] * enc[i] }
+            for i in 0 ..< enc.count { acc += encW[j * enc.count + i] * enc[i] }
             encProj[j] = acc
         }
         var predProj = [Float](repeating: 0, count: cfg.jointHidden)
-        for j in 0..<cfg.jointHidden {
+        for j in 0 ..< cfg.jointHidden {
             var acc = predB[j]
-            for i in 0..<pred.count { acc += predW[j * pred.count + i] * pred[i] }
+            for i in 0 ..< pred.count { acc += predW[j * pred.count + i] * pred[i] }
             predProj[j] = acc
         }
 
         // Sum + ReLU
         var joint = [Float](repeating: 0, count: cfg.jointHidden)
-        for j in 0..<cfg.jointHidden { joint[j] = max(encProj[j] + predProj[j], 0) }
+        for j in 0 ..< cfg.jointHidden { joint[j] = max(encProj[j] + predProj[j], 0) }
 
         // Output projection → logits
         let numOut = cfg.numClasses + cfg.numExtraOutputs
         var logits = [Float](repeating: 0, count: numOut)
-        for j in 0..<numOut {
+        for j in 0 ..< numOut {
             var acc = outB[j]
-            for i in 0..<cfg.jointHidden { acc += outW[j * cfg.jointHidden + i] * joint[i] }
+            for i in 0 ..< cfg.jointHidden { acc += outW[j * cfg.jointHidden + i] * joint[i] }
             logits[j] = acc
         }
         return logits
@@ -1207,10 +1247,10 @@ public final class ParakeetModel: @unchecked Sendable {
         A: [Float], B: [Float], C: inout [Float],
         M: Int, K: Int, N: Int, transB: Bool
     ) {
-        for i in 0..<M {
-            for j in 0..<N {
+        for i in 0 ..< M {
+            for j in 0 ..< N {
                 var acc: Float = 0
-                for k in 0..<K {
+                for k in 0 ..< K {
                     acc += A[i * K + k] * (transB ? B[j * K + k] : B[k * N + j])
                 }
                 C[i * N + j] = acc
@@ -1224,10 +1264,10 @@ public final class ParakeetModel: @unchecked Sendable {
         M: Int, K: Int, N: Int
     ) -> [Float] {
         var out = [Float](repeating: 0, count: M * N)
-        for i in 0..<M {
-            for j in 0..<N {
+        for i in 0 ..< M {
+            for j in 0 ..< N {
                 var acc: Float = bias?[j] ?? 0
-                for k in 0..<K { acc += input[i * K + k] * weight[j * K + k] }
+                for k in 0 ..< K { acc += input[i * K + k] * weight[j * K + k] }
                 out[i * N + j] = acc
             }
         }
@@ -1240,14 +1280,19 @@ public final class ParakeetModel: @unchecked Sendable {
         rows: Int, cols: Int, eps: Float = 1e-5
     ) -> [Float] {
         var out = [Float](repeating: 0, count: rows * cols)
-        for r in 0..<rows {
+        for r in 0 ..< rows {
             let base = r * cols
-            var sum: Float = 0; var sum2: Float = 0
-            for c in 0..<cols { let v = input[base + c]; sum += v; sum2 += v * v }
+            var sum: Float = 0
+            var sum2: Float = 0
+            for c in 0 ..< cols {
+                let v = input[base + c]
+                sum += v
+                sum2 += v * v
+            }
             let mean = sum / Float(cols)
             let variance = max((sum2 / Float(cols)) - mean * mean, 0)
             let invStd = 1.0 / sqrt(variance + eps)
-            for c in 0..<cols {
+            for c in 0 ..< cols {
                 out[base + c] = (input[base + c] - mean) * invStd * weight[c] + bias[c]
             }
         }
@@ -1257,22 +1302,32 @@ public final class ParakeetModel: @unchecked Sendable {
     /// Softmax over each row.
     private func softmaxRows(_ x: [Float], rows: Int, cols: Int) -> [Float] {
         var out = x
-        for r in 0..<rows {
+        for r in 0 ..< rows {
             let base = r * cols
             var maxVal = -Float.greatestFiniteMagnitude
-            for c in 0..<cols { if x[base + c] > maxVal { maxVal = x[base + c] } }
+            for c in 0 ..< cols { if x[base + c] > maxVal { maxVal = x[base + c] } }
             var sum: Float = 0
-            for c in 0..<cols { let e = exp(out[base + c] - maxVal); out[base + c] = e; sum += e }
+            for c in 0 ..< cols {
+                let e = exp(out[base + c] - maxVal)
+                out[base + c] = e
+                sum += e
+            }
             let inv = sum > 0 ? 1 / sum : 0
-            for c in 0..<cols { out[base + c] *= inv }
+            for c in 0 ..< cols { out[base + c] *= inv }
         }
         return out
     }
 
     private func argmax1D(_ x: [Float]) -> Int {
         guard !x.isEmpty else { return 0 }
-        var bestIdx = 0; var bestVal = x[0]
-        for i in 1..<x.count { if x[i] > bestVal { bestVal = x[i]; bestIdx = i } }
+        var bestIdx = 0
+        var bestVal = x[0]
+        for i in 1 ..< x.count {
+            if x[i] > bestVal {
+                bestVal = x[i]
+                bestIdx = i
+            }
+        }
         return bestIdx
     }
 
@@ -1287,31 +1342,49 @@ public final class ParakeetModel: @unchecked Sendable {
 /// Extracted from the SafeTensorsBundle during `load(...)`.
 public final class ParakeetConformerBlockWeights: Sendable {
     // Feed-forward 1
-    let normFF1Weight: [Float]; let normFF1Bias: [Float]
-    let ff1W1: [Float]; let ff1B1: [Float]
-    let ff1W2: [Float]; let ff1B2: [Float]
+    let normFF1Weight: [Float]
+    let normFF1Bias: [Float]
+    let ff1W1: [Float]
+    let ff1B1: [Float]
+    let ff1W2: [Float]
+    let ff1B2: [Float]
     // Self attention
-    let normAttnWeight: [Float]; let normAttnBias: [Float]
-    let qW: [Float]; let qB: [Float]
-    let kW: [Float]; let kB: [Float]
-    let vW: [Float]; let vB: [Float]
-    let posW: [Float]               // linear_pos (no bias)
-    let oW: [Float]; let oB: [Float]
-    let posBiasU: Tensor            // [nHeads, headDim]
-    let posBiasV: Tensor            // [nHeads, headDim]
+    let normAttnWeight: [Float]
+    let normAttnBias: [Float]
+    let qW: [Float]
+    let qB: [Float]
+    let kW: [Float]
+    let kB: [Float]
+    let vW: [Float]
+    let vB: [Float]
+    let posW: [Float]  // linear_pos (no bias)
+    let oW: [Float]
+    let oB: [Float]
+    let posBiasU: Tensor  // [nHeads, headDim]
+    let posBiasV: Tensor  // [nHeads, headDim]
     // Conformer conv
-    let normConvWeight: [Float]; let normConvBias: [Float]
-    let convPW1W: [Float]; let convPW1B: [Float]
-    let convDWW: [Float]; let convDWB: [Float]
-    let convBNWeight: [Float]; let convBNBias: [Float]
-    let convBNMean: [Float]; let convBNVar: [Float]
-    let convPW2W: [Float]; let convPW2B: [Float]
+    let normConvWeight: [Float]
+    let normConvBias: [Float]
+    let convPW1W: [Float]
+    let convPW1B: [Float]
+    let convDWW: [Float]
+    let convDWB: [Float]
+    let convBNWeight: [Float]
+    let convBNBias: [Float]
+    let convBNMean: [Float]
+    let convBNVar: [Float]
+    let convPW2W: [Float]
+    let convPW2B: [Float]
     // Feed-forward 2
-    let normFF2Weight: [Float]; let normFF2Bias: [Float]
-    let ff2W1: [Float]; let ff2B1: [Float]
-    let ff2W2: [Float]; let ff2B2: [Float]
+    let normFF2Weight: [Float]
+    let normFF2Bias: [Float]
+    let ff2W1: [Float]
+    let ff2B1: [Float]
+    let ff2W2: [Float]
+    let ff2B2: [Float]
     // Output norm
-    let normOutWeight: [Float]; let normOutBias: [Float]
+    let normOutWeight: [Float]
+    let normOutBias: [Float]
 
     init(
         normFF1Weight: [Float], normFF1Bias: [Float],
@@ -1330,21 +1403,45 @@ public final class ParakeetConformerBlockWeights: Sendable {
         ff2W1: [Float], ff2B1: [Float], ff2W2: [Float], ff2B2: [Float],
         normOutWeight: [Float], normOutBias: [Float]
     ) {
-        self.normFF1Weight = normFF1Weight; self.normFF1Bias = normFF1Bias
-        self.ff1W1 = ff1W1; self.ff1B1 = ff1B1; self.ff1W2 = ff1W2; self.ff1B2 = ff1B2
-        self.normAttnWeight = normAttnWeight; self.normAttnBias = normAttnBias
-        self.qW = qW; self.qB = qB; self.kW = kW; self.kB = kB
-        self.vW = vW; self.vB = vB; self.posW = posW; self.oW = oW; self.oB = oB
-        self.posBiasU = posBiasU; self.posBiasV = posBiasV
-        self.normConvWeight = normConvWeight; self.normConvBias = normConvBias
-        self.convPW1W = convPW1W; self.convPW1B = convPW1B
-        self.convDWW = convDWW; self.convDWB = convDWB
-        self.convBNWeight = convBNWeight; self.convBNBias = convBNBias
-        self.convBNMean = convBNMean; self.convBNVar = convBNVar
-        self.convPW2W = convPW2W; self.convPW2B = convPW2B
-        self.normFF2Weight = normFF2Weight; self.normFF2Bias = normFF2Bias
-        self.ff2W1 = ff2W1; self.ff2B1 = ff2B1; self.ff2W2 = ff2W2; self.ff2B2 = ff2B2
-        self.normOutWeight = normOutWeight; self.normOutBias = normOutBias
+        self.normFF1Weight = normFF1Weight
+        self.normFF1Bias = normFF1Bias
+        self.ff1W1 = ff1W1
+        self.ff1B1 = ff1B1
+        self.ff1W2 = ff1W2
+        self.ff1B2 = ff1B2
+        self.normAttnWeight = normAttnWeight
+        self.normAttnBias = normAttnBias
+        self.qW = qW
+        self.qB = qB
+        self.kW = kW
+        self.kB = kB
+        self.vW = vW
+        self.vB = vB
+        self.posW = posW
+        self.oW = oW
+        self.oB = oB
+        self.posBiasU = posBiasU
+        self.posBiasV = posBiasV
+        self.normConvWeight = normConvWeight
+        self.normConvBias = normConvBias
+        self.convPW1W = convPW1W
+        self.convPW1B = convPW1B
+        self.convDWW = convDWW
+        self.convDWB = convDWB
+        self.convBNWeight = convBNWeight
+        self.convBNBias = convBNBias
+        self.convBNMean = convBNMean
+        self.convBNVar = convBNVar
+        self.convPW2W = convPW2W
+        self.convPW2B = convPW2B
+        self.normFF2Weight = normFF2Weight
+        self.normFF2Bias = normFF2Bias
+        self.ff2W1 = ff2W1
+        self.ff2B1 = ff2B1
+        self.ff2W2 = ff2W2
+        self.ff2B2 = ff2B2
+        self.normOutWeight = normOutWeight
+        self.normOutBias = normOutBias
     }
 }
 
@@ -1352,14 +1449,16 @@ public final class ParakeetConformerBlockWeights: Sendable {
 
 /// One LSTM layer's weights: input-hidden matrix, hidden-hidden matrix, biases.
 public final class LSTMLayerWeights: Sendable {
-    let ihWeight: Tensor   // [4 * hiddenSize, inputSize]
-    let hhWeight: Tensor   // [4 * hiddenSize, hiddenSize]
-    let ihBias: Tensor     // [4 * hiddenSize]
-    let hhBias: Tensor     // [4 * hiddenSize]
+    let ihWeight: Tensor  // [4 * hiddenSize, inputSize]
+    let hhWeight: Tensor  // [4 * hiddenSize, hiddenSize]
+    let ihBias: Tensor  // [4 * hiddenSize]
+    let hhBias: Tensor  // [4 * hiddenSize]
 
     init(ihWeight: Tensor, hhWeight: Tensor, ihBias: Tensor, hhBias: Tensor) {
-        self.ihWeight = ihWeight; self.hhWeight = hhWeight
-        self.ihBias = ihBias; self.hhBias = hhBias
+        self.ihWeight = ihWeight
+        self.hhWeight = hhWeight
+        self.ihBias = ihBias
+        self.hhBias = hhBias
     }
 }
 
@@ -1398,43 +1497,48 @@ public enum ParakeetTokeniser {
 /// `[outCh, kH, kW, 1]` and become `[outCh, 1, kH, kW]` (one input
 /// channel per group, the convention `conv2DReLU` expects with
 /// `groups == outCh`).
-fileprivate func parakeetTransposeOHWIToOIHW(
+private func parakeetTransposeOHWIToOIHW(
     _ raw: Tensor, device: Device
 ) -> Tensor {
-    precondition(raw.shape.count == 4,
-                 "Parakeet conv weight must be 4D, got \(raw.shape)")
+    precondition(
+        raw.shape.count == 4,
+        "Parakeet conv weight must be 4D, got \(raw.shape)")
     let outCh = raw.shape[0]
-    let kH    = raw.shape[1]
-    let kW    = raw.shape[2]
-    let inCh  = raw.shape[3]
+    let kH = raw.shape[1]
+    let kW = raw.shape[2]
+    let inCh = raw.shape[3]
     let src = raw.toFloatArray()
     var dst = [Float](repeating: 0, count: outCh * inCh * kH * kW)
-    for o in 0..<outCh {
-        for h in 0..<kH {
-            for w in 0..<kW {
-                for i in 0..<inCh {
-                    let srcIdx = o * (kH * kW * inCh) + h * (kW * inCh)
-                                 + w * inCh + i
-                    let dstIdx = o * (inCh * kH * kW) + i * (kH * kW)
-                                 + h * kW + w
+    for o in 0 ..< outCh {
+        for h in 0 ..< kH {
+            for w in 0 ..< kW {
+                for i in 0 ..< inCh {
+                    let srcIdx =
+                        o * (kH * kW * inCh) + h * (kW * inCh)
+                        + w * inCh + i
+                    let dstIdx =
+                        o * (inCh * kH * kW) + i * (kH * kW)
+                        + h * kW + w
                     dst[dstIdx] = src[srcIdx]
                 }
             }
         }
     }
-    let out = Tensor.empty(shape: [outCh, inCh, kH, kW],
-                           dtype: raw.dtype, device: device)
+    let out = Tensor.empty(
+        shape: [outCh, inCh, kH, kW],
+        dtype: raw.dtype, device: device)
     switch raw.dtype {
     case .f32:
         out.copyIn(from: dst)
     case .f16:
         out.copyIn(from: dst.map { Float16($0) })
     case .bf16:
-        out.copyIn(from: dst.map { v -> UInt16 in
-            let bits = v.bitPattern
-            let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
-            return UInt16(rounded >> 16)
-        })
+        out.copyIn(
+            from: dst.map { v -> UInt16 in
+                let bits = v.bitPattern
+                let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
+                return UInt16(rounded >> 16)
+            })
     default:
         preconditionFailure(
             "Parakeet conv weight: unsupported dtype \(raw.dtype)")
@@ -1442,11 +1546,11 @@ fileprivate func parakeetTransposeOHWIToOIHW(
     return out
 }
 
-public extension ParakeetModel {
+extension ParakeetModel {
 
     /// Load a Parakeet checkpoint from a directory that contains
     /// `config.json` and `.safetensors` weight shards.
-    static func load(
+    public static func load(
         directory: URL,
         device: Device = .shared
     ) throws -> ParakeetModel {
@@ -1457,7 +1561,7 @@ public extension ParakeetModel {
     }
 
     /// Assemble a `ParakeetModel` from a resolved config + weight bundle.
-    static func build(
+    public static func build(
         config: ParakeetConfig,
         bundle: SafeTensorsBundle,
         device: Device = .shared
@@ -1481,24 +1585,28 @@ public extension ParakeetModel {
             bundle.tensor(named: "\(pref).conv.0.weight"), device: device)
         let conv0B = try bundle.tensor(named: "\(pref).conv.0.bias")
 
-        var dwWeights: [Tensor] = []; var dwBiases: [Tensor] = []
-        var pwWeights: [Tensor] = []; var pwBiases: [Tensor] = []
-        for i in 0..<(samplingNum - 1) {
+        var dwWeights: [Tensor] = []
+        var dwBiases: [Tensor] = []
+        var pwWeights: [Tensor] = []
+        var pwBiases: [Tensor] = []
+        for i in 0 ..< (samplingNum - 1) {
             let dwIdx = 2 + 3 * i
             let pwIdx = 3 + 3 * i
-            dwWeights.append(try parakeetTransposeOHWIToOIHW(
-                bundle.tensor(named: "\(pref).conv.\(dwIdx).weight"), device: device))
+            dwWeights.append(
+                try parakeetTransposeOHWIToOIHW(
+                    bundle.tensor(named: "\(pref).conv.\(dwIdx).weight"), device: device))
             dwBiases.append(try bundle.tensor(named: "\(pref).conv.\(dwIdx).bias"))
-            pwWeights.append(try parakeetTransposeOHWIToOIHW(
-                bundle.tensor(named: "\(pref).conv.\(pwIdx).weight"), device: device))
+            pwWeights.append(
+                try parakeetTransposeOHWIToOIHW(
+                    bundle.tensor(named: "\(pref).conv.\(pwIdx).weight"), device: device))
             pwBiases.append(try bundle.tensor(named: "\(pref).conv.\(pwIdx).bias"))
         }
         let subOutWeight = try bundle.tensor(named: "\(pref).out.weight")
-        let subOutBias   = try bundle.tensor(named: "\(pref).out.bias")
+        let subOutBias = try bundle.tensor(named: "\(pref).out.bias")
 
         // ── Conformer blocks ─────────────────────────────────────────
         var blocks: [ParakeetConformerBlockWeights] = []
-        for l in 0..<enc.nLayers {
+        for l in 0 ..< enc.nLayers {
             let bp = "encoder.layers.\(l)"
             let bw = try loadConformerBlock(
                 prefix: bp, bundle: bundle,
@@ -1529,7 +1637,7 @@ public extension ParakeetModel {
         // ── Prediction network ───────────────────────────────────────
         let predEmbedWeight = try bundle.tensor(named: "decoder.prediction.embed.weight")
         var lstmLayers: [LSTMLayerWeights] = []
-        for i in 0..<config.predNet.predRnnLayers {
+        for i in 0 ..< config.predNet.predRnnLayers {
             let lp = "decoder.prediction.dec_rnn.lstm.\(i)"
             // mlx-community's NeMo Parakeet conversion renames the
             // input-hidden / hidden-hidden weights to `Wx` / `Wh` and
@@ -1545,19 +1653,21 @@ public extension ParakeetModel {
             if bundle.has("\(lp).weight_ih") {
                 ihWeight = try bundle.tensor(named: "\(lp).weight_ih")
                 hhWeight = try bundle.tensor(named: "\(lp).weight_hh")
-                ihBias   = try bundle.tensor(named: "\(lp).bias_ih")
-                hhBias   = try bundle.tensor(named: "\(lp).bias_hh")
+                ihBias = try bundle.tensor(named: "\(lp).bias_ih")
+                hhBias = try bundle.tensor(named: "\(lp).bias_hh")
             } else {
                 ihWeight = try bundle.tensor(named: "\(lp).Wx")
                 hhWeight = try bundle.tensor(named: "\(lp).Wh")
-                ihBias   = try bundle.tensor(named: "\(lp).bias")
-                hhBias   = Tensor.filled(0, shape: ihBias.shape, dtype: ihBias.dtype,
-                                         device: device)
+                ihBias = try bundle.tensor(named: "\(lp).bias")
+                hhBias = Tensor.filled(
+                    0, shape: ihBias.shape, dtype: ihBias.dtype,
+                    device: device)
             }
-            lstmLayers.append(LSTMLayerWeights(
-                ihWeight: ihWeight, hhWeight: hhWeight,
-                ihBias: ihBias, hhBias: hhBias
-            ))
+            lstmLayers.append(
+                LSTMLayerWeights(
+                    ihWeight: ihWeight, hhWeight: hhWeight,
+                    ihBias: ihBias, hhBias: hhBias
+                ))
         }
 
         // ── Joint network ────────────────────────────────────────────
@@ -1566,12 +1676,12 @@ public extension ParakeetModel {
         // hidden projection — already loaded as `joint.enc/pred`) and
         // index 2 is the output Linear that produces logits. Use the
         // ".2." suffix to grab the output projection.
-        let jointEncWeight  = try bundle.tensor(named: "joint.enc.weight")
-        let jointEncBias    = try bundle.tensor(named: "joint.enc.bias")
+        let jointEncWeight = try bundle.tensor(named: "joint.enc.weight")
+        let jointEncBias = try bundle.tensor(named: "joint.enc.bias")
         let jointPredWeight = try bundle.tensor(named: "joint.pred.weight")
-        let jointPredBias   = try bundle.tensor(named: "joint.pred.bias")
-        let jointOutWeight  = try bundle.tensor(named: "joint.joint_net.2.weight")
-        let jointOutBias    = try bundle.tensor(named: "joint.joint_net.2.bias")
+        let jointPredBias = try bundle.tensor(named: "joint.pred.bias")
+        let jointOutWeight = try bundle.tensor(named: "joint.joint_net.2.weight")
+        let jointOutBias = try bundle.tensor(named: "joint.joint_net.2.bias")
 
         return ParakeetModel(
             config: config,
@@ -1603,13 +1713,13 @@ public extension ParakeetModel {
 
         return try ParakeetConformerBlockWeights(
             normFF1Weight: t("norm_feed_forward1.weight"),
-            normFF1Bias:   t("norm_feed_forward1.bias"),
+            normFF1Bias: t("norm_feed_forward1.bias"),
             ff1W1: t("feed_forward1.linear1.weight"),
             ff1B1: t("feed_forward1.linear1.bias"),
             ff1W2: t("feed_forward1.linear2.weight"),
             ff1B2: t("feed_forward1.linear2.bias"),
             normAttnWeight: t("norm_self_att.weight"),
-            normAttnBias:   t("norm_self_att.bias"),
+            normAttnBias: t("norm_self_att.bias"),
             qW: t("self_attn.linear_q.weight"),
             qB: t("self_attn.linear_q.bias"),
             kW: t("self_attn.linear_k.weight"),
@@ -1622,25 +1732,25 @@ public extension ParakeetModel {
             posBiasU: tv("self_attn.posBiasU"),
             posBiasV: tv("self_attn.posBiasV"),
             normConvWeight: t("norm_conv.weight"),
-            normConvBias:   t("norm_conv.bias"),
+            normConvBias: t("norm_conv.bias"),
             convPW1W: t("conv.pointwise_conv1.weight"),
             convPW1B: t("conv.pointwise_conv1.bias"),
-            convDWW:  t("conv.depthwise_conv.weight"),
-            convDWB:  t("conv.depthwise_conv.bias"),
+            convDWW: t("conv.depthwise_conv.weight"),
+            convDWB: t("conv.depthwise_conv.bias"),
             convBNWeight: t("conv.batch_norm.weight"),
-            convBNBias:   t("conv.batch_norm.bias"),
-            convBNMean:   t("conv.batch_norm.running_mean"),
-            convBNVar:    t("conv.batch_norm.running_var"),
+            convBNBias: t("conv.batch_norm.bias"),
+            convBNMean: t("conv.batch_norm.running_mean"),
+            convBNVar: t("conv.batch_norm.running_var"),
             convPW2W: t("conv.pointwise_conv2.weight"),
             convPW2B: t("conv.pointwise_conv2.bias"),
             normFF2Weight: t("norm_feed_forward2.weight"),
-            normFF2Bias:   t("norm_feed_forward2.bias"),
+            normFF2Bias: t("norm_feed_forward2.bias"),
             ff2W1: t("feed_forward2.linear1.weight"),
             ff2B1: t("feed_forward2.linear1.bias"),
             ff2W2: t("feed_forward2.linear2.weight"),
             ff2B2: t("feed_forward2.linear2.bias"),
             normOutWeight: t("norm_out.weight"),
-            normOutBias:   t("norm_out.bias")
+            normOutBias: t("norm_out.bias")
         )
     }
 }

@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("ModelConfig")
@@ -29,24 +30,25 @@ struct ModelConfigTests {
 
     @Test("load + standard accessors")
     func loadStandard() throws {
-        let dir = try Self.writeConfig("""
-        {
-          "architectures": ["LlamaForCausalLM"],
-          "model_type": "llama",
-          "vocab_size": 128256,
-          "hidden_size": 2048,
-          "intermediate_size": 8192,
-          "num_hidden_layers": 16,
-          "num_attention_heads": 32,
-          "num_key_value_heads": 8,
-          "head_dim": 64,
-          "rms_norm_eps": 1e-5,
-          "rope_theta": 500000.0,
-          "tie_word_embeddings": true,
-          "eos_token_id": 128001,
-          "bos_token_id": 128000
-        }
-        """)
+        let dir = try Self.writeConfig(
+            """
+            {
+              "architectures": ["LlamaForCausalLM"],
+              "model_type": "llama",
+              "vocab_size": 128256,
+              "hidden_size": 2048,
+              "intermediate_size": 8192,
+              "num_hidden_layers": 16,
+              "num_attention_heads": 32,
+              "num_key_value_heads": 8,
+              "head_dim": 64,
+              "rms_norm_eps": 1e-5,
+              "rope_theta": 500000.0,
+              "tie_word_embeddings": true,
+              "eos_token_id": 128001,
+              "bos_token_id": 128000
+            }
+            """)
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let cfg = try ModelConfig.load(from: dir)
@@ -68,9 +70,10 @@ struct ModelConfigTests {
 
     @Test("headDim derived from hidden_size / num_attention_heads when absent")
     func headDimDerived() throws {
-        let dir = try Self.writeConfig("""
-        {"hidden_size": 4096, "num_attention_heads": 32}
-        """)
+        let dir = try Self.writeConfig(
+            """
+            {"hidden_size": 4096, "num_attention_heads": 32}
+            """)
         defer { try? FileManager.default.removeItem(at: dir) }
         let cfg = try ModelConfig.load(from: dir)
         #expect(cfg.headDim == 128)
@@ -78,9 +81,10 @@ struct ModelConfigTests {
 
     @Test("numKeyValueHeads falls back to numAttentionHeads")
     func kvHeadsFallback() throws {
-        let dir = try Self.writeConfig("""
-        {"num_attention_heads": 16}
-        """)
+        let dir = try Self.writeConfig(
+            """
+            {"num_attention_heads": 16}
+            """)
         defer { try? FileManager.default.removeItem(at: dir) }
         let cfg = try ModelConfig.load(from: dir)
         #expect(cfg.numKeyValueHeads == 16)
@@ -88,29 +92,32 @@ struct ModelConfigTests {
 
     @Test("eosTokenId accepts both single int and list")
     func eosVariants() throws {
-        let single = try Self.writeConfig("""
-        {"eos_token_id": 7}
-        """)
+        let single = try Self.writeConfig(
+            """
+            {"eos_token_id": 7}
+            """)
         defer { try? FileManager.default.removeItem(at: single) }
         #expect(try ModelConfig.load(from: single).eosTokenId == 7)
 
-        let list = try Self.writeConfig("""
-        {"eos_token_id": [11, 12, 13]}
-        """)
+        let list = try Self.writeConfig(
+            """
+            {"eos_token_id": [11, 12, 13]}
+            """)
         defer { try? FileManager.default.removeItem(at: list) }
         #expect(try ModelConfig.load(from: list).eosTokenId == 11)
     }
 
     @Test("nested + has + intArray + string + bool accessors")
     func accessorMix() throws {
-        let dir = try Self.writeConfig("""
-        {
-          "rope_scaling": {"factor": 32.0, "rope_type": "llama3"},
-          "some_array": [1, 2, 3],
-          "some_string": "hello",
-          "some_bool": false
-        }
-        """)
+        let dir = try Self.writeConfig(
+            """
+            {
+              "rope_scaling": {"factor": 32.0, "rope_type": "llama3"},
+              "some_array": [1, 2, 3],
+              "some_string": "hello",
+              "some_bool": false
+            }
+            """)
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let cfg = try ModelConfig.load(from: dir)

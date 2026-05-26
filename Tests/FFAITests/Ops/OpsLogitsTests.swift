@@ -19,9 +19,10 @@
 
 import Foundation
 import Metal
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("OpsLogits — sampling pipeline")
 struct OpsLogitsTests {
@@ -76,14 +77,15 @@ struct OpsLogitsTests {
             let tokenIds = Tensor.empty(shape: [2], dtype: .u32)
             tokenIds.copyIn(from: [UInt32(1), UInt32(3)])
             runAndWait { cb in
-                Ops.logitsRepetitionPenalty(logits: logits, tokenIds: tokenIds,
-                                            penalty: 2, on: cb)
+                Ops.logitsRepetitionPenalty(
+                    logits: logits, tokenIds: tokenIds,
+                    penalty: 2, on: cb)
             }
             let r = logits.toArray(as: Float.self)
-            #expect(r[0] == 1)         // untouched
-            #expect(r[1] == 2)         // 4 / 2
-            #expect(r[2] == 1)         // untouched
-            #expect(r[3] == -4)        // -2 * 2
+            #expect(r[0] == 1)  // untouched
+            #expect(r[1] == 2)  // 4 / 2
+            #expect(r[2] == 1)  // untouched
+            #expect(r[3] == -4)  // -2 * 2
         }
     }
 
@@ -151,12 +153,15 @@ struct OpsLogitsTests {
 
     @Test("validateLogitsRepetitionPenalty rejects penalty ≤ 0")
     func validateRepetitionPenalty() {
-        #expect(OpsValidation.validateLogitsRepetitionPenalty(
-            vocab: 100, nTokenIds: 5, penalty: 0) != nil)
-        #expect(OpsValidation.validateLogitsRepetitionPenalty(
-            vocab: 0, nTokenIds: 5, penalty: 1.1) != nil)
-        #expect(OpsValidation.validateLogitsRepetitionPenalty(
-            vocab: 100, nTokenIds: 5, penalty: 1.1) == nil)
+        #expect(
+            OpsValidation.validateLogitsRepetitionPenalty(
+                vocab: 100, nTokenIds: 5, penalty: 0) != nil)
+        #expect(
+            OpsValidation.validateLogitsRepetitionPenalty(
+                vocab: 0, nTokenIds: 5, penalty: 1.1) != nil)
+        #expect(
+            OpsValidation.validateLogitsRepetitionPenalty(
+                vocab: 100, nTokenIds: 5, penalty: 1.1) == nil)
     }
 
     // ─── f16 + bf16 dispatch ───────────────────────────────────────
@@ -166,7 +171,7 @@ struct OpsLogitsTests {
         autoreleasepool {
             // f16: temperature, topK, minP, topP
             let inp16 = Tensor.empty(shape: [16], dtype: .f16)
-            inp16.copyIn(from: (0..<16).map { Float16(Float($0) * 0.1) })
+            inp16.copyIn(from: (0 ..< 16).map { Float16(Float($0) * 0.1) })
             runAndWait { cb in
                 _ = Ops.logitsTemperature(inp16, temperature: 0.7, on: cb)
                 _ = Ops.logitsTopKMask(inp16, threshold: 0.5, on: cb)
@@ -176,16 +181,18 @@ struct OpsLogitsTests {
             let tokensF16 = Tensor.empty(shape: [2], dtype: .u32)
             tokensF16.copyIn(from: [UInt32(0), UInt32(3)])
             runAndWait { cb in
-                Ops.logitsRepetitionPenalty(logits: inp16, tokenIds: tokensF16,
-                                            penalty: 1.5, on: cb)
+                Ops.logitsRepetitionPenalty(
+                    logits: inp16, tokenIds: tokensF16,
+                    penalty: 1.5, on: cb)
             }
             // bf16: temperature, topK, minP, topP
             // Build bf16 via uint16 bit patterns mapped 1:1 from f32 high bits.
             let inpBF = Tensor.empty(shape: [16], dtype: .bf16)
-            inpBF.copyIn(from: (0..<16).map { i -> UInt16 in
-                let f: Float = Float(i) * 0.1
-                return UInt16(f.bitPattern >> 16)
-            })
+            inpBF.copyIn(
+                from: (0 ..< 16).map { i -> UInt16 in
+                    let f: Float = Float(i) * 0.1
+                    return UInt16(f.bitPattern >> 16)
+                })
             runAndWait { cb in
                 _ = Ops.logitsTemperature(inpBF, temperature: 0.7, on: cb)
                 _ = Ops.logitsTopKMask(inpBF, threshold: 0.5, on: cb)
@@ -193,8 +200,9 @@ struct OpsLogitsTests {
                 _ = Ops.logitsTopPMask(inpBF, topP: 0.9, on: cb)
             }
             runAndWait { cb in
-                Ops.logitsRepetitionPenalty(logits: inpBF, tokenIds: tokensF16,
-                                            penalty: 1.5, on: cb)
+                Ops.logitsRepetitionPenalty(
+                    logits: inpBF, tokenIds: tokensF16,
+                    penalty: 1.5, on: cb)
             }
         }
     }

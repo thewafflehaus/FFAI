@@ -42,15 +42,15 @@ import Metal
 
 /// Vision (SigLIP-style ViT) configuration decoded from "vision_config" sub-object.
 public struct Idefics3VisionConfig: Sendable {
-    public let hiddenSize: Int          // 1152 for Idefics3-8B
-    public let intermediateSize: Int    // 4304
-    public let numHiddenLayers: Int     // 27
-    public let numAttentionHeads: Int   // 16
-    public let numChannels: Int         // 3
-    public let patchSize: Int           // 14
-    public let imageSize: Int           // 364
-    public let layerNormEps: Float      // 1e-6
-    public let headDim: Int             // hiddenSize / numAttentionHeads
+    public let hiddenSize: Int  // 1152 for Idefics3-8B
+    public let intermediateSize: Int  // 4304
+    public let numHiddenLayers: Int  // 27
+    public let numAttentionHeads: Int  // 16
+    public let numChannels: Int  // 3
+    public let patchSize: Int  // 14
+    public let imageSize: Int  // 364
+    public let layerNormEps: Float  // 1e-6
+    public let headDim: Int  // hiddenSize / numAttentionHeads
 
     public init(from raw: [String: Any]) throws {
         guard let hs = raw["hidden_size"] as? Int else {
@@ -69,33 +69,33 @@ public struct Idefics3VisionConfig: Sendable {
             throw Idefics3Error.missingVisionConfig("num_attention_heads")
         }
         let intermediate = raw["intermediate_size"] as? Int ?? (hs * 4)
-        let nCh  = raw["num_channels"] as? Int ?? 3
-        let eps  = (raw["layer_norm_eps"] as? Double).map(Float.init) ?? 1e-6
+        let nCh = raw["num_channels"] as? Int ?? 3
+        let eps = (raw["layer_norm_eps"] as? Double).map(Float.init) ?? 1e-6
 
-        self.hiddenSize         = hs
-        self.intermediateSize   = intermediate
-        self.numHiddenLayers    = nLayers
-        self.numAttentionHeads  = nHeads
-        self.numChannels        = nCh
-        self.patchSize          = ps
-        self.imageSize          = imgSz
-        self.layerNormEps       = eps
-        self.headDim            = hs / nHeads
+        self.hiddenSize = hs
+        self.intermediateSize = intermediate
+        self.numHiddenLayers = nLayers
+        self.numAttentionHeads = nHeads
+        self.numChannels = nCh
+        self.patchSize = ps
+        self.imageSize = imgSz
+        self.layerNormEps = eps
+        self.headDim = hs / nHeads
     }
 }
 
 /// Text (Llama-style) configuration decoded from "text_config" sub-object.
 public struct Idefics3TextConfig: Sendable {
-    public let hiddenSize: Int          // 4096 for Idefics3-8B
-    public let intermediateSize: Int    // 14336
-    public let numHiddenLayers: Int     // 32
-    public let numAttentionHeads: Int   // 32
-    public let numKeyValueHeads: Int    // 8
-    public let headDim: Int             // 128
-    public let vocabSize: Int           // 128259
-    public let maxPositionEmbeddings: Int // 8192
-    public let rmsNormEps: Float        // 1e-5
-    public let ropeTheta: Float         // 500_000
+    public let hiddenSize: Int  // 4096 for Idefics3-8B
+    public let intermediateSize: Int  // 14336
+    public let numHiddenLayers: Int  // 32
+    public let numAttentionHeads: Int  // 32
+    public let numKeyValueHeads: Int  // 8
+    public let headDim: Int  // 128
+    public let vocabSize: Int  // 128259
+    public let maxPositionEmbeddings: Int  // 8192
+    public let rmsNormEps: Float  // 1e-5
+    public let ropeTheta: Float  // 500_000
     public let tieWordEmbeddings: Bool
 
     public init(from raw: [String: Any]) throws {
@@ -111,25 +111,25 @@ public struct Idefics3TextConfig: Sendable {
         guard let nHeads = raw["num_attention_heads"] as? Int else {
             throw Idefics3Error.missingTextConfig("num_attention_heads")
         }
-        let nKV    = raw["num_key_value_heads"] as? Int ?? nHeads
-        let hDim   = raw["head_dim"] as? Int ?? (hs / nHeads)
-        let inter  = raw["intermediate_size"] as? Int ?? (hs * 4)
+        let nKV = raw["num_key_value_heads"] as? Int ?? nHeads
+        let hDim = raw["head_dim"] as? Int ?? (hs / nHeads)
+        let inter = raw["intermediate_size"] as? Int ?? (hs * 4)
         let maxPos = raw["max_position_embeddings"] as? Int ?? 8192
-        let eps    = (raw["rms_norm_eps"] as? Double).map(Float.init) ?? 1e-5
-        let theta  = (raw["rope_theta"] as? Double).map(Float.init) ?? 500_000
+        let eps = (raw["rms_norm_eps"] as? Double).map(Float.init) ?? 1e-5
+        let theta = (raw["rope_theta"] as? Double).map(Float.init) ?? 500_000
         let tieEmbed = raw["tie_word_embeddings"] as? Bool ?? false
 
-        self.hiddenSize             = hs
-        self.intermediateSize       = inter
-        self.numHiddenLayers        = nLayers
-        self.numAttentionHeads      = nHeads
-        self.numKeyValueHeads       = nKV
-        self.headDim                = hDim
-        self.vocabSize              = vocab
-        self.maxPositionEmbeddings  = maxPos
-        self.rmsNormEps             = eps
-        self.ropeTheta              = theta
-        self.tieWordEmbeddings      = tieEmbed
+        self.hiddenSize = hs
+        self.intermediateSize = inter
+        self.numHiddenLayers = nLayers
+        self.numAttentionHeads = nHeads
+        self.numKeyValueHeads = nKV
+        self.headDim = hDim
+        self.vocabSize = vocab
+        self.maxPositionEmbeddings = maxPos
+        self.rmsNormEps = eps
+        self.ropeTheta = theta
+        self.tieWordEmbeddings = tieEmbed
     }
 }
 
@@ -140,10 +140,10 @@ public struct Idefics3Config: Sendable {
     /// `scale_factor` controls pixel-shuffle downsampling of vision features
     /// before projection into text embedding space. Default is 2 for Idefics3
     /// (SmolVLM2 uses 4).
-    public let scaleFactor: Int          // 2
+    public let scaleFactor: Int  // 2
     /// Token id used as placeholder for image patches in the input sequence.
-    public let imageTokenId: Int         // 49153
-    public let vocabSize: Int            // 128259
+    public let imageTokenId: Int  // 49153
+    public let vocabSize: Int  // 128259
 
     public init(from raw: [String: Any]) throws {
         guard let vcRaw = raw["vision_config"] as? [String: Any] else {
@@ -153,12 +153,13 @@ public struct Idefics3Config: Sendable {
             throw Idefics3Error.missingConfig("text_config")
         }
         self.visionConfig = try Idefics3VisionConfig(from: vcRaw)
-        self.textConfig   = try Idefics3TextConfig(from: tcRaw)
-        self.scaleFactor  = raw["scale_factor"] as? Int ?? 2
-        self.imageTokenId = raw["image_token_id"] as? Int
+        self.textConfig = try Idefics3TextConfig(from: tcRaw)
+        self.scaleFactor = raw["scale_factor"] as? Int ?? 2
+        self.imageTokenId =
+            raw["image_token_id"] as? Int
             ?? raw["image_token_index"] as? Int
             ?? 49153
-        self.vocabSize    = raw["vocab_size"] as? Int ?? 128259
+        self.vocabSize = raw["vocab_size"] as? Int ?? 128259
     }
 }
 
@@ -190,13 +191,17 @@ private func storeBF16(_ value: Float, to p: UnsafeMutableRawPointer, at index: 
 @inline(__always)
 private func loadF16(_ p: UnsafeRawPointer, at index: Int) -> Float {
     let raw = p.load(fromByteOffset: index * 2, as: UInt16.self)
-    let sign:  UInt32 = UInt32(raw & 0x8000) << 16
+    let sign: UInt32 = UInt32(raw & 0x8000) << 16
     let exp16: UInt32 = UInt32((raw >> 10) & 0x1F)
-    let mant:  UInt32 = UInt32(raw & 0x3FF)
+    let mant: UInt32 = UInt32(raw & 0x3FF)
     if exp16 == 0 {
         if mant == 0 { return Float(bitPattern: sign) }
-        var m = mant; var e: UInt32 = 0
-        while (m & 0x400) == 0 { m <<= 1; e += 1 }
+        var m = mant
+        var e: UInt32 = 0
+        while (m & 0x400) == 0 {
+            m <<= 1
+            e += 1
+        }
         return Float(bitPattern: sign | ((127 - 15 - e + 1) << 23) | ((m & 0x3FF) << 13))
     }
     let exp32: UInt32 = exp16 == 0x1F ? 0xFF << 23 : (exp16 + (127 - 15)) << 23
@@ -206,16 +211,16 @@ private func loadF16(_ p: UnsafeRawPointer, at index: Int) -> Float {
 /// Read all elements of a 1-D (or flat multi-D) Tensor into a Float array.
 private func idefics3TensorToFloats(_ t: Tensor) -> [Float] {
     let ptr = t.buffer.contents().advanced(by: t.offset)
-    let n   = t.elementCount
+    let n = t.elementCount
     var out = [Float](repeating: 0, count: n)
     switch t.dtype {
     case .f32:
         let p = ptr.bindMemory(to: Float.self, capacity: n)
-        for i in 0..<n { out[i] = p[i] }
+        for i in 0 ..< n { out[i] = p[i] }
     case .bf16:
-        for i in 0..<n { out[i] = loadBF16(ptr, at: i) }
+        for i in 0 ..< n { out[i] = loadBF16(ptr, at: i) }
     case .f16:
-        for i in 0..<n { out[i] = loadF16(ptr, at: i) }
+        for i in 0 ..< n { out[i] = loadF16(ptr, at: i) }
     default:
         fatalError("idefics3TensorToFloats: unsupported dtype \(t.dtype)")
     }
@@ -223,25 +228,27 @@ private func idefics3TensorToFloats(_ t: Tensor) -> [Float] {
 }
 
 /// Write a Float array into a new Tensor.
-private func idefics3FloatsToTensor(_ values: [Float], shape: [Int], dtype: DType,
-                                    device: Device = .shared) -> Tensor {
+private func idefics3FloatsToTensor(
+    _ values: [Float], shape: [Int], dtype: DType,
+    device: Device = .shared
+) -> Tensor {
     let n = shape.reduce(1, *)
     precondition(values.count == n, "idefics3FloatsToTensor: count mismatch")
-    let t   = Tensor.empty(shape: shape, dtype: dtype, device: device)
+    let t = Tensor.empty(shape: shape, dtype: dtype, device: device)
     let ptr = t.buffer.contents()
     switch dtype {
     case .f32:
         let p = ptr.bindMemory(to: Float.self, capacity: n)
-        for i in 0..<n { p[i] = values[i] }
+        for i in 0 ..< n { p[i] = values[i] }
     case .bf16:
-        for i in 0..<n { storeBF16(values[i], to: ptr, at: i) }
+        for i in 0 ..< n { storeBF16(values[i], to: ptr, at: i) }
     case .f16:
-        for i in 0..<n {
-            let f   = values[i]
+        for i in 0 ..< n {
+            let f = values[i]
             let bits = f.bitPattern
-            let sign: UInt16  = UInt16((bits >> 31) & 1) << 15
-            let exp32: Int32  = Int32((bits >> 23) & 0xFF) - 127
-            let mant: UInt32  = bits & 0x7FFFFF
+            let sign: UInt16 = UInt16((bits >> 31) & 1) << 15
+            let exp32: Int32 = Int32((bits >> 23) & 0xFF) - 127
+            let mant: UInt32 = bits & 0x7FFFFF
             let word: UInt16
             if exp32 < -24 {
                 word = sign
@@ -265,14 +272,16 @@ private func idefics3FloatsToTensor(_ values: [Float], shape: [Int], dtype: DTyp
 // ─── CPU vision primitives ────────────────────────────────────────────────────
 
 /// Standard LayerNorm with per-channel affine. Input: [n], weight/bias: [n].
-private func idefics3LayerNorm1D(_ x: [Float], weight: [Float], bias: [Float],
-                                  eps: Float) -> [Float] {
-    let n    = x.count
+private func idefics3LayerNorm1D(
+    _ x: [Float], weight: [Float], bias: [Float],
+    eps: Float
+) -> [Float] {
+    let n = x.count
     let mean = x.reduce(0, +) / Float(n)
     let variance = x.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Float(n)
-    let std  = (variance + eps).squareRoot()
-    var out  = [Float](repeating: 0, count: n)
-    for i in 0..<n { out[i] = ((x[i] - mean) / std) * weight[i] + bias[i] }
+    let std = (variance + eps).squareRoot()
+    var out = [Float](repeating: 0, count: n)
+    for i in 0 ..< n { out[i] = ((x[i] - mean) / std) * weight[i] + bias[i] }
     return out
 }
 
@@ -301,28 +310,33 @@ private func idefics3GeluTanh(_ x: Float) -> Float {
 /// (vision-tower MHA: nQHeads == nKVHeads, kvStride == seqLen,
 /// baseKV == 0). Output `[seqLen, nHeads, headDim]` is flattened to
 /// `[seqLen, nHeads * headDim]` for the caller.
-private func idefics3VisionSDPA(q: [Float], k: [Float], v: [Float],
-                                 nHeads: Int, seqLen: Int, headDim: Int) -> [Float] {
+private func idefics3VisionSDPA(
+    q: [Float], k: [Float], v: [Float],
+    nHeads: Int, seqLen: Int, headDim: Int
+) -> [Float] {
     let scale = 1.0 / Float(headDim).squareRoot()
     let device = Device.shared
 
     // Wrap Q in [seqLen, nHeads, headDim] layout (kernel's Q contract).
     // The CPU buffer was [nHeads, seqLen, headDim], so transpose here.
     var qSeqMajor = [Float](repeating: 0, count: seqLen * nHeads * headDim)
-    for h in 0..<nHeads {
-        for s in 0..<seqLen {
+    for h in 0 ..< nHeads {
+        for s in 0 ..< seqLen {
             let src = (h * seqLen + s) * headDim
             let dst = (s * nHeads + h) * headDim
-            for d in 0..<headDim { qSeqMajor[dst + d] = q[src + d] }
+            for d in 0 ..< headDim { qSeqMajor[dst + d] = q[src + d] }
         }
     }
 
-    let qT = idefics3FloatsToTensor(qSeqMajor, shape: [seqLen, nHeads, headDim],
-                                    dtype: .f32, device: device)
-    let kT = idefics3FloatsToTensor(k, shape: [nHeads, seqLen, headDim],
-                                    dtype: .f32, device: device)
-    let vT = idefics3FloatsToTensor(v, shape: [nHeads, seqLen, headDim],
-                                    dtype: .f32, device: device)
+    let qT = idefics3FloatsToTensor(
+        qSeqMajor, shape: [seqLen, nHeads, headDim],
+        dtype: .f32, device: device)
+    let kT = idefics3FloatsToTensor(
+        k, shape: [nHeads, seqLen, headDim],
+        dtype: .f32, device: device)
+    let vT = idefics3FloatsToTensor(
+        v, shape: [nHeads, seqLen, headDim],
+        dtype: .f32, device: device)
     let cmd = device.makeCommandBuffer()
     let outT = Ops.sdpaBidirectional(
         q: qT, k: kT, v: vT,
@@ -346,17 +360,25 @@ private func idefics3VisionSDPA(q: [Float], k: [Float], v: [Float],
 /// cheap relative to the matmul bandwidth it used to bottleneck.
 struct Idefics3EncoderLayer {
     // Self-attention: weight [dim, dim] f32 GPU, bias [dim] f32 GPU
-    let qW: Tensor; let qB: Tensor
-    let kW: Tensor; let kB: Tensor
-    let vW: Tensor; let vB: Tensor
+    let qW: Tensor
+    let qB: Tensor
+    let kW: Tensor
+    let kB: Tensor
+    let vW: Tensor
+    let vB: Tensor
     // Output projection is named "out_proj" in Idefics3 (not "o_proj")
-    let oW: Tensor; let oB: Tensor
+    let oW: Tensor
+    let oB: Tensor
     // MLP: fc1 [intermediate, dim] f32 GPU, fc2 [dim, intermediate] f32 GPU
-    let fc1W: Tensor; let fc1B: Tensor
-    let fc2W: Tensor; let fc2B: Tensor
+    let fc1W: Tensor
+    let fc1B: Tensor
+    let fc2W: Tensor
+    let fc2B: Tensor
     // LayerNorms (still CPU — applied per row before the GEMMs)
-    let ln1W: [Float]; let ln1B: [Float]
-    let ln2W: [Float]; let ln2B: [Float]
+    let ln1W: [Float]
+    let ln1B: [Float]
+    let ln2W: [Float]
+    let ln2B: [Float]
 
     let dim: Int
     let intermediate: Int
@@ -370,13 +392,13 @@ struct Idefics3EncoderLayer {
     ///   vision_model.encoder.layers.<i>.mlp.{fc1,fc2}.{weight,bias}
     ///   vision_model.encoder.layers.<i>.layer_norm{1,2}.{weight,bias}
     init(index i: Int, weights: Idefics3RemappedBundle, cfg: Idefics3VisionConfig) throws {
-        let p   = "vision_model.encoder.layers.\(i)"
+        let p = "vision_model.encoder.layers.\(i)"
         let dim = cfg.hiddenSize
 
-        self.dim         = dim
+        self.dim = dim
         self.intermediate = cfg.intermediateSize
-        self.nHeads      = cfg.numAttentionHeads
-        self.headDim     = cfg.headDim
+        self.nHeads = cfg.numAttentionHeads
+        self.headDim = cfg.headDim
 
         // Re-host each projection weight + bias as an f32 GPU Tensor so
         // `Ops.gemm` / `Ops.add` can consume them directly.
@@ -420,24 +442,28 @@ struct Idefics3EncoderLayer {
         // upload `normed1` to the GPU.
         var h = x
         var normed1 = [Float](repeating: 0, count: seqLen * dim)
-        for row in 0..<seqLen {
+        for row in 0 ..< seqLen {
             let start = row * dim
-            let slice = Array(h[start..<start + dim])
+            let slice = Array(h[start ..< start + dim])
             let n = idefics3LayerNorm1D(slice, weight: ln1W, bias: ln1B, eps: eps)
-            normed1.replaceSubrange(start..<start + dim, with: n)
+            normed1.replaceSubrange(start ..< start + dim, with: n)
         }
 
         // Upload normed input once, then dispatch Q/K/V/O over the same
         // command buffer. All three projections share the input tensor.
-        let normedT = idefics3FloatsToTensor(normed1, shape: [seqLen, dim],
-                                              dtype: .f32, device: device)
+        let normedT = idefics3FloatsToTensor(
+            normed1, shape: [seqLen, dim],
+            dtype: .f32, device: device)
         let cmd = device.makeCommandBuffer()
-        let qT  = idefics3GemmBiased(input: normedT, weight: qW, bias: qB,
-                                      nRows: seqLen, outDim: dim, device: device, on: cmd)
-        let kT  = idefics3GemmBiased(input: normedT, weight: kW, bias: kB,
-                                      nRows: seqLen, outDim: dim, device: device, on: cmd)
-        let vT  = idefics3GemmBiased(input: normedT, weight: vW, bias: vB,
-                                      nRows: seqLen, outDim: dim, device: device, on: cmd)
+        let qT = idefics3GemmBiased(
+            input: normedT, weight: qW, bias: qB,
+            nRows: seqLen, outDim: dim, device: device, on: cmd)
+        let kT = idefics3GemmBiased(
+            input: normedT, weight: kW, bias: kB,
+            nRows: seqLen, outDim: dim, device: device, on: cmd)
+        let vT = idefics3GemmBiased(
+            input: normedT, weight: vW, bias: vB,
+            nRows: seqLen, outDim: dim, device: device, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
         let q = qT.toFloatArray()
@@ -448,64 +474,73 @@ struct Idefics3EncoderLayer {
         var qH = [Float](repeating: 0, count: nHeads * seqLen * headDim)
         var kH = [Float](repeating: 0, count: nHeads * seqLen * headDim)
         var vH = [Float](repeating: 0, count: nHeads * seqLen * headDim)
-        for s in 0..<seqLen {
-            for nh in 0..<nHeads {
-                for d in 0..<headDim {
+        for s in 0 ..< seqLen {
+            for nh in 0 ..< nHeads {
+                for d in 0 ..< headDim {
                     let src = s * dim + nh * headDim + d
                     let dst = nh * seqLen * headDim + s * headDim + d
-                    qH[dst] = q[src]; kH[dst] = k[src]; vH[dst] = v[src]
+                    qH[dst] = q[src]
+                    kH[dst] = k[src]
+                    vH[dst] = v[src]
                 }
             }
         }
 
         // GPU scaled dot-product attention (already migrated).
-        let attnOut = idefics3VisionSDPA(q: qH, k: kH, v: vH,
-                                         nHeads: nHeads, seqLen: seqLen, headDim: headDim)
+        let attnOut = idefics3VisionSDPA(
+            q: qH, k: kH, v: vH,
+            nHeads: nHeads, seqLen: seqLen, headDim: headDim)
 
         // Output projection + residual. Same GPU pattern as Q/K/V.
-        let attnT = idefics3FloatsToTensor(attnOut, shape: [seqLen, dim],
-                                            dtype: .f32, device: device)
+        let attnT = idefics3FloatsToTensor(
+            attnOut, shape: [seqLen, dim],
+            dtype: .f32, device: device)
         let cmd2 = device.makeCommandBuffer()
-        let oTGpu = idefics3GemmBiased(input: attnT, weight: oW, bias: oB,
-                                        nRows: seqLen, outDim: dim, device: device, on: cmd2)
+        let oTGpu = idefics3GemmBiased(
+            input: attnT, weight: oW, bias: oB,
+            nRows: seqLen, outDim: dim, device: device, on: cmd2)
         cmd2.commit()
         cmd2.waitUntilCompleted()
         let oOut = oTGpu.toFloatArray()
-        for i in 0..<h.count { h[i] += oOut[i] }
+        for i in 0 ..< h.count { h[i] += oOut[i] }
 
         // ── MLP ─────────────────────────────────────────────────────────────
         var normed2 = [Float](repeating: 0, count: seqLen * dim)
-        for row in 0..<seqLen {
+        for row in 0 ..< seqLen {
             let start = row * dim
-            let slice = Array(h[start..<start + dim])
+            let slice = Array(h[start ..< start + dim])
             let n = idefics3LayerNorm1D(slice, weight: ln2W, bias: ln2B, eps: eps)
-            normed2.replaceSubrange(start..<start + dim, with: n)
+            normed2.replaceSubrange(start ..< start + dim, with: n)
         }
 
-        let normed2T = idefics3FloatsToTensor(normed2, shape: [seqLen, dim],
-                                               dtype: .f32, device: device)
+        let normed2T = idefics3FloatsToTensor(
+            normed2, shape: [seqLen, dim],
+            dtype: .f32, device: device)
         let cmd3 = device.makeCommandBuffer()
-        let fc1Tgpu = idefics3GemmBiased(input: normed2T, weight: fc1W, bias: fc1B,
-                                          nRows: seqLen, outDim: intermediate,
-                                          device: device, on: cmd3)
+        let fc1Tgpu = idefics3GemmBiased(
+            input: normed2T, weight: fc1W, bias: fc1B,
+            nRows: seqLen, outDim: intermediate,
+            device: device, on: cmd3)
         cmd3.commit()
         cmd3.waitUntilCompleted()
         var fc1Out = fc1Tgpu.toFloatArray()
         // GELU tanh approximation (gelu_pytorch_tanh)
-        for i in 0..<fc1Out.count { fc1Out[i] = idefics3GeluTanh(fc1Out[i]) }
+        for i in 0 ..< fc1Out.count { fc1Out[i] = idefics3GeluTanh(fc1Out[i]) }
 
-        let fc1OutT = idefics3FloatsToTensor(fc1Out, shape: [seqLen, intermediate],
-                                              dtype: .f32, device: device)
+        let fc1OutT = idefics3FloatsToTensor(
+            fc1Out, shape: [seqLen, intermediate],
+            dtype: .f32, device: device)
         let cmd4 = device.makeCommandBuffer()
-        let fc2Tgpu = idefics3GemmBiased(input: fc1OutT, weight: fc2W, bias: fc2B,
-                                          nRows: seqLen, outDim: dim,
-                                          device: device, on: cmd4)
+        let fc2Tgpu = idefics3GemmBiased(
+            input: fc1OutT, weight: fc2W, bias: fc2B,
+            nRows: seqLen, outDim: dim,
+            device: device, on: cmd4)
         cmd4.commit()
         cmd4.waitUntilCompleted()
         let fc2Out = fc2Tgpu.toFloatArray()
 
         // Residual
-        for i in 0..<h.count { h[i] += fc2Out[i] }
+        for i in 0 ..< h.count { h[i] += fc2Out[i] }
         return h
     }
 }
@@ -514,18 +549,21 @@ struct Idefics3EncoderLayer {
 /// as one `Ops.gemm` + bias-tile + `Ops.add` on the supplied command
 /// buffer. The bias tile is built CPU-side once and uploaded to GPU.
 /// Returns the result tensor; caller commits and reads back.
-private func idefics3GemmBiased(input: Tensor, weight: Tensor, bias: Tensor,
-                                 nRows: Int, outDim: Int, device: Device,
-                                 on cmd: MTLCommandBuffer) -> Tensor {
+private func idefics3GemmBiased(
+    input: Tensor, weight: Tensor, bias: Tensor,
+    nRows: Int, outDim: Int, device: Device,
+    on cmd: MTLCommandBuffer
+) -> Tensor {
     let out = Ops.gemm(weight: weight, input: input, nRows: nRows, on: cmd)
     let biasVals = bias.toFloatArray()
     var tiled = [Float](repeating: 0, count: nRows * outDim)
-    for r in 0..<nRows {
+    for r in 0 ..< nRows {
         let base = r * outDim
-        for c in 0..<outDim { tiled[base + c] = biasVals[c] }
+        for c in 0 ..< outDim { tiled[base + c] = biasVals[c] }
     }
-    let tiledT = idefics3FloatsToTensor(tiled, shape: [nRows, outDim],
-                                         dtype: .f32, device: device)
+    let tiledT = idefics3FloatsToTensor(
+        tiled, shape: [nRows, outDim],
+        dtype: .f32, device: device)
     return Ops.add(out, tiledT, on: cmd)
 }
 
@@ -548,29 +586,30 @@ public final class Idefics3VisionEncoder: Module {
     let layers: [Idefics3EncoderLayer]
 
     // Keep raw Tensors for parameters()
-    private let patchWTensor:   Tensor
-    private let patchBTensor:   Tensor
+    private let patchWTensor: Tensor
+    private let patchBTensor: Tensor
     private let posEmbedTensor: Tensor
-    private let postLnWTensor:  Tensor
-    private let postLnBTensor:  Tensor
+    private let postLnWTensor: Tensor
+    private let postLnBTensor: Tensor
 
     init(cfg: Idefics3VisionConfig, weights: Idefics3RemappedBundle) throws {
         self.cfg = cfg
 
-        let patchWTens    = try weights.tensor(named: "vision_model.embeddings.patch_embedding.weight")
-        let patchBTens    = try weights.tensor(named: "vision_model.embeddings.patch_embedding.bias")
-        let posEmbedTens  = try weights.tensor(named: "vision_model.embeddings.position_embedding.weight")
-        let postLnWTens   = try weights.tensor(named: "vision_model.post_layernorm.weight")
-        let postLnBTens   = try weights.tensor(named: "vision_model.post_layernorm.bias")
+        let patchWTens = try weights.tensor(named: "vision_model.embeddings.patch_embedding.weight")
+        let patchBTens = try weights.tensor(named: "vision_model.embeddings.patch_embedding.bias")
+        let posEmbedTens = try weights.tensor(
+            named: "vision_model.embeddings.position_embedding.weight")
+        let postLnWTens = try weights.tensor(named: "vision_model.post_layernorm.weight")
+        let postLnBTens = try weights.tensor(named: "vision_model.post_layernorm.bias")
 
-        self.patchWTensor   = patchWTens
-        self.patchBTensor   = patchBTens
+        self.patchWTensor = patchWTens
+        self.patchBTensor = patchBTens
         self.posEmbedTensor = posEmbedTens
-        self.postLnWTensor  = postLnWTens
-        self.postLnBTensor  = postLnBTens
+        self.postLnWTensor = postLnWTens
+        self.postLnBTensor = postLnBTens
 
-        self.patchW   = idefics3TensorToFloats(patchWTens)
-        self.patchB   = idefics3TensorToFloats(patchBTens)
+        self.patchW = idefics3TensorToFloats(patchWTens)
+        self.patchB = idefics3TensorToFloats(patchBTens)
         self.posEmbed = idefics3TensorToFloats(posEmbedTens)
 
         let n = (cfg.imageSize / cfg.patchSize) * (cfg.imageSize / cfg.patchSize)
@@ -581,7 +620,7 @@ public final class Idefics3VisionEncoder: Module {
 
         var layers: [Idefics3EncoderLayer] = []
         layers.reserveCapacity(cfg.numHiddenLayers)
-        for i in 0..<cfg.numHiddenLayers {
+        for i in 0 ..< cfg.numHiddenLayers {
             layers.append(try Idefics3EncoderLayer(index: i, weights: weights, cfg: cfg))
         }
         self.layers = layers
@@ -590,10 +629,10 @@ public final class Idefics3VisionEncoder: Module {
     public func parameters() -> [(String, Tensor)] {
         var out: [(String, Tensor)] = []
         out.append(("vision_model.embeddings.patch_embedding.weight", patchWTensor))
-        out.append(("vision_model.embeddings.patch_embedding.bias",   patchBTensor))
+        out.append(("vision_model.embeddings.patch_embedding.bias", patchBTensor))
         out.append(("vision_model.embeddings.position_embedding.weight", posEmbedTensor))
         out.append(("vision_model.post_layernorm.weight", postLnWTensor))
-        out.append(("vision_model.post_layernorm.bias",   postLnBTensor))
+        out.append(("vision_model.post_layernorm.bias", postLnBTensor))
         return out
     }
 
@@ -606,24 +645,24 @@ public final class Idefics3VisionEncoder: Module {
     /// non-overlapping windows and projecting each through the patch weight matrix.
     /// patchW layout: [hiddenSize, numChannels, patchSize, patchSize] — OIHW.
     func patchEmbeddings(pixels: [Float], height: Int, width: Int) -> [Float] {
-        let ps     = cfg.patchSize
-        let dim    = cfg.hiddenSize
-        let nC     = cfg.numChannels
-        let nRows  = height / ps
-        let nCols  = width  / ps
+        let ps = cfg.patchSize
+        let dim = cfg.hiddenSize
+        let nC = cfg.numChannels
+        let nRows = height / ps
+        let nCols = width / ps
         let nPatch = nRows * nCols
         let filterSize = nC * ps * ps
 
         var out = [Float](repeating: 0, count: nPatch * dim)
 
-        for pr in 0..<nRows {
-            for pc in 0..<nCols {
+        for pr in 0 ..< nRows {
+            for pc in 0 ..< nCols {
                 let pIdx = pr * nCols + pc
                 // Extract one patch [ps, ps, nC] from the HWC image
                 var patchCHW = [Float](repeating: 0, count: filterSize)
-                for ch in 0..<nC {
-                    for r in 0..<ps {
-                        for c in 0..<ps {
+                for ch in 0 ..< nC {
+                    for r in 0 ..< ps {
+                        for c in 0 ..< ps {
                             let pixRow = pr * ps + r
                             let pixCol = pc * ps + c
                             // pixels: [height, width, nC] row-major
@@ -633,10 +672,10 @@ public final class Idefics3VisionEncoder: Module {
                     }
                 }
                 // patchW[d, *] is filter d of size filterSize — dot with patchCHW
-                for d in 0..<dim {
+                for d in 0 ..< dim {
                     var dot: Float = 0
                     let fRow = d * filterSize
-                    for j in 0..<filterSize { dot += patchW[fRow + j] * patchCHW[j] }
+                    for j in 0 ..< filterSize { dot += patchW[fRow + j] * patchCHW[j] }
                     out[pIdx * dim + d] = dot + patchB[d]
                 }
             }
@@ -649,13 +688,13 @@ public final class Idefics3VisionEncoder: Module {
     /// `pixels` is [height, width, channels] Float32 after mean/std normalization.
     /// Returns [numPatches, hiddenSize] Float — the pooler output after post-LayerNorm.
     func encode(pixels: [Float], height: Int, width: Int) -> [Float] {
-        let dim    = cfg.hiddenSize
+        let dim = cfg.hiddenSize
         let nPatch = (height / cfg.patchSize) * (width / cfg.patchSize)
 
         // Patch embeddings + position embeddings
         var x = patchEmbeddings(pixels: pixels, height: height, width: width)
-        for i in 0..<nPatch {
-            for d in 0..<dim { x[i * dim + d] += posEmbed[i * dim + d] }
+        for i in 0 ..< nPatch {
+            for d in 0 ..< dim { x[i * dim + d] += posEmbed[i * dim + d] }
         }
 
         // Transformer layers
@@ -665,12 +704,13 @@ public final class Idefics3VisionEncoder: Module {
 
         // Post layer norm (applied per patch)
         var postNormed = [Float](repeating: 0, count: nPatch * dim)
-        for row in 0..<nPatch {
+        for row in 0 ..< nPatch {
             let start = row * dim
-            let slice = Array(x[start..<start + dim])
-            let n = idefics3LayerNorm1D(slice, weight: postLnW, bias: postLnB,
-                                        eps: cfg.layerNormEps)
-            postNormed.replaceSubrange(start..<start + dim, with: n)
+            let slice = Array(x[start ..< start + dim])
+            let n = idefics3LayerNorm1D(
+                slice, weight: postLnW, bias: postLnB,
+                eps: cfg.layerNormEps)
+            postNormed.replaceSubrange(start ..< start + dim, with: n)
         }
         return postNormed
     }
@@ -705,8 +745,9 @@ public final class Idefics3Connector: Module {
         // against the pixel-shuffle output every vision prefill, so we
         // pay the conversion once.
         let floats = idefics3TensorToFloats(projTensor)
-        self.projWGpu = idefics3FloatsToTensor(floats, shape: projTensor.shape,
-                                                dtype: .f32)
+        self.projWGpu = idefics3FloatsToTensor(
+            floats, shape: projTensor.shape,
+            dtype: .f32)
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -718,26 +759,29 @@ public final class Idefics3Connector: Module {
     /// `visionOut` is [nPatches, visionHidden].
     /// Returns [nPatches/sf², textHidden].
     func forward(visionOut: [Float], nPatches: Int, visionHidden: Int, textHidden: Int) -> [Float] {
-        let sf  = scaleFactor
+        let sf = scaleFactor
         let sf2 = sf * sf
         let side = Int(Double(nPatches).squareRoot())
-        precondition(side * side == nPatches,
-                     "Idefics3 connector: nPatches must be a perfect square, got \(nPatches)")
-        precondition(side % sf == 0,
-                     "Idefics3 connector: side (\(side)) must be divisible by scale_factor (\(sf))")
+        precondition(
+            side * side == nPatches,
+            "Idefics3 connector: nPatches must be a perfect square, got \(nPatches)")
+        precondition(
+            side % sf == 0,
+            "Idefics3 connector: side (\(side)) must be divisible by scale_factor (\(sf))")
 
-        let newSide    = side / sf
-        let newHidden  = visionHidden * sf2
+        let newSide = side / sf
+        let newHidden = visionHidden * sf2
         let newNPatches = newSide * newSide
 
         // Step 2: [side, side, visionHidden] → [side, side/sf, visionHidden*sf]
         var step2 = [Float](repeating: 0, count: side * newSide * visionHidden * sf)
-        for r in 0..<side {
-            for c2 in 0..<newSide {
-                for e in 0..<visionHidden {
-                    for s in 0..<sf {
+        for r in 0 ..< side {
+            for c2 in 0 ..< newSide {
+                for e in 0 ..< visionHidden {
+                    for s in 0 ..< sf {
                         let srcIdx = r * side * visionHidden + (c2 * sf + s) * visionHidden + e
-                        let dstIdx = r * newSide * visionHidden * sf + c2 * visionHidden * sf + e * sf + s
+                        let dstIdx =
+                            r * newSide * visionHidden * sf + c2 * visionHidden * sf + e * sf + s
                         step2[dstIdx] = visionOut[srcIdx]
                     }
                 }
@@ -746,9 +790,9 @@ public final class Idefics3Connector: Module {
 
         // Step 3: transpose(0,2,1,3) → [side/sf, side, visionHidden*sf]
         var step3 = [Float](repeating: 0, count: newSide * side * visionHidden * sf)
-        for c2 in 0..<newSide {
-            for r in 0..<side {
-                for d in 0..<(visionHidden * sf) {
+        for c2 in 0 ..< newSide {
+            for r in 0 ..< side {
+                for d in 0 ..< (visionHidden * sf) {
                     let srcIdx = r * newSide * visionHidden * sf + c2 * visionHidden * sf + d
                     let dstIdx = c2 * side * visionHidden * sf + r * visionHidden * sf + d
                     step3[dstIdx] = step2[srcIdx]
@@ -758,12 +802,14 @@ public final class Idefics3Connector: Module {
 
         // Step 4: reshape → [side/sf, side/sf, visionHidden*sf²]
         var step4 = [Float](repeating: 0, count: newSide * newSide * newHidden)
-        for r2 in 0..<newSide {
-            for c2 in 0..<newSide {
-                for s in 0..<sf {
-                    for e in 0..<(visionHidden * sf) {
-                        let srcIdx = r2 * side * visionHidden * sf + (c2 * sf + s) * visionHidden * sf + e
-                        let dstIdx = r2 * newSide * newHidden + c2 * newHidden + s * visionHidden * sf + e
+        for r2 in 0 ..< newSide {
+            for c2 in 0 ..< newSide {
+                for s in 0 ..< sf {
+                    for e in 0 ..< (visionHidden * sf) {
+                        let srcIdx =
+                            r2 * side * visionHidden * sf + (c2 * sf + s) * visionHidden * sf + e
+                        let dstIdx =
+                            r2 * newSide * newHidden + c2 * newHidden + s * visionHidden * sf + e
                         step4[dstIdx] = step3[srcIdx]
                     }
                 }
@@ -774,11 +820,13 @@ public final class Idefics3Connector: Module {
         // One GPU GEMM dispatch instead of the nested-loop CPU matmul that
         // previously bottlenecked the connector at 4608 → textHidden.
         let device = Device.shared
-        let inputT = idefics3FloatsToTensor(step4, shape: [newNPatches, newHidden],
-                                             dtype: .f32, device: device)
+        let inputT = idefics3FloatsToTensor(
+            step4, shape: [newNPatches, newHidden],
+            dtype: .f32, device: device)
         let cmd = device.makeCommandBuffer()
-        let outT = Ops.gemm(weight: projWGpu, input: inputT,
-                            nRows: newNPatches, on: cmd)
+        let outT = Ops.gemm(
+            weight: projWGpu, input: inputT,
+            nRows: newNPatches, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
         return outT.toFloatArray()
@@ -795,10 +843,11 @@ func loadIdefics3Linear(
 ) throws -> AnyLinear {
     if let q = quantization, [3, 4, 5, 6, 8].contains(q.bits), bundle.isQuantized(base) {
         let t = try bundle.quantizedTriplet(base)
-        return AnyLinear(QuantizedLinear(
-            weight: t.weight, scales: t.scales, biases: t.biases,
-            bits: q.bits, groupSize: q.groupSize
-        ))
+        return AnyLinear(
+            QuantizedLinear(
+                weight: t.weight, scales: t.scales, biases: t.biases,
+                bits: q.bits, groupSize: q.groupSize
+            ))
     }
     return AnyLinear(Linear(weight: try bundle.tensor(named: "\(base).weight")))
 }
@@ -809,10 +858,11 @@ func loadIdefics3Embedding(
 ) throws -> AnyEmbedding {
     if let q = quantization, [3, 4, 5, 6, 8].contains(q.bits), bundle.isQuantized(base) {
         let t = try bundle.quantizedTriplet(base)
-        return AnyEmbedding(QuantizedEmbedding(
-            weight: t.weight, scales: t.scales, biases: t.biases,
-            hidden: hidden, bits: q.bits, groupSize: q.groupSize
-        ))
+        return AnyEmbedding(
+            QuantizedEmbedding(
+                weight: t.weight, scales: t.scales, biases: t.biases,
+                hidden: hidden, bits: q.bits, groupSize: q.groupSize
+            ))
     }
     return AnyEmbedding(Embedding(weight: try bundle.tensor(named: "\(base).weight")))
 }
@@ -889,32 +939,34 @@ final class Idefics3RemappedBundle {
 /// Vision prefill (`prefillWithImage`) drives the KV cache one token at a
 /// time, substituting image embeddings for image-placeholder tokens.
 public final class Idefics3Model: LanguageModel {
-    public let llamaModel:     LlamaModel
-    public let visionEncoder:  Idefics3VisionEncoder
-    public let connector:      Idefics3Connector
-    public let cfg:            Idefics3Config
-    public let device:         Device
+    public let llamaModel: LlamaModel
+    public let visionEncoder: Idefics3VisionEncoder
+    public let connector: Idefics3Connector
+    public let cfg: Idefics3Config
+    public let device: Device
 
     // LanguageModel conformance — delegate to the Llama backbone
-    public var hidden:   Int   { llamaModel.hidden }
-    public var nLayers:  Int   { llamaModel.nLayers }
-    public var nHeads:   Int   { llamaModel.nHeads }
-    public var nKVHeads: Int   { llamaModel.nKVHeads }
-    public var headDim:  Int   { llamaModel.headDim }
-    public var vocab:    Int   { llamaModel.vocab }
-    public var maxSeq:   Int   { llamaModel.maxSeq }
-    public var dtype:    DType { llamaModel.dtype }
+    public var hidden: Int { llamaModel.hidden }
+    public var nLayers: Int { llamaModel.nLayers }
+    public var nHeads: Int { llamaModel.nHeads }
+    public var nKVHeads: Int { llamaModel.nKVHeads }
+    public var headDim: Int { llamaModel.headDim }
+    public var vocab: Int { llamaModel.vocab }
+    public var maxSeq: Int { llamaModel.maxSeq }
+    public var dtype: DType { llamaModel.dtype }
 
-    public init(llamaModel:    LlamaModel,
-                visionEncoder: Idefics3VisionEncoder,
-                connector:     Idefics3Connector,
-                cfg:           Idefics3Config,
-                device:        Device) {
-        self.llamaModel    = llamaModel
+    public init(
+        llamaModel: LlamaModel,
+        visionEncoder: Idefics3VisionEncoder,
+        connector: Idefics3Connector,
+        cfg: Idefics3Config,
+        device: Device
+    ) {
+        self.llamaModel = llamaModel
         self.visionEncoder = visionEncoder
-        self.connector     = connector
-        self.cfg           = cfg
-        self.device        = device
+        self.connector = connector
+        self.cfg = cfg
+        self.device = device
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -929,21 +981,27 @@ public final class Idefics3Model: LanguageModel {
         llamaModel.makeLayerCaches(maxSeq: maxSeq, device: device)
     }
 
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        device: Device) -> Tensor {
-        llamaModel.forward(tokenId: tokenId, position: position,
-                           caches: caches, device: device)
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        device: Device
+    ) -> Tensor {
+        llamaModel.forward(
+            tokenId: tokenId, position: position,
+            caches: caches, device: device)
     }
 
     /// Command-buffer-aware forward — required by `LanguageModel` for
     /// command-buffer chaining across decode steps. Delegates to
     /// LlamaModel's `forward(...:on:device:)`.
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        llamaModel.forward(tokenId: tokenId, position: position,
-                           caches: caches, on: cmd, device: device)
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        llamaModel.forward(
+            tokenId: tokenId, position: position,
+            caches: caches, on: cmd, device: device)
     }
 
     /// Multi-token forward — delegates to LlamaModel's optimised
@@ -953,17 +1011,23 @@ public final class Idefics3Model: LanguageModel {
     /// since its text backbone IS a LlamaModel. Image-prefill
     /// (vision-substitution) still routes through `prefillWithImage`
     /// which is its own block path.
-    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                             caches: [any LayerCacheProtocol],
-                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        llamaModel.forwardMulti(tokenIds: tokenIds, startingAt: position,
-                                caches: caches, on: cmd, device: device)
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        llamaModel.forwardMulti(
+            tokenIds: tokenIds, startingAt: position,
+            caches: caches, on: cmd, device: device)
     }
 
-    public func forwardSample(tokenId: Int, position: Int,
-                              caches: [any LayerCacheProtocol], device: Device) -> Int {
-        llamaModel.forwardSample(tokenId: tokenId, position: position,
-                                  caches: caches, device: device)
+    public func forwardSample(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol], device: Device
+    ) -> Int {
+        llamaModel.forwardSample(
+            tokenId: tokenId, position: position,
+            caches: caches, device: device)
     }
 
     public func forwardSampleCategorical(
@@ -988,20 +1052,21 @@ public final class Idefics3Model: LanguageModel {
     /// The number of image tokens equals nPatches / scaleFactor² where nPatches
     /// is (imageSize / patchSize)².
     public func encodeImage(pixels: [Float], height: Int, width: Int) -> [Float] {
-        let vc          = cfg.visionConfig
-        let nPatches    = (height / vc.patchSize) * (width / vc.patchSize)
-        let sf2         = cfg.scaleFactor * cfg.scaleFactor
+        let vc = cfg.visionConfig
+        let nPatches = (height / vc.patchSize) * (width / vc.patchSize)
+        let sf2 = cfg.scaleFactor * cfg.scaleFactor
         let nImageTokens = nPatches / sf2
 
         let visionFeatures = visionEncoder.encode(pixels: pixels, height: height, width: width)
-        let imageEmbeds    = connector.forward(
+        let imageEmbeds = connector.forward(
             visionOut: visionFeatures,
             nPatches: nPatches,
             visionHidden: vc.hiddenSize,
             textHidden: cfg.textConfig.hiddenSize
         )
-        precondition(imageEmbeds.count == nImageTokens * cfg.textConfig.hiddenSize,
-                     "Idefics3: image embeds count mismatch")
+        precondition(
+            imageEmbeds.count == nImageTokens * cfg.textConfig.hiddenSize,
+            "Idefics3: image embeds count mismatch")
         return imageEmbeds
     }
 
@@ -1019,7 +1084,7 @@ public final class Idefics3Model: LanguageModel {
         caches: [any LayerCacheProtocol],
         device: Device
     ) -> Tensor {
-        let textHidden   = cfg.textConfig.hiddenSize
+        let textHidden = cfg.textConfig.hiddenSize
         let imageTokenId = cfg.imageTokenId
         let totalImageTokens = imageEmbeds.count / textHidden
 
@@ -1031,11 +1096,12 @@ public final class Idefics3Model: LanguageModel {
             if tokenId == imageTokenId && imageIdx < totalImageTokens {
                 // Substitute the image embedding for this position
                 let embedStart = imageIdx * textHidden
-                let embedSlice = Array(imageEmbeds[embedStart..<embedStart + textHidden])
+                let embedSlice = Array(imageEmbeds[embedStart ..< embedStart + textHidden])
                 imageIdx += 1
 
-                let h = idefics3FloatsToTensor(embedSlice, shape: [textHidden],
-                                               dtype: dtype, device: device)
+                let h = idefics3FloatsToTensor(
+                    embedSlice, shape: [textHidden],
+                    dtype: dtype, device: device)
                 lastLogits = forwardFromEmbedding(h, position: pos, caches: caches, device: device)
             } else {
                 // Normal text token
@@ -1057,16 +1123,19 @@ public final class Idefics3Model: LanguageModel {
     ///
     /// Used during VL prefill to process image-feature tokens that bypass the
     /// normal embedding table lookup.
-    public func forwardFromEmbedding(_ embedding: Tensor, position: Int,
-                                      caches: [any LayerCacheProtocol],
-                                      device: Device) -> Tensor {
+    public func forwardFromEmbedding(
+        _ embedding: Tensor, position: Int,
+        caches: [any LayerCacheProtocol],
+        device: Device
+    ) -> Tensor {
         let cmd = device.makeCommandBuffer()
         var h = embedding.reshaped(to: [llamaModel.hidden])
 
         for (i, layer) in llamaModel.layers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              cmd: cmd, device: device)
+            h = layer.forward(
+                h, position: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                cmd: cmd, device: device)
         }
 
         let normed = llamaModel.finalNorm(h, on: cmd)

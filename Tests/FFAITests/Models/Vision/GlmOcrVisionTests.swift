@@ -18,6 +18,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("GlmOcr Vision Tests")
@@ -29,48 +30,49 @@ struct GlmOcrTests {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("ffai-glmocr-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try json.write(to: dir.appendingPathComponent("config.json"),
-                       atomically: true, encoding: .utf8)
+        try json.write(
+            to: dir.appendingPathComponent("config.json"),
+            atomically: true, encoding: .utf8)
         return dir
     }
 
     // Minimal GLM-OCR config.json that mirrors the real checkpoint.
     static let minimalConfigJSON = """
-    {
-      "architectures": ["GlmOcrForConditionalGeneration"],
-      "model_type": "glm_ocr",
-      "image_token_id": 59280,
-      "eos_token_id": [59246, 59253],
-      "quantization": {"bits": 4, "group_size": 64},
-      "text_config": {
-        "model_type": "glm_ocr_text",
-        "hidden_size": 1536,
-        "num_hidden_layers": 16,
-        "num_attention_heads": 16,
-        "num_key_value_heads": 8,
-        "head_dim": 128,
-        "intermediate_size": 4608,
-        "vocab_size": 59392,
-        "rms_norm_eps": 1e-05,
-        "max_position_embeddings": 131072,
-        "num_nextn_predict_layers": 1,
-        "tie_word_embeddings": false,
-        "rope_parameters": {"rope_theta": 10000}
-      },
-      "vision_config": {
-        "model_type": "glm_ocr_vision",
-        "depth": 24,
-        "hidden_size": 1024,
-        "num_heads": 16,
-        "intermediate_size": 4096,
-        "patch_size": 14,
-        "out_hidden_size": 1536,
-        "spatial_merge_size": 2,
-        "temporal_patch_size": 2,
-        "rms_norm_eps": 1e-05
-      }
-    }
-    """
+        {
+          "architectures": ["GlmOcrForConditionalGeneration"],
+          "model_type": "glm_ocr",
+          "image_token_id": 59280,
+          "eos_token_id": [59246, 59253],
+          "quantization": {"bits": 4, "group_size": 64},
+          "text_config": {
+            "model_type": "glm_ocr_text",
+            "hidden_size": 1536,
+            "num_hidden_layers": 16,
+            "num_attention_heads": 16,
+            "num_key_value_heads": 8,
+            "head_dim": 128,
+            "intermediate_size": 4608,
+            "vocab_size": 59392,
+            "rms_norm_eps": 1e-05,
+            "max_position_embeddings": 131072,
+            "num_nextn_predict_layers": 1,
+            "tie_word_embeddings": false,
+            "rope_parameters": {"rope_theta": 10000}
+          },
+          "vision_config": {
+            "model_type": "glm_ocr_vision",
+            "depth": 24,
+            "hidden_size": 1024,
+            "num_heads": 16,
+            "intermediate_size": 4096,
+            "patch_size": 14,
+            "out_hidden_size": 1536,
+            "spatial_merge_size": 2,
+            "temporal_patch_size": 2,
+            "rms_norm_eps": 1e-05
+          }
+        }
+        """
 
     // ── Architecture / model_type registry ───────────────────────────
 
@@ -164,9 +166,10 @@ struct GlmOcrTests {
 
     @Test("ModelRegistry rejects unknown architecture with unsupportedArchitecture")
     func registryRejectsUnknownArch() throws {
-        let dir = try Self.makeGlmOcrDir(json: """
-        {"architectures": ["UnknownVLM"], "model_type": "unknown_type"}
-        """)
+        let dir = try Self.makeGlmOcrDir(
+            json: """
+                {"architectures": ["UnknownVLM"], "model_type": "unknown_type"}
+                """)
         defer { try? FileManager.default.removeItem(at: dir) }
         // Write a minimal safetensors stub so the bundle loads.
         let header = "{}"
@@ -222,9 +225,9 @@ struct GlmOcrTests {
         #expect(img.data[2] == 0.1)
         // All pixels identical.
         for i in stride(from: 0, to: img.data.count, by: 3) {
-            #expect(img.data[i]   == 0.5)
-            #expect(img.data[i+1] == 0.25)
-            #expect(img.data[i+2] == 0.1)
+            #expect(img.data[i] == 0.5)
+            #expect(img.data[i + 1] == 0.25)
+            #expect(img.data[i + 2] == 0.1)
         }
     }
 

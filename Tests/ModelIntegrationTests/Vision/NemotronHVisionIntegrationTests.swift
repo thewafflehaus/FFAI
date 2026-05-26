@@ -35,9 +35,10 @@
 // HF cache and the suite goes green on the next run.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("NemotronH Vision Integration", .serialized)
 struct NemotronHVisionIntegrationTests {
@@ -70,8 +71,10 @@ struct NemotronHVisionIntegrationTests {
 
     @Test("load — Nemotron-VLM checkpoint loads with vision capability")
     func loadVLCheckpoint() async throws {
-        try #require(nemotronVLIsCached(),
-                     "Nemotron-VL checkpoint not cached locally — no mlx-style conversion published on HF yet")
+        try #require(
+            nemotronVLIsCached(),
+            "Nemotron-VL checkpoint not cached locally — no mlx-style conversion published on HF yet"
+        )
         let m = try await ModelLoadLock.shared.loadSerially {
             try await Model.load(Self.modelId)
         }
@@ -89,8 +92,10 @@ struct NemotronHVisionIntegrationTests {
 
     @Test("enable / disable .imageIn — runtime capability flip")
     func capabilityFlip() async throws {
-        try #require(nemotronVLIsCached(),
-                     "Nemotron-VL checkpoint not cached locally — no mlx-style conversion published on HF yet")
+        try #require(
+            nemotronVLIsCached(),
+            "Nemotron-VL checkpoint not cached locally — no mlx-style conversion published on HF yet"
+        )
         let m = try await ModelLoadLock.shared.loadSerially {
             try await Model.load(Self.modelId)
         }
@@ -103,8 +108,10 @@ struct NemotronHVisionIntegrationTests {
 
     @Test("image + text prompt — describes the dog photo")
     func imageTextGeneration() async throws {
-        try #require(nemotronVLIsCached(),
-                     "Nemotron-VL checkpoint not cached locally — no mlx-style conversion published on HF yet")
+        try #require(
+            nemotronVLIsCached(),
+            "Nemotron-VL checkpoint not cached locally — no mlx-style conversion published on HF yet"
+        )
         let m = try await ModelLoadLock.shared.loadSerially {
             try await Model.load(Self.modelId)
         }
@@ -114,8 +121,10 @@ struct NemotronHVisionIntegrationTests {
         // image-placeholder tokens followed by a text question.
         let imageTokenId = vlm.imageTokenId
         let questionTokens = m.tokenizer.encode(text: "Describe this image.")
-        let promptTokens = Array(repeating: imageTokenId,
-                                 count: vlm.imageTokenCount) + questionTokens
+        let promptTokens =
+            Array(
+                repeating: imageTokenId,
+                count: vlm.imageTokenCount) + questionTokens
 
         // A real photograph — the golden-retriever fixture.
         let image = try VisionTestHelpers.dogImage()
@@ -126,8 +135,9 @@ struct NemotronHVisionIntegrationTests {
 
         // Coherence first, then the content check: the caption should
         // mention a dog.
-        expectCoherentOutput(generated, minTokens: 8,
-                             label: "Nemotron-VLM image+text")
+        expectCoherentOutput(
+            generated, minTokens: 8,
+            label: "Nemotron-VLM image+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("Nemotron-VLM generated: \(text)")
         VisionTestHelpers.expectMentionsDog(text, label: "Nemotron-VLM")

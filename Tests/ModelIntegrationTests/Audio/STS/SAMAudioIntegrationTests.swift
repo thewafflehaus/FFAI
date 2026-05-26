@@ -25,6 +25,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("SAMAudio Integration", .serialized)
@@ -49,8 +50,8 @@ struct SAMAudioIntegrationTests {
 
         // Build a 1-second synthetic 440 Hz sine waveform at the model's sample rate.
         let sampleRate = model.config.audioCodec.sampleRate
-        let nSamples = sampleRate          // 1 second
-        let waveform = (0..<nSamples).map { i in
+        let nSamples = sampleRate  // 1 second
+        let waveform = (0 ..< nSamples).map { i in
             0.5 * Foundation.sin(2.0 * Float.pi * 440.0 * Float(i) / Float(sampleRate))
         }
         let description = "drums"
@@ -70,4 +71,3 @@ struct SAMAudioIntegrationTests {
         #expect(result.residual[0].count == waveform.count)
     }
 }
-

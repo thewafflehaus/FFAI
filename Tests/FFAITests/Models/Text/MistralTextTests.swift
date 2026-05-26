@@ -23,6 +23,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("MistralText Routes Through LlamaDense")
@@ -30,8 +31,9 @@ struct MistralTextTests {
 
     @Test("Mistral.variant(for:) returns LlamaDense — Mistral has no own variant")
     func routesThroughLlamaDense() throws {
-        let cfg = ModelConfig(architecture: "MistralForCausalLM",
-                              modelType: "mistral", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "MistralForCausalLM",
+            modelType: "mistral", raw: [:])
         let v = try Mistral.variant(for: cfg)
         #expect(String(describing: v) == String(describing: LlamaDense.self))
     }

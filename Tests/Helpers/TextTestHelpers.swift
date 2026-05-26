@@ -71,9 +71,10 @@ public func expectCoherentOutput(
 
     // Token-count floor — catches early-exit / silent crash regressions.
     guard tokens.count >= minTokens else {
-        let msg = "\(tag)generated only \(tokens.count) tokens, expected ≥ \(minTokens). " +
-            "Forward pass likely exited early (EOS at first step, sampler crash, " +
-            "or cache desync). Tokens: \(tokens)"
+        let msg =
+            "\(tag)generated only \(tokens.count) tokens, expected ≥ \(minTokens). "
+            + "Forward pass likely exited early (EOS at first step, sampler crash, "
+            + "or cache desync). Tokens: \(tokens)"
         Issue.record(Comment(rawValue: msg), sourceLocation: sourceLocation)
         return
     }
@@ -85,9 +86,10 @@ public func expectCoherentOutput(
         run = (tok == prev) ? run + 1 : 1
         prev = tok
         if run > maxConsecutiveRepeat {
-            let context = max(0, i - run + 1)..<min(tokens.count, i + 5)
-            let msg = "\(tag)degenerate output: \(run) consecutive copies of token \(tok) " +
-                "starting near index \(i - run + 1). Context: \(Array(tokens[context]))…"
+            let context = max(0, i - run + 1) ..< min(tokens.count, i + 5)
+            let msg =
+                "\(tag)degenerate output: \(run) consecutive copies of token \(tok) "
+                + "starting near index \(i - run + 1). Context: \(Array(tokens[context]))…"
             Issue.record(Comment(rawValue: msg), sourceLocation: sourceLocation)
             return
         }
@@ -98,9 +100,10 @@ public func expectCoherentOutput(
     let ratio = Double(unique) / Double(tokens.count)
     guard ratio >= minUniqueRatio else {
         let pct = String(format: "%.0f%%", ratio * 100)
-        let msg = "\(tag)low token diversity: \(unique) unique tokens of \(tokens.count) " +
-            "(\(pct)), expected ratio ≥ \(minUniqueRatio). Likely degenerate output. " +
-            "First 16: \(Array(tokens.prefix(16)))"
+        let msg =
+            "\(tag)low token diversity: \(unique) unique tokens of \(tokens.count) "
+            + "(\(pct)), expected ratio ≥ \(minUniqueRatio). Likely degenerate output. "
+            + "First 16: \(Array(tokens.prefix(16)))"
         Issue.record(Comment(rawValue: msg), sourceLocation: sourceLocation)
         return
     }
@@ -139,8 +142,10 @@ public func expectTextContains(
 /// the STT phrase-match assertion in AudioTestHelpers.
 public func normalizeForMatch(_ text: String) -> String {
     let lowered = text.lowercased()
-    let punct: Set<Character> = [".", ",", "!", "?", ";", ":", "\"", "'", "`",
-                                 "—", "–", "(", ")", "[", "]", "{", "}"]
+    let punct: Set<Character> = [
+        ".", ",", "!", "?", ";", ":", "\"", "'", "`",
+        "—", "–", "(", ")", "[", "]", "{", "}",
+    ]
     let stripped = lowered.filter { !punct.contains($0) }
     // Collapse all whitespace runs to a single space.
     let parts = stripped.split(whereSeparator: { $0.isWhitespace })

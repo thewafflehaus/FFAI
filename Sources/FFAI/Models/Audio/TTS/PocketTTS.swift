@@ -352,9 +352,10 @@ public struct PocketTTSConfig: Sendable {
     public static func from(_ config: ModelConfig) -> PocketTTSConfig? {
         let raw = config.raw
         // Require at least one of the canonical markers.
-        guard config.modelType == "pocket_tts"
-            || raw["flow_lm"] != nil
-            || raw["mimi"] != nil
+        guard
+            config.modelType == "pocket_tts"
+                || raw["flow_lm"] != nil
+                || raw["mimi"] != nil
         else { return nil }
 
         let flowRaw = raw["flow_lm"] as? [String: Any] ?? [:]

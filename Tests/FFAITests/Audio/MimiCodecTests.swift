@@ -24,6 +24,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Mimi codec — structure + round-trip")
@@ -35,11 +36,11 @@ struct MimiCodecTests {
     func presetGeometry() {
         let c = MimiConfig.mimi202407
         #expect(c.sampleRate == 24_000)
-        #expect(c.hopLength == 8 * 6 * 5 * 4)        // 960
+        #expect(c.hopLength == 8 * 6 * 5 * 4)  // 960
         // encoder fps = 24000 / 960 = 25; frameRate 12.5 -> stride 2.
         #expect(c.encoderFPS == 25.0)
         #expect(c.downsampleStride == 2)
-        #expect(c.headDim == 64)                     // 512 / 8
+        #expect(c.headDim == 64)  // 512 / 8
         #expect(c.quantizerNQ == 32)
     }
 
@@ -48,19 +49,24 @@ struct MimiCodecTests {
     @Test("sanitizeKey rewrites encoder/decoder sequential indices")
     func sanitizeKeys() {
         // Leading underscores stripped, encoder.model. prefix removed.
-        #expect(MimiWeights.sanitizeKey("_encoder._model._0._conv._weight")
+        #expect(
+            MimiWeights.sanitizeKey("_encoder._model._0._conv._weight")
                 == "encoder.init_conv1d.conv.weight")
         // encoder.1 -> encoder.layers.0.residuals.0
-        #expect(MimiWeights.sanitizeKey("encoder.1.conv.weight")
+        #expect(
+            MimiWeights.sanitizeKey("encoder.1.conv.weight")
                 == "encoder.layers.0.residuals.0.conv.weight")
         // encoder.3 -> encoder.layers.0.downsample (encoderIdx+2).
-        #expect(MimiWeights.sanitizeKey("encoder.3.conv.weight")
+        #expect(
+            MimiWeights.sanitizeKey("encoder.3.conv.weight")
                 == "encoder.layers.0.downsample.conv.weight")
         // decoder.14 -> decoder.final_conv1d.
-        #expect(MimiWeights.sanitizeKey("decoder.14.conv.bias")
+        #expect(
+            MimiWeights.sanitizeKey("decoder.14.conv.bias")
                 == "decoder.final_conv1d.conv.bias")
         // in_proj_weight -> in_proj.weight.
-        #expect(MimiWeights.sanitizeKey("layers.0.self_attn.in_proj_weight")
+        #expect(
+            MimiWeights.sanitizeKey("layers.0.self_attn.in_proj_weight")
                 == "layers.0.self_attn.in_proj.weight")
     }
 
@@ -68,19 +74,19 @@ struct MimiCodecTests {
 
     @Test("traditional RoPE leaves position 0 unchanged")
     func ropeZeroPosition() {
-        let x: [Float] = [1, 2, 3, 4]   // one row, headDim 4
+        let x: [Float] = [1, 2, 3, 4]  // one row, headDim 4
         let out = MimiRoPE.apply(x, t: 1, headDim: 4, base: 10_000)
         // theta = 0 at position 0 -> identity rotation.
-        for i in 0..<4 { #expect(abs(out[i] - x[i]) < 1e-5) }
+        for i in 0 ..< 4 { #expect(abs(out[i] - x[i]) < 1e-5) }
     }
 
     @Test("traditional RoPE rotates a pair by the expected angle")
     func ropeRotation() {
         // headDim 2, position 1, base 10000 -> freq = base^0 = 1,
         // theta = 1. Pair (1, 0) rotates to (cos1, sin1).
-        let x: [Float] = [1, 0,   1, 0]   // two rows
+        let x: [Float] = [1, 0, 1, 0]  // two rows
         let out = MimiRoPE.apply(x, t: 2, headDim: 2, base: 10_000)
-        #expect(abs(out[0] - 1) < 1e-5)        // pos 0 unchanged
+        #expect(abs(out[0] - 1) < 1e-5)  // pos 0 unchanged
         #expect(abs(out[1] - 0) < 1e-5)
         #expect(abs(out[2] - cosf(1)) < 1e-4)  // pos 1 rotated
         #expect(abs(out[3] - sinf(1)) < 1e-4)
@@ -92,16 +98,17 @@ struct MimiCodecTests {
     func codebookNearest() {
         // 3 entries, dim 2. embedding rows are 2× the embedding_sum
         // since cluster_usage is 0.5 for every entry.
-        let embSum: [Float] = [0, 0,   5, 0,   0, 5]
+        let embSum: [Float] = [0, 0, 5, 0, 0, 5]
         let usage: [Float] = [0.5, 0.5, 0.5]
-        let cb = MimiCodebook.testInstance(embeddingSum: embSum,
-                                           clusterUsage: usage, dim: 2)
+        let cb = MimiCodebook.testInstance(
+            embeddingSum: embSum,
+            clusterUsage: usage, dim: 2)
         // Effective embedding: [0,0], [10,0], [0,10].
-        let queries: [Float] = [9, 1,   1, 9]   // -> idx 1, idx 2
+        let queries: [Float] = [9, 1, 1, 9]  // -> idx 1, idx 2
         let idx = cb.encode(queries, rows: 2)
         #expect(idx == [1, 2])
         let decoded = cb.decode(codes: idx)
-        #expect(decoded == [10, 0,  0, 10])
+        #expect(decoded == [10, 0, 0, 10])
     }
 
     // MARK: - end-to-end (graceful skip)
@@ -127,7 +134,7 @@ struct MimiCodecTests {
         // A short 0.5s sine tone at the codec sample rate.
         let n = codec.sampleRate / 2
         var samples = [Float](repeating: 0, count: n)
-        for i in 0..<n {
+        for i in 0 ..< n {
             let t = Float(i) / Float(codec.sampleRate)
             samples[i] = 0.5 * sin(2.0 * .pi * 220.0 * t)
         }
@@ -143,8 +150,10 @@ struct MimiCodecTests {
 
         // Codecs are lossy; assert correlation rather than equality.
         let len = min(samples.count, reconFloats.count)
-        var dotXY: Float = 0, dotXX: Float = 0, dotYY: Float = 0
-        for i in 0..<len {
+        var dotXY: Float = 0
+        var dotXX: Float = 0
+        var dotYY: Float = 0
+        for i in 0 ..< len {
             dotXY += samples[i] * reconFloats[i]
             dotXX += samples[i] * samples[i]
             dotYY += reconFloats[i] * reconFloats[i]
@@ -160,9 +169,12 @@ struct MimiCodecTests {
 extension MimiCodebook {
     /// Build a codebook from in-memory `embedding_sum` / `cluster_usage`
     /// tables — used by unit tests that have no checkpoint.
-    static func testInstance(embeddingSum: [Float], clusterUsage: [Float],
-                             dim: Int) -> MimiCodebook {
-        MimiCodebook(embeddingSum: embeddingSum,
-                     clusterUsage: clusterUsage, dim: dim)
+    static func testInstance(
+        embeddingSum: [Float], clusterUsage: [Float],
+        dim: Int
+    ) -> MimiCodebook {
+        MimiCodebook(
+            embeddingSum: embeddingSum,
+            clusterUsage: clusterUsage, dim: dim)
     }
 }

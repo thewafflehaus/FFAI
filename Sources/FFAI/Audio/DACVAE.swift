@@ -121,13 +121,15 @@ struct DACVAEWeights {
 
     /// Transpose an MLX `[Cout, K, Cin]` conv weight to PyTorch
     /// `[Cout, Cin, K]`.
-    private static func mlxToPyTorch(_ w: [Float],
-                                     mlxShape: [Int]) -> (data: [Float], shape: [Int]) {
+    private static func mlxToPyTorch(
+        _ w: [Float],
+        mlxShape: [Int]
+    ) -> (data: [Float], shape: [Int]) {
         let (cOut, k, cIn) = (mlxShape[0], mlxShape[1], mlxShape[2])
         var out = [Float](repeating: 0, count: w.count)
-        for o in 0..<cOut {
-            for kk in 0..<k {
-                for ci in 0..<cIn {
+        for o in 0 ..< cOut {
+            for kk in 0 ..< k {
+                for ci in 0 ..< cIn {
                     // src [o,kk,ci] -> dst [o,ci,kk]
                     out[(o * cIn + ci) * k + kk] = w[(o * k + kk) * cIn + ci]
                 }
@@ -138,8 +140,10 @@ struct DACVAEWeights {
 
     /// Reconstruct a (possibly weight-normalized) conv at `prefix`,
     /// returning a PyTorch-layout `SNACWNConv1d`.
-    func conv1d(prefix: String, stride: Int, padding: Int,
-                dilation: Int = 1, groups: Int = 1) throws -> SNACWNConv1d {
+    func conv1d(
+        prefix: String, stride: Int, padding: Int,
+        dilation: Int = 1, groups: Int = 1
+    ) throws -> SNACWNConv1d {
         let gKey = "\(prefix).weight_g"
         let vKey = "\(prefix).weight_v"
         let plainKey = "\(prefix).weight"
@@ -150,31 +154,36 @@ struct DACVAEWeights {
             let g = try floats(gKey)
             let v = try floats(vKey)
             mlxShape = try shape(vKey)
-            mlxWeight = WeightNorm.effectiveWeight(g: g, v: v, shape: mlxShape,
-                                                   exceptDim: 0)
+            mlxWeight = WeightNorm.effectiveWeight(
+                g: g, v: v, shape: mlxShape,
+                exceptDim: 0)
         } else if has(plainKey) {
             mlxWeight = try floats(plainKey)
             mlxShape = try shape(plainKey)
         } else {
             throw DACVAEError.missingWeights(prefix)
         }
-        let (weight, ptShape) = DACVAEWeights.mlxToPyTorch(mlxWeight,
-                                                           mlxShape: mlxShape)
+        let (weight, ptShape) = DACVAEWeights.mlxToPyTorch(
+            mlxWeight,
+            mlxShape: mlxShape)
         let bias = has("\(prefix).bias") ? try floats("\(prefix).bias") : nil
-        return SNACWNConv1d(weight: weight, wShape: ptShape, bias: bias,
-                            stride: stride, padding: padding,
-                            dilation: dilation, groups: groups)
+        return SNACWNConv1d(
+            weight: weight, wShape: ptShape, bias: bias,
+            stride: stride, padding: padding,
+            dilation: dilation, groups: groups)
     }
 
     /// Transpose an MLX `[Cout, K, Cin]` convT weight to PyTorch
     /// `[Cin, Cout, K]` (PyTorch convTranspose1d layout).
-    private static func mlxToPyTorchTransposed(_ w: [Float],
-                                               mlxShape: [Int]) -> (data: [Float], shape: [Int]) {
+    private static func mlxToPyTorchTransposed(
+        _ w: [Float],
+        mlxShape: [Int]
+    ) -> (data: [Float], shape: [Int]) {
         let (cOut, k, cIn) = (mlxShape[0], mlxShape[1], mlxShape[2])
         var out = [Float](repeating: 0, count: w.count)
-        for o in 0..<cOut {
-            for kk in 0..<k {
-                for ci in 0..<cIn {
+        for o in 0 ..< cOut {
+            for kk in 0 ..< k {
+                for ci in 0 ..< cIn {
                     // src [o,kk,ci] -> dst [ci,o,kk]
                     out[(ci * cOut + o) * k + kk] = w[(o * k + kk) * cIn + ci]
                 }
@@ -185,9 +194,11 @@ struct DACVAEWeights {
 
     /// Reconstruct a (possibly weight-normalized) transposed conv at
     /// `prefix`, returning a PyTorch-layout `SNACWNConvTranspose1d`.
-    func convTranspose1d(prefix: String, stride: Int, padding: Int,
-                         outputPadding: Int = 0,
-                         groups: Int = 1) throws -> SNACWNConvTranspose1d {
+    func convTranspose1d(
+        prefix: String, stride: Int, padding: Int,
+        outputPadding: Int = 0,
+        groups: Int = 1
+    ) throws -> SNACWNConvTranspose1d {
         let gKey = "\(prefix).weight_g"
         let vKey = "\(prefix).weight_v"
         let plainKey = "\(prefix).weight"
@@ -197,8 +208,9 @@ struct DACVAEWeights {
             let g = try floats(gKey)
             let v = try floats(vKey)
             mlxShape = try shape(vKey)
-            mlxWeight = WeightNorm.effectiveWeight(g: g, v: v, shape: mlxShape,
-                                                   exceptDim: 0)
+            mlxWeight = WeightNorm.effectiveWeight(
+                g: g, v: v, shape: mlxShape,
+                exceptDim: 0)
         } else if has(plainKey) {
             mlxWeight = try floats(plainKey)
             mlxShape = try shape(plainKey)
@@ -208,9 +220,10 @@ struct DACVAEWeights {
         let (weight, ptShape) =
             DACVAEWeights.mlxToPyTorchTransposed(mlxWeight, mlxShape: mlxShape)
         let bias = has("\(prefix).bias") ? try floats("\(prefix).bias") : nil
-        return SNACWNConvTranspose1d(weight: weight, wShape: ptShape, bias: bias,
-                                     stride: stride, padding: padding,
-                                     outputPadding: outputPadding, groups: groups)
+        return SNACWNConvTranspose1d(
+            weight: weight, wShape: ptShape, bias: bias,
+            stride: stride, padding: padding,
+            outputPadding: outputPadding, groups: groups)
     }
 }
 
@@ -219,18 +232,22 @@ struct DACVAEWeights {
 /// DACVAE residual unit — Snake → WNConv(k=7, dilated) → Snake →
 /// WNConv(k=1), then a centre-cropped residual add. Reuses
 /// `SNACResidualUnit` so the math path is shared with SNAC / DAC.
-private func dacvaeResidualUnit(weights w: DACVAEWeights, prefix: String,
-                                dilation: Int) throws -> SNACResidualUnit {
+private func dacvaeResidualUnit(
+    weights w: DACVAEWeights, prefix: String,
+    dilation: Int
+) throws -> SNACResidualUnit {
     // Padding for the k=7 dilated conv keeps DACVAE's `pad_mode="none"`
     // contract: pad = (kernel - stride) * dilation / 2.
     let pad = ((7 - 1) * dilation) / 2
     let alpha1 = try w.floats("\(prefix).act1.alpha")
-    let conv1 = try w.conv1d(prefix: "\(prefix).conv1", stride: 1,
-                             padding: pad, dilation: dilation)
+    let conv1 = try w.conv1d(
+        prefix: "\(prefix).conv1", stride: 1,
+        padding: pad, dilation: dilation)
     let alpha2 = try w.floats("\(prefix).act2.alpha")
     let conv2 = try w.conv1d(prefix: "\(prefix).conv2", stride: 1, padding: 0)
-    return SNACResidualUnit(alpha1: alpha1, conv1: conv1,
-                            alpha2: alpha2, conv2: conv2)
+    return SNACResidualUnit(
+        alpha1: alpha1, conv1: conv1,
+        alpha2: alpha2, conv2: conv2)
 }
 
 /// DACVAE encoder block — three dilated residual units, a Snake, then a
@@ -243,14 +260,16 @@ struct DACVAEEncoderBlock {
     init(weights w: DACVAEWeights, prefix: String, stride: Int) throws {
         var res: [SNACResidualUnit] = []
         for (i, dil) in [1, 3, 9].enumerated() {
-            res.append(try dacvaeResidualUnit(
-                weights: w, prefix: "\(prefix).res\(i + 1)", dilation: dil))
+            res.append(
+                try dacvaeResidualUnit(
+                    weights: w, prefix: "\(prefix).res\(i + 1)", dilation: dil))
         }
         self.residuals = res
         self.snakeAlpha = try w.floats("\(prefix).snake.alpha")
         let pad = Int(ceil(Double(stride) / 2.0))
-        self.convDown = try w.conv1d(prefix: "\(prefix).conv",
-                                     stride: stride, padding: pad)
+        self.convDown = try w.conv1d(
+            prefix: "\(prefix).conv",
+            stride: stride, padding: pad)
     }
 
     func callAsFunction(_ x: [Float], shape: [Int]) -> (data: [Float], shape: [Int]) {
@@ -277,8 +296,9 @@ struct DACVAEDecoderBlock {
         self.snakeAlpha = try w.floats("\(prefix).block_0.alpha")
         // ConvTranspose with pad = (stride + 1) / 2 (DACVAE convT default).
         let pad = (stride + 1) / 2
-        self.convUp = try w.convTranspose1d(prefix: "\(prefix).block_1",
-                                            stride: stride, padding: pad)
+        self.convUp = try w.convTranspose1d(
+            prefix: "\(prefix).block_1",
+            stride: stride, padding: pad)
         self.res1 = try dacvaeResidualUnit(
             weights: w, prefix: "\(prefix).block_4", dilation: 1)
         self.res2 = try dacvaeResidualUnit(
@@ -313,7 +333,7 @@ public final class DACVAE: @unchecked Sendable {
     private let encoderConvOut: SNACWNConv1d
 
     // VAE quantizer projections (1x1 convs).
-    private let quantizerInProj: SNACWNConv1d   // latentDim -> 2*codebookDim
+    private let quantizerInProj: SNACWNConv1d  // latentDim -> 2*codebookDim
     private let quantizerOutProj: SNACWNConv1d  // codebookDim -> latentDim
 
     // Decoder.
@@ -329,8 +349,9 @@ public final class DACVAE: @unchecked Sendable {
         guard FileManager.default.fileExists(atPath: configURL.path) else {
             throw DACVAEError.configNotFound(configURL.path)
         }
-        let config = try JSONDecoder().decode(DACVAEConfig.self,
-                                              from: Data(contentsOf: configURL))
+        let config = try JSONDecoder().decode(
+            DACVAEConfig.self,
+            from: Data(contentsOf: configURL))
         let bundle = try SafeTensorsBundle(directory: directory)
         return try DACVAE(config: config, bundle: bundle)
     }
@@ -341,40 +362,48 @@ public final class DACVAE: @unchecked Sendable {
 
         // ─── Encoder ──────────────────────────────────────────────
         // conv_in — WNConv1d(in=1, k=7, pad=3).
-        self.encoderConvIn = try w.conv1d(prefix: "encoder.conv_in",
-                                          stride: 1, padding: 3)
+        self.encoderConvIn = try w.conv1d(
+            prefix: "encoder.conv_in",
+            stride: 1, padding: 3)
         var encBlocks: [DACVAEEncoderBlock] = []
         for (i, stride) in config.encoderRates.enumerated() {
-            encBlocks.append(try DACVAEEncoderBlock(
-                weights: w, prefix: "encoder.blocks.\(i)", stride: stride))
+            encBlocks.append(
+                try DACVAEEncoderBlock(
+                    weights: w, prefix: "encoder.blocks.\(i)", stride: stride))
         }
         self.encoderBlocks = encBlocks
         self.encoderSnakeAlpha = try w.floats("encoder.snake_out.alpha")
         // conv_out — WNConv1d(out=latentDim, k=3, pad=1).
-        self.encoderConvOut = try w.conv1d(prefix: "encoder.conv_out",
-                                           stride: 1, padding: 1)
+        self.encoderConvOut = try w.conv1d(
+            prefix: "encoder.conv_out",
+            stride: 1, padding: 1)
 
         // ─── Quantizer projections ────────────────────────────────
         // 1x1 convs; in_proj emits 2*codebookDim (VAE mean + logvar).
-        self.quantizerInProj = try w.conv1d(prefix: "quantizer_in_proj",
-                                            stride: 1, padding: 0)
-        self.quantizerOutProj = try w.conv1d(prefix: "quantizer_out_proj",
-                                             stride: 1, padding: 0)
+        self.quantizerInProj = try w.conv1d(
+            prefix: "quantizer_in_proj",
+            stride: 1, padding: 0)
+        self.quantizerOutProj = try w.conv1d(
+            prefix: "quantizer_out_proj",
+            stride: 1, padding: 0)
 
         // ─── Decoder ──────────────────────────────────────────────
         // conv_in — WNConv1d(in=latentDim, k=7, pad=3).
-        self.decoderConvIn = try w.conv1d(prefix: "decoder.conv_in",
-                                          stride: 1, padding: 3)
+        self.decoderConvIn = try w.conv1d(
+            prefix: "decoder.conv_in",
+            stride: 1, padding: 3)
         var decBlocks: [DACVAEDecoderBlock] = []
         for (i, stride) in config.decoderRates.enumerated() {
-            decBlocks.append(try DACVAEDecoderBlock(
-                weights: w, prefix: "decoder.blocks.\(i)", stride: stride))
+            decBlocks.append(
+                try DACVAEDecoderBlock(
+                    weights: w, prefix: "decoder.blocks.\(i)", stride: stride))
         }
         self.decoderBlocks = decBlocks
         self.decoderSnakeAlpha = try w.floats("decoder.snake_out.alpha")
         // conv_out — WNConv1d(out=1, k=7, pad=3).
-        self.decoderConvOut = try w.conv1d(prefix: "decoder.conv_out",
-                                           stride: 1, padding: 3)
+        self.decoderConvOut = try w.conv1d(
+            prefix: "decoder.conv_out",
+            stride: 1, padding: 3)
     }
 
     /// Audio sample rate of the codec.
@@ -420,9 +449,9 @@ public final class DACVAE: @unchecked Sendable {
         let t = projShape[2]
         let cb = twoCb / 2
         var mean = [Float](repeating: 0, count: cb * t)
-        for c in 0..<cb {
+        for c in 0 ..< cb {
             let srcBase = c * t
-            for i in 0..<t { mean[srcBase + i] = proj[srcBase + i] }
+            for i in 0 ..< t { mean[srcBase + i] = proj[srcBase + i] }
         }
         let out = Tensor.empty(shape: [1, cb, t], dtype: .f32)
         out.copyIn(from: mean)

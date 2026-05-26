@@ -22,9 +22,10 @@
 // checkpoint isn't reachable.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Qwen2 Text Integration", .serialized)
 struct Qwen2TextIntegrationTests {
@@ -44,7 +45,9 @@ struct Qwen2TextIntegrationTests {
         // GQA: 2 KV heads.
         #expect(m.engine.nKVHeads == 2)
         #expect(m.engine.headDim == 64)
-        #expect(m.llama != nil, "Qwen 2.5 should load through the 3-series engine after bias-aware Linear")
+        #expect(
+            m.llama != nil,
+            "Qwen 2.5 should load through the 3-series engine after bias-aware Linear")
 
         let result = try await m.generate(
             prompt: prompt,

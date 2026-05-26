@@ -19,6 +19,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Phi Family Root")
@@ -36,8 +37,9 @@ struct PhiRootTests {
 
     @Test("variant(for:) returns Phi3Dense")
     func variantDispatch() throws {
-        let cfg = ModelConfig(architecture: "Phi3ForCausalLM",
-                              modelType: "phi3", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "Phi3ForCausalLM",
+            modelType: "phi3", raw: [:])
         let v = try Phi.variant(for: cfg)
         #expect(String(describing: v) == String(describing: Phi3Dense.self))
     }

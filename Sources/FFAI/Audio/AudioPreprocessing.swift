@@ -27,8 +27,9 @@
 
 import Foundation
 import Metal
+
 #if canImport(AVFoundation)
-import AVFoundation
+    import AVFoundation
 #endif
 
 /// Front-end geometry shared by every speech model FFAI supports.
@@ -48,8 +49,10 @@ public struct AudioFrontEndConfig: Sendable {
     /// Highest Mel-filter edge frequency in Hz (`nil` → Nyquist).
     public let fMax: Double?
 
-    public init(sampleRate: Int, nFFT: Int, hopLength: Int, nMels: Int,
-                fMin: Double = 0, fMax: Double? = nil) {
+    public init(
+        sampleRate: Int, nFFT: Int, hopLength: Int, nMels: Int,
+        fMin: Double = 0, fMax: Double? = nil
+    ) {
         self.sampleRate = sampleRate
         self.nFFT = nFFT
         self.hopLength = hopLength
@@ -84,7 +87,7 @@ public enum AudioPreprocessing {
         guard n > 1 else { return [Float](repeating: 1, count: max(n, 0)) }
         var w = [Float](repeating: 0, count: n)
         let twoPi = 2.0 * Double.pi
-        for i in 0..<n {
+        for i in 0 ..< n {
             w[i] = Float(0.5 - 0.5 * cos(twoPi * Double(i) / Double(n)))
         }
         return w
@@ -111,7 +114,7 @@ public enum AudioPreprocessing {
         let fMax = cfg.fMax ?? Double(cfg.sampleRate) / 2.0
         // FFT bin centre frequencies (Hz): bin k → k * sr / nFFT.
         var fftFreqs = [Double](repeating: 0, count: nFreq)
-        for k in 0..<nFreq {
+        for k in 0 ..< nFreq {
             fftFreqs[k] = Double(k) * Double(cfg.sampleRate) / Double(cfg.nFFT)
         }
         // `nMels + 2` equally-spaced points on the Mel scale → triangle
@@ -119,19 +122,19 @@ public enum AudioPreprocessing {
         let melLo = hzToMel(cfg.fMin)
         let melHi = hzToMel(fMax)
         var edgeHz = [Double](repeating: 0, count: cfg.nMels + 2)
-        for i in 0..<(cfg.nMels + 2) {
+        for i in 0 ..< (cfg.nMels + 2) {
             let mel = melLo + (melHi - melLo) * Double(i) / Double(cfg.nMels + 1)
             edgeHz[i] = melToHz(mel)
         }
 
         var bank = [Float](repeating: 0, count: cfg.nMels * nFreq)
-        for m in 0..<cfg.nMels {
+        for m in 0 ..< cfg.nMels {
             let lo = edgeHz[m]
             let ctr = edgeHz[m + 1]
             let hi = edgeHz[m + 2]
             // Slaney normalisation — keeps total filter energy uniform.
             let enorm = 2.0 / (hi - lo)
-            for k in 0..<nFreq {
+            for k in 0 ..< nFreq {
                 let f = fftFreqs[k]
                 // Rising edge lo→ctr, falling edge ctr→hi.
                 let lower = (f - lo) / max(ctr - lo, 1e-9)
@@ -154,16 +157,18 @@ public enum AudioPreprocessing {
     /// `2i+1`: `cos(...)` — the original Transformer formulation, which
     /// is also what Whisper / Qwen-Omni use for the audio encoder.
     public static func sinusoidalPositions(length: Int, dim: Int)
-        -> [Float] {
-        precondition(dim % 2 == 0,
-                     "sinusoidalPositions: dim must be even, got \(dim)")
+        -> [Float]
+    {
+        precondition(
+            dim % 2 == 0,
+            "sinusoidalPositions: dim must be even, got \(dim)")
         var table = [Float](repeating: 0, count: length * dim)
         let half = dim / 2
         // log-spaced inverse frequencies, matching Whisper's
         // `log(10000) / (half - 1)` increment.
         let logTimescale = log(10_000.0) / Double(max(half - 1, 1))
-        for p in 0..<length {
-            for i in 0..<half {
+        for p in 0 ..< length {
+            for i in 0 ..< half {
                 let invFreq = exp(-logTimescale * Double(i))
                 let angle = Double(p) * invFreq
                 table[p * dim + i] = Float(sin(angle))
@@ -198,14 +203,14 @@ public enum AudioPreprocessing {
             return j < n ? j : period - j
         }
         var out = [Float](repeating: 0, count: n + 2 * pad)
-        for i in 0..<pad {
-            out[i] = x[reflectIndex(pad - i)]            // left mirror
+        for i in 0 ..< pad {
+            out[i] = x[reflectIndex(pad - i)]  // left mirror
         }
-        for i in 0..<n {
+        for i in 0 ..< n {
             out[pad + i] = x[i]
         }
-        for i in 0..<pad {
-            out[pad + n + i] = x[reflectIndex(n - 2 - i)] // right mirror
+        for i in 0 ..< pad {
+            out[pad + n + i] = x[reflectIndex(n - 2 - i)]  // right mirror
         }
         return out
     }
@@ -213,8 +218,10 @@ public enum AudioPreprocessing {
     /// Number of STFT frames a (post-pad) signal of `paddedSamples`
     /// samples produces. Mirrors the kernel's frame walk:
     /// frame f covers `[f*hop, f*hop + nFFT)`.
-    public static func frameCount(paddedSamples: Int,
-                                  cfg: AudioFrontEndConfig) -> Int {
+    public static func frameCount(
+        paddedSamples: Int,
+        cfg: AudioFrontEndConfig
+    ) -> Int {
         guard paddedSamples >= cfg.nFFT else { return 0 }
         return (paddedSamples - cfg.nFFT) / cfg.hopLength + 1
     }
@@ -226,8 +233,10 @@ public enum AudioPreprocessing {
     /// front-ends — the log-Mel projection that follows is far lossier
     /// than the resampler. A polyphase resampler is a quality
     /// follow-up.
-    public static func resample(_ x: [Float], from srcRate: Int,
-                                 to dstRate: Int) -> [Float] {
+    public static func resample(
+        _ x: [Float], from srcRate: Int,
+        to dstRate: Int
+    ) -> [Float] {
         guard srcRate != dstRate, srcRate > 0, dstRate > 0, !x.isEmpty else {
             return x
         }
@@ -235,7 +244,7 @@ public enum AudioPreprocessing {
         let dstCount = Int((Double(x.count) * ratio).rounded())
         guard dstCount > 0 else { return [] }
         var out = [Float](repeating: 0, count: dstCount)
-        for i in 0..<dstCount {
+        for i in 0 ..< dstCount {
             let srcPos = Double(i) / ratio
             let i0 = Int(srcPos.rounded(.down))
             let frac = Float(srcPos - Double(i0))
@@ -265,44 +274,47 @@ public enum AudioPreprocessing {
     /// (wav / mp3 / m4a / flac / …) works. Multi-channel input is
     /// down-mixed to mono by averaging.
     #if canImport(AVFoundation)
-    public static func loadWaveform(url: URL, targetRate: Int) throws -> [Float] {
-        let file: AVAudioFile
-        do {
-            file = try AVAudioFile(forReading: url)
-        } catch {
-            throw AudioError.decodeFailed("\(url.lastPathComponent): \(error)")
-        }
-        let srcFormat = file.processingFormat
-        let frameCount = AVAudioFrameCount(file.length)
-        guard frameCount > 0 else { return [] }
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: srcFormat,
-                                            frameCapacity: frameCount) else {
-            throw AudioError.decodeFailed("could not allocate PCM buffer")
-        }
-        do {
-            try file.read(into: buffer)
-        } catch {
-            throw AudioError.decodeFailed("read failed: \(error)")
-        }
-        guard let channelData = buffer.floatChannelData else {
-            throw AudioError.unsupportedFormat("non-float PCM not supported")
-        }
-        let channels = Int(srcFormat.channelCount)
-        let n = Int(buffer.frameLength)
-        var mono = [Float](repeating: 0, count: n)
-        // Down-mix to mono by averaging the channels.
-        for c in 0..<channels {
-            let ptr = channelData[c]
-            for i in 0..<n {
-                mono[i] += ptr[i]
+        public static func loadWaveform(url: URL, targetRate: Int) throws -> [Float] {
+            let file: AVAudioFile
+            do {
+                file = try AVAudioFile(forReading: url)
+            } catch {
+                throw AudioError.decodeFailed("\(url.lastPathComponent): \(error)")
             }
+            let srcFormat = file.processingFormat
+            let frameCount = AVAudioFrameCount(file.length)
+            guard frameCount > 0 else { return [] }
+            guard
+                let buffer = AVAudioPCMBuffer(
+                    pcmFormat: srcFormat,
+                    frameCapacity: frameCount)
+            else {
+                throw AudioError.decodeFailed("could not allocate PCM buffer")
+            }
+            do {
+                try file.read(into: buffer)
+            } catch {
+                throw AudioError.decodeFailed("read failed: \(error)")
+            }
+            guard let channelData = buffer.floatChannelData else {
+                throw AudioError.unsupportedFormat("non-float PCM not supported")
+            }
+            let channels = Int(srcFormat.channelCount)
+            let n = Int(buffer.frameLength)
+            var mono = [Float](repeating: 0, count: n)
+            // Down-mix to mono by averaging the channels.
+            for c in 0 ..< channels {
+                let ptr = channelData[c]
+                for i in 0 ..< n {
+                    mono[i] += ptr[i]
+                }
+            }
+            if channels > 1 {
+                let inv = 1.0 / Float(channels)
+                for i in 0 ..< n { mono[i] *= inv }
+            }
+            return resample(mono, from: Int(srcFormat.sampleRate), to: targetRate)
         }
-        if channels > 1 {
-            let inv = 1.0 / Float(channels)
-            for i in 0..<n { mono[i] *= inv }
-        }
-        return resample(mono, from: Int(srcFormat.sampleRate), to: targetRate)
-    }
     #endif
 
     // ─── End-to-end log-Mel ──────────────────────────────────────────
@@ -349,16 +361,18 @@ public enum AudioPreprocessing {
         device: Device = .shared,
         on cmd: MTLCommandBuffer
     ) -> Tensor {
-        precondition(dtype == .f32 || dtype == .f16,
-                     "logMelSpectrogram: dtype must be f32 or f16")
+        precondition(
+            dtype == .f32 || dtype == .f16,
+            "logMelSpectrogram: dtype must be f32 or f16")
         let pad = cfg.nFFT / 2
         let padded = reflectPad(waveform, pad: pad)
         let nFrames = frameCount(paddedSamples: padded.count, cfg: cfg)
         precondition(nFrames > 0, "logMelSpectrogram: waveform too short")
 
         // Upload the padded waveform.
-        let audioT = Tensor.empty(shape: [padded.count], dtype: dtype,
-                                  device: device)
+        let audioT = Tensor.empty(
+            shape: [padded.count], dtype: dtype,
+            device: device)
         copyFloats(padded, into: audioT)
 
         // Window + filterbank — build if not supplied.
@@ -373,8 +387,9 @@ public enum AudioPreprocessing {
         if let m = melWeight {
             melT = m
         } else {
-            melT = Tensor.empty(shape: [cfg.nMels, cfg.nFreq], dtype: dtype,
-                                device: device)
+            melT = Tensor.empty(
+                shape: [cfg.nMels, cfg.nFreq], dtype: dtype,
+                device: device)
             copyFloats(melFilterbank(cfg), into: melT)
         }
 
@@ -419,8 +434,9 @@ public enum AudioPreprocessing {
             let clamped = max(vals[i], floor)
             vals[i] = (clamped + whisperNormOffset) / whisperNormScale
         }
-        let out = Tensor.empty(shape: rawNaturalLog.shape,
-                               dtype: rawNaturalLog.dtype, device: device)
+        let out = Tensor.empty(
+            shape: rawNaturalLog.shape,
+            dtype: rawNaturalLog.dtype, device: device)
         copyFloats(vals, into: out)
         return out
     }
@@ -431,12 +447,15 @@ public enum AudioPreprocessing {
     /// f32-only `mel_spectrogram` kernel output to a bf16 model: the Mel
     /// front-end runs in f32, then the spectrogram is cast to the
     /// model's activation dtype before the conv stem.
-    static func castTensor(_ source: Tensor, to dtype: DType,
-                           device: Device = .shared) -> Tensor {
+    static func castTensor(
+        _ source: Tensor, to dtype: DType,
+        device: Device = .shared
+    ) -> Tensor {
         guard source.dtype != dtype else { return source }
         let values = source.toFloatArray()
-        let out = Tensor.empty(shape: source.shape, dtype: dtype,
-                               device: device)
+        let out = Tensor.empty(
+            shape: source.shape, dtype: dtype,
+            device: device)
         copyFloats(values, into: out)
         return out
     }
@@ -444,19 +463,21 @@ public enum AudioPreprocessing {
     /// Copy a `[Float]` array into a tensor, converting to the tensor's
     /// dtype (f32 / f16 / bf16). Small helper used by the upload paths.
     static func copyFloats(_ values: [Float], into t: Tensor) {
-        precondition(values.count == t.elementCount,
-                     "copyFloats: count mismatch \(values.count) vs \(t.elementCount)")
+        precondition(
+            values.count == t.elementCount,
+            "copyFloats: count mismatch \(values.count) vs \(t.elementCount)")
         switch t.dtype {
         case .f32:
             t.copyIn(from: values)
         case .f16:
             t.copyIn(from: values.map { Float16($0) })
         case .bf16:
-            t.copyIn(from: values.map { v -> UInt16 in
-                let bits = v.bitPattern
-                let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
-                return UInt16(rounded >> 16)
-            })
+            t.copyIn(
+                from: values.map { v -> UInt16 in
+                    let bits = v.bitPattern
+                    let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
+                    return UInt16(rounded >> 16)
+                })
         default:
             fatalError("copyFloats: unsupported dtype \(t.dtype)")
         }

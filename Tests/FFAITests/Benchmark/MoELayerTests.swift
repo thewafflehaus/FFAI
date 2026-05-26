@@ -25,6 +25,7 @@
 import Foundation
 import Metal
 import Testing
+
 @testable import FFAI
 
 // ─── MoERouter ───────────────────────────────────────────────────────
@@ -39,8 +40,9 @@ struct MoERouterTests {
     ///   normalised         = [0.73107, 0.26893]
     @Test("softmaxThenTopK + normTopKProb matches hand-computed softmax")
     func softmaxThenTopKNormalised() {
-        let router = MoERouter(nExperts: 4, topK: 2,
-                               gatingMode: .softmaxThenTopK, normTopKProb: true)
+        let router = MoERouter(
+            nExperts: 4, topK: 2,
+            gatingMode: .softmaxThenTopK, normTopKProb: true)
         let r = router.route(logits: [1, 3, 2, 0])
         #expect(r.indices == [1, 2])
         #expect(abs(r.weights[0] - 0.73107) < 1e-4)
@@ -53,8 +55,9 @@ struct MoERouterTests {
     /// softmax probabilities of the picked experts (do NOT sum to 1).
     @Test("softmaxThenTopK without normTopKProb keeps raw softmax probs")
     func softmaxThenTopKUnnormalised() {
-        let router = MoERouter(nExperts: 4, topK: 2,
-                               gatingMode: .softmaxThenTopK, normTopKProb: false)
+        let router = MoERouter(
+            nExperts: 4, topK: 2,
+            gatingMode: .softmaxThenTopK, normTopKProb: false)
         let r = router.route(logits: [1, 3, 2, 0])
         #expect(r.indices == [1, 2])
         #expect(abs(r.weights[0] - 0.64391) < 1e-4)
@@ -68,8 +71,9 @@ struct MoERouterTests {
     ///   softmax([3,2])   = [0.73106, 0.26894]   (always normalised)
     @Test("topKThenSoftmax matches softmax over the picked logits")
     func topKThenSoftmax() {
-        let router = MoERouter(nExperts: 4, topK: 2,
-                               gatingMode: .topKThenSoftmax)
+        let router = MoERouter(
+            nExperts: 4, topK: 2,
+            gatingMode: .topKThenSoftmax)
         let r = router.route(logits: [1, 3, 2, 0])
         #expect(r.indices == [1, 2])
         #expect(abs(r.weights[0] - 0.73106) < 1e-4)
@@ -83,8 +87,9 @@ struct MoERouterTests {
     /// deterministic.
     @Test("equal logits break ties toward the smaller expert index")
     func tieBreakingSmallerIndexWins() {
-        let router = MoERouter(nExperts: 4, topK: 2,
-                               gatingMode: .topKThenSoftmax)
+        let router = MoERouter(
+            nExperts: 4, topK: 2,
+            gatingMode: .topKThenSoftmax)
         // All four logits equal — top-2 must be experts 0 and 1.
         let r = router.route(logits: [5, 5, 5, 5])
         #expect(r.indices == [0, 1])
@@ -96,8 +101,9 @@ struct MoERouterTests {
     /// topK == nExperts selects every expert (the dense limit).
     @Test("topK == nExperts selects all experts")
     func topKEqualsNExperts() {
-        let router = MoERouter(nExperts: 3, topK: 3,
-                               gatingMode: .softmaxThenTopK, normTopKProb: true)
+        let router = MoERouter(
+            nExperts: 3, topK: 3,
+            gatingMode: .softmaxThenTopK, normTopKProb: true)
         let r = router.route(logits: [0, 1, 2])
         #expect(Set(r.indices) == [0, 1, 2])
         #expect(abs(r.weights.reduce(0, +) - 1) < 1e-5)
@@ -164,20 +170,23 @@ struct MoELayerTests {
             let upProj = uW.map { scalarLinear($0) }
             let downProj = dW.map { scalarLinear($0) }
 
-            let router = MoERouter(nExperts: nExperts, topK: 2,
-                                   gatingMode: .softmaxThenTopK, normTopKProb: true)
-            let layer = MoELayer(gate: gate,
-                                 gateProj: gateProj, upProj: upProj, downProj: downProj,
-                                 router: router, hidden: hidden)
+            let router = MoERouter(
+                nExperts: nExperts, topK: 2,
+                gatingMode: .softmaxThenTopK, normTopKProb: true)
+            let layer = MoELayer(
+                gate: gate,
+                gateProj: gateProj, upProj: upProj, downProj: downProj,
+                router: router, hidden: hidden)
 
             let input = Tensor.empty(shape: [hidden], dtype: .f32)
             input.copyIn(from: [inputX])
 
             var out: Tensor!
             let cb = Device.shared.makeCommandBuffer()
-            out = layer.decode(input, position: 0,
-                               cache: StatelessLayerCache(),
-                               cmd: cb, device: .shared)
+            out = layer.decode(
+                input, position: 0,
+                cache: StatelessLayerCache(),
+                cmd: cb, device: .shared)
             // `decode` commits its internal `work` buffer WITHOUT
             // waiting — the production caller hazard-tracks the read on
             // the next GPU cmd. A host readback must flush the queue
@@ -218,25 +227,30 @@ struct MoELayerTests {
             let downProj = dW.map { scalarLinear($0) }
 
             // Shared expert scalar weights.
-            let sg: Float = 0.4, su: Float = 0.6, sd: Float = 1.5
+            let sg: Float = 0.4
+            let su: Float = 0.6
+            let sd: Float = 1.5
 
-            let router = MoERouter(nExperts: nExperts, topK: 2,
-                                   gatingMode: .softmaxThenTopK, normTopKProb: true)
-            let layer = MoELayer(gate: gate,
-                                 gateProj: gateProj, upProj: upProj, downProj: downProj,
-                                 sharedGateProj: scalarLinear(sg),
-                                 sharedUpProj: scalarLinear(su),
-                                 sharedDownProj: scalarLinear(sd),
-                                 router: router, hidden: hidden)
+            let router = MoERouter(
+                nExperts: nExperts, topK: 2,
+                gatingMode: .softmaxThenTopK, normTopKProb: true)
+            let layer = MoELayer(
+                gate: gate,
+                gateProj: gateProj, upProj: upProj, downProj: downProj,
+                sharedGateProj: scalarLinear(sg),
+                sharedUpProj: scalarLinear(su),
+                sharedDownProj: scalarLinear(sd),
+                router: router, hidden: hidden)
 
             let input = Tensor.empty(shape: [hidden], dtype: .f32)
             input.copyIn(from: [inputX])
 
             var out: Tensor!
             let cb = Device.shared.makeCommandBuffer()
-            out = layer.decode(input, position: 0,
-                               cache: StatelessLayerCache(),
-                               cmd: cb, device: .shared)
+            out = layer.decode(
+                input, position: 0,
+                cache: StatelessLayerCache(),
+                cmd: cb, device: .shared)
             Self.flushQueue()  // see `decode` no-wait note above
 
             let w1: Float = 0.73107
@@ -259,18 +273,20 @@ struct MoELayerTests {
         let gateW = Tensor.empty(shape: [nExperts, hidden], dtype: .f32)
         gateW.copyIn(from: [Float(0), 0, 0])
         let gate = AnyLinear(Linear(weight: gateW))
-        let gateProj = (0..<nExperts).map { _ in scalarLinear(1) }
-        let upProj = (0..<nExperts).map { _ in scalarLinear(1) }
-        let downProj = (0..<nExperts).map { _ in scalarLinear(1) }
+        let gateProj = (0 ..< nExperts).map { _ in scalarLinear(1) }
+        let upProj = (0 ..< nExperts).map { _ in scalarLinear(1) }
+        let downProj = (0 ..< nExperts).map { _ in scalarLinear(1) }
 
-        let router = MoERouter(nExperts: nExperts, topK: 1,
-                               gatingMode: .topKThenSoftmax)
-        let layer = MoELayer(gate: gate,
-                             gateProj: gateProj, upProj: upProj, downProj: downProj,
-                             sharedGateProj: scalarLinear(1),
-                             sharedUpProj: scalarLinear(1),
-                             sharedDownProj: scalarLinear(1),
-                             router: router, hidden: hidden)
+        let router = MoERouter(
+            nExperts: nExperts, topK: 1,
+            gatingMode: .topKThenSoftmax)
+        let layer = MoELayer(
+            gate: gate,
+            gateProj: gateProj, upProj: upProj, downProj: downProj,
+            sharedGateProj: scalarLinear(1),
+            sharedUpProj: scalarLinear(1),
+            sharedDownProj: scalarLinear(1),
+            router: router, hidden: hidden)
 
         let names = Set(layer.parameters().map { $0.0 })
         #expect(names.contains("gate.weight"))

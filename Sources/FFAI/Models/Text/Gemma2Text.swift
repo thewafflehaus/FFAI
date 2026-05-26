@@ -44,11 +44,11 @@ public struct Gemma2Dense: Gemma2Variant {
         device: Device
     ) throws -> Gemma2Model {
         guard let hidden = config.hiddenSize,
-              let nLayers = config.numLayers,
-              let nHeads = config.numAttentionHeads,
-              let intermediate = config.intermediateSize,
-              let eps = config.rmsNormEps,
-              let vocab = config.vocabSize
+            let nLayers = config.numLayers,
+            let nHeads = config.numAttentionHeads,
+            let intermediate = config.intermediateSize,
+            let eps = config.rmsNormEps,
+            let vocab = config.vocabSize
         else {
             throw Gemma2Error.missingConfig
         }
@@ -84,26 +84,33 @@ public struct Gemma2Dense: Gemma2Variant {
         var layers: [Gemma2Layer] = []
         layers.reserveCapacity(nLayers)
 
-        for i in 0..<nLayers {
+        for i in 0 ..< nLayers {
             let p = "model.layers.\(i)"
             // Same formula as Gemma 3 — see file header for why
             // pattern=2 reproduces HF's `not bool(layer_idx % 2)`.
             let isSliding = (i + 1) % slidingWindowPattern != 0
 
-            let qProj = try loadLinear(base: "\(p).self_attn.q_proj",
-                                       in: weights, quantization: quant)
-            let kProj = try loadLinear(base: "\(p).self_attn.k_proj",
-                                       in: weights, quantization: quant)
-            let vProj = try loadLinear(base: "\(p).self_attn.v_proj",
-                                       in: weights, quantization: quant)
-            let oProj = try loadLinear(base: "\(p).self_attn.o_proj",
-                                       in: weights, quantization: quant)
-            let gateProj = try loadLinear(base: "\(p).mlp.gate_proj",
-                                          in: weights, quantization: quant)
-            let upProj = try loadLinear(base: "\(p).mlp.up_proj",
-                                        in: weights, quantization: quant)
-            let downProj = try loadLinear(base: "\(p).mlp.down_proj",
-                                          in: weights, quantization: quant)
+            let qProj = try loadLinear(
+                base: "\(p).self_attn.q_proj",
+                in: weights, quantization: quant)
+            let kProj = try loadLinear(
+                base: "\(p).self_attn.k_proj",
+                in: weights, quantization: quant)
+            let vProj = try loadLinear(
+                base: "\(p).self_attn.v_proj",
+                in: weights, quantization: quant)
+            let oProj = try loadLinear(
+                base: "\(p).self_attn.o_proj",
+                in: weights, quantization: quant)
+            let gateProj = try loadLinear(
+                base: "\(p).mlp.gate_proj",
+                in: weights, quantization: quant)
+            let upProj = try loadLinear(
+                base: "\(p).mlp.up_proj",
+                in: weights, quantization: quant)
+            let downProj = try loadLinear(
+                base: "\(p).mlp.down_proj",
+                in: weights, quantization: quant)
 
             let inputNorm = try loadGemmaRMSNorm(
                 base: "\(p).input_layernorm.weight", in: weights, eps: eps)
@@ -114,17 +121,18 @@ public struct Gemma2Dense: Gemma2Variant {
             let postFFNorm = try loadGemmaRMSNorm(
                 base: "\(p).post_feedforward_layernorm.weight", in: weights, eps: eps)
 
-            layers.append(Gemma2Layer(
-                qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
-                gateProj: gateProj, upProj: upProj, downProj: downProj,
-                inputNorm: inputNorm, postAttnNorm: postAttnNorm,
-                preFFNorm: preFFNorm, postFFNorm: postFFNorm,
-                hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
-                headDim: headDim, intermediate: intermediate,
-                ropeTheta: ropeTheta,
-                queryPreAttnScalar: queryPreAttnScalar,
-                isSliding: isSliding
-            ))
+            layers.append(
+                Gemma2Layer(
+                    qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
+                    gateProj: gateProj, upProj: upProj, downProj: downProj,
+                    inputNorm: inputNorm, postAttnNorm: postAttnNorm,
+                    preFFNorm: preFFNorm, postFFNorm: postFFNorm,
+                    hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
+                    headDim: headDim, intermediate: intermediate,
+                    ropeTheta: ropeTheta,
+                    queryPreAttnScalar: queryPreAttnScalar,
+                    isSliding: isSliding
+                ))
         }
 
         let finalNorm = try loadGemmaRMSNorm(
@@ -142,17 +150,19 @@ public struct Gemma2Dense: Gemma2Variant {
                 weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
                 scaleCols: t.scales.shape[t.scales.shape.count - 1],
                 groupSize: q.groupSize)
-            lmHead = AnyLinear(QuantizedLinear(
-                weight: t.weight, scales: t.scales, biases: t.biases,
-                bits: bits, groupSize: q.groupSize
-            ))
+            lmHead = AnyLinear(
+                QuantizedLinear(
+                    weight: t.weight, scales: t.scales, biases: t.biases,
+                    bits: bits, groupSize: q.groupSize
+                ))
         } else {
             lmHead = AnyLinear(Linear(weight: embedTokens.weight))
         }
 
         let activationDtype: DType
         if weights.isQuantized("model.embed_tokens"),
-           let scales = try? weights.tensor(named: "model.embed_tokens.scales") {
+            let scales = try? weights.tensor(named: "model.embed_tokens.scales")
+        {
             activationDtype = scales.dtype
         } else {
             activationDtype = embedTokens.weight.dtype
@@ -195,19 +205,31 @@ public final class Gemma2Layer: Module {
     /// `Gemma2Model.makeLayerCaches`.
     public let isSliding: Bool
 
-    init(qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
-         gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
-         inputNorm: RMSNorm, postAttnNorm: RMSNorm,
-         preFFNorm: RMSNorm, postFFNorm: RMSNorm,
-         hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         intermediate: Int, ropeTheta: Float,
-         queryPreAttnScalar: Float, isSliding: Bool) {
-        self.qProj = qProj; self.kProj = kProj; self.vProj = vProj; self.oProj = oProj
-        self.gateProj = gateProj; self.upProj = upProj; self.downProj = downProj
-        self.inputNorm = inputNorm; self.postAttnNorm = postAttnNorm
-        self.preFFNorm = preFFNorm; self.postFFNorm = postFFNorm
-        self.hidden = hidden; self.nHeads = nHeads; self.nKVHeads = nKVHeads
-        self.headDim = headDim; self.intermediate = intermediate
+    init(
+        qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
+        gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
+        inputNorm: RMSNorm, postAttnNorm: RMSNorm,
+        preFFNorm: RMSNorm, postFFNorm: RMSNorm,
+        hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        intermediate: Int, ropeTheta: Float,
+        queryPreAttnScalar: Float, isSliding: Bool
+    ) {
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
+        self.gateProj = gateProj
+        self.upProj = upProj
+        self.downProj = downProj
+        self.inputNorm = inputNorm
+        self.postAttnNorm = postAttnNorm
+        self.preFFNorm = preFFNorm
+        self.postFFNorm = postFFNorm
+        self.hidden = hidden
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.intermediate = intermediate
         self.ropeTheta = ropeTheta
         self.isSliding = isSliding
         self.scale = 1.0 / Float(Double(queryPreAttnScalar).squareRoot())
@@ -234,8 +256,10 @@ public final class Gemma2Layer: Module {
     /// pre_ff norm → gate*up → down → post_ff norm → +residual) MINUS
     /// the per-head q_norm / k_norm step Gemma 3 adds between
     /// projection and RoPE.
-    func forward(_ h: Tensor, position: Int, cache: any KVCacheProtocol,
-                 on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forward(
+        _ h: Tensor, position: Int, cache: any KVCacheProtocol,
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // Pre-attn norm + QKV.
         let xNorm = inputNorm(h, on: cmd)
         let q = qProj(xNorm, on: cmd)
@@ -247,17 +271,20 @@ public final class Gemma2Layer: Module {
         // `[nHeads, headDim]` layout the kernel expects.
         let qHeads = q.reshaped(to: [nHeads, headDim])
         let kHeads = k.reshaped(to: [nKVHeads, headDim])
-        let qRotated = Ops.rope(qHeads,
-                                position: position, headDim: headDim,
-                                thetaBase: ropeTheta, scaling: .none, on: cmd)
-        let kRotated = Ops.rope(kHeads,
-                                position: position, headDim: headDim,
-                                thetaBase: ropeTheta, scaling: .none, on: cmd)
+        let qRotated = Ops.rope(
+            qHeads,
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, scaling: .none, on: cmd)
+        let kRotated = Ops.rope(
+            kHeads,
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, scaling: .none, on: cmd)
 
         // Append + SDPA.
-        cache.appendOnGPU(kFlat: kRotated,
-                          vFlat: v.reshaped(to: [nKVHeads, headDim]),
-                          on: cmd)
+        cache.appendOnGPU(
+            kFlat: kRotated,
+            vFlat: v.reshaped(to: [nKVHeads, headDim]),
+            on: cmd)
         let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
         // `attn_logit_softcapping` is intentionally NOT applied here —
         // see file header. `sdpaSinkWindow` returns the sliding-window
@@ -335,22 +362,29 @@ public final class Gemma2Model: LanguageModel {
     public let kvCacheKind: KVCacheKind
     public let kvEviction: KVEviction
 
-    init(embedTokens: AnyEmbedding, layers: [Gemma2Layer],
-         finalNorm: RMSNorm, lmHead: AnyLinear,
-         embedScale: Tensor,
-         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         vocab: Int, maxSeq: Int, dtype: DType,
-         slidingWindow: Int, slidingWindowPattern: Int,
-         attnLogitSoftcap: Float, finalLogitSoftcap: Float,
-         kvCacheKind: KVCacheKind, kvEviction: KVEviction) {
+    init(
+        embedTokens: AnyEmbedding, layers: [Gemma2Layer],
+        finalNorm: RMSNorm, lmHead: AnyLinear,
+        embedScale: Tensor,
+        hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        vocab: Int, maxSeq: Int, dtype: DType,
+        slidingWindow: Int, slidingWindowPattern: Int,
+        attnLogitSoftcap: Float, finalLogitSoftcap: Float,
+        kvCacheKind: KVCacheKind, kvEviction: KVEviction
+    ) {
         self.embedTokens = embedTokens
         self.layers = layers
         self.finalNorm = finalNorm
         self.lmHead = lmHead
         self.embedScale = embedScale
-        self.hidden = hidden; self.nLayers = nLayers; self.nHeads = nHeads
-        self.nKVHeads = nKVHeads; self.headDim = headDim
-        self.vocab = vocab; self.maxSeq = maxSeq; self.dtype = dtype
+        self.hidden = hidden
+        self.nLayers = nLayers
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.vocab = vocab
+        self.maxSeq = maxSeq
+        self.dtype = dtype
         self.slidingWindow = slidingWindow
         self.slidingWindowPattern = slidingWindowPattern
         self.attnLogitSoftcap = attnLogitSoftcap
@@ -380,32 +414,37 @@ public final class Gemma2Model: LanguageModel {
         let cap = maxSeq ?? self.maxSeq
         var caches: [any LayerCacheProtocol] = []
         caches.reserveCapacity(nLayers)
-        for i in 0..<nLayers {
+        for i in 0 ..< nLayers {
             let layerEviction: KVEviction
             switch kvEviction {
             case .window:
                 layerEviction = kvEviction
             case .unbounded:
-                layerEviction = layers[i].isSliding
+                layerEviction =
+                    layers[i].isSliding
                     ? .window(maxSize: min(slidingWindow, cap), keep: 0)
                     : .unbounded
             }
             switch kvCacheKind {
             case .raw:
-                caches.append(KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
-                    dtype: dtype, eviction: layerEviction, device: device
-                ))
+                caches.append(
+                    KVCache(
+                        nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                        dtype: dtype, eviction: layerEviction, device: device
+                    ))
             default:
-                preconditionFailure("Gemma2: only .raw KV cache supported today; got \(kvCacheKind)")
+                preconditionFailure(
+                    "Gemma2: only .raw KV cache supported today; got \(kvCacheKind)")
             }
         }
         return caches
     }
 
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let tap = InspectTap.fromEnvironment
         var workCmd = tap.makeWorkCmd(from: cmd, device: device)
 
@@ -415,26 +454,31 @@ public final class Gemma2Model: LanguageModel {
         let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
         let h0 = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
         var h = Ops.mul(h0, embedScale, on: workCmd)
-        workCmd = tap.dumpLayerBoundary(h, label: "embed*scale", layer: -1,
-                                        cmd: workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(
+            h, label: "embed*scale", layer: -1,
+            cmd: workCmd, device: device)
 
         for (i, layer) in layers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              on: workCmd, device: device)
-            workCmd = tap.dumpLayerBoundary(h, label: "layer_out", layer: i,
-                                            cmd: workCmd, device: device)
+            h = layer.forward(
+                h, position: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                on: workCmd, device: device)
+            workCmd = tap.dumpLayerBoundary(
+                h, label: "layer_out", layer: i,
+                cmd: workCmd, device: device)
         }
         h = finalNorm(h, on: workCmd)
-        workCmd = tap.dumpLayerBoundary(h, label: "final_norm", layer: -1,
-                                        cmd: workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(
+            h, label: "final_norm", layer: -1,
+            cmd: workCmd, device: device)
         // `final_logit_softcapping` is loaded onto Gemma2Model but
         // intentionally NOT applied here — it has no effect on greedy
         // (argmax) decode since tanh is monotonic. Sampling paths that
         // care should consult `finalLogitSoftcap` before token choice.
         let logits = lmHead(h, on: workCmd)
-        workCmd = tap.dumpLayerBoundary(logits, label: "logits", layer: -1,
-                                        cmd: workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(
+            logits, label: "logits", layer: -1,
+            cmd: workCmd, device: device)
 
         if tap.active {
             workCmd.commit()
@@ -448,15 +492,19 @@ public final class Gemma2Model: LanguageModel {
     /// future work (see Gemma 3's matching doc comment) but the
     /// sliding-window layers' ring-buffer state makes naive sdpaMulti
     /// unsafe, so first-light keeps it commit-batched only.
-    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                             caches: [any LayerCacheProtocol],
-                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(!tokenIds.isEmpty,
-                     "Gemma2Model.forwardMulti: tokenIds must be non-empty")
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "Gemma2Model.forwardMulti: tokenIds must be non-empty")
         var logits: Tensor!
         for (i, tok) in tokenIds.enumerated() {
-            logits = forward(tokenId: tok, position: position + i,
-                             caches: caches, on: cmd, device: device)
+            logits = forward(
+                tokenId: tok, position: position + i,
+                caches: caches, on: cmd, device: device)
         }
         return logits
     }
@@ -466,19 +514,23 @@ public final class Gemma2Model: LanguageModel {
     /// in vision-encoder embeddings directly.
     public var supportsEmbeddingInput: Bool { true }
 
-    public func forward(inputEmbedding: Tensor, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(inputEmbedding.elementCount == hidden,
-                     "Gemma2Model.forward(inputEmbedding:): expected [\(hidden)], "
-                     + "got \(inputEmbedding.shape)")
+    public func forward(
+        inputEmbedding: Tensor, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            inputEmbedding.elementCount == hidden,
+            "Gemma2Model.forward(inputEmbedding:): expected [\(hidden)], "
+                + "got \(inputEmbedding.shape)")
         // Apply the same sqrt(hidden) embed-scale Gemma 3 does for VLM
         // splice — image tokens and text tokens get the same scaling.
         var h = Ops.mul(inputEmbedding.reshaped(to: [hidden]), embedScale, on: cmd)
         for (i, layer) in layers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              on: cmd, device: device)
+            h = layer.forward(
+                h, position: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                on: cmd, device: device)
         }
         h = finalNorm(h, on: cmd)
         return lmHead(h, on: cmd)

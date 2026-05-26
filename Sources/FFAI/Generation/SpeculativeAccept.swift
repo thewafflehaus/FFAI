@@ -67,12 +67,15 @@ public enum SpeculativeAccept {
     ///   standard +1 token.
     ///
     /// Accepts the longest prefix where `draft[j] == verifierTokens[j]`.
-    public static func verify(draft: [Int],
-                              verifierTokens: [Int],
-                              bonusToken: Int) -> Outcome {
-        precondition(draft.count == verifierTokens.count,
-                     "SpeculativeAccept.verify: draft (\(draft.count)) and "
-                     + "verifierTokens (\(verifierTokens.count)) must be equal length")
+    public static func verify(
+        draft: [Int],
+        verifierTokens: [Int],
+        bonusToken: Int
+    ) -> Outcome {
+        precondition(
+            draft.count == verifierTokens.count,
+            "SpeculativeAccept.verify: draft (\(draft.count)) and "
+                + "verifierTokens (\(verifierTokens.count)) must be equal length")
         var accepted = 0
         while accepted < draft.count && draft[accepted] == verifierTokens[accepted] {
             accepted += 1

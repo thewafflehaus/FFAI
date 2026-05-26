@@ -21,6 +21,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("LFM2 Family Root — isMoE dispatch")
@@ -34,15 +35,17 @@ struct LFM2RootDispatchTests {
 
     @Test("isMoE recognises architecture == Lfm2MoeForCausalLM")
     func moeByArchitecture() {
-        let cfg = ModelConfig(architecture: "Lfm2MoeForCausalLM",
-                              modelType: "lfm2", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "Lfm2MoeForCausalLM",
+            modelType: "lfm2", raw: [:])
         #expect(LFM2.isMoE(cfg))
     }
 
     @Test("isMoE is false for the dense LFM2 model_type")
     func denseConfig() {
-        let cfg = ModelConfig(architecture: "Lfm2ForCausalLM",
-                              modelType: "lfm2", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "Lfm2ForCausalLM",
+            modelType: "lfm2", raw: [:])
         #expect(!LFM2.isMoE(cfg))
     }
 
@@ -55,8 +58,9 @@ struct LFM2RootDispatchTests {
 
     @Test("variant(for:) returns LFM2Dense for dense configs")
     func variantDense() throws {
-        let cfg = ModelConfig(architecture: "Lfm2ForCausalLM",
-                              modelType: "lfm2", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "Lfm2ForCausalLM",
+            modelType: "lfm2", raw: [:])
         let v = try LFM2.variant(for: cfg)
         #expect(String(describing: v) == String(describing: LFM2Dense.self))
     }

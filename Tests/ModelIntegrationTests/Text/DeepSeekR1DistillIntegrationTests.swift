@@ -21,9 +21,10 @@
 // Skipped automatically if the checkpoint isn't reachable.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("DeepSeek R1 Distill Integration", .serialized)
 struct DeepSeekR1DistillIntegrationTests {
@@ -77,7 +78,9 @@ struct DeepSeekR1DistillIntegrationTests {
         #expect(m.engine.nHeads == 12)
         #expect(m.engine.nKVHeads == 2)
         #expect(m.engine.headDim == 128)
-        #expect(m.llama != nil, "R1-Distill-Qwen should load through the 3-series engine after bias-aware Linear")
+        #expect(
+            m.llama != nil,
+            "R1-Distill-Qwen should load through the 3-series engine after bias-aware Linear")
 
         let result = try await m.generate(
             prompt: prompt,

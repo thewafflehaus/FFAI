@@ -19,9 +19,10 @@
 
 import Foundation
 import Metal
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Ops — audio")
 struct OpsAudioTests {
@@ -32,19 +33,21 @@ struct OpsAudioTests {
     func melSpectrogramMatchesReference() {
         autoreleasepool {
             // Small synthetic front-end: nFFT=8, hop=4, nMels=3.
-            let nFFT = 8, hop = 4, nMels = 3
-            let nFreq = nFFT / 2 + 1   // 5
+            let nFFT = 8
+            let hop = 4
+            let nMels = 3
+            let nFreq = nFFT / 2 + 1  // 5
             let nFrames = 3
             let nSamples = (nFrames - 1) * hop + nFFT  // 16
 
             // A deterministic input waveform.
             var audio = [Float](repeating: 0, count: nSamples)
-            for i in 0..<nSamples { audio[i] = sin(Float(i) * 0.7) }
+            for i in 0 ..< nSamples { audio[i] = sin(Float(i) * 0.7) }
             // A simple analysis window + filterbank.
             let window = AudioPreprocessing.hannWindow(nFFT)
             var melW = [Float](repeating: 0, count: nMels * nFreq)
-            for m in 0..<nMels {
-                for k in 0..<nFreq {
+            for m in 0 ..< nMels {
+                for k in 0 ..< nFreq {
                     melW[m * nFreq + k] = Float((m + 1) * (k + 1)) * 0.01
                 }
             }
@@ -52,14 +55,15 @@ struct OpsAudioTests {
 
             // CPU reference — exactly the kernel's described math.
             var expected = [Float](repeating: 0, count: nFrames * nMels)
-            for f in 0..<nFrames {
+            for f in 0 ..< nFrames {
                 let frameStart = f * hop
-                for m in 0..<nMels {
+                for m in 0 ..< nMels {
                     var melAcc: Float = 0
-                    for k in 0..<nFreq {
+                    for k in 0 ..< nFreq {
                         let angleStep = -2.0 * Float.pi / Float(nFFT) * Float(k)
-                        var re: Float = 0, im: Float = 0
-                        for t in 0..<nFFT {
+                        var re: Float = 0
+                        var im: Float = 0
+                        for t in 0 ..< nFFT {
                             let xw = audio[frameStart + t] * window[t]
                             let angle = angleStep * Float(t)
                             re += xw * cos(angle)
@@ -88,9 +92,10 @@ struct OpsAudioTests {
             }
             #expect(out.shape == [nFrames, nMels])
             let got = out.toArray(as: Float.self)
-            for i in 0..<got.count {
-                #expect(abs(got[i] - expected[i]) < 1e-2,
-                        "mel[\(i)] got \(got[i]) expected \(expected[i])")
+            for i in 0 ..< got.count {
+                #expect(
+                    abs(got[i] - expected[i]) < 1e-2,
+                    "mel[\(i)] got \(got[i]) expected \(expected[i])")
             }
         }
     }
@@ -102,9 +107,12 @@ struct OpsAudioTests {
             let cfg = AudioFrontEndConfig.whisper
             let n = cfg.sampleRate / 2
             var wave = [Float](repeating: 0, count: n)
-            for i in 0..<n {
-                wave[i] = 0.3 * sin(2.0 * Float.pi * 220.0 * Float(i)
-                                    / Float(cfg.sampleRate))
+            for i in 0 ..< n {
+                wave[i] =
+                    0.3
+                    * sin(
+                        2.0 * Float.pi * 220.0 * Float(i)
+                            / Float(cfg.sampleRate))
             }
             var out: Tensor!
             // `whisperNormalize: false` keeps the kernel only *queued*
@@ -128,26 +136,31 @@ struct OpsAudioTests {
     @Test("audioConv1d f32 — matches a CPU reference, stride 1, pad 1")
     func audioConv1dStride1() {
         autoreleasepool {
-            let batch = 1, inCh = 2, inLen = 5, outCh = 3, k = 3
-            let stride = 1, pad = 1
+            let batch = 1
+            let inCh = 2
+            let inLen = 5
+            let outCh = 3
+            let k = 3
+            let stride = 1
+            let pad = 1
             let outLen = (inLen + 2 * pad - k) / stride + 1  // 5
 
             var input = [Float](repeating: 0, count: batch * inCh * inLen)
-            for i in 0..<input.count { input[i] = Float(i) * 0.5 - 1.0 }
+            for i in 0 ..< input.count { input[i] = Float(i) * 0.5 - 1.0 }
             var weight = [Float](repeating: 0, count: outCh * inCh * k)
-            for i in 0..<weight.count { weight[i] = Float(i % 5) * 0.3 - 0.5 }
+            for i in 0 ..< weight.count { weight[i] = Float(i % 5) * 0.3 - 0.5 }
             var bias = [Float](repeating: 0, count: outCh)
-            for i in 0..<outCh { bias[i] = Float(i) * 0.1 }
+            for i in 0 ..< outCh { bias[i] = Float(i) * 0.1 }
 
             // CPU reference — the kernel's NCL conv math.
             var expected = [Float](repeating: 0, count: batch * outCh * outLen)
-            for n in 0..<batch {
-                for oc in 0..<outCh {
-                    for op in 0..<outLen {
+            for n in 0 ..< batch {
+                for oc in 0 ..< outCh {
+                    for op in 0 ..< outLen {
                         var acc = bias[oc]
                         let p0 = op * stride
-                        for ic in 0..<inCh {
-                            for kx in 0..<k {
+                        for ic in 0 ..< inCh {
+                            for kx in 0 ..< k {
                                 let p = p0 + kx
                                 if p >= pad && p < pad + inLen {
                                     let ix = p - pad
@@ -178,9 +191,10 @@ struct OpsAudioTests {
             }
             #expect(out.shape == [batch, outCh, outLen])
             let got = out.toArray(as: Float.self)
-            for i in 0..<got.count {
-                #expect(abs(got[i] - expected[i]) < 1e-3,
-                        "conv[\(i)] got \(got[i]) expected \(expected[i])")
+            for i in 0 ..< got.count {
+                #expect(
+                    abs(got[i] - expected[i]) < 1e-3,
+                    "conv[\(i)] got \(got[i]) expected \(expected[i])")
             }
         }
     }
@@ -189,11 +203,16 @@ struct OpsAudioTests {
     func audioConv1dStride2() {
         autoreleasepool {
             // Whisper's second stem conv: k=3, stride=2, pad=1.
-            let batch = 1, inCh = 1, inLen = 8, outCh = 1, k = 3
-            let stride = 2, pad = 1
+            let batch = 1
+            let inCh = 1
+            let inLen = 8
+            let outCh = 1
+            let k = 3
+            let stride = 2
+            let pad = 1
             let outLen = (inLen + 2 * pad - k) / stride + 1  // 4
 
-            let input = (0..<inLen).map { Float($0) }
+            let input = (0 ..< inLen).map { Float($0) }
             let weight = [Float](repeating: 1, count: k)  // sum-of-window
             let bias: [Float] = [0]
 
@@ -228,14 +247,16 @@ struct OpsAudioTests {
             // to a constant signal. With a rectangular window the COLA
             // normalisation divides it straight back out, so the
             // reconstruction equals the DC level.
-            let nFFT = 8, hop = 4, nFrames = 3
+            let nFFT = 8
+            let hop = 4
+            let nFrames = 3
             let nFreq = nFFT / 2 + 1
             let outLen = (nFrames - 1) * hop + nFFT
 
             var specRe = [Float](repeating: 0, count: nFrames * nFreq)
             let specIm = [Float](repeating: 0, count: nFrames * nFreq)
             // DC bin = nFFT so the (1/nFFT) inverse-DFT scale yields 1.0.
-            for f in 0..<nFrames { specRe[f * nFreq + 0] = Float(nFFT) }
+            for f in 0 ..< nFrames { specRe[f * nFreq + 0] = Float(nFFT) }
             let window = [Float](repeating: 1, count: nFFT)  // rectangular
 
             let reT = Tensor.empty(shape: [nFrames, nFreq], dtype: .f32)
@@ -264,14 +285,16 @@ struct OpsAudioTests {
     @Test("vocoderISTFT f32 — matches a CPU inverse-DFT overlap-add reference")
     func vocoderISTFTMatchesReference() {
         autoreleasepool {
-            let nFFT = 8, hop = 4, nFrames = 3
+            let nFFT = 8
+            let hop = 4
+            let nFrames = 3
             let nFreq = nFFT / 2 + 1
             let outLen = (nFrames - 1) * hop + nFFT
             let nyquist = nFFT / 2
 
             var specRe = [Float](repeating: 0, count: nFrames * nFreq)
             var specIm = [Float](repeating: 0, count: nFrames * nFreq)
-            for i in 0..<specRe.count {
+            for i in 0 ..< specRe.count {
                 specRe[i] = Float(i % 7) * 0.2 - 0.5
                 specIm[i] = Float(i % 5) * 0.15 - 0.3
             }
@@ -279,17 +302,19 @@ struct OpsAudioTests {
 
             // CPU reference — the kernel's per-output-sample gather.
             var expected = [Float](repeating: 0, count: outLen)
-            for t in 0..<outLen {
-                var num: Float = 0, den: Float = 0
+            for t in 0 ..< outLen {
+                var num: Float = 0
+                var den: Float = 0
                 let fHi = min(t / hop, nFrames - 1)
-                let fLo = t + 1 > nFFT
+                let fLo =
+                    t + 1 > nFFT
                     ? (t + 1 - nFFT + hop - 1) / hop : 0
                 if fLo <= fHi {
-                    for f in fLo...fHi {
+                    for f in fLo ... fHi {
                         let tau = t - f * hop
                         let angleStep = 2.0 * Float.pi / Float(nFFT) * Float(tau)
                         var sample: Float = 0
-                        for k in 0..<nFreq {
+                        for k in 0 ..< nFreq {
                             let re = specRe[f * nFreq + k]
                             let im = specIm[f * nFreq + k]
                             let angle = angleStep * Float(k)
@@ -321,9 +346,10 @@ struct OpsAudioTests {
             }
             let got = out.toArray(as: Float.self)
             #expect(got.count == outLen)
-            for i in 0..<outLen {
-                #expect(abs(got[i] - expected[i]) < 1e-2,
-                        "istft[\(i)] got \(got[i]) expected \(expected[i])")
+            for i in 0 ..< outLen {
+                #expect(
+                    abs(got[i] - expected[i]) < 1e-2,
+                    "istft[\(i)] got \(got[i]) expected \(expected[i])")
             }
         }
     }
@@ -356,8 +382,8 @@ struct OpsAudioTests {
         #expect(bank.count == cfg.nMels * cfg.nFreq)
         #expect(bank.allSatisfy { $0 >= 0 })
         // Each Mel filter should have at least one non-zero tap.
-        for m in 0..<cfg.nMels {
-            let row = bank[(m * cfg.nFreq)..<((m + 1) * cfg.nFreq)]
+        for m in 0 ..< cfg.nMels {
+            let row = bank[(m * cfg.nFreq) ..< ((m + 1) * cfg.nFreq)]
             #expect(row.contains { $0 > 0 }, "Mel filter \(m) is all-zero")
         }
     }

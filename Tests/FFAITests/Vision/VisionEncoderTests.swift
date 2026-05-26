@@ -15,6 +15,7 @@
 import Foundation
 import Metal
 import Testing
+
 @testable import FFAI
 
 // VisionEncoder + ImagePreprocessing — exercises the ViT vision tower
@@ -40,7 +41,7 @@ struct VisionEncoderTests {
         let out = ImagePreprocessing.resize(img, targetW: 4, targetH: 4)
         #expect(out.width == 4 && out.height == 4)
         // A solid color stays that color regardless of resampling.
-        for i in 0..<(4 * 4) {
+        for i in 0 ..< (4 * 4) {
             #expect(abs(out.pixels[i * 3] - 0.3) < 1e-4)
             #expect(abs(out.pixels[i * 3 + 1] - 0.6) < 1e-4)
             #expect(abs(out.pixels[i * 3 + 2] - 0.1) < 1e-4)
@@ -61,7 +62,7 @@ struct VisionEncoderTests {
 
     @Test("patchify — flattens 3ch image into [num_patches, patch_dim]")
     func patchifyShape() {
-        let planar = (0..<(3 * 8 * 8)).map { Float($0) }
+        let planar = (0 ..< (3 * 8 * 8)).map { Float($0) }
         let t = ImagePreprocessing.patchify(
             planar: planar, channels: 3, height: 8, width: 8,
             patchH: 4, patchW: 4, dtype: .f32)
@@ -86,7 +87,7 @@ struct VisionEncoderTests {
             let n = shape.reduce(1, *)
             var data = [Float](repeating: 0, count: n)
             var s = UInt64(seed &+ 1)
-            for i in 0..<n {
+            for i in 0 ..< n {
                 // Cheap deterministic LCG in [-scale, scale].
                 s = s &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
                 let u = Float(s >> 40) / Float(1 << 24)
@@ -112,31 +113,40 @@ struct VisionEncoderTests {
         let posEmb = t([config.numPatches, hidden], seed: 2)
 
         var layers: [VisionEncoderLayer] = []
-        for l in 0..<nLayers {
+        for l in 0 ..< nLayers {
             let ln1 = LayerNorm(weight: ones(hidden), bias: zeros(hidden), eps: 1e-6)
             let ln2 = LayerNorm(weight: ones(hidden), bias: zeros(hidden), eps: 1e-6)
-            let qP = Linear(weight: t([hidden, hidden], seed: 10 + l * 8),
-                            bias: zeros(hidden))
-            let kP = Linear(weight: t([hidden, hidden], seed: 11 + l * 8),
-                            bias: zeros(hidden))
-            let vP = Linear(weight: t([hidden, hidden], seed: 12 + l * 8),
-                            bias: zeros(hidden))
-            let oP = Linear(weight: t([hidden, hidden], seed: 13 + l * 8),
-                            bias: zeros(hidden))
-            let fc1 = Linear(weight: t([intermediate, hidden], seed: 14 + l * 8),
-                             bias: zeros(intermediate))
-            let fc2 = Linear(weight: t([hidden, intermediate], seed: 15 + l * 8),
-                             bias: zeros(hidden))
-            layers.append(VisionEncoderLayer(
-                layerNorm1: ln1, qProj: qP, kProj: kP, vProj: vP, oProj: oP,
-                layerNorm2: ln2, fc1: fc1, fc2: fc2,
-                hidden: hidden, nHeads: nHeads, intermediate: intermediate))
+            let qP = Linear(
+                weight: t([hidden, hidden], seed: 10 + l * 8),
+                bias: zeros(hidden))
+            let kP = Linear(
+                weight: t([hidden, hidden], seed: 11 + l * 8),
+                bias: zeros(hidden))
+            let vP = Linear(
+                weight: t([hidden, hidden], seed: 12 + l * 8),
+                bias: zeros(hidden))
+            let oP = Linear(
+                weight: t([hidden, hidden], seed: 13 + l * 8),
+                bias: zeros(hidden))
+            let fc1 = Linear(
+                weight: t([intermediate, hidden], seed: 14 + l * 8),
+                bias: zeros(intermediate))
+            let fc2 = Linear(
+                weight: t([hidden, intermediate], seed: 15 + l * 8),
+                bias: zeros(hidden))
+            layers.append(
+                VisionEncoderLayer(
+                    layerNorm1: ln1, qProj: qP, kProj: kP, vProj: vP, oProj: oP,
+                    layerNorm2: ln2, fc1: fc1, fc2: fc2,
+                    hidden: hidden, nHeads: nHeads, intermediate: intermediate))
         }
         let postLN = LayerNorm(weight: ones(hidden), bias: zeros(hidden), eps: 1e-6)
-        let projection: Linear? = textHidden == hidden
+        let projection: Linear? =
+            textHidden == hidden
             ? nil
-            : Linear(weight: t([textHidden, hidden], seed: 99),
-                     bias: zeros(textHidden))
+            : Linear(
+                weight: t([textHidden, hidden], seed: 99),
+                bias: zeros(textHidden))
 
         return VisionEncoder(
             config: config, patchEmbedWeight: patchW, patchEmbedBias: patchB,
@@ -152,8 +162,9 @@ struct VisionEncoderTests {
             let enc = makeEncoder(
                 imageSize: 32, patchSize: 16, hidden: 64,
                 intermediate: 128, nLayers: 2, nHeads: 4, textHidden: 64)
-            let img = RGBImage.solid(width: 32, height: 32,
-                                     r: 0.4, g: 0.5, b: 0.6)
+            let img = RGBImage.solid(
+                width: 32, height: 32,
+                r: 0.4, g: 0.5, b: 0.6)
             let pixels = ImagePreprocessing.preprocess(
                 img, targetW: 32, targetH: 32,
                 normalization: .siglip, dtype: .f32)
@@ -174,8 +185,9 @@ struct VisionEncoderTests {
             let enc = makeEncoder(
                 imageSize: 28, patchSize: 14, hidden: 48,
                 intermediate: 96, nLayers: 2, nHeads: 4, textHidden: 80)
-            let img = RGBImage.solid(width: 28, height: 28,
-                                     r: 0.3, g: 0.7, b: 0.2)
+            let img = RGBImage.solid(
+                width: 28, height: 28,
+                r: 0.3, g: 0.7, b: 0.2)
             let pixels = ImagePreprocessing.preprocess(
                 img, targetW: 28, targetH: 28,
                 normalization: .clip, dtype: .f32)

@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // Unit tests for the LFM2-VL family (the SigLIP2 +
@@ -80,8 +81,9 @@ struct LFM2VisionConfigTests {
     @Test("architecture string is registered in VisionLanguageArchitectures")
     func architectureRegistered() {
         #expect(LFM2VL.architectures.contains("Lfm2VlForConditionalGeneration"))
-        #expect(VisionLanguageArchitectures.architectures
-            .contains("Lfm2VlForConditionalGeneration"))
+        #expect(
+            VisionLanguageArchitectures.architectures
+                .contains("Lfm2VlForConditionalGeneration"))
     }
 
     @Test("routes as a vision-language checkpoint")
@@ -121,8 +123,8 @@ struct LFM2VisionConfigTests {
             nLayers: vc.int("num_hidden_layers")!,
             nHeads: vc.int("num_attention_heads")!,
             textHidden: vc.int("hidden_size")!)
-        #expect(enc.numPatches == 256)           // 16×16
-        #expect(enc.headDim == 72)               // 1152 / 16
+        #expect(enc.numPatches == 256)  // 16×16
+        #expect(enc.headDim == 72)  // 1152 / 16
     }
 
     @Test("vision_feature_layer = -2 yields 26 active encoder layers")
@@ -130,8 +132,8 @@ struct LFM2VisionConfigTests {
         let cfg = makeConfig()
         let numHiddenLayers = 27
         let vfl = cfg.int("vision_feature_layer") ?? -2  // -2
-        let actualLayer = numHiddenLayers + vfl           // 25
-        let activeLayers = actualLayer + 1                // 26
+        let actualLayer = numHiddenLayers + vfl  // 25
+        let activeLayers = actualLayer + 1  // 26
         #expect(activeLayers == 26)
     }
 
@@ -142,7 +144,7 @@ struct LFM2VisionConfigTests {
         let numPatches = vc.int("num_patches") ?? 256
         let downsample = cfg.int("downsample_factor") ?? 2
         let imageTokenCount = numPatches / (downsample * downsample)
-        #expect(imageTokenCount == 64)   // 256 / 4
+        #expect(imageTokenCount == 64)  // 256 / 4
     }
 
     @Test("projector dimensions are consistent with pixel-unshuffle")

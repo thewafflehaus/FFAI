@@ -19,6 +19,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Jamba Family Root")
@@ -36,16 +37,18 @@ struct JambaRootTests {
 
     @Test("variant(for:) returns JambaHybrid")
     func variantDispatch() throws {
-        let cfg = ModelConfig(architecture: "JambaForCausalLM",
-                              modelType: "jamba", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "JambaForCausalLM",
+            modelType: "jamba", raw: [:])
         let v = try Jamba.variant(for: cfg)
         #expect(String(describing: v) == String(describing: JambaHybrid.self))
     }
 
     @Test("JambaError stringifies every case with its payload")
     func errorDescriptions() {
-        #expect(JambaError.missingConfig("hidden_size").description
-            .contains("hidden_size"))
+        #expect(
+            JambaError.missingConfig("hidden_size").description
+                .contains("hidden_size"))
         #expect(JambaError.unsupportedConfig("bad").description.contains("bad"))
         #expect(JambaError.missingConfig("x").description.contains("Jamba"))
     }

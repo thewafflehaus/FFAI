@@ -24,9 +24,10 @@
 // conversions; the IDs below have been verified via the HF API.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("SmolLM Integration", .serialized)
 struct SmolLMIntegrationTests {

@@ -27,6 +27,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -35,94 +36,96 @@ private func makeConfig(_ json: String) throws -> ModelConfig {
     let dir = FileManager.default.temporaryDirectory
         .appendingPathComponent("qwen3-tts-base-cfg-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: dir) }
-    try FileManager.default.createDirectory(at: dir,
-                                            withIntermediateDirectories: true)
-    try json.write(to: dir.appendingPathComponent("config.json"),
-                   atomically: true, encoding: .utf8)
+    try FileManager.default.createDirectory(
+        at: dir,
+        withIntermediateDirectories: true)
+    try json.write(
+        to: dir.appendingPathComponent("config.json"),
+        atomically: true, encoding: .utf8)
     return try ModelConfig.load(from: dir)
 }
 
 /// Minimal config for a VyvoTTS / Qwen3 base TTS checkpoint.
 /// Vocabulary size of 163 840 (> 151 936) + sample_rate = audio.
 private let vyvoTTSJSON = """
-{
-  "model_type": "qwen3",
-  "architectures": ["Qwen3ForCausalLM"],
-  "hidden_size": 2048,
-  "intermediate_size": 11008,
-  "num_hidden_layers": 28,
-  "num_attention_heads": 16,
-  "num_key_value_heads": 8,
-  "head_dim": 128,
-  "rms_norm_eps": 1e-6,
-  "rope_theta": 1000000,
-  "vocab_size": 163840,
-  "max_position_embeddings": 32768,
-  "sample_rate": 24000,
-  "tie_word_embeddings": false
-}
-"""
+    {
+      "model_type": "qwen3",
+      "architectures": ["Qwen3ForCausalLM"],
+      "hidden_size": 2048,
+      "intermediate_size": 11008,
+      "num_hidden_layers": 28,
+      "num_attention_heads": 16,
+      "num_key_value_heads": 8,
+      "head_dim": 128,
+      "rms_norm_eps": 1e-6,
+      "rope_theta": 1000000,
+      "vocab_size": 163840,
+      "max_position_embeddings": 32768,
+      "sample_rate": 24000,
+      "tie_word_embeddings": false
+    }
+    """
 
 /// Plain Qwen3 text checkpoint — same arch but base vocab and no sample_rate.
 private let plainQwen3JSON = """
-{
-  "model_type": "qwen3",
-  "architectures": ["Qwen3ForCausalLM"],
-  "hidden_size": 2048,
-  "intermediate_size": 11008,
-  "num_hidden_layers": 28,
-  "num_attention_heads": 16,
-  "num_key_value_heads": 8,
-  "head_dim": 128,
-  "rms_norm_eps": 1e-6,
-  "vocab_size": 151936,
-  "tie_word_embeddings": false
-}
-"""
+    {
+      "model_type": "qwen3",
+      "architectures": ["Qwen3ForCausalLM"],
+      "hidden_size": 2048,
+      "intermediate_size": 11008,
+      "num_hidden_layers": 28,
+      "num_attention_heads": 16,
+      "num_key_value_heads": 8,
+      "head_dim": 128,
+      "rms_norm_eps": 1e-6,
+      "vocab_size": 151936,
+      "tie_word_embeddings": false
+    }
+    """
 
 /// Qwen3TTS Flash / 12Hz variant — has talker_config + speaker_encoder_config.
 /// Must NOT be routed to Qwen3TTSBase.
 private let qwen3TTSFlashJSON = """
-{
-  "model_type": "qwen3_tts",
-  "architectures": ["Qwen3TTSForConditionalGeneration"],
-  "talker_config": {
-    "vocab_size": 3072,
-    "hidden_size": 1024
-  },
-  "speaker_encoder_config": {
-    "channels": 512
-  },
-  "sample_rate": 24000,
-  "vocab_size": 151936,
-  "hidden_size": 1024,
-  "num_hidden_layers": 28,
-  "num_attention_heads": 16,
-  "num_key_value_heads": 8,
-  "head_dim": 64,
-  "intermediate_size": 4096,
-  "rms_norm_eps": 1e-6
-}
-"""
+    {
+      "model_type": "qwen3_tts",
+      "architectures": ["Qwen3TTSForConditionalGeneration"],
+      "talker_config": {
+        "vocab_size": 3072,
+        "hidden_size": 1024
+      },
+      "speaker_encoder_config": {
+        "channels": 512
+      },
+      "sample_rate": 24000,
+      "vocab_size": 151936,
+      "hidden_size": 1024,
+      "num_hidden_layers": 28,
+      "num_attention_heads": 16,
+      "num_key_value_heads": 8,
+      "head_dim": 64,
+      "intermediate_size": 4096,
+      "rms_norm_eps": 1e-6
+    }
+    """
 
 /// Config with the explicit Qwen3TTSBase model_type.
 private let explicitQwen3TTSBaseJSON = """
-{
-  "model_type": "qwen3_tts_base",
-  "architectures": ["Qwen3TTSBaseForConditionalGeneration"],
-  "hidden_size": 2048,
-  "intermediate_size": 11008,
-  "num_hidden_layers": 28,
-  "num_attention_heads": 16,
-  "num_key_value_heads": 8,
-  "head_dim": 128,
-  "rms_norm_eps": 1e-6,
-  "vocab_size": 163840,
-  "max_position_embeddings": 32768,
-  "sample_rate": 24000,
-  "tie_word_embeddings": false
-}
-"""
+    {
+      "model_type": "qwen3_tts_base",
+      "architectures": ["Qwen3TTSBaseForConditionalGeneration"],
+      "hidden_size": 2048,
+      "intermediate_size": 11008,
+      "num_hidden_layers": 28,
+      "num_attention_heads": 16,
+      "num_key_value_heads": 8,
+      "head_dim": 128,
+      "rms_norm_eps": 1e-6,
+      "vocab_size": 163840,
+      "max_position_embeddings": 32768,
+      "sample_rate": 24000,
+      "tie_word_embeddings": false
+    }
+    """
 
 // ─── Tests ───────────────────────────────────────────────────────────
 
@@ -160,17 +163,17 @@ struct Qwen3TTSBaseTests {
     @Test("config uses sample_rate default of 24000 when absent")
     func config_defaultSampleRate() throws {
         let json = """
-        {
-          "model_type": "qwen3_tts_base",
-          "hidden_size": 2048,
-          "intermediate_size": 11008,
-          "num_hidden_layers": 28,
-          "num_attention_heads": 16,
-          "head_dim": 128,
-          "rms_norm_eps": 1e-6,
-          "vocab_size": 163840
-        }
-        """
+            {
+              "model_type": "qwen3_tts_base",
+              "hidden_size": 2048,
+              "intermediate_size": 11008,
+              "num_hidden_layers": 28,
+              "num_attention_heads": 16,
+              "head_dim": 128,
+              "rms_norm_eps": 1e-6,
+              "vocab_size": 163840
+            }
+            """
         let cfg = try makeConfig(json)
         let tts = Qwen3TTSBaseConfig.from(cfg)
         // No sample_rate key → default 24000
@@ -211,18 +214,18 @@ struct Qwen3TTSBaseTests {
         // codec-token marker; the loader defaults the rate to 24 kHz when
         // the config omits it. Detection must accept this shape.
         let json = """
-        {
-          "model_type": "qwen3",
-          "architectures": ["Qwen3ForCausalLM"],
-          "hidden_size": 2048,
-          "intermediate_size": 11008,
-          "num_hidden_layers": 28,
-          "num_attention_heads": 16,
-          "head_dim": 128,
-          "rms_norm_eps": 1e-6,
-          "vocab_size": 163840
-        }
-        """
+            {
+              "model_type": "qwen3",
+              "architectures": ["Qwen3ForCausalLM"],
+              "hidden_size": 2048,
+              "intermediate_size": 11008,
+              "num_hidden_layers": 28,
+              "num_attention_heads": 16,
+              "head_dim": 128,
+              "rms_norm_eps": 1e-6,
+              "vocab_size": 163840
+            }
+            """
         let cfg = try makeConfig(json)
         #expect(Qwen3TTSBaseModel.handles(cfg) == true)
     }
@@ -259,15 +262,18 @@ struct Qwen3TTSBaseTests {
 
     @Test("Qwen3TTSBaseTokens — audioTokensStart is 10 beyond the base vocab size")
     func tokens_audioStart() {
-        #expect(Qwen3TTSBaseTokens.audioTokensStart
+        #expect(
+            Qwen3TTSBaseTokens.audioTokensStart
                 == Qwen3TTSBaseTokens.baseVocabSize + 10)
     }
 
     @Test("Qwen3TTSBaseTokens — endOfSpeech is distinct from startOfSpeech")
     func tokens_speechMarkersDistinct() {
-        #expect(Qwen3TTSBaseTokens.startOfSpeech
+        #expect(
+            Qwen3TTSBaseTokens.startOfSpeech
                 != Qwen3TTSBaseTokens.endOfSpeech)
-        #expect(Qwen3TTSBaseTokens.endOfSpeech
+        #expect(
+            Qwen3TTSBaseTokens.endOfSpeech
                 > Qwen3TTSBaseTokens.startOfSpeech)
     }
 
@@ -276,7 +282,7 @@ struct Qwen3TTSBaseTests {
     @Test("deinterleaveSNACCodes — three frames yield correct plane lengths")
     func deinterleave_planeShapes() {
         // 3 frames × 7 = 21 tokens → layer1 = 3, layer2 = 6, layer3 = 12
-        let tokens = Array(0..<21)
+        let tokens = Array(0 ..< 21)
         let planes = Qwen3TTSBaseModel.deinterleaveSNACCodes(tokens)
         #expect(planes.count == 3)
         #expect(planes[0].count == 3)
@@ -287,7 +293,7 @@ struct Qwen3TTSBaseTests {
     @Test("deinterleaveSNACCodes — partial trailing frame is dropped")
     func deinterleave_partialFrameDropped() {
         // 25 tokens → 3 full frames (21), 4 leftover dropped
-        let tokens = Array(0..<25)
+        let tokens = Array(0 ..< 25)
         let planes = Qwen3TTSBaseModel.deinterleaveSNACCodes(tokens)
         #expect(planes[0].count == 3)
         #expect(planes[1].count == 6)
@@ -305,7 +311,7 @@ struct Qwen3TTSBaseTests {
 
     @Test("deinterleaveSNACCodes — SNAC up-sampling invariant: layer2 = 2x, layer3 = 4x layer1")
     func deinterleave_upSamplingInvariant() {
-        let tokens = Array(0..<70)  // 10 complete frames
+        let tokens = Array(0 ..< 70)  // 10 complete frames
         let planes = Qwen3TTSBaseModel.deinterleaveSNACCodes(tokens)
         #expect(planes[1].count == 2 * planes[0].count)
         #expect(planes[2].count == 4 * planes[0].count)
@@ -316,8 +322,8 @@ struct Qwen3TTSBaseTests {
     @Test("Qwen3TTSBaseError descriptions are non-empty and meaningful")
     func errorDescriptions() {
         let codecErr = Qwen3TTSBaseError.codecUnavailable
-        let noAudio  = Qwen3TTSBaseError.noAudioCodes
-        let missCfg  = Qwen3TTSBaseError.missingConfig
+        let noAudio = Qwen3TTSBaseError.noAudioCodes
+        let missCfg = Qwen3TTSBaseError.missingConfig
         #expect(String(describing: codecErr).contains("SNAC"))
         #expect(String(describing: noAudio).contains("audio-code"))
         #expect(String(describing: missCfg).contains("config"))

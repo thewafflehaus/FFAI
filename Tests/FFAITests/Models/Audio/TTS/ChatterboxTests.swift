@@ -24,6 +24,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Chatterbox")
@@ -120,11 +121,15 @@ struct ChatterboxTests {
     func isTurboFromT3BackboneName() {
         let config = ModelConfig(
             architecture: nil, modelType: "chatterbox",
-            raw: ["model_type": "chatterbox",
-                  "t3": ["llama_config_name": "GPT2_medium",
-                          "speech_tokens_dict_size": 6563,
-                          "start_speech_token": 6561,
-                          "stop_speech_token": 6562]])
+            raw: [
+                "model_type": "chatterbox",
+                "t3": [
+                    "llama_config_name": "GPT2_medium",
+                    "speech_tokens_dict_size": 6563,
+                    "start_speech_token": 6561,
+                    "stop_speech_token": 6562,
+                ],
+            ])
         let cb = ChatterboxConfig.from(config)
         #expect(cb?.isTurbo == true)
     }
@@ -183,7 +188,8 @@ struct ChatterboxTests {
             raw: ["model_type": "chatterbox"])
         #expect(AudioModelRegistry.handles(config))
         #expect(ChatterboxModel.handles(config))
-        #expect(AudioModelRegistry.capabilities(for: config)
+        #expect(
+            AudioModelRegistry.capabilities(for: config)
                 == Capability.textToSpeech)
     }
 
@@ -191,11 +197,14 @@ struct ChatterboxTests {
     func registryDetectsChatterboxTurboFromModelType() {
         let config = ModelConfig(
             architecture: "chatterbox_turbo", modelType: "chatterbox_turbo",
-            raw: ["model_type": "chatterbox_turbo",
-                  "architecture": "chatterbox_turbo"])
+            raw: [
+                "model_type": "chatterbox_turbo",
+                "architecture": "chatterbox_turbo",
+            ])
         #expect(AudioModelRegistry.handles(config))
         #expect(ChatterboxModel.handles(config))
-        #expect(AudioModelRegistry.capabilities(for: config)
+        #expect(
+            AudioModelRegistry.capabilities(for: config)
                 == Capability.textToSpeech)
     }
 
@@ -215,9 +224,13 @@ struct ChatterboxTests {
         // speech_tokens_dict_size in the expected range.
         let config = ModelConfig(
             architecture: nil, modelType: nil,
-            raw: ["t3": ["speech_tokens_dict_size": 8194,
-                          "start_speech_token": 6561,
-                          "stop_speech_token": 6562]])
+            raw: [
+                "t3": [
+                    "speech_tokens_dict_size": 8194,
+                    "start_speech_token": 6561,
+                    "stop_speech_token": 6562,
+                ]
+            ])
         #expect(ChatterboxModel.handles(config))
     }
 
@@ -225,9 +238,13 @@ struct ChatterboxTests {
     func registryDetectsFromT3ConfigBlock() {
         let config = ModelConfig(
             architecture: nil, modelType: nil,
-            raw: ["t3_config": ["speech_tokens_dict_size": 6563,
-                                "start_speech_token": 6561,
-                                "stop_speech_token": 6562]])
+            raw: [
+                "t3_config": [
+                    "speech_tokens_dict_size": 6563,
+                    "start_speech_token": 6561,
+                    "stop_speech_token": 6562,
+                ]
+            ])
         #expect(ChatterboxModel.handles(config))
     }
 
@@ -262,11 +279,14 @@ struct ChatterboxTests {
         for slug in candidates {
             let base = hfRoot.appendingPathComponent(slug)
                 .appendingPathComponent("snapshots")
-            guard let sub = try? FileManager.default
-                .contentsOfDirectory(at: base, includingPropertiesForKeys: nil)
-                .first else { continue }
-            guard FileManager.default.fileExists(
-                atPath: sub.appendingPathComponent("model.safetensors").path)
+            guard
+                let sub = try? FileManager.default
+                    .contentsOfDirectory(at: base, includingPropertiesForKeys: nil)
+                    .first
+            else { continue }
+            guard
+                FileManager.default.fileExists(
+                    atPath: sub.appendingPathComponent("model.safetensors").path)
             else { continue }
 
             do {

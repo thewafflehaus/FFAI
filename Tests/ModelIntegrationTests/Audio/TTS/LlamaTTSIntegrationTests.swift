@@ -26,9 +26,10 @@
 // code planes — the contract the codec consumes.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("LlamaTTS Integration", .serialized)
 struct LlamaTTSIntegrationTests {
@@ -52,14 +53,14 @@ struct LlamaTTSIntegrationTests {
     func deinterleave_planeShapes() {
         // One SNAC frame is 7 interleaved code tokens. Three frames →
         // 21 tokens → layer1 has 3, layer2 has 6, layer3 has 12.
-        let tokens = Array(0..<21)
+        let tokens = Array(0 ..< 21)
         let planes = LlamaTTSModel.deinterleaveSNACCodes(tokens)
         #expect(planes.count == 3)
         #expect(planes[0].count == 3)
         #expect(planes[1].count == 6)
         #expect(planes[2].count == 12)
         // A partial trailing frame is dropped.
-        let partial = LlamaTTSModel.deinterleaveSNACCodes(Array(0..<25))
+        let partial = LlamaTTSModel.deinterleaveSNACCodes(Array(0 ..< 25))
         #expect(partial[0].count == 3)
     }
 

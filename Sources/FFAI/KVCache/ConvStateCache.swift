@@ -34,15 +34,19 @@ public final class ConvStateCache: @unchecked Sendable {
     /// Rolling window, shape `[kernelSize - 1, nChannels]`.
     public let state: Tensor
 
-    public init(nChannels: Int, kernelSize: Int, dtype: DType,
-                device: Device = .shared) {
-        precondition(kernelSize >= 2,
-                     "ConvStateCache: kernelSize must be >= 2 (1-tap conv has no state)")
+    public init(
+        nChannels: Int, kernelSize: Int, dtype: DType,
+        device: Device = .shared
+    ) {
+        precondition(
+            kernelSize >= 2,
+            "ConvStateCache: kernelSize must be >= 2 (1-tap conv has no state)")
         self.nChannels = nChannels
         self.kernelSize = kernelSize
         self.dtype = dtype
-        self.state = Tensor.empty(shape: [kernelSize - 1, nChannels],
-                                  dtype: dtype, device: device)
+        self.state = Tensor.empty(
+            shape: [kernelSize - 1, nChannels],
+            dtype: dtype, device: device)
         self.state.zero()
     }
 
@@ -56,7 +60,7 @@ public final class ConvStateCache: @unchecked Sendable {
     }
 }
 
-public extension Array where Element == ConvStateCache {
+extension Array where Element == ConvStateCache {
     /// Sum of `bytesAllocated` across all per-layer conv caches.
-    var totalBytesAllocated: Int { reduce(0) { $0 + $1.bytesAllocated } }
+    public var totalBytesAllocated: Int { reduce(0) { $0 + $1.bytesAllocated } }
 }

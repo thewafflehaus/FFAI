@@ -38,9 +38,10 @@
 // checkpoint exists to integration-test it here.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Jamba Integration", .serialized)
 struct JambaIntegrationTests {

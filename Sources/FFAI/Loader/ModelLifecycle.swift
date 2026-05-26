@@ -18,9 +18,9 @@
 import Foundation
 
 public struct LoadProgress: Sendable {
-    public let stage: String           // "config", "weights", "modules", "prewarm", ...
-    public let completed: Int64        // bytes or tensors loaded
-    public let total: Int64            // total bytes or tensors
+    public let stage: String  // "config", "weights", "modules", "prewarm", ...
+    public let completed: Int64  // bytes or tensors loaded
+    public let total: Int64  // total bytes or tensors
 
     public var fraction: Double {
         total > 0 ? Double(completed) / Double(total) : 0

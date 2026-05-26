@@ -84,11 +84,13 @@ public final class VisionModel: @unchecked Sendable {
     /// tokens) passes the pooled count explicitly.
     public let imageTokenCount: Int
 
-    public init(visionEncoder: VisionEncoder, engine: any LanguageModel,
-                imageTokenId: Int,
-                videoTokenId: Int? = nil,
-                normalization: ImageNormalization,
-                imageTokenCount: Int? = nil) throws {
+    public init(
+        visionEncoder: VisionEncoder, engine: any LanguageModel,
+        imageTokenId: Int,
+        videoTokenId: Int? = nil,
+        normalization: ImageNormalization,
+        imageTokenCount: Int? = nil
+    ) throws {
         guard engine.supportsEmbeddingInput else {
             throw VisionModelError.engineLacksEmbeddingInput(String(describing: type(of: engine)))
         }
@@ -115,8 +117,10 @@ public final class VisionModel: @unchecked Sendable {
     ///
     /// CPU-driven (the spec marks the splice "CPU-fine"); the per-token
     /// embedding lookups + the vision encode are the only GPU work.
-    public func splice(promptTokens: [Int], imageTokens: Tensor,
-                       device: Device = .shared) throws -> [Tensor] {
+    public func splice(
+        promptTokens: [Int], imageTokens: Tensor,
+        device: Device = .shared
+    ) throws -> [Tensor] {
         let placeholderCount = promptTokens.filter { $0 == imageTokenId }.count
         let visionRows = imageTokens.shape[0]
         guard placeholderCount == visionRows else {
@@ -124,9 +128,10 @@ public final class VisionModel: @unchecked Sendable {
                 expected: visionRows, found: placeholderCount)
         }
         let hidden = engine.hidden
-        precondition(imageTokens.shape == [visionRows, hidden],
-                     "VisionModel.splice: image tokens \(imageTokens.shape) "
-                     + "≠ [\(visionRows), \(hidden)]")
+        precondition(
+            imageTokens.shape == [visionRows, hidden],
+            "VisionModel.splice: image tokens \(imageTokens.shape) "
+                + "≠ [\(visionRows), \(hidden)]")
 
         let imageRowBytes = hidden * imageTokens.dtype.byteSize
         var stream: [Tensor] = []
@@ -165,10 +170,13 @@ public final class VisionModel: @unchecked Sendable {
     /// frames) happens inside `VisionEncoder.encode(frames:)`. Throws
     /// `VisionEncoderError.videoUnsupported` for towers that don't wire
     /// the multi-frame path.
-    public func encodeVideo(_ frames: [RGBImage],
-                            device: Device = .shared) throws -> Tensor {
-        precondition(!frames.isEmpty,
-                     "VisionModel.encodeVideo: expected at least one frame")
+    public func encodeVideo(
+        _ frames: [RGBImage],
+        device: Device = .shared
+    ) throws -> Tensor {
+        precondition(
+            !frames.isEmpty,
+            "VisionModel.encodeVideo: expected at least one frame")
         let cfg = visionEncoder.config
         let pixels: [Tensor] = frames.map { frame in
             ImagePreprocessing.preprocess(
@@ -184,10 +192,12 @@ public final class VisionModel: @unchecked Sendable {
     /// each image-placeholder / video-placeholder position. The image
     /// and video token streams are consumed independently (each carries
     /// its own cursor) so a prompt may interleave both.
-    private func spliceMultimodal(promptTokens: [Int],
-                                  imageTokens: Tensor?,
-                                  videoTokens: Tensor?,
-                                  device: Device) throws -> [Tensor] {
+    private func spliceMultimodal(
+        promptTokens: [Int],
+        imageTokens: Tensor?,
+        videoTokens: Tensor?,
+        device: Device
+    ) throws -> [Tensor] {
         let hidden = engine.hidden
         // Validate placeholder counts up-front so we fail fast on
         // mismatched prompts.
@@ -209,23 +219,27 @@ public final class VisionModel: @unchecked Sendable {
                 expected: videoVisionRows, found: videoPlaceholderCount)
         }
         if let imageTokens {
-            precondition(imageTokens.shape == [imageVisionRows, hidden],
-                         "VisionModel.splice: image tokens \(imageTokens.shape) "
-                         + "≠ [\(imageVisionRows), \(hidden)]")
+            precondition(
+                imageTokens.shape == [imageVisionRows, hidden],
+                "VisionModel.splice: image tokens \(imageTokens.shape) "
+                    + "≠ [\(imageVisionRows), \(hidden)]")
         }
         if let videoTokens {
-            precondition(videoTokens.shape == [videoVisionRows, hidden],
-                         "VisionModel.splice: video tokens \(videoTokens.shape) "
-                         + "≠ [\(videoVisionRows), \(hidden)]")
+            precondition(
+                videoTokens.shape == [videoVisionRows, hidden],
+                "VisionModel.splice: video tokens \(videoTokens.shape) "
+                    + "≠ [\(videoVisionRows), \(hidden)]")
         }
         // Byte stride for slicing a single [hidden] row out of the
         // vision token buffer — same for image and video.
-        let imageRowBytes = imageTokens.map {
-            hidden * $0.dtype.byteSize
-        } ?? 0
-        let videoRowBytes = videoTokens.map {
-            hidden * $0.dtype.byteSize
-        } ?? 0
+        let imageRowBytes =
+            imageTokens.map {
+                hidden * $0.dtype.byteSize
+            } ?? 0
+        let videoRowBytes =
+            videoTokens.map {
+                hidden * $0.dtype.byteSize
+            } ?? 0
 
         var stream: [Tensor] = []
         stream.reserveCapacity(promptTokens.count)
@@ -264,10 +278,12 @@ public final class VisionModel: @unchecked Sendable {
     /// filters / streaming are a later pass — the text-only `Generate`
     /// already has them and `VisionModel` will route through it once the
     /// engine grows a public embedding-prefill entry point.
-    public func generate(promptTokens: [Int], image: RGBImage?,
-                         maxTokens: Int, eosTokenId: Int?,
-                         eosTokenIds: [Int] = [],
-                         device: Device = .shared) throws -> [Int] {
+    public func generate(
+        promptTokens: [Int], image: RGBImage?,
+        maxTokens: Int, eosTokenId: Int?,
+        eosTokenIds: [Int] = [],
+        device: Device = .shared
+    ) throws -> [Int] {
         let imageTokens = image.map { encodeImage($0, device: device) }
         return try runGreedy(
             promptTokens: promptTokens,
@@ -289,10 +305,12 @@ public final class VisionModel: @unchecked Sendable {
     /// `VisionModelError.videoPlaceholderCountMismatch` if the prompt
     /// doesn't contain exactly `(T/temporal_patch_size) × spatial`
     /// `<|video_pad|>` placeholders.
-    public func generate(promptTokens: [Int], videoFrames: [RGBImage],
-                         maxTokens: Int, eosTokenId: Int?,
-                         eosTokenIds: [Int] = [],
-                         device: Device = .shared) throws -> [Int] {
+    public func generate(
+        promptTokens: [Int], videoFrames: [RGBImage],
+        maxTokens: Int, eosTokenId: Int?,
+        eosTokenIds: [Int] = [],
+        device: Device = .shared
+    ) throws -> [Int] {
         guard videoTokenId != nil else {
             throw VisionModelError.videoTokenIdMissing(
                 String(describing: type(of: visionEncoder)))
@@ -309,11 +327,13 @@ public final class VisionModel: @unchecked Sendable {
     /// stream (with optional pre-encoded image / video tokens), runs
     /// prefill, then decodes tokens one at a time. Identical control
     /// flow to the legacy `generate(promptTokens:image:...)` path.
-    private func runGreedy(promptTokens: [Int],
-                           imageTokens: Tensor?, videoTokens: Tensor?,
-                           maxTokens: Int, eosTokenId: Int?,
-                           eosTokenIds: [Int],
-                           device: Device) throws -> [Int] {
+    private func runGreedy(
+        promptTokens: [Int],
+        imageTokens: Tensor?, videoTokens: Tensor?,
+        maxTokens: Int, eosTokenId: Int?,
+        eosTokenIds: [Int],
+        device: Device
+    ) throws -> [Int] {
         let caches = engine.makeLayerCaches(device: device)
 
         // Build the prefill embedding stream.
@@ -343,8 +363,9 @@ public final class VisionModel: @unchecked Sendable {
             Ops.argmax(logits, into: outT, on: cmd)
             cmd.commit()
             cmd.waitUntilCompleted()
-            nextToken = Int(outBuf.contents()
-                .bindMemory(to: UInt32.self, capacity: 1).pointee)
+            nextToken = Int(
+                outBuf.contents()
+                    .bindMemory(to: UInt32.self, capacity: 1).pointee)
         }
 
         // Decode: ordinary token-id forward from the prefill tail.
@@ -355,7 +376,7 @@ public final class VisionModel: @unchecked Sendable {
         if let single = eosTokenId { stopSet.insert(single) }
         var generated: [Int] = []
         var pos = stream.count
-        for _ in 0..<maxTokens {
+        for _ in 0 ..< maxTokens {
             if stopSet.contains(nextToken) { break }
             generated.append(nextToken)
             let prior = nextToken

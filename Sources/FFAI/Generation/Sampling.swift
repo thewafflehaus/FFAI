@@ -52,7 +52,7 @@ public enum Sampling {
         let values = decodeF32(logits)
         var best = 0
         var bestVal = values[0]
-        for i in 1..<values.count where values[i] > bestVal {
+        for i in 1 ..< values.count where values[i] > bestVal {
             bestVal = values[i]
             best = i
         }
@@ -96,7 +96,7 @@ public enum Sampling {
         // (2) Temperature
         if parameters.temperature != 1.0 {
             let invT = 1.0 / parameters.temperature
-            for i in 0..<vocab { values[i] *= invT }
+            for i in 0 ..< vocab { values[i] *= invT }
         }
 
         // Build a working list of (logit, index) so we can filter.
@@ -105,7 +105,7 @@ public enum Sampling {
         // sort needed.
         var indexed: [(idx: Int, logit: Float)] = []
         indexed.reserveCapacity(vocab)
-        for i in 0..<vocab { indexed.append((i, values[i])) }
+        for i in 0 ..< vocab { indexed.append((i, values[i])) }
 
         let needsSort = parameters.topK > 0 || parameters.topP < 1.0
         if needsSort {
@@ -125,9 +125,12 @@ public enum Sampling {
             var sumExp = 0.0
             for x in indexed { sumExp += Double(expf(x.logit - maxL)) }
             var cutoff = indexed.count
-            for i in 0..<indexed.count {
+            for i in 0 ..< indexed.count {
                 cum += Double(expf(indexed[i].logit - maxL)) / sumExp
-                if cum >= Double(parameters.topP) { cutoff = i + 1; break }
+                if cum >= Double(parameters.topP) {
+                    cutoff = i + 1
+                    break
+                }
             }
             indexed.removeLast(indexed.count - cutoff)
         }
@@ -151,14 +154,14 @@ public enum Sampling {
         let maxL = indexed.map(\.logit).max() ?? 0
         var weights = [Double](repeating: 0, count: indexed.count)
         var total = 0.0
-        for i in 0..<indexed.count {
+        for i in 0 ..< indexed.count {
             let w = Double(expf(indexed[i].logit - maxL))
             weights[i] = w
             total += w
         }
-        let u = Double.random(in: 0..<1, using: &rng) * total
+        let u = Double.random(in: 0 ..< 1, using: &rng) * total
         var acc = 0.0
-        for i in 0..<indexed.count {
+        for i in 0 ..< indexed.count {
             acc += weights[i]
             if acc >= u { return indexed[i].idx }
         }
@@ -174,13 +177,13 @@ public enum Sampling {
         switch logits.dtype {
         case .f32:
             let arr = logits.toArray(as: Float.self)
-            for i in 0..<n { out[i] = arr[i] }
+            for i in 0 ..< n { out[i] = arr[i] }
         case .f16:
             let arr = logits.toArray(as: Float16.self)
-            for i in 0..<n { out[i] = Float(arr[i]) }
+            for i in 0 ..< n { out[i] = Float(arr[i]) }
         case .bf16:
             let bits = logits.toArray(as: UInt16.self)
-            for i in 0..<n { out[i] = Float(bitPattern: UInt32(bits[i]) << 16) }
+            for i in 0 ..< n { out[i] = Float(bitPattern: UInt32(bits[i]) << 16) }
         default:
             fatalError("Sampling: unsupported logits dtype \(logits.dtype)")
         }
@@ -190,8 +193,9 @@ public enum Sampling {
     private static func argmaxOf(_ values: [Float]) -> Int {
         var best = 0
         var bestVal = values[0]
-        for i in 1..<values.count where values[i] > bestVal {
-            bestVal = values[i]; best = i
+        for i in 1 ..< values.count where values[i] > bestVal {
+            bestVal = values[i]
+            best = i
         }
         return best
     }
@@ -208,10 +212,10 @@ public struct SeededRandomNumberGenerator: RandomNumberGenerator, Sendable {
     public init(seed: UInt64) { self.state = seed }
 
     public mutating func next() -> UInt64 {
-        state &+= 0x9E3779B97F4A7C15
+        state &+= 0x9E37_79B9_7F4A_7C15
         var z = state
-        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
-        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
         return z ^ (z >> 31)
     }
 }
@@ -228,10 +232,10 @@ public struct AnyRandomNumberGenerator: RandomNumberGenerator {
     }
 }
 
-public extension GenerationParameters {
+extension GenerationParameters {
     /// Build an RNG for this generation: seeded + deterministic when
     /// `seed != nil`, system random otherwise.
-    func makeRNG() -> AnyRandomNumberGenerator {
+    public func makeRNG() -> AnyRandomNumberGenerator {
         if let s = seed {
             return AnyRandomNumberGenerator(SeededRandomNumberGenerator(seed: s))
         }

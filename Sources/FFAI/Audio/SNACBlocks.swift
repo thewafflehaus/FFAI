@@ -30,19 +30,23 @@ import Foundation
 extension SNACResidualUnit {
     /// Build a residual unit from checkpoint weights at `prefix`.
     /// `dim` is the channel count; `dilation` the conv dilation.
-    init(weights w: SNACWeights, prefix: String,
-         dim: Int, dilation: Int, kernel: Int = 7, groups: Int) throws {
+    init(
+        weights w: SNACWeights, prefix: String,
+        dim: Int, dilation: Int, kernel: Int = 7, groups: Int
+    ) throws {
         let pad = ((kernel - 1) * dilation) / 2
         // layers.0 — Snake1d, layers.1 — WNConv1d(k=7, dilated)
         // layers.2 — Snake1d, layers.3 — WNConv1d(k=1)
         self.alpha1 = try w.floats("\(prefix).block.layers.0.alpha")
-        self.conv1 = try w.wnConv1d(prefix: "\(prefix).block.layers.1",
-                                    stride: 1, padding: pad,
-                                    dilation: dilation, groups: groups)
+        self.conv1 = try w.wnConv1d(
+            prefix: "\(prefix).block.layers.1",
+            stride: 1, padding: pad,
+            dilation: dilation, groups: groups)
         self.alpha2 = try w.floats("\(prefix).block.layers.2.alpha")
-        self.conv2 = try w.wnConv1d(prefix: "\(prefix).block.layers.3",
-                                    stride: 1, padding: 0,
-                                    dilation: 1, groups: 1)
+        self.conv2 = try w.wnConv1d(
+            prefix: "\(prefix).block.layers.3",
+            stride: 1, padding: 0,
+            dilation: 1, groups: 1)
     }
 }
 
@@ -55,24 +59,28 @@ struct SNACEncoderBlock {
     let snakeAlpha: [Float]
     let convDown: SNACWNConv1d
 
-    init(weights w: SNACWeights, prefix: String,
-         outputDim: Int, stride: Int, groups: Int) throws {
+    init(
+        weights w: SNACWeights, prefix: String,
+        outputDim: Int, stride: Int, groups: Int
+    ) throws {
         let inputDim = outputDim / 2
         // layers.{0,1,2} — ResidualUnit(dilation 1,3,9)
         var res: [SNACResidualUnit] = []
         for (i, dil) in [1, 3, 9].enumerated() {
-            res.append(try SNACResidualUnit(
-                weights: w, prefix: "\(prefix).block.layers.\(i)",
-                dim: inputDim, dilation: dil, groups: groups))
+            res.append(
+                try SNACResidualUnit(
+                    weights: w, prefix: "\(prefix).block.layers.\(i)",
+                    dim: inputDim, dilation: dil, groups: groups))
         }
         self.residuals = res
         // layers.3 — Snake1d
         self.snakeAlpha = try w.floats("\(prefix).block.layers.3.alpha")
         // layers.4 — WNConv1d(k=2*stride, stride, pad=ceil(stride/2))
         let pad = Int(ceil(Double(stride) / 2.0))
-        self.convDown = try w.wnConv1d(prefix: "\(prefix).block.layers.4",
-                                       stride: stride, padding: pad,
-                                       dilation: 1, groups: 1)
+        self.convDown = try w.wnConv1d(
+            prefix: "\(prefix).block.layers.4",
+            stride: stride, padding: pad,
+            dilation: 1, groups: 1)
     }
 
     func callAsFunction(_ x: [Float], shape: [Int]) -> (data: [Float], shape: [Int]) {
@@ -90,12 +98,14 @@ struct SNACEncoderBlock {
 struct SNACDecoderBlock {
     let snakeAlpha: [Float]
     let convUp: SNACWNConvTranspose1d
-    let noiseConv: SNACWNConv1d?     // 1x1 WNConv, bias-free, when noise on
+    let noiseConv: SNACWNConv1d?  // 1x1 WNConv, bias-free, when noise on
     let residuals: [SNACResidualUnit]
 
-    init(weights w: SNACWeights, prefix: String,
-         inputDim: Int, outputDim: Int, stride: Int,
-         noise: Bool, groups: Int) throws {
+    init(
+        weights w: SNACWeights, prefix: String,
+        inputDim: Int, outputDim: Int, stride: Int,
+        noise: Bool, groups: Int
+    ) throws {
         // layers.0 — Snake1d
         self.snakeAlpha = try w.floats("\(prefix).block.layers.0.alpha")
         // layers.1 — WNConvTranspose1d(k=2*stride, stride,
@@ -120,9 +130,10 @@ struct SNACDecoderBlock {
 
         var res: [SNACResidualUnit] = []
         for dil in [1, 3, 9] {
-            res.append(try SNACResidualUnit(
-                weights: w, prefix: "\(prefix).block.layers.\(idx)",
-                dim: outputDim, dilation: dil, groups: groups))
+            res.append(
+                try SNACResidualUnit(
+                    weights: w, prefix: "\(prefix).block.layers.\(idx)",
+                    dim: outputDim, dilation: dil, groups: groups))
             idx += 1
         }
         self.residuals = res
@@ -156,22 +167,26 @@ struct SNACVectorQuantize {
     let codebookDim: Int
     let stride: Int
 
-    let inProj: SNACWNConv1d        // [codebookDim, inputDim, 1]
-    let outProj: SNACWNConv1d       // [inputDim, codebookDim, 1]
-    let codebook: [Float]           // [codebookSize, codebookDim]
+    let inProj: SNACWNConv1d  // [codebookDim, inputDim, 1]
+    let outProj: SNACWNConv1d  // [inputDim, codebookDim, 1]
+    let codebook: [Float]  // [codebookSize, codebookDim]
     let inputDim: Int
 
-    init(weights w: SNACWeights, prefix: String,
-         codebookSize: Int, codebookDim: Int, stride: Int) throws {
+    init(
+        weights w: SNACWeights, prefix: String,
+        codebookSize: Int, codebookDim: Int, stride: Int
+    ) throws {
         self.codebookSize = codebookSize
         self.codebookDim = codebookDim
         self.stride = stride
-        self.inProj = try w.wnConv1d(prefix: "\(prefix).in_proj",
-                                     stride: 1, padding: 0,
-                                     dilation: 1, groups: 1)
-        self.outProj = try w.wnConv1d(prefix: "\(prefix).out_proj",
-                                      stride: 1, padding: 0,
-                                      dilation: 1, groups: 1)
+        self.inProj = try w.wnConv1d(
+            prefix: "\(prefix).in_proj",
+            stride: 1, padding: 0,
+            dilation: 1, groups: 1)
+        self.outProj = try w.wnConv1d(
+            prefix: "\(prefix).out_proj",
+            stride: 1, padding: 0,
+            dilation: 1, groups: 1)
         self.codebook = try w.floats("\(prefix).codebook.weight")
         // out_proj weight is [inputDim, codebookDim, 1].
         self.inputDim = outProj.wShape[0]
@@ -183,13 +198,13 @@ struct SNACVectorQuantize {
         let (n, c, l) = (shape[0], shape[1], shape[2])
         let lOut = l / stride
         var out = [Float](repeating: 0, count: n * c * lOut)
-        for b in 0..<n {
-            for ch in 0..<c {
+        for b in 0 ..< n {
+            for ch in 0 ..< c {
                 let inBase = (b * c + ch) * l
                 let outBase = (b * c + ch) * lOut
-                for t in 0..<lOut {
+                for t in 0 ..< lOut {
                     var acc: Float = 0
-                    for k in 0..<stride { acc += x[inBase + t * stride + k] }
+                    for k in 0 ..< stride { acc += x[inBase + t * stride + k] }
                     out[outBase + t] = acc / Float(stride)
                 }
             }
@@ -198,19 +213,21 @@ struct SNACVectorQuantize {
     }
 
     /// Repeat-interleave an NCL tensor along time by `stride`.
-    private func repeatInterleave(_ x: [Float],
-                                  shape: [Int]) -> (data: [Float], shape: [Int]) {
+    private func repeatInterleave(
+        _ x: [Float],
+        shape: [Int]
+    ) -> (data: [Float], shape: [Int]) {
         if stride == 1 { return (x, shape) }
         let (n, c, l) = (shape[0], shape[1], shape[2])
         let lOut = l * stride
         var out = [Float](repeating: 0, count: n * c * lOut)
-        for b in 0..<n {
-            for ch in 0..<c {
+        for b in 0 ..< n {
+            for ch in 0 ..< c {
                 let inBase = (b * c + ch) * l
                 let outBase = (b * c + ch) * lOut
-                for t in 0..<l {
+                for t in 0 ..< l {
                     let v = x[inBase + t]
-                    for k in 0..<stride { out[outBase + t * stride + k] = v }
+                    for k in 0 ..< stride { out[outBase + t * stride + k] = v }
                 }
             }
         }
@@ -219,47 +236,54 @@ struct SNACVectorQuantize {
 
     /// Nearest-codebook lookup. `latents` is NCL `[1, codebookDim, T]`.
     /// Returns the picked indices `[T]` and the quantized latent `[1, D, T]`.
-    private func decodeLatents(_ latents: [Float],
-                               shape: [Int]) -> (zQ: [Float], indices: [Int32]) {
+    private func decodeLatents(
+        _ latents: [Float],
+        shape: [Int]
+    ) -> (zQ: [Float], indices: [Int32]) {
         let (_, d, t) = (shape[0], shape[1], shape[2])
         // Rearrange b d t -> (b t) d.
         var enc = [Float](repeating: 0, count: t * d)
-        for i in 0..<t {
-            for c in 0..<d { enc[i * d + c] = latents[c * t + i] }
+        for i in 0 ..< t {
+            for c in 0 ..< d { enc[i * d + c] = latents[c * t + i] }
         }
         // Normalize both encodings and codebook, then nearest by
         // distance = ||e||^2 - 2 e·c + ||c||^2.
         let encN = AudioMath.l2NormalizeRows(enc, rows: t, dim: d)
         let cbN = AudioMath.l2NormalizeRows(codebook, rows: codebookSize, dim: d)
         var indices = [Int32](repeating: 0, count: t)
-        for i in 0..<t {
+        for i in 0 ..< t {
             var best: Float = .greatestFiniteMagnitude
             var bestIdx = 0
             let eBase = i * d
-            for ci in 0..<codebookSize {
+            for ci in 0 ..< codebookSize {
                 let cBase = ci * d
                 var dot: Float = 0
-                for c in 0..<d { dot += encN[eBase + c] * cbN[cBase + c] }
+                for c in 0 ..< d { dot += encN[eBase + c] * cbN[cBase + c] }
                 // ||e||^2 and ||c||^2 are both 1 after normalization, so
                 // distance is monotone in -dot; maximize dot.
                 let dist = 2.0 - 2.0 * dot
-                if dist < best { best = dist; bestIdx = ci }
+                if dist < best {
+                    best = dist
+                    bestIdx = ci
+                }
             }
             indices[i] = Int32(bestIdx)
         }
         // zQ = codebook[indices], rearranged back to [1, D, T].
         var zQ = [Float](repeating: 0, count: d * t)
-        for i in 0..<t {
+        for i in 0 ..< t {
             let cBase = Int(indices[i]) * d
-            for c in 0..<d { zQ[c * t + i] = codebook[cBase + c] }
+            for c in 0 ..< d { zQ[c * t + i] = codebook[cBase + c] }
         }
         return (zQ, indices)
     }
 
     /// Encode a residual latent: returns the upsampled quantized latent
     /// (for residual subtraction), the projected latent, and the codes.
-    func encode(_ z: [Float],
-                shape: [Int]) throws -> (zQ: [Float], zE: [Float], indices: [Int32]) {
+    func encode(
+        _ z: [Float],
+        shape: [Int]
+    ) throws -> (zQ: [Float], zE: [Float], indices: [Int32]) {
         var (d, s) = (z, shape)
         (d, s) = avgPool(d, shape: s)
         // in_proj: [B, inputDim, T] -> [B, codebookDim, T].
@@ -277,9 +301,9 @@ struct SNACVectorQuantize {
         let t = codes.count
         // codebook lookup -> [1, codebookDim, T].
         var zLatent = [Float](repeating: 0, count: codebookDim * t)
-        for i in 0..<t {
+        for i in 0 ..< t {
             let cBase = Int(codes[i]) * codebookDim
-            for c in 0..<codebookDim { zLatent[c * t + i] = codebook[cBase + c] }
+            for c in 0 ..< codebookDim { zLatent[c * t + i] = codebook[cBase + c] }
         }
         let (zQ, zqShape) = outProj(zLatent, shape: [1, codebookDim, t])
         return repeatInterleave(zQ, shape: zqShape)

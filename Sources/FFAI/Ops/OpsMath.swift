@@ -34,48 +34,81 @@ extension Ops {
     // ─── Binary elementwise: sub, div, pow, maxElem, minElem ─────────
 
     /// Element-wise `out[i] = a[i] - b[i]`. Wraps `mt_sub_*`.
-    public static func sub(_ a: Tensor, _ b: Tensor, on cmd: MTLCommandBuffer,
-                           into out: Tensor? = nil) -> Tensor {
+    public static func sub(
+        _ a: Tensor, _ b: Tensor, on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         precondition(a.shape == b.shape, "sub: shape mismatch \(a.shape) vs \(b.shape)")
         precondition(a.dtype == b.dtype, "sub: dtype mismatch")
         let result = out ?? Tensor.empty(shape: a.shape, dtype: a.dtype)
         let (grid, tg) = elementwiseGrid(a.elementCount)
         switch a.dtype {
-        case .f32:  MetalTileKernels.mt_sub_f32(a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer, outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .f16:  MetalTileKernels.mt_sub_f16(a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer, outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .bf16: MetalTileKernels.mt_sub_bf16(a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer, outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f32:
+            MetalTileKernels.mt_sub_f32(
+                a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer,
+                outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_sub_f16(
+                a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer,
+                outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_sub_bf16(
+                a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer,
+                outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
         default: fatalError("Ops.sub: unsupported dtype \(a.dtype)")
         }
         return result
     }
 
     /// Element-wise `out[i] = a[i] / b[i]`. Wraps `mt_div_*`.
-    public static func div(_ a: Tensor, _ b: Tensor, on cmd: MTLCommandBuffer,
-                           into out: Tensor? = nil) -> Tensor {
+    public static func div(
+        _ a: Tensor, _ b: Tensor, on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         precondition(a.shape == b.shape, "div: shape mismatch \(a.shape) vs \(b.shape)")
         precondition(a.dtype == b.dtype, "div: dtype mismatch")
         let result = out ?? Tensor.empty(shape: a.shape, dtype: a.dtype)
         let (grid, tg) = elementwiseGrid(a.elementCount)
         switch a.dtype {
-        case .f32:  MetalTileKernels.mt_div_f32(a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer, outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .f16:  MetalTileKernels.mt_div_f16(a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer, outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .bf16: MetalTileKernels.mt_div_bf16(a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer, outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f32:
+            MetalTileKernels.mt_div_f32(
+                a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer,
+                outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_div_f16(
+                a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer,
+                outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_div_bf16(
+                a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer,
+                outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
         default: fatalError("Ops.div: unsupported dtype \(a.dtype)")
         }
         return result
     }
 
     /// Element-wise `out[i] = a[i] ^ b[i]`. Wraps `mt_pow_*`.
-    public static func pow(_ a: Tensor, _ b: Tensor, on cmd: MTLCommandBuffer,
-                           into out: Tensor? = nil) -> Tensor {
+    public static func pow(
+        _ a: Tensor, _ b: Tensor, on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         precondition(a.shape == b.shape, "pow: shape mismatch")
         precondition(a.dtype == b.dtype, "pow: dtype mismatch")
         let result = out ?? Tensor.empty(shape: a.shape, dtype: a.dtype)
         let (grid, tg) = elementwiseGrid(a.elementCount)
         switch a.dtype {
-        case .f32:  MetalTileKernels.mt_pow_f32(a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer, outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .f16:  MetalTileKernels.mt_pow_f16(a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer, outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .bf16: MetalTileKernels.mt_pow_bf16(a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer, outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f32:
+            MetalTileKernels.mt_pow_f32(
+                a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer,
+                outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_pow_f16(
+                a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer,
+                outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_pow_bf16(
+                a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer,
+                outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
         default: fatalError("Ops.pow: unsupported dtype \(a.dtype)")
         }
         return result
@@ -84,32 +117,54 @@ extension Ops {
     /// Element-wise `out[i] = max(a[i], b[i])`. Wraps `mt_max_elem_*`.
     /// Distinct from `Ops.argmax` / `mt_max_elem` per-tensor; this is
     /// per-element maximum across two tensors.
-    public static func maxElem(_ a: Tensor, _ b: Tensor, on cmd: MTLCommandBuffer,
-                               into out: Tensor? = nil) -> Tensor {
+    public static func maxElem(
+        _ a: Tensor, _ b: Tensor, on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         precondition(a.shape == b.shape, "maxElem: shape mismatch")
         precondition(a.dtype == b.dtype, "maxElem: dtype mismatch")
         let result = out ?? Tensor.empty(shape: a.shape, dtype: a.dtype)
         let (grid, tg) = elementwiseGrid(a.elementCount)
         switch a.dtype {
-        case .f32:  MetalTileKernels.mt_max_elem_f32(a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer, outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .f16:  MetalTileKernels.mt_max_elem_f16(a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer, outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .bf16: MetalTileKernels.mt_max_elem_bf16(a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer, outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f32:
+            MetalTileKernels.mt_max_elem_f32(
+                a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer,
+                outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_max_elem_f16(
+                a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer,
+                outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_max_elem_bf16(
+                a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer,
+                outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
         default: fatalError("Ops.maxElem: unsupported dtype \(a.dtype)")
         }
         return result
     }
 
     /// Element-wise `out[i] = min(a[i], b[i])`. Wraps `mt_min_elem_*`.
-    public static func minElem(_ a: Tensor, _ b: Tensor, on cmd: MTLCommandBuffer,
-                               into out: Tensor? = nil) -> Tensor {
+    public static func minElem(
+        _ a: Tensor, _ b: Tensor, on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         precondition(a.shape == b.shape, "minElem: shape mismatch")
         precondition(a.dtype == b.dtype, "minElem: dtype mismatch")
         let result = out ?? Tensor.empty(shape: a.shape, dtype: a.dtype)
         let (grid, tg) = elementwiseGrid(a.elementCount)
         switch a.dtype {
-        case .f32:  MetalTileKernels.mt_min_elem_f32(a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer, outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .f16:  MetalTileKernels.mt_min_elem_f16(a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer, outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .bf16: MetalTileKernels.mt_min_elem_bf16(a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer, outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f32:
+            MetalTileKernels.mt_min_elem_f32(
+                a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer,
+                outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_min_elem_f16(
+                a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer,
+                outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_min_elem_bf16(
+                a: a.buffer, aOffset: a.offset, b: b.buffer, bOffset: b.offset, out: result.buffer,
+                outOffset: result.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
         default: fatalError("Ops.minElem: unsupported dtype \(a.dtype)")
         }
         return result
@@ -131,8 +186,8 @@ extension Ops {
         let result = out ?? Tensor.empty(shape: x.shape, dtype: x.dtype)
         let (grid, tg) = elementwiseGrid(x.elementCount)
         switch x.dtype {
-        case .f32:  f32(x.buffer, x.offset, result.buffer, result.offset, grid, tg, cmd)
-        case .f16:  f16(x.buffer, x.offset, result.buffer, result.offset, grid, tg, cmd)
+        case .f32: f32(x.buffer, x.offset, result.buffer, result.offset, grid, tg, cmd)
+        case .f16: f16(x.buffer, x.offset, result.buffer, result.offset, grid, tg, cmd)
         case .bf16: bf16(x.buffer, x.offset, result.buffer, result.offset, grid, tg, cmd)
         default: fatalError("Ops.\(name): unsupported dtype \(x.dtype)")
         }
@@ -141,92 +196,234 @@ extension Ops {
 
     /// Element-wise `out[i] = -x[i]`.
     public static func neg(_ x: Tensor, on cmd: MTLCommandBuffer, into out: Tensor? = nil) -> Tensor {
-        runUnary(x, out, "neg",
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_neg_f32(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_neg_f16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_neg_bf16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
+        runUnary(
+            x, out, "neg",
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_neg_f32(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_neg_f16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_neg_bf16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
             on: cmd)
     }
 
     /// Element-wise `out[i] = |x[i]|`.
     public static func abs(_ x: Tensor, on cmd: MTLCommandBuffer, into out: Tensor? = nil) -> Tensor {
-        runUnary(x, out, "abs",
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_abs_f32(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_abs_f16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_abs_bf16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
+        runUnary(
+            x, out, "abs",
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_abs_f32(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_abs_f16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_abs_bf16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
             on: cmd)
     }
 
     /// Element-wise `out[i] = exp(x[i])`.
     public static func exp(_ x: Tensor, on cmd: MTLCommandBuffer, into out: Tensor? = nil) -> Tensor {
-        runUnary(x, out, "exp",
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_exp_f32(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_exp_f16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_exp_bf16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
+        runUnary(
+            x, out, "exp",
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_exp_f32(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_exp_f16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_exp_bf16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
             on: cmd)
     }
 
     /// Element-wise `out[i] = log(x[i])`.
     public static func log(_ x: Tensor, on cmd: MTLCommandBuffer, into out: Tensor? = nil) -> Tensor {
-        runUnary(x, out, "log",
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_log_f32(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_log_f16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_log_bf16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
+        runUnary(
+            x, out, "log",
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_log_f32(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_log_f16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_log_bf16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
             on: cmd)
     }
 
     /// Element-wise `out[i] = sqrt(x[i])`.
-    public static func sqrt(_ x: Tensor, on cmd: MTLCommandBuffer, into out: Tensor? = nil) -> Tensor {
-        runUnary(x, out, "sqrt",
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_sqrt_f32(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_sqrt_f16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_sqrt_bf16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
+    public static func sqrt(_ x: Tensor, on cmd: MTLCommandBuffer, into out: Tensor? = nil)
+        -> Tensor
+    {
+        runUnary(
+            x, out, "sqrt",
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_sqrt_f32(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_sqrt_f16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_sqrt_bf16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
             on: cmd)
     }
 
     /// Element-wise `out[i] = x[i] * x[i]`.
-    public static func square(_ x: Tensor, on cmd: MTLCommandBuffer, into out: Tensor? = nil) -> Tensor {
-        runUnary(x, out, "square",
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_square_f32(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_square_f16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_square_bf16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
+    public static func square(_ x: Tensor, on cmd: MTLCommandBuffer, into out: Tensor? = nil)
+        -> Tensor
+    {
+        runUnary(
+            x, out, "square",
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_square_f32(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_square_f16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_square_bf16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
             on: cmd)
     }
 
     /// Element-wise `out[i] = 1 / x[i]`.
-    public static func recip(_ x: Tensor, on cmd: MTLCommandBuffer, into out: Tensor? = nil) -> Tensor {
-        runUnary(x, out, "recip",
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_recip_f32(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_recip_f16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_recip_bf16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
+    public static func recip(_ x: Tensor, on cmd: MTLCommandBuffer, into out: Tensor? = nil)
+        -> Tensor
+    {
+        runUnary(
+            x, out, "recip",
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_recip_f32(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_recip_f16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_recip_bf16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
             on: cmd)
     }
 
     /// Element-wise `out[i] = floor(x[i])`.
-    public static func floor(_ x: Tensor, on cmd: MTLCommandBuffer, into out: Tensor? = nil) -> Tensor {
-        runUnary(x, out, "floor",
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_floor_f32(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_floor_f16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_floor_bf16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
+    public static func floor(_ x: Tensor, on cmd: MTLCommandBuffer, into out: Tensor? = nil)
+        -> Tensor
+    {
+        runUnary(
+            x, out, "floor",
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_floor_f32(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_floor_f16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_floor_bf16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
             on: cmd)
     }
 
     /// Element-wise `out[i] = ceil(x[i])`.
-    public static func ceil(_ x: Tensor, on cmd: MTLCommandBuffer, into out: Tensor? = nil) -> Tensor {
-        runUnary(x, out, "ceil",
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_ceil_f32(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_ceil_f16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_ceil_bf16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
+    public static func ceil(_ x: Tensor, on cmd: MTLCommandBuffer, into out: Tensor? = nil)
+        -> Tensor
+    {
+        runUnary(
+            x, out, "ceil",
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_ceil_f32(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_ceil_f16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_ceil_bf16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
             on: cmd)
     }
 
     /// Element-wise `out[i] = round(x[i])` (banker's rounding via the
     /// Metal IEEE-754 `rint` semantic).
-    public static func round(_ x: Tensor, on cmd: MTLCommandBuffer, into out: Tensor? = nil) -> Tensor {
-        runUnary(x, out, "round",
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_round_f32(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_round_f16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
-            { a, ao, o, oo, g, t, c in MetalTileKernels.mt_round_bf16(a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c) },
+    public static func round(_ x: Tensor, on cmd: MTLCommandBuffer, into out: Tensor? = nil)
+        -> Tensor
+    {
+        runUnary(
+            x, out, "round",
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_round_f32(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_round_f16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
+            { a, ao, o, oo, g, t, c in
+                MetalTileKernels.mt_round_bf16(
+                    a: a, aOffset: ao, out: o, outOffset: oo, gridSize: g, threadgroupSize: t, on: c
+                )
+            },
             on: cmd)
     }
 
@@ -239,16 +436,28 @@ extension Ops {
     // an encoder boundary; a compute dispatch chains with neighbouring
     // compute work).
 
-    public static func copyKernel(_ src: Tensor, into dst: Tensor,
-                                  on cmd: MTLCommandBuffer) {
-        precondition(src.elementCount == dst.elementCount,
-                     "Ops.copyKernel: element-count mismatch")
+    public static func copyKernel(
+        _ src: Tensor, into dst: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            src.elementCount == dst.elementCount,
+            "Ops.copyKernel: element-count mismatch")
         precondition(src.dtype == dst.dtype, "Ops.copyKernel: dtype mismatch")
         let (grid, tg) = elementwiseGrid(src.elementCount)
         switch src.dtype {
-        case .f32:  MetalTileKernels.mt_copy_f32(a: src.buffer, aOffset: src.offset, out: dst.buffer, outOffset: dst.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .f16:  MetalTileKernels.mt_copy_f16(a: src.buffer, aOffset: src.offset, out: dst.buffer, outOffset: dst.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .bf16: MetalTileKernels.mt_copy_bf16(a: src.buffer, aOffset: src.offset, out: dst.buffer, outOffset: dst.offset, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f32:
+            MetalTileKernels.mt_copy_f32(
+                a: src.buffer, aOffset: src.offset, out: dst.buffer, outOffset: dst.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_copy_f16(
+                a: src.buffer, aOffset: src.offset, out: dst.buffer, outOffset: dst.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_copy_bf16(
+                a: src.buffer, aOffset: src.offset, out: dst.buffer, outOffset: dst.offset,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
         default: fatalError("Ops.copyKernel: unsupported dtype \(src.dtype)")
         }
     }
@@ -262,8 +471,10 @@ extension Ops {
 
     /// Fill `out` with the linspace `[start, start + step, …,
     /// start + (n-1)*step]`. `out.elementCount` is treated as `n`.
-    public static func arange(start: Float, step: Float,
-                              into out: Tensor, on cmd: MTLCommandBuffer) {
+    public static func arange(
+        start: Float, step: Float,
+        into out: Tensor, on cmd: MTLCommandBuffer
+    ) {
         let n = out.elementCount
         precondition(n > 0, "Ops.arange: out must be non-empty")
         // Scalar buffers are allocated as small 4-byte slabs. For f16 /
@@ -297,8 +508,10 @@ extension Ops {
     /// Wraps `mt_softmax_*`: one threadgroup per row, online max + sum
     /// reduction, then a second pass writes the normalised output. The
     /// vocab length `n` is a runtime constexpr — no per-vocab PSO churn.
-    public static func softmax(_ x: Tensor, on cmd: MTLCommandBuffer,
-                               into out: Tensor? = nil) -> Tensor {
+    public static func softmax(
+        _ x: Tensor, on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         precondition(!x.shape.isEmpty, "Ops.softmax: x must be non-empty")
         let result = out ?? Tensor.empty(shape: x.shape, dtype: x.dtype)
         let n = x.shape.last!
@@ -311,9 +524,18 @@ extension Ops {
         let grid = MTLSize(width: rows * tgSize, height: 1, depth: 1)
         let tg = MTLSize(width: tgSize, height: 1, depth: 1)
         switch x.dtype {
-        case .f32:  MetalTileKernels.mt_softmax_f32(inp: x.buffer, inpOffset: x.offset, out: result.buffer, outOffset: result.offset, n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .f16:  MetalTileKernels.mt_softmax_f16(inp: x.buffer, inpOffset: x.offset, out: result.buffer, outOffset: result.offset, n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .bf16: MetalTileKernels.mt_softmax_bf16(inp: x.buffer, inpOffset: x.offset, out: result.buffer, outOffset: result.offset, n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f32:
+            MetalTileKernels.mt_softmax_f32(
+                inp: x.buffer, inpOffset: x.offset, out: result.buffer, outOffset: result.offset,
+                n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_softmax_f16(
+                inp: x.buffer, inpOffset: x.offset, out: result.buffer, outOffset: result.offset,
+                n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_softmax_bf16(
+                inp: x.buffer, inpOffset: x.offset, out: result.buffer, outOffset: result.offset,
+                n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
         default: fatalError("Ops.softmax: unsupported dtype \(x.dtype)")
         }
         return result
@@ -321,23 +543,36 @@ extension Ops {
 
     /// `out[r] = log(sum_i exp(x[r, i]))`. One threadgroup per row,
     /// fp32 accumulation. Output element-count equals row count.
-    public static func logsumexp(_ x: Tensor, on cmd: MTLCommandBuffer,
-                                 into out: Tensor? = nil) -> Tensor {
+    public static func logsumexp(
+        _ x: Tensor, on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         precondition(!x.shape.isEmpty, "Ops.logsumexp: x must be non-empty")
         let n = x.shape.last!
         let rows = x.elementCount / n
         let outShape = Array(x.shape.dropLast())
         let resultShape = outShape.isEmpty ? [1] : outShape
         let result = out ?? Tensor.empty(shape: resultShape, dtype: x.dtype)
-        precondition(result.elementCount == rows,
-                     "Ops.logsumexp: out element-count (\(result.elementCount)) must match row count \(rows)")
+        precondition(
+            result.elementCount == rows,
+            "Ops.logsumexp: out element-count (\(result.elementCount)) must match row count \(rows)"
+        )
         let tgSize = 256
         let grid = MTLSize(width: rows * tgSize, height: 1, depth: 1)
         let tg = MTLSize(width: tgSize, height: 1, depth: 1)
         switch x.dtype {
-        case .f32:  MetalTileKernels.mt_logsumexp_f32(inp: x.buffer, inpOffset: x.offset, out: result.buffer, outOffset: result.offset, n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .f16:  MetalTileKernels.mt_logsumexp_f16(inp: x.buffer, inpOffset: x.offset, out: result.buffer, outOffset: result.offset, n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .bf16: MetalTileKernels.mt_logsumexp_bf16(inp: x.buffer, inpOffset: x.offset, out: result.buffer, outOffset: result.offset, n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f32:
+            MetalTileKernels.mt_logsumexp_f32(
+                inp: x.buffer, inpOffset: x.offset, out: result.buffer, outOffset: result.offset,
+                n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_logsumexp_f16(
+                inp: x.buffer, inpOffset: x.offset, out: result.buffer, outOffset: result.offset,
+                n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_logsumexp_bf16(
+                inp: x.buffer, inpOffset: x.offset, out: result.buffer, outOffset: result.offset,
+                n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
         default: fatalError("Ops.logsumexp: unsupported dtype \(x.dtype)")
         }
         return result
@@ -345,21 +580,33 @@ extension Ops {
 
     /// `out[r] = argmin_i x[r, i]` as a u32 buffer.
     /// One threadgroup per row, TPG = 256.
-    public static func argmin(_ x: Tensor, into out: Tensor,
-                              on cmd: MTLCommandBuffer) {
+    public static func argmin(
+        _ x: Tensor, into out: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
         precondition(out.dtype == .u32, "Ops.argmin: out must be u32")
         precondition(!x.shape.isEmpty, "Ops.argmin: x must be non-empty")
         let n = x.shape.last!
         let rows = x.elementCount / n
-        precondition(out.elementCount == rows,
-                     "Ops.argmin: out element-count (\(out.elementCount)) must match row count \(rows)")
+        precondition(
+            out.elementCount == rows,
+            "Ops.argmin: out element-count (\(out.elementCount)) must match row count \(rows)")
         let tgSize = 256
         let grid = MTLSize(width: rows * tgSize, height: 1, depth: 1)
         let tg = MTLSize(width: tgSize, height: 1, depth: 1)
         switch x.dtype {
-        case .f32:  MetalTileKernels.mt_argmin_f32(inp: x.buffer, inpOffset: x.offset, out: out.buffer, outOffset: out.offset, n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .f16:  MetalTileKernels.mt_argmin_f16(inp: x.buffer, inpOffset: x.offset, out: out.buffer, outOffset: out.offset, n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .bf16: MetalTileKernels.mt_argmin_bf16(inp: x.buffer, inpOffset: x.offset, out: out.buffer, outOffset: out.offset, n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f32:
+            MetalTileKernels.mt_argmin_f32(
+                inp: x.buffer, inpOffset: x.offset, out: out.buffer, outOffset: out.offset,
+                n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_argmin_f16(
+                inp: x.buffer, inpOffset: x.offset, out: out.buffer, outOffset: out.offset,
+                n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_argmin_bf16(
+                inp: x.buffer, inpOffset: x.offset, out: out.buffer, outOffset: out.offset,
+                n: UInt32(n), gridSize: grid, threadgroupSize: tg, on: cmd)
         default: fatalError("Ops.argmin: unsupported dtype \(x.dtype)")
         }
     }

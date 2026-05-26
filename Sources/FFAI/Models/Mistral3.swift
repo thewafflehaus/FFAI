@@ -83,7 +83,7 @@ public enum Mistral3 {
 
     /// Architecture strings used by Mistral3-family HF conversions.
     public static let architectures: Set<String> = [
-        "Mistral3ForConditionalGeneration",
+        "Mistral3ForConditionalGeneration"
     ]
 
     /// Default `image_token_id` for Mistral3. The tokenizer's `[IMG]`
@@ -101,7 +101,7 @@ public enum Mistral3 {
         options: LoadOptions, device: Device
     ) throws -> VisionModel {
         guard let visionConfig = config.subConfig("vision_config"),
-              let textConfig = config.subConfig("text_config")
+            let textConfig = config.subConfig("text_config")
         else {
             throw Mistral3Error.missingConfig
         }
@@ -113,8 +113,9 @@ public enum Mistral3 {
         let mergedTextConfig = ModelConfig(
             architecture: "MistralForCausalLM",
             modelType: textConfig.modelType ?? "mistral",
-            raw: pixtralTextConfigWithDefaults(textConfig.raw,
-                                               vocabFallback: config.int("vocab_size")))
+            raw: pixtralTextConfigWithDefaults(
+                textConfig.raw,
+                vocabFallback: config.int("vocab_size")))
         let textWeights = weights.prefixed("language_model.")
         let textEngine = try LlamaDense.loadModel(
             config: mergedTextConfig, weights: textWeights,
@@ -156,7 +157,8 @@ public enum Mistral3 {
         // the Mistral3ComposedEncoder override.
         let mergedPatches = visionCfg.numPatches / (spatialMergeSize * spatialMergeSize)
 
-        let imageTokenId = config.int("image_token_id")
+        let imageTokenId =
+            config.int("image_token_id")
             ?? config.int("image_token_index")
             ?? defaultImageTokenId
 

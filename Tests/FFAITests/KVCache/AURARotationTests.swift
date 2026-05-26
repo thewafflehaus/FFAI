@@ -13,6 +13,7 @@
 // limitations under the License.
 //
 import Testing
+
 @testable import FFAI
 
 @Suite("AURARotation")
@@ -25,22 +26,24 @@ struct AURARotationTests {
 
         // H_4 = [[1,1,1,1], [1,-1,1,-1], [1,1,-1,-1], [1,-1,-1,1]]
         let h4: [Float] = [
-            1,  1,  1,  1,
-            1, -1,  1, -1,
-            1,  1, -1, -1,
-            1, -1, -1,  1,
+            1, 1, 1, 1,
+            1, -1, 1, -1,
+            1, 1, -1, -1,
+            1, -1, -1, 1,
         ]
         #expect(AURARotation.hadamardMatrix(dim: 4) == h4)
 
         // Spot-check at dim=8 that the orthogonality H · H^T = 8·I holds.
         let h = AURARotation.hadamardMatrix(dim: 8)
-        for i in 0..<8 {
-            for j in 0..<8 {
+        for i in 0 ..< 8 {
+            for j in 0 ..< 8 {
                 var dot: Float = 0
-                for k in 0..<8 { dot += h[i * 8 + k] * h[j * 8 + k] }
+                for k in 0 ..< 8 { dot += h[i * 8 + k] * h[j * 8 + k] }
                 let expected: Float = (i == j) ? 8.0 : 0.0
-                #expect(abs(dot - expected) < 1e-5,
-                        "hadamardMatrix(8) not orthogonal: row \(i) · row \(j) = \(dot), expected \(expected)")
+                #expect(
+                    abs(dot - expected) < 1e-5,
+                    "hadamardMatrix(8) not orthogonal: row \(i) · row \(j) = \(dot), expected \(expected)"
+                )
             }
         }
     }
@@ -51,16 +54,16 @@ struct AURARotationTests {
         let h = AURARotation.hadamardMatrix(dim: dim)
         // Sample the diagonal + a few off-diagonal entries; full pairwise
         // is O(dim^3) and overkill for a sanity test.
-        for i in 0..<dim {
+        for i in 0 ..< dim {
             var dot: Float = 0
-            for k in 0..<dim { dot += h[i * dim + k] * h[i * dim + k] }
+            for k in 0 ..< dim { dot += h[i * dim + k] * h[i * dim + k] }
             #expect(abs(dot - Float(dim)) < 1e-3, "diagonal[\(i)] = \(dot), expected \(dim)")
         }
         // Off-diagonal sample
         let pairs = [(0, 1), (0, 7), (3, 11), (17, 64), (100, 127)]
         for (i, j) in pairs {
             var dot: Float = 0
-            for k in 0..<dim { dot += h[i * dim + k] * h[j * dim + k] }
+            for k in 0 ..< dim { dot += h[i * dim + k] * h[j * dim + k] }
             #expect(abs(dot) < 1e-3, "off-diagonal[\(i),\(j)] = \(dot), expected 0")
         }
     }
@@ -85,12 +88,12 @@ struct AURARotationTests {
         // Π · Π^T should be ≈ I. Sample a few rows.
         for i in [0, 1, 17, 100, dim - 1] {
             var dot: Float = 0
-            for k in 0..<dim { dot += pi[i * dim + k] * pi[i * dim + k] }
+            for k in 0 ..< dim { dot += pi[i * dim + k] * pi[i * dim + k] }
             #expect(abs(dot - 1.0) < 1e-4, "row \(i) · row \(i) = \(dot), expected 1.0")
         }
         for (i, j) in [(0, 1), (0, 17), (3, 50), (100, 127)] {
             var dot: Float = 0
-            for k in 0..<dim { dot += pi[i * dim + k] * pi[j * dim + k] }
+            for k in 0 ..< dim { dot += pi[i * dim + k] * pi[j * dim + k] }
             #expect(abs(dot) < 1e-4, "row \(i) · row \(j) = \(dot), expected 0")
         }
     }
@@ -100,8 +103,8 @@ struct AURARotationTests {
         let dim = 16
         let id = AURARotation.identityMatrix(dim: dim)
         #expect(id.count == dim * dim)
-        for i in 0..<dim {
-            for j in 0..<dim {
+        for i in 0 ..< dim {
+            for j in 0 ..< dim {
                 let want: Float = (i == j) ? 1.0 : 0.0
                 #expect(id[i * dim + j] == want, "identity[\(i),\(j)] = \(id[i * dim + j])")
             }

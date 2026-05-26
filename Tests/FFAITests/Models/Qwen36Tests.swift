@@ -23,6 +23,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Qwen36 Family Root (shared Qwen35 hybrid types)")
@@ -41,8 +42,9 @@ struct Qwen36RootTests {
 
     @Test("Qwen36 routes through Qwen35Hybrid (the shared backbone type)")
     func sharedVariantType() throws {
-        let cfg = ModelConfig(architecture: "Qwen3_5MoeForCausalLM",
-                              modelType: "qwen3_5_moe", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "Qwen3_5MoeForCausalLM",
+            modelType: "qwen3_5_moe", raw: [:])
         let v = try Qwen35.variant(for: cfg)
         #expect(String(describing: v) == String(describing: Qwen35Hybrid.self))
     }

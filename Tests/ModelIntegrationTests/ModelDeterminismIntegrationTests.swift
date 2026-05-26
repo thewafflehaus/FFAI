@@ -23,29 +23,33 @@
 // Skipped automatically if the network/checkpoint isn't available.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Model Determinism Integration", .serialized)
 struct ModelDeterminismIntegrationTests {
 
     @Test("forwardSample(BOS) returns the same token on three back-to-back calls")
     func forwardSampleIsDeterministic() async throws {
-        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load("mlx-community/Qwen3-1.7B-bf16") }
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load("mlx-community/Qwen3-1.7B-bf16")
+        }
         let qwen3 = try #require(m.qwen3, "determinism smoke: expected Qwen3 engine")
 
         // Three back-to-back forwards from a fresh KV cache each time.
         // Each call should produce identical logits → identical argmax.
         var sampled: [Int] = []
         var topFivePerRun: [[(Int, Float)]] = []
-        for _ in 0..<3 {
+        for _ in 0 ..< 3 {
             let caches = m.engine.makeLayerCaches()
             let logits = m.engine.forward(tokenId: 0, position: 0, caches: caches)
             topFivePerRun.append(Sampling.topN(logits, n: 5))
-            let token = qwen3.forwardSample(tokenId: 0, position: 0,
-                                            caches: m.engine.makeLayerCaches(),
-                                            device: .shared)
+            let token = qwen3.forwardSample(
+                tokenId: 0, position: 0,
+                caches: m.engine.makeLayerCaches(),
+                device: .shared)
             sampled.append(token)
         }
         print("DETERMINISM sampled tokens: \(sampled)")
@@ -53,10 +57,12 @@ struct ModelDeterminismIntegrationTests {
             print("DETERMINISM run \(i) top-5: \(top)")
         }
 
-        #expect(sampled[0] == sampled[1],
-                "forwardSample drifted between run 0 and run 1")
-        #expect(sampled[1] == sampled[2],
-                "forwardSample drifted between run 1 and run 2")
+        #expect(
+            sampled[0] == sampled[1],
+            "forwardSample drifted between run 0 and run 1")
+        #expect(
+            sampled[1] == sampled[2],
+            "forwardSample drifted between run 1 and run 2")
     }
 
     /// Full multi-token generate, three back-to-back from a freshly-loaded
@@ -65,10 +71,12 @@ struct ModelDeterminismIntegrationTests {
     /// pipeline (or the generate loop's bookkeeping).
     @Test("generate(prompt) returns the same token stream on three back-to-back calls")
     func multiTokenGenerateIsDeterministic() async throws {
-        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load("mlx-community/Qwen3-1.7B-bf16") }
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load("mlx-community/Qwen3-1.7B-bf16")
+        }
 
         var streams: [[Int]] = []
-        for run in 0..<3 {
+        for run in 0 ..< 3 {
             let result = try await m.generate(
                 prompt: "The capital of France is",
                 parameters: GenerationParameters(maxTokens: 8, temperature: 0)
@@ -76,10 +84,12 @@ struct ModelDeterminismIntegrationTests {
             print("MULTI-DETERMINISM run \(run): \(result.generatedTokens)")
             streams.append(result.generatedTokens)
         }
-        #expect(streams[0] == streams[1],
-                "multi-token generate drifted between run 0 and run 1")
-        #expect(streams[1] == streams[2],
-                "multi-token generate drifted between run 1 and run 2")
+        #expect(
+            streams[0] == streams[1],
+            "multi-token generate drifted between run 0 and run 1")
+        #expect(
+            streams[1] == streams[2],
+            "multi-token generate drifted between run 1 and run 2")
     }
 
     /// After two prefill forwards (positions 0 and 1) on the SAME model,
@@ -90,18 +100,21 @@ struct ModelDeterminismIntegrationTests {
     /// is nondeterministic.
     @Test("layer-0 K cache contents are deterministic after 2 prefill forwards")
     func kvCacheIsDeterministic() async throws {
-        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load("mlx-community/Qwen3-1.7B-bf16") }
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load("mlx-community/Qwen3-1.7B-bf16")
+        }
         let qwen3 = try #require(m.qwen3, "KV-cache determinism smoke: expected Qwen3 engine")
 
         // First 5 prompt tokens (no BOS for Qwen3): "The capital of France is".
         let promptTokens = m.tokenizer.encode(text: "The capital of France is")
 
         var hashes: [[UInt64]] = []
-        for run in 0..<3 {
+        for run in 0 ..< 3 {
             let caches = m.engine.makeLayerCaches()
             for (pos, t) in promptTokens.enumerated() {
-                _ = qwen3.forwardSample(tokenId: t, position: pos,
-                                         caches: caches, device: .shared)
+                _ = qwen3.forwardSample(
+                    tokenId: t, position: pos,
+                    caches: caches, device: .shared)
             }
             // Hash each layer's K cache so we can see at which layer the
             // drift (if any) starts.
@@ -119,7 +132,8 @@ struct ModelDeterminismIntegrationTests {
             var perLayer: [UInt64] = []
             for cache in caches {
                 guard let kv = cache as? KVCache else {
-                    perLayer.append(0); continue
+                    perLayer.append(0)
+                    continue
                 }
                 let len = kv.length
                 let bytesPerRow = kv.headDim * kv.dtype.byteSize
@@ -127,15 +141,15 @@ struct ModelDeterminismIntegrationTests {
                 let raw = kv.kBuffer.buffer.contents()
                     .advanced(by: kv.kBuffer.offset)
                     .bindMemory(to: UInt8.self, capacity: kv.kBuffer.byteCount)
-                var h: UInt64 = 1469598103934665603  // FNV-1a 64-bit offset
+                var h: UInt64 = 1_469_598_103_934_665_603  // FNV-1a 64-bit offset
                 // For each KV head, hash its filled prefix
                 // `[h * maxSeq + 0 ..< h * maxSeq + length]` rows.
-                for headIdx in 0..<kv.nKVHeads {
+                for headIdx in 0 ..< kv.nKVHeads {
                     let headStart = headIdx * bytesPerHeadCapacity
                     let filledBytes = len * bytesPerRow
-                    for i in 0..<filledBytes {
+                    for i in 0 ..< filledBytes {
                         h ^= UInt64(raw[headStart + i])
-                        h &*= 1099511628211
+                        h &*= 1_099_511_628_211
                     }
                 }
                 perLayer.append(h)

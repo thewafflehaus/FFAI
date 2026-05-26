@@ -19,17 +19,20 @@
 
 import Foundation
 import Metal
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 // ─── Mock layers ─────────────────────────────────────────────────────
 
 /// Returns the hidden state unchanged.
 private final class IdentityDecoderLayer: DecoderLayer {
     func parameters() -> [(String, Tensor)] { [] }
-    func decode(_ h: Tensor, position _: Int, cache _: any LayerCacheProtocol,
-                cmd _: MTLCommandBuffer, device _: Device) -> Tensor { h }
+    func decode(
+        _ h: Tensor, position _: Int, cache _: any LayerCacheProtocol,
+        cmd _: MTLCommandBuffer, device _: Device
+    ) -> Tensor { h }
 }
 
 /// Adds a fixed per-element bias vector to the hidden state.
@@ -37,8 +40,10 @@ private final class AddBiasDecoderLayer: DecoderLayer {
     let bias: Tensor
     init(bias: Tensor) { self.bias = bias }
     func parameters() -> [(String, Tensor)] { [("bias", bias)] }
-    func decode(_ h: Tensor, position _: Int, cache _: any LayerCacheProtocol,
-                cmd: MTLCommandBuffer, device _: Device) -> Tensor {
+    func decode(
+        _ h: Tensor, position _: Int, cache _: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device _: Device
+    ) -> Tensor {
         Ops.add(h, bias, on: cmd)
     }
 }
@@ -47,8 +52,10 @@ private final class AddBiasDecoderLayer: DecoderLayer {
 /// through the decode loop.
 private final class PositionAddDecoderLayer: DecoderLayer {
     func parameters() -> [(String, Tensor)] { [] }
-    func decode(_ h: Tensor, position: Int, cache _: any LayerCacheProtocol,
-                cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func decode(
+        _ h: Tensor, position: Int, cache _: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let n = h.elementCount
         let posVec = Tensor.empty(shape: [n], dtype: .f32, device: device)
         posVec.copyIn(from: [Float](repeating: Float(position), count: n))
@@ -82,8 +89,9 @@ struct DecoderLayerTests {
             var h = input
             runAndWait { cb in
                 for (i, layer) in layers.enumerated() {
-                    h = layer.decode(h, position: 0, cache: caches[i],
-                                     cmd: cb, device: .shared)
+                    h = layer.decode(
+                        h, position: 0, cache: caches[i],
+                        cmd: cb, device: .shared)
                 }
             }
             #expect(h.toArray(as: Float.self) == [12, 13, 14, 15])
@@ -102,8 +110,9 @@ struct DecoderLayerTests {
 
             var h = input
             runAndWait { cb in
-                h = layer.decode(h, position: 7, cache: cache,
-                                 cmd: cb, device: .shared)
+                h = layer.decode(
+                    h, position: 7, cache: cache,
+                    cmd: cb, device: .shared)
             }
             #expect(h.toArray(as: Float.self) == [7, 7, 7])
         }
@@ -116,7 +125,7 @@ struct DecoderLayerTests {
         #expect(cache.maxSeq == Int.max)
         #expect(cache.bytesAllocated == 0)
         #expect(cache.bytesInUse == 0)
-        cache.reset()   // no-op, must not crash
+        cache.reset()  // no-op, must not crash
         #expect(cache.length == 0)
     }
 }

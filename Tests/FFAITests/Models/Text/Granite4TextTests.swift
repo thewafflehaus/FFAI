@@ -25,6 +25,7 @@
 import Foundation
 import Metal
 import Testing
+
 @testable import FFAI
 
 @Suite("Granite4Hybrid Variant Surface")
@@ -78,7 +79,7 @@ struct Granite4TextVariantTests {
     private static let nHeads = 1
     private static let nKVHeads = 1
     private static let headDim = 128
-    private static let hidden = 128          // nHeads * headDim
+    private static let hidden = 128  // nHeads * headDim
     private static let vocab = 64
     private static let nExperts = 4
     private static let topK = 2
@@ -92,7 +93,7 @@ struct Granite4TextVariantTests {
     private func smallWeight(rows: Int, cols: Int, seed: UInt64) -> Tensor {
         var state = seed &+ 0x9E37_79B9_7F4A_7C15
         var values = [Float](repeating: 0, count: rows * cols)
-        for i in 0..<values.count {
+        for i in 0 ..< values.count {
             state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
             // Map the top bits to a small symmetric range [-0.05, 0.05].
             let unit = Float(state >> 40) / Float(1 << 24)
@@ -131,32 +132,44 @@ struct Granite4TextVariantTests {
             // the Granite4 block-sparse layout. `MoELayer.decode`
             // commits the command buffer, so this layer commits.
             let I = Self.moeIntermediate
-            let gateProj = (0..<Self.nExperts).map {
-                AnyLinear(Linear(weight: smallWeight(rows: I, cols: H, seed: seed + 10 + UInt64($0))))
+            let gateProj = (0 ..< Self.nExperts).map {
+                AnyLinear(
+                    Linear(weight: smallWeight(rows: I, cols: H, seed: seed + 10 + UInt64($0))))
             }
-            let upProj = (0..<Self.nExperts).map {
-                AnyLinear(Linear(weight: smallWeight(rows: I, cols: H, seed: seed + 20 + UInt64($0))))
+            let upProj = (0 ..< Self.nExperts).map {
+                AnyLinear(
+                    Linear(weight: smallWeight(rows: I, cols: H, seed: seed + 20 + UInt64($0))))
             }
-            let downProj = (0..<Self.nExperts).map {
-                AnyLinear(Linear(weight: smallWeight(rows: H, cols: I, seed: seed + 30 + UInt64($0))))
+            let downProj = (0 ..< Self.nExperts).map {
+                AnyLinear(
+                    Linear(weight: smallWeight(rows: H, cols: I, seed: seed + 30 + UInt64($0))))
             }
-            let router = MoERouter(nExperts: Self.nExperts, topK: Self.topK,
-                                   gatingMode: .topKThenSoftmax)
+            let router = MoERouter(
+                nExperts: Self.nExperts, topK: Self.topK,
+                gatingMode: .topKThenSoftmax)
             let moeLayer = MoELayer(
-                gate: AnyLinear(Linear(weight: smallWeight(rows: Self.nExperts, cols: H, seed: seed + 40))),
+                gate: AnyLinear(
+                    Linear(weight: smallWeight(rows: Self.nExperts, cols: H, seed: seed + 40))),
                 gateProj: gateProj, upProj: upProj, downProj: downProj,
-                sharedGateProj: AnyLinear(Linear(weight: smallWeight(rows: I, cols: H, seed: seed + 50))),
-                sharedUpProj: AnyLinear(Linear(weight: smallWeight(rows: I, cols: H, seed: seed + 51))),
-                sharedDownProj: AnyLinear(Linear(weight: smallWeight(rows: H, cols: I, seed: seed + 52))),
+                sharedGateProj: AnyLinear(
+                    Linear(weight: smallWeight(rows: I, cols: H, seed: seed + 50))),
+                sharedUpProj: AnyLinear(
+                    Linear(weight: smallWeight(rows: I, cols: H, seed: seed + 51))),
+                sharedDownProj: AnyLinear(
+                    Linear(weight: smallWeight(rows: H, cols: I, seed: seed + 52))),
                 router: router, hidden: H)
             ffn = .moe(moeLayer)
         } else {
             // Dense SwiGLU MLP — no command-buffer commit.
             let I = Self.moeIntermediate
-            ffn = .dense(Granite4DenseMLP(
-                gateProj: AnyLinear(Linear(weight: smallWeight(rows: I, cols: H, seed: seed + 60))),
-                upProj: AnyLinear(Linear(weight: smallWeight(rows: I, cols: H, seed: seed + 61))),
-                downProj: AnyLinear(Linear(weight: smallWeight(rows: H, cols: I, seed: seed + 62)))))
+            ffn = .dense(
+                Granite4DenseMLP(
+                    gateProj: AnyLinear(
+                        Linear(weight: smallWeight(rows: I, cols: H, seed: seed + 60))),
+                    upProj: AnyLinear(
+                        Linear(weight: smallWeight(rows: I, cols: H, seed: seed + 61))),
+                    downProj: AnyLinear(
+                        Linear(weight: smallWeight(rows: H, cols: I, seed: seed + 62)))))
         }
 
         return Granite4Layer(
@@ -240,8 +253,9 @@ struct Granite4TextVariantTests {
             #expect(caches.count == 2)
 
             let cmd = Device.shared.makeCommandBuffer()
-            let logits = m.forward(tokenId: 7, position: 0,
-                                   caches: caches, on: cmd, device: .shared)
+            let logits = m.forward(
+                tokenId: 7, position: 0,
+                caches: caches, on: cmd, device: .shared)
             // The caller owns `cmd`'s single commit — `forward` must not
             // have committed it (the layers ran on internal buffers).
             cmd.commit()

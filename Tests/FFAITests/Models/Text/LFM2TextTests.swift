@@ -174,18 +174,19 @@ struct LFM2HostRMSNormTests {
 
         // Independent CPU reference.
         var expected = [Float](repeating: 0, count: nHeads * headDim)
-        for h in 0..<nHeads {
+        for h in 0 ..< nHeads {
             let base = h * headDim
             var sumSq: Float = 0
-            for d in 0..<headDim { sumSq += xValues[base + d] * xValues[base + d] }
+            for d in 0 ..< headDim { sumSq += xValues[base + d] * xValues[base + d] }
             let inv = 1.0 / (sumSq / Float(headDim) + eps).squareRoot()
-            for d in 0..<headDim { expected[base + d] = xValues[base + d] * inv }
+            for d in 0 ..< headDim { expected[base + d] = xValues[base + d] * inv }
         }
 
         #expect(got.count == expected.count)
-        for i in 0..<got.count {
-            #expect(abs(got[i] - expected[i]) < 1e-4,
-                    "element \(i): got \(got[i]), expected \(expected[i])")
+        for i in 0 ..< got.count {
+            #expect(
+                abs(got[i] - expected[i]) < 1e-4,
+                "element \(i): got \(got[i]), expected \(expected[i])")
         }
     }
 

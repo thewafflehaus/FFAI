@@ -25,9 +25,10 @@
 // VLM). The checkpoint MUST load — a load failure fails the test.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Gemma3 Vision Integration", .serialized)
 struct Gemma3VisionIntegrationTests {
@@ -44,8 +45,8 @@ struct Gemma3VisionIntegrationTests {
         // available, and the text backbone is a Gemma 3 4B engine.
         #expect(m.vlModel != nil)
         #expect(m.availableCapabilities.contains(.imageIn))
-        #expect(m.engine.hidden == 2560)        // 4B text hidden
-        #expect(m.engine.supportsEmbeddingInput) // VLM splice prerequisite
+        #expect(m.engine.hidden == 2560)  // 4B text hidden
+        #expect(m.engine.supportsEmbeddingInput)  // VLM splice prerequisite
 
         let vlm = try #require(m.vlModel)
         // SigLIP-896 / patch-14 → 64×64 patches, pooled 4×4 → 256 tokens.
@@ -101,7 +102,8 @@ struct Gemma3VisionIntegrationTests {
         let trailer = m.tokenizer.encode(
             text: "<end_of_image>Describe this image.<end_of_turn>\n"
                 + "<start_of_turn>model\n")
-        let promptTokens = header
+        let promptTokens =
+            header
             + Array(repeating: imageTokenId, count: vlm.imageTokenCount)
             + trailer
 
@@ -118,8 +120,9 @@ struct Gemma3VisionIntegrationTests {
 
         // Coherence first, then the content check: the caption should
         // mention a dog.
-        expectCoherentOutput(generated, minTokens: 8,
-                             label: "Gemma 3 VL image+text")
+        expectCoherentOutput(
+            generated, minTokens: 8,
+            label: "Gemma 3 VL image+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("Gemma 3 VL generated: \(text)")
         VisionTestHelpers.expectMentionsDog(text, label: "Gemma 3 VL")

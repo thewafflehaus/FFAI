@@ -15,6 +15,7 @@
 import Foundation
 import Metal
 import Testing
+
 @testable import FFAI
 
 // VisionModel — cross-modal token splice + VL generate composition.
@@ -42,26 +43,35 @@ struct VisionModelTests {
         func parameters() -> [(String, Tensor)] { [] }
 
         func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-            [KVCache(nKVHeads: nKVHeads, headDim: headDim,
-                     maxSeq: maxSeq ?? self.maxSeq, dtype: dtype, device: device)]
+            [
+                KVCache(
+                    nKVHeads: nKVHeads, headDim: headDim,
+                    maxSeq: maxSeq ?? self.maxSeq, dtype: dtype, device: device)
+            ]
         }
 
-        func forward(tokenId: Int, position: Int,
-                     caches: [any LayerCacheProtocol],
-                     on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        func forward(
+            tokenId: Int, position: Int,
+            caches: [any LayerCacheProtocol],
+            on cmd: MTLCommandBuffer, device: Device
+        ) -> Tensor {
             Tensor.empty(shape: [vocab], dtype: dtype)
         }
 
-        func forwardSample(tokenId: Int, position: Int,
-                            caches: [any LayerCacheProtocol], device: Device) -> Int {
+        func forwardSample(
+            tokenId: Int, position: Int,
+            caches: [any LayerCacheProtocol], device: Device
+        ) -> Int {
             (tokenId + 1) % vocab
         }
 
         var supportsEmbeddingInput: Bool { true }
 
-        func forward(inputEmbedding: Tensor, position: Int,
-                     caches: [any LayerCacheProtocol],
-                     on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        func forward(
+            inputEmbedding: Tensor, position: Int,
+            caches: [any LayerCacheProtocol],
+            on cmd: MTLCommandBuffer, device: Device
+        ) -> Tensor {
             Tensor.empty(shape: [vocab], dtype: dtype)
         }
 
@@ -113,20 +123,26 @@ struct VisionModelTests {
             let dtype: DType = .f32
             func parameters() -> [(String, Tensor)] { [] }
             func makeLayerCaches(maxSeq: Int?, device: Device)
-                -> [any LayerCacheProtocol] { [] }
-            func forward(tokenId: Int, position: Int,
-                         caches: [any LayerCacheProtocol],
-                         on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+                -> [any LayerCacheProtocol]
+            { [] }
+            func forward(
+                tokenId: Int, position: Int,
+                caches: [any LayerCacheProtocol],
+                on cmd: MTLCommandBuffer, device: Device
+            ) -> Tensor {
                 Tensor.empty(shape: [vocab], dtype: dtype)
             }
-            func forwardSample(tokenId: Int, position: Int,
-                               caches: [any LayerCacheProtocol],
-                               device: Device) -> Int { 0 }
+            func forwardSample(
+                tokenId: Int, position: Int,
+                caches: [any LayerCacheProtocol],
+                device: Device
+            ) -> Int { 0 }
         }
         let enc = makeStubVisionEncoder(hidden: 8)
         #expect(throws: VisionModelError.self) {
-            _ = try VisionModel(visionEncoder: enc, engine: TextOnly(),
-                            imageTokenId: 42, normalization: .siglip)
+            _ = try VisionModel(
+                visionEncoder: enc, engine: TextOnly(),
+                imageTokenId: 42, normalization: .siglip)
         }
     }
 
@@ -134,15 +150,19 @@ struct VisionModelTests {
     func spliceInjectsImageTokens() throws {
         let hidden = 8
         let enc = makeStubVisionEncoder(hidden: hidden)
-        let vlm = try VisionModel(visionEncoder: enc, engine: StubEngine(hidden: hidden),
-                              imageTokenId: 99, normalization: .siglip)
+        let vlm = try VisionModel(
+            visionEncoder: enc, engine: StubEngine(hidden: hidden),
+            imageTokenId: 99, normalization: .siglip)
 
         // Prompt: text, text, <image>, <image>, text.
         let prompt = [10, 11, 99, 99, 12]
         // Two vision rows, tagged 1000.0 and 2000.0.
         let imageTokens = Tensor.empty(shape: [2, hidden], dtype: .f32)
         var data = [Float](repeating: 0, count: 2 * hidden)
-        for c in 0..<hidden { data[c] = 1000; data[hidden + c] = 2000 }
+        for c in 0 ..< hidden {
+            data[c] = 1000
+            data[hidden + c] = 2000
+        }
         imageTokens.copyIn(from: data)
 
         let stream = try vlm.splice(promptTokens: prompt, imageTokens: imageTokens)
@@ -160,8 +180,9 @@ struct VisionModelTests {
     func splicePlaceholderMismatch() throws {
         let hidden = 8
         let enc = makeStubVisionEncoder(hidden: hidden)
-        let vlm = try VisionModel(visionEncoder: enc, engine: StubEngine(hidden: hidden),
-                              imageTokenId: 99, normalization: .siglip)
+        let vlm = try VisionModel(
+            visionEncoder: enc, engine: StubEngine(hidden: hidden),
+            imageTokenId: 99, normalization: .siglip)
         // One placeholder, but two vision rows.
         let prompt = [10, 99, 11]
         let imageTokens = Tensor.empty(shape: [2, hidden], dtype: .f32)
@@ -175,8 +196,9 @@ struct VisionModelTests {
     func spliceImageAtHead() throws {
         let hidden = 8
         let enc = makeStubVisionEncoder(hidden: hidden)
-        let vlm = try VisionModel(visionEncoder: enc, engine: StubEngine(hidden: hidden),
-                              imageTokenId: 99, normalization: .siglip)
+        let vlm = try VisionModel(
+            visionEncoder: enc, engine: StubEngine(hidden: hidden),
+            imageTokenId: 99, normalization: .siglip)
         let prompt = [99, 5, 6, 7]
         let imageTokens = Tensor.empty(shape: [1, hidden], dtype: .f32)
         imageTokens.copyIn(from: [Float](repeating: 777, count: hidden))
@@ -188,8 +210,9 @@ struct VisionModelTests {
     @Test("imageTokenCount — equals the vision encoder patch count")
     func imageTokenCount() throws {
         let enc = makeStubVisionEncoder(hidden: 8)
-        let vlm = try VisionModel(visionEncoder: enc, engine: StubEngine(hidden: 8),
-                              imageTokenId: 99, normalization: .siglip)
+        let vlm = try VisionModel(
+            visionEncoder: enc, engine: StubEngine(hidden: 8),
+            imageTokenId: 99, normalization: .siglip)
         // 16x16 image, 16x16 patch → 1 patch.
         #expect(vlm.imageTokenCount == 1)
     }

@@ -384,11 +384,13 @@ public final class EchoTTSModel: @unchecked Sendable {
     /// Output waveform sample rate in Hz (44100 for EchoTTS base).
     public var sampleRate: Int { config.sampleRate }
 
-    public init(config: EchoTTSConfig,
-                pcaComponents: Tensor? = nil,
-                pcaMean: Tensor? = nil,
-                latentScale: Float = 1.0,
-                weightCount: Int = 0) {
+    public init(
+        config: EchoTTSConfig,
+        pcaComponents: Tensor? = nil,
+        pcaMean: Tensor? = nil,
+        latentScale: Float = 1.0,
+        weightCount: Int = 0
+    ) {
         self.config = config
         self.pcaComponents = pcaComponents
         self.pcaMean = pcaMean
@@ -399,8 +401,10 @@ public final class EchoTTSModel: @unchecked Sendable {
     /// Return a placeholder waveform (zeros, `durationSeconds` long) for
     /// integration tests that verify load + config without running diffusion.
     /// Shape: `[nSamples]` f32.
-    public func generatePlaceholder(durationSeconds: Double = 0.1,
-                                    device: Device = .shared) -> Tensor {
+    public func generatePlaceholder(
+        durationSeconds: Double = 0.1,
+        device: Device = .shared
+    ) -> Tensor {
         let nSamples = max(1, Int(durationSeconds * Double(sampleRate)))
         let t = Tensor.empty(shape: [nSamples], dtype: .f32, device: device)
         t.zero()
@@ -418,9 +422,11 @@ public final class EchoTTSModel: @unchecked Sendable {
     ///               f32 at `config.sampleRate`. Pass `nil` for a default
     ///               (no-reference) voice.
     ///   - device: Metal device to use.
-    public func synthesize(text: String,
-                           refAudio: Tensor? = nil,
-                           device: Device = .shared) throws -> Tensor {
+    public func synthesize(
+        text: String,
+        refAudio: Tensor? = nil,
+        device: Device = .shared
+    ) throws -> Tensor {
         _ = text
         _ = refAudio
         _ = device
@@ -452,7 +458,8 @@ extension EchoTTSModel {
     ///   that the checkpoint is complete without allocating GPU memory for
     ///   the full DiT — the forward pass is not yet wired).
     public static func load(directory: URL, device: Device = .shared)
-        throws -> EchoTTSModel {
+        throws -> EchoTTSModel
+    {
         let config = try ModelConfig.load(from: directory)
         guard handles(config) else {
             throw ModelError.unsupportedModelType(
@@ -471,7 +478,8 @@ extension EchoTTSModel {
         let latentScale: Float
 
         if pcaFile.entries["pca_components"] != nil,
-           pcaFile.entries["pca_mean"] != nil {
+            pcaFile.entries["pca_mean"] != nil
+        {
             // Build Tensor views from the mmap'd SafeTensorsFile entries.
             pcaComponents = try pcaFile.tensor(named: "pca_components")
             pcaMean = try pcaFile.tensor(named: "pca_mean")

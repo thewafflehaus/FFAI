@@ -17,6 +17,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("DeepFilterNet")
@@ -40,23 +41,23 @@ struct DeepFilterNetTests {
     @Test("Config decodes from JSON with snake_case keys")
     func configDecodeJSON() throws {
         let json = """
-        {
-          "sample_rate": 48000,
-          "fft_size": 960,
-          "hop_size": 480,
-          "nb_erb": 32,
-          "nb_df": 96,
-          "df_order": 5,
-          "df_lookahead": 2,
-          "conv_lookahead": 2,
-          "conv_ch": 64,
-          "emb_hidden_dim": 256,
-          "emb_num_layers": 3,
-          "df_hidden_dim": 256,
-          "df_num_layers": 2,
-          "model_version": "DeepFilterNet3"
-        }
-        """
+            {
+              "sample_rate": 48000,
+              "fft_size": 960,
+              "hop_size": 480,
+              "nb_erb": 32,
+              "nb_df": 96,
+              "df_order": 5,
+              "df_lookahead": 2,
+              "conv_lookahead": 2,
+              "conv_ch": 64,
+              "emb_hidden_dim": 256,
+              "emb_num_layers": 3,
+              "df_hidden_dim": 256,
+              "df_num_layers": 2,
+              "model_version": "DeepFilterNet3"
+            }
+            """
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let cfg = try decoder.decode(DeepFilterNetConfig.self, from: Data(json.utf8))
@@ -103,7 +104,7 @@ struct DeepFilterNetTests {
         // Vorbis window should be between 0 and 1.
         #expect(w.allSatisfy { $0 >= 0 && $0 <= 1.0 + 1e-6 })
         // Symmetric.
-        for i in 0..<(size / 2) {
+        for i in 0 ..< (size / 2) {
             #expect(abs(w[i] - w[size - 1 - i]) < 1e-5)
         }
     }
@@ -125,7 +126,8 @@ struct DeepFilterNetTests {
         let hopSize = 480
         let signal = [Float](repeating: 0.5, count: 4800)  // 0.1s at 48kHz
         let window = DeepFilterNetSTFT.vorbisWindow(size: fftSize)
-        let spec = DeepFilterNetSTFT.stft(audio: signal, fftSize: fftSize, hopSize: hopSize, window: window)
+        let spec = DeepFilterNetSTFT.stft(
+            audio: signal, fftSize: fftSize, hopSize: hopSize, window: window)
         #expect(spec.freqBins == fftSize / 2 + 1)
         #expect(spec.nFrames > 0)
         #expect(spec.real.count == spec.nFrames * spec.freqBins)
@@ -192,8 +194,9 @@ struct DeepFilterNetTests {
         for mt in types {
             // Simulate a ModelConfig with that model_type.
             let cfg = ModelConfig(architecture: nil, modelType: mt, raw: ["model_type": mt])
-            #expect(DeepFilterNetModel.handles(cfg),
-                    "Expected handles() to return true for model_type=\(mt)")
+            #expect(
+                DeepFilterNetModel.handles(cfg),
+                "Expected handles() to return true for model_type=\(mt)")
         }
     }
 

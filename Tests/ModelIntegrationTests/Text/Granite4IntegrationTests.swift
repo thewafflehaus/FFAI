@@ -36,9 +36,10 @@
 // test it here.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Granite4 Integration", .serialized)
 struct Granite4IntegrationTests {

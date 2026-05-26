@@ -54,13 +54,21 @@ public struct FishSpeechSubConfig: Sendable {
         self.nLocalHeads = nLH > 0 ? nLH : defaults.nLocalHeads
         self.headDim = raw["head_dim"] as? Int ?? defaults.headDim
         let ropeBaseRaw = raw["rope_base"]
-        if let d = ropeBaseRaw as? Double { self.ropeBase = Float(d) }
-        else if let i = ropeBaseRaw as? Int { self.ropeBase = Float(i) }
-        else { self.ropeBase = defaults.ropeBase }
+        if let d = ropeBaseRaw as? Double {
+            self.ropeBase = Float(d)
+        } else if let i = ropeBaseRaw as? Int {
+            self.ropeBase = Float(i)
+        } else {
+            self.ropeBase = defaults.ropeBase
+        }
         let eps = raw["norm_eps"]
-        if let d = eps as? Double { self.normEps = Float(d) }
-        else if let i = eps as? Int { self.normEps = Float(i) }
-        else { self.normEps = defaults.normEps }
+        if let d = eps as? Double {
+            self.normEps = Float(d)
+        } else if let i = eps as? Int {
+            self.normEps = Float(i)
+        } else {
+            self.normEps = defaults.normEps
+        }
         self.maxSeqLen = raw["max_seq_len"] as? Int ?? defaults.maxSeqLen
         self.tieWordEmbeddings = raw["tie_word_embeddings"] as? Bool ?? defaults.tieWordEmbeddings
         self.attentionQKVBias = raw["attention_qkv_bias"] as? Bool ?? defaults.attentionQKVBias

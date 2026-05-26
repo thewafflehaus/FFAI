@@ -126,8 +126,9 @@ public enum FastVLM {
         let mergedTextConfig = ModelConfig(
             architecture: "Qwen2ForCausalLM",
             modelType: "qwen2",
-            raw: fastVLMTextConfigWithDefaults(config.raw,
-                                               vocabFallback: config.int("vocab_size")))
+            raw: fastVLMTextConfigWithDefaults(
+                config.raw,
+                vocabFallback: config.int("vocab_size")))
         let textWeights = weights.prefixed("language_model.")
         let textEngine = try LlamaDense.loadModel(
             config: mergedTextConfig, weights: textWeights,
@@ -160,7 +161,8 @@ public enum FastVLM {
             textHidden: textEngine.hidden,
             dtype: textEngine.dtype)
 
-        let imageTokenId = config.int("image_token_id")
+        let imageTokenId =
+            config.int("image_token_id")
             ?? config.int("image_token_index")
             ?? defaultImageTokenId
 
@@ -198,10 +200,12 @@ func fastVLMTextConfigWithDefaults(
     ]
     // Checkpoint-declared fields override defaults. Exclude nested VLM
     // keys that LlamaDense doesn't understand (vision_config, mm_*).
-    let excludeKeys: Set<String> = ["vision_config", "architectures",
-                                    "model_type", "image_token_id",
-                                    "image_token_index", "mm_projector_type",
-                                    "mm_hidden_size"]
+    let excludeKeys: Set<String> = [
+        "vision_config", "architectures",
+        "model_type", "image_token_id",
+        "image_token_index", "mm_projector_type",
+        "mm_hidden_size",
+    ]
     for (k, v) in raw where !excludeKeys.contains(k) { merged[k] = v }
     return merged
 }

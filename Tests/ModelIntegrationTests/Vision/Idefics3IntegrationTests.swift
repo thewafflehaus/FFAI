@@ -27,9 +27,10 @@
 
 import CoreImage
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Idefics3 Vision Integration", .serialized)
 struct Idefics3IntegrationTests {
@@ -45,8 +46,8 @@ struct Idefics3IntegrationTests {
         let candidates: [URL] = [
             // Tests/Fixtures/dog.jpeg (Package.swift copies this for ModelIntegrationTests)
             URL(fileURLWithPath: #filePath)
-                .deletingLastPathComponent()        // ModelIntegrationTests/
-                .deletingLastPathComponent()        // Tests/
+                .deletingLastPathComponent()  // ModelIntegrationTests/
+                .deletingLastPathComponent()  // Tests/
                 .appendingPathComponent("Fixtures/dog.jpeg"),
             // Tests/ModelIntegrationTests/Resources/dog.jpeg (other worktrees)
             URL(fileURLWithPath: #filePath)
@@ -54,12 +55,14 @@ struct Idefics3IntegrationTests {
                 .appendingPathComponent("Resources/dog.jpeg"),
             // Absolute path for local development convenience
             URL(fileURLWithPath: NSHomeDirectory())
-                .appendingPathComponent("Development/personal/ai/FFAI/Tests/ModelIntegrationTests/Resources/dog.jpeg"),
+                .appendingPathComponent(
+                    "Development/personal/ai/FFAI/Tests/ModelIntegrationTests/Resources/dog.jpeg"),
         ]
 
         for url in candidates {
             guard FileManager.default.fileExists(atPath: url.path),
-                  let ciImage = CIImage(contentsOf: url) else { continue }
+                let ciImage = CIImage(contentsOf: url)
+            else { continue }
             return normalizeAndResize(ciImage, to: imageSize)
         }
         return nil
@@ -68,28 +71,29 @@ struct Idefics3IntegrationTests {
     /// Resize a CIImage to [imageSize × imageSize] and normalize to
     /// [height, width, channels] Float32 with (x - 0.5) / 0.5 = 2x - 1.
     private static func normalizeAndResize(_ ci: CIImage, to size: Int) -> [Float]? {
-        let context    = CIContext()
+        let context = CIContext()
         let targetSize = CGSize(width: size, height: size)
-        let scaleX     = targetSize.width  / ci.extent.width
-        let scaleY     = targetSize.height / ci.extent.height
-        let scaled     = ci.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
-        let cropped    = scaled.cropped(to: CGRect(origin: .zero, size: targetSize))
+        let scaleX = targetSize.width / ci.extent.width
+        let scaleY = targetSize.height / ci.extent.height
+        let scaled = ci.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+        let cropped = scaled.cropped(to: CGRect(origin: .zero, size: targetSize))
 
         // Render to a Float32 RGBA bitmap
         var rgba = [Float](repeating: 0, count: size * size * 4)
         rgba.withUnsafeMutableBytes { ptr in
-            context.render(cropped,
-                           toBitmap: ptr.baseAddress!,
-                           rowBytes: size * 4 * MemoryLayout<Float>.size,
-                           bounds: CGRect(origin: .zero, size: targetSize),
-                           format: .RGBAf,
-                           colorSpace: CGColorSpaceCreateDeviceRGB())
+            context.render(
+                cropped,
+                toBitmap: ptr.baseAddress!,
+                rowBytes: size * 4 * MemoryLayout<Float>.size,
+                bounds: CGRect(origin: .zero, size: targetSize),
+                format: .RGBAf,
+                colorSpace: CGColorSpaceCreateDeviceRGB())
         }
 
         // Extract RGB channels, normalize to [-1, 1]: (x - 0.5) / 0.5 = 2x - 1
         // Layout: [height, width, channels] — HWC as expected by Idefics3Model.encodeImage
         var rgb = [Float](repeating: 0, count: size * size * 3)
-        for i in 0..<(size * size) {
+        for i in 0 ..< (size * size) {
             rgb[i * 3 + 0] = rgba[i * 4 + 0] * 2.0 - 1.0  // R
             rgb[i * 3 + 1] = rgba[i * 4 + 1] * 2.0 - 1.0  // G
             rgb[i * 3 + 2] = rgba[i * 4 + 2] * 2.0 - 1.0  // B
@@ -111,43 +115,45 @@ struct Idefics3IntegrationTests {
         }
 
         // Verify the engine is an Idefics3Model
-        let idefics3 = try #require(m.engine as? Idefics3Model,
-                                    "expected engine to be Idefics3Model, got \(type(of: m.engine))")
+        let idefics3 = try #require(
+            m.engine as? Idefics3Model,
+            "expected engine to be Idefics3Model, got \(type(of: m.engine))")
 
         // ─── Shape checks (Idefics3-8B config values) ────────────────────────
         let tc = idefics3.cfg.textConfig
         let vc = idefics3.cfg.visionConfig
 
         // Llama-3-8B text backbone
-        #expect(tc.hiddenSize        == 4096,   "text hidden_size")
-        #expect(tc.numHiddenLayers   == 32,     "text num_hidden_layers")
-        #expect(tc.numAttentionHeads == 32,     "text num_attention_heads")
-        #expect(tc.numKeyValueHeads  == 8,      "text num_kv_heads")
-        #expect(tc.headDim           == 128,    "text head_dim")
-        #expect(tc.vocabSize         == 128259, "text vocab_size")
+        #expect(tc.hiddenSize == 4096, "text hidden_size")
+        #expect(tc.numHiddenLayers == 32, "text num_hidden_layers")
+        #expect(tc.numAttentionHeads == 32, "text num_attention_heads")
+        #expect(tc.numKeyValueHeads == 8, "text num_kv_heads")
+        #expect(tc.headDim == 128, "text head_dim")
+        #expect(tc.vocabSize == 128259, "text vocab_size")
 
         // SigLIP-400M vision backbone
-        #expect(vc.hiddenSize        == 1152, "vision hidden_size")
-        #expect(vc.numHiddenLayers   == 27,   "vision num_hidden_layers")
-        #expect(vc.numAttentionHeads == 16,   "vision num_attention_heads")
-        #expect(vc.patchSize         == 14,   "vision patch_size")
-        #expect(vc.imageSize         == 364,  "vision image_size")
+        #expect(vc.hiddenSize == 1152, "vision hidden_size")
+        #expect(vc.numHiddenLayers == 27, "vision num_hidden_layers")
+        #expect(vc.numAttentionHeads == 16, "vision num_attention_heads")
+        #expect(vc.patchSize == 14, "vision patch_size")
+        #expect(vc.imageSize == 364, "vision image_size")
 
         // Connector config
-        #expect(idefics3.cfg.scaleFactor  == 2,     "scale_factor")
+        #expect(idefics3.cfg.scaleFactor == 2, "scale_factor")
         #expect(idefics3.cfg.imageTokenId == 49153, "image_token_id")
 
         // ─── Pure text forward (sanity check without image) ──────────────────
-        let caches   = m.engine.makeLayerCaches()
-        let logits   = m.engine.forward(tokenId: 1, position: 0, caches: caches)
+        let caches = m.engine.makeLayerCaches()
+        let logits = m.engine.forward(tokenId: 1, position: 0, caches: caches)
         let topTokens = Sampling.topN(logits, n: 5)
         #expect(topTokens.count == 5)
         #expect(topTokens[0].1.isFinite)
         #expect(topTokens[0].1 != 0)
 
         // ─── Image encoding ───────────────────────────────────────────────────
-        let pixels = try #require(Self.dogImagePixels(imageSize: vc.imageSize),
-                                  "Idefics3 integration test: dog.jpeg fixture not found")
+        let pixels = try #require(
+            Self.dogImagePixels(imageSize: vc.imageSize),
+            "Idefics3 integration test: dog.jpeg fixture not found")
 
         let imageEmbeds = idefics3.encodeImage(
             pixels: pixels,
@@ -158,27 +164,28 @@ struct Idefics3IntegrationTests {
         // With scale_factor=2:
         //   nPatches = (364/14)² = 26² = 676
         //   nImageTokens = 676 / (2*2) = 169
-        let nPatches      = (vc.imageSize / vc.patchSize) * (vc.imageSize / vc.patchSize)
-        let sf2           = idefics3.cfg.scaleFactor * idefics3.cfg.scaleFactor
+        let nPatches = (vc.imageSize / vc.patchSize) * (vc.imageSize / vc.patchSize)
+        let sf2 = idefics3.cfg.scaleFactor * idefics3.cfg.scaleFactor
         let expectedImageTokens = nPatches / sf2
-        #expect(imageEmbeds.count == expectedImageTokens * tc.hiddenSize,
-                "image embeds count should be nImageTokens * textHidden")
+        #expect(
+            imageEmbeds.count == expectedImageTokens * tc.hiddenSize,
+            "image embeds count should be nImageTokens * textHidden")
 
         // ─── Generate a caption ───────────────────────────────────────────────
         // Build a minimal prompt: [BOS] <image×N> "Describe this image."
         // We use image_token_id (49153) as placeholders for the image patches.
-        let imageTokenId    = idefics3.cfg.imageTokenId
+        let imageTokenId = idefics3.cfg.imageTokenId
         let imageTokenCount = expectedImageTokens
 
         // Construct token sequence: BOS + imageTokenId×N + text tokens
-        let textTokens  = m.tokenizer.encode(text: "Describe this image.")
+        let textTokens = m.tokenizer.encode(text: "Describe this image.")
         var promptTokenIds = [1]  // BOS
         promptTokenIds += [Int](repeating: imageTokenId, count: imageTokenCount)
         promptTokenIds += textTokens
 
         // Prefill with image embeddings then check logits
         let freshCaches = m.engine.makeLayerCaches()
-        let lastLogits  = idefics3.prefillWithImage(
+        let lastLogits = idefics3.prefillWithImage(
             tokenIds: promptTokenIds,
             imageEmbeds: imageEmbeds,
             caches: freshCaches,
@@ -194,8 +201,8 @@ struct Idefics3IntegrationTests {
         // Decode a few tokens greedily
         var generatedTokens: [Int] = []
         var nextToken = Sampling.argmax(lastLogits)
-        let eosId     = m.config.eosTokenId ?? 2
-        for step in 0..<32 {
+        let eosId = m.config.eosTokenId ?? 2
+        for step in 0 ..< 32 {
             if nextToken == eosId { break }
             generatedTokens.append(nextToken)
             nextToken = m.engine.forwardSample(
@@ -205,18 +212,21 @@ struct Idefics3IntegrationTests {
             )
         }
 
-        let generatedText = m.tokenizer.decode(tokens: generatedTokens,
-                                                skipSpecialTokens: true)
+        let generatedText = m.tokenizer.decode(
+            tokens: generatedTokens,
+            skipSpecialTokens: true)
 
         // Verify the generated text is non-empty and semantically plausible.
         // For a dog image with "Describe this image." we expect some mention of
         // "dog" or related terms.
         #expect(!generatedText.isEmpty, "generated text should be non-empty")
         let lower = generatedText.lowercased()
-        let containsDog = lower.contains("dog") || lower.contains("animal")
+        let containsDog =
+            lower.contains("dog") || lower.contains("animal")
             || lower.contains("puppy") || lower.contains("canine")
-            || lower.contains("pet")  || lower.contains("fur")
-        #expect(containsDog,
-                "expected generated text to contain 'dog' or related term, got: \(generatedText)")
+            || lower.contains("pet") || lower.contains("fur")
+        #expect(
+            containsDog,
+            "expected generated text to contain 'dog' or related term, got: \(generatedText)")
     }
 }

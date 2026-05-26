@@ -93,7 +93,7 @@ public enum MiniCPMV4_6 {
         options: LoadOptions, device: Device
     ) throws -> VisionModel {
         guard let visionConfig = config.subConfig("vision_config"),
-              config.nested("text_config") != nil
+            config.nested("text_config") != nil
         else {
             throw MiniCPMVError.missingConfig(
                 "vision_config / text_config")
@@ -107,7 +107,8 @@ public enum MiniCPMV4_6 {
         // existing loader runs unchanged. Qwen3.5's loader pulls every
         // text hyper-parameter from `config.text_config`, so we hand it
         // the full MiniCPM root config.
-        let textWeights = weights
+        let textWeights =
+            weights
             .prefixed("model.language_model.")
             .withAddedPrefix("model.")
         let textEngine = try Qwen35Hybrid.loadModel(

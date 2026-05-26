@@ -25,6 +25,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("FireRedASR2")
@@ -41,25 +42,25 @@ struct FireRedASR2Tests {
         #expect(cfg != nil)
 
         // Published AED-large defaults.
-        #expect(cfg?.idim    == 80)
-        #expect(cfg?.odim    == 8667)
-        #expect(cfg?.dModel  == 1280)
-        #expect(cfg?.sosID   == 3)
-        #expect(cfg?.eosID   == 4)
-        #expect(cfg?.padID   == 2)
+        #expect(cfg?.idim == 80)
+        #expect(cfg?.odim == 8667)
+        #expect(cfg?.dModel == 1280)
+        #expect(cfg?.sosID == 3)
+        #expect(cfg?.eosID == 4)
+        #expect(cfg?.padID == 2)
         #expect(cfg?.blankID == 0)
 
         // Encoder defaults.
-        #expect(cfg?.encoder.nLayers    == 16)
-        #expect(cfg?.encoder.nHead      == 20)
-        #expect(cfg?.encoder.dModel     == 1280)
+        #expect(cfg?.encoder.nLayers == 16)
+        #expect(cfg?.encoder.nHead == 20)
+        #expect(cfg?.encoder.dModel == 1280)
         #expect(cfg?.encoder.kernelSize == 33)
-        #expect(cfg?.encoder.peMaxlen   == 5000)
+        #expect(cfg?.encoder.peMaxlen == 5000)
 
         // Decoder defaults.
-        #expect(cfg?.decoder.nLayers  == 16)
-        #expect(cfg?.decoder.nHead    == 20)
-        #expect(cfg?.decoder.dModel   == 1280)
+        #expect(cfg?.decoder.nLayers == 16)
+        #expect(cfg?.decoder.nHead == 20)
+        #expect(cfg?.decoder.dModel == 1280)
         #expect(cfg?.decoder.peMaxlen == 5000)
     }
 
@@ -70,33 +71,33 @@ struct FireRedASR2Tests {
             modelType: "fireredasr2",
             raw: [
                 "model_type": "fireredasr2",
-                "idim":   80,
-                "odim":   8667,
+                "idim": 80,
+                "odim": 8667,
                 "sos_id": 3,
                 "eos_id": 4,
                 "pad_id": 2,
                 "blank_id": 0,
                 "encoder": [
-                    "n_layers":    16,
-                    "n_head":      20,
-                    "d_model":     1280,
+                    "n_layers": 16,
+                    "n_head": 20,
+                    "d_model": 1280,
                     "kernel_size": 33,
-                    "pe_maxlen":   5000
+                    "pe_maxlen": 5000,
                 ] as [String: Any],
                 "decoder": [
-                    "n_layers":  16,
-                    "n_head":    20,
-                    "d_model":   1280,
-                    "pe_maxlen": 5000
-                ] as [String: Any]
+                    "n_layers": 16,
+                    "n_head": 20,
+                    "d_model": 1280,
+                    "pe_maxlen": 5000,
+                ] as [String: Any],
             ])
         let cfg = FireRedASR2Config.from(config)
         #expect(cfg != nil)
         #expect(cfg?.encoder.nLayers == 16)
-        #expect(cfg?.encoder.nHead   == 20)
-        #expect(cfg?.encoder.dModel  == 1280)
+        #expect(cfg?.encoder.nHead == 20)
+        #expect(cfg?.encoder.dModel == 1280)
         #expect(cfg?.decoder.nLayers == 16)
-        #expect(cfg?.odim            == 8667)
+        #expect(cfg?.odim == 8667)
     }
 
     @Test("FireRedASR2Config.from — detects by architecture string")
@@ -160,7 +161,8 @@ struct FireRedASR2Tests {
             architecture: "FireRedASR2ForConditionalGeneration",
             modelType: "fireredasr2",
             raw: ["model_type": "fireredasr2"])
-        #expect(AudioModelRegistry.capabilities(for: config)
+        #expect(
+            AudioModelRegistry.capabilities(for: config)
                 == Capability.speechToText)
     }
 
@@ -222,7 +224,7 @@ struct FireRedASR2Tests {
         // 1 second of 440 Hz tone at 16 kHz.
         let sr = 16_000
         var wave = [Float](repeating: 0, count: sr)
-        for i in 0..<sr {
+        for i in 0 ..< sr {
             wave[i] = 0.3 * sin(2.0 * Float.pi * 440.0 * Float(i) / Float(sr))
         }
 
@@ -233,8 +235,9 @@ struct FireRedASR2Tests {
         let nFrames = feats.count / idim
         #expect(nFrames > 0, "kaldiFbank produced zero frames")
         #expect(feats.count == nFrames * idim)
-        #expect(feats.allSatisfy { $0.isFinite },
-                "Kaldi fbank front-end produced non-finite values")
+        #expect(
+            feats.allSatisfy { $0.isFinite },
+            "Kaldi fbank front-end produced non-finite values")
     }
 
     @Test("FireRedASR2 Kaldi fbank — empty waveform returns empty")
@@ -248,7 +251,7 @@ struct FireRedASR2Tests {
         // Normalised PCM in [-1, 1] — front-end should rescale to int16 range.
         let sr = 16_000
         var wave = [Float](repeating: 0, count: sr)
-        for i in 0..<sr {
+        for i in 0 ..< sr {
             wave[i] = 0.1 * sin(2.0 * Float.pi * 300.0 * Float(i) / Float(sr))
         }
         let feats = FireRedASR2Model.kaldiFbank(waveform: wave, idim: 80)

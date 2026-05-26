@@ -17,6 +17,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("GraniteSpeech")
@@ -29,56 +30,57 @@ struct GraniteSpeechTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         // Minimal valid config — only the fields GraniteSpeechConfig.load reads from the top level.
         let json = """
-        {
-            "architectures": ["GraniteSpeechForConditionalGeneration"],
-            "model_type": "granite_speech",
-            "audio_token_index": 100352,
-            "downsample_rate": 5,
-            "window_size": 15,
-            "encoder_config": {
-                "input_dim": 160,
-                "num_layers": 16,
-                "hidden_dim": 1024,
-                "feedforward_mult": 4,
-                "num_heads": 8,
-                "dim_head": 128,
-                "output_dim": 348,
-                "context_size": 200,
-                "max_pos_emb": 512,
-                "conv_kernel_size": 15,
-                "conv_expansion_factor": 2
-            },
-            "projector_config": {
-                "hidden_size": 1024,
-                "num_hidden_layers": 2,
-                "num_attention_heads": 16,
-                "intermediate_size": 4096,
-                "layer_norm_eps": 1e-12,
-                "encoder_hidden_size": 1024
-            },
-            "text_config": {
-                "model_type": "granite",
-                "vocab_size": 100353,
-                "hidden_size": 2048,
-                "intermediate_size": 4096,
-                "num_hidden_layers": 40,
-                "num_attention_heads": 16,
-                "num_key_value_heads": 4,
-                "max_position_embeddings": 4096,
-                "rms_norm_eps": 1e-5,
-                "rope_theta": 10000.0,
-                "attention_bias": false,
-                "mlp_bias": false,
-                "attention_multiplier": 0.0078125,
-                "embedding_multiplier": 12.0,
-                "residual_multiplier": 0.22,
-                "logits_scaling": 8.0,
-                "tie_word_embeddings": false
+            {
+                "architectures": ["GraniteSpeechForConditionalGeneration"],
+                "model_type": "granite_speech",
+                "audio_token_index": 100352,
+                "downsample_rate": 5,
+                "window_size": 15,
+                "encoder_config": {
+                    "input_dim": 160,
+                    "num_layers": 16,
+                    "hidden_dim": 1024,
+                    "feedforward_mult": 4,
+                    "num_heads": 8,
+                    "dim_head": 128,
+                    "output_dim": 348,
+                    "context_size": 200,
+                    "max_pos_emb": 512,
+                    "conv_kernel_size": 15,
+                    "conv_expansion_factor": 2
+                },
+                "projector_config": {
+                    "hidden_size": 1024,
+                    "num_hidden_layers": 2,
+                    "num_attention_heads": 16,
+                    "intermediate_size": 4096,
+                    "layer_norm_eps": 1e-12,
+                    "encoder_hidden_size": 1024
+                },
+                "text_config": {
+                    "model_type": "granite",
+                    "vocab_size": 100353,
+                    "hidden_size": 2048,
+                    "intermediate_size": 4096,
+                    "num_hidden_layers": 40,
+                    "num_attention_heads": 16,
+                    "num_key_value_heads": 4,
+                    "max_position_embeddings": 4096,
+                    "rms_norm_eps": 1e-5,
+                    "rope_theta": 10000.0,
+                    "attention_bias": false,
+                    "mlp_bias": false,
+                    "attention_multiplier": 0.0078125,
+                    "embedding_multiplier": 12.0,
+                    "residual_multiplier": 0.22,
+                    "logits_scaling": 8.0,
+                    "tie_word_embeddings": false
+                }
             }
-        }
-        """
-        try json.write(to: dir.appendingPathComponent("config.json"),
-                       atomically: true, encoding: .utf8)
+            """
+        try json.write(
+            to: dir.appendingPathComponent("config.json"),
+            atomically: true, encoding: .utf8)
     }
 
     /// Write a minimal empty safetensors bundle (required by SafeTensorsBundle init in tests).

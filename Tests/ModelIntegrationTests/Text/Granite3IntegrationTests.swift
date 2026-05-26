@@ -21,9 +21,10 @@
 // integration test under `Granite4IntegrationTests.swift`.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Granite3 Integration", .serialized)
 struct Granite3IntegrationTests {

@@ -21,6 +21,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Mistral3 Family Root — error + constants")
@@ -29,8 +30,9 @@ struct Mistral3RootTests {
     @Test("Mistral3 advertises the canonical model_type + architecture")
     func registration() {
         #expect(Mistral3.modelTypes.contains("mistral3"))
-        #expect(Mistral3.architectures
-            .contains("Mistral3ForConditionalGeneration"))
+        #expect(
+            Mistral3.architectures
+                .contains("Mistral3ForConditionalGeneration"))
     }
 
     @Test("Mistral3 exposes the canonical defaults")

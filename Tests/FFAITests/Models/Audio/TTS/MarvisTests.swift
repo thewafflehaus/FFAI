@@ -28,6 +28,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Marvis")
@@ -132,12 +133,14 @@ struct MarvisTests {
 
     @Test("MarvisModel.handles — true for csm model_type")
     func handlesByModelType() {
-        let config = ModelConfig(architecture: nil, modelType: "csm",
-                                 raw: ["model_type": "csm"])
+        let config = ModelConfig(
+            architecture: nil, modelType: "csm",
+            raw: ["model_type": "csm"])
         #expect(MarvisModel.handles(config))
     }
 
-    @Test("MarvisModel.handles — structural fallback via audio_num_codebooks + depth_decoder_config")
+    @Test(
+        "MarvisModel.handles — structural fallback via audio_num_codebooks + depth_decoder_config")
     func handlesStructural() {
         let raw: [String: Any] = [
             "audio_num_codebooks": 32,
@@ -149,9 +152,10 @@ struct MarvisTests {
 
     @Test("MarvisModel.handles — false for unrelated text model")
     func handlesFalseForTextModel() {
-        let config = ModelConfig(architecture: "LlamaForCausalLM",
-                                 modelType: "llama",
-                                 raw: ["model_type": "llama"])
+        let config = ModelConfig(
+            architecture: "LlamaForCausalLM",
+            modelType: "llama",
+            raw: ["model_type": "llama"])
         #expect(!MarvisModel.handles(config))
     }
 
@@ -159,8 +163,9 @@ struct MarvisTests {
 
     @Test("AudioModelRegistry.capabilities — Marvis maps to textToSpeech")
     func registryCapability() {
-        let config = ModelConfig(architecture: nil, modelType: "csm",
-                                 raw: ["model_type": "csm"])
+        let config = ModelConfig(
+            architecture: nil, modelType: "csm",
+            raw: ["model_type": "csm"])
         #expect(AudioModelRegistry.capabilities(for: config) == Capability.textToSpeech)
     }
 
@@ -183,7 +188,8 @@ struct MarvisTests {
     func errorDescriptionNoFrames() {
         let err = MarvisError.noFrames
         let desc = err.description
-        #expect(desc.contains("Marvis") || desc.contains("frame")
+        #expect(
+            desc.contains("Marvis") || desc.contains("frame")
                 || desc.contains("audio"))
     }
 }

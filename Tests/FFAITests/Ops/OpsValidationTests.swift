@@ -28,6 +28,7 @@
 // why this exists.
 
 import Testing
+
 @testable import FFAI
 
 @Suite("OpsValidation — wrapper preconditions")
@@ -92,26 +93,31 @@ struct OpsValidationTests {
     @Test("sdpaDecode accepts production shapes")
     func sdpaDecodeAcceptsLegal() {
         // Llama 3.1 (32 q-heads, 8 kv-heads = 4x GQA, head_dim=128).
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 128, nQHeads: 32, nKVHeads: 8,
-            nKV: 100, kvStride: 4096) == nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 128, nQHeads: 32, nKVHeads: 8,
+                nKV: 100, kvStride: 4096) == nil)
         // Qwen3 0.6B (16 q-heads, 8 kv-heads = 2x GQA, head_dim=128).
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 128, nQHeads: 16, nKVHeads: 8,
-            nKV: 0, kvStride: 1) == nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 128, nQHeads: 16, nKVHeads: 8,
+                nKV: 0, kvStride: 1) == nil)
         // No GQA, head_dim=128.
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 128, nQHeads: 8, nKVHeads: 8,
-            nKV: 1024, kvStride: 4096) == nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 128, nQHeads: 8, nKVHeads: 8,
+                nKV: 1024, kvStride: 4096) == nil)
         // Llama 3.2 1B: head_dim=64, 32 q-heads, 8 kv-heads.
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 64, nQHeads: 32, nKVHeads: 8,
-            nKV: 256, kvStride: 4096) == nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 64, nQHeads: 32, nKVHeads: 8,
+                nKV: 256, kvStride: 4096) == nil)
         // GPT-OSS-20B sliding-window layers: head_dim=64, 64 q-heads,
         // 8 kv-heads.
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 64, nQHeads: 64, nKVHeads: 8,
-            nKV: 1, kvStride: 128) == nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 64, nQHeads: 64, nKVHeads: 8,
+                nKV: 1, kvStride: 128) == nil)
     }
 
     @Test("sdpaDecode rejects head_dim outside {64, 128, 256, 512}")
@@ -120,9 +126,10 @@ struct OpsValidationTests {
         // sizing helper → 4 threads → n_simd=0 → infinite loop. The set
         // also covers values we've never specialized.
         for badHeadDim in [4, 32, 96, 127, 129, 192, 256 + 1, 1024] {
-            #expect(OpsValidation.validateSdpaDecode(
-                headDim: badHeadDim, nQHeads: 8, nKVHeads: 8,
-                nKV: 1, kvStride: 4) != nil,
+            #expect(
+                OpsValidation.validateSdpaDecode(
+                    headDim: badHeadDim, nQHeads: 8, nKVHeads: 8,
+                    nKV: 1, kvStride: 4) != nil,
                 "head_dim=\(badHeadDim) should be rejected")
         }
     }
@@ -139,77 +146,91 @@ struct OpsValidationTests {
 
     @Test("sdpaDecode rejects non-integer GQA fan-out")
     func sdpaDecodeRejectsBadGQA() {
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 128, nQHeads: 7, nKVHeads: 4,
-            nKV: 1, kvStride: 4) != nil)
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 128, nQHeads: 32, nKVHeads: 5,
-            nKV: 1, kvStride: 4) != nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 128, nQHeads: 7, nKVHeads: 4,
+                nKV: 1, kvStride: 4) != nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 128, nQHeads: 32, nKVHeads: 5,
+                nKV: 1, kvStride: 4) != nil)
     }
 
     @Test("sdpaDecode rejects zero / negative head counts")
     func sdpaDecodeRejectsBadHeadCounts() {
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 128, nQHeads: 0, nKVHeads: 1,
-            nKV: 1, kvStride: 4) != nil)
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 128, nQHeads: 8, nKVHeads: 0,
-            nKV: 1, kvStride: 4) != nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 128, nQHeads: 0, nKVHeads: 1,
+                nKV: 1, kvStride: 4) != nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 128, nQHeads: 8, nKVHeads: 0,
+                nKV: 1, kvStride: 4) != nil)
     }
 
     @Test("sdpaDecode rejects n_kv > kv_stride")
     func sdpaDecodeRejectsOverflowingNKV() {
         // Walking past the pre-allocated cache → OOB reads on K/V.
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 128, nQHeads: 8, nKVHeads: 8,
-            nKV: 10, kvStride: 4) != nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 128, nQHeads: 8, nKVHeads: 8,
+                nKV: 10, kvStride: 4) != nil)
         // n_kv == kv_stride is fine (cache exactly full).
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 128, nQHeads: 8, nKVHeads: 8,
-            nKV: 4, kvStride: 4) == nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 128, nQHeads: 8, nKVHeads: 8,
+                nKV: 4, kvStride: 4) == nil)
     }
 
     @Test("sdpaDecode accepts legal sink/window bounds")
     func sdpaDecodeAcceptsLegalSinkWindow() {
         // Dense default — both zero.
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 128, nQHeads: 8, nKVHeads: 8,
-            nKV: 64, kvStride: 256, sinkEnd: 0, windowStart: 0) == nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 128, nQHeads: 8, nKVHeads: 8,
+                nKV: 64, kvStride: 256, sinkEnd: 0, windowStart: 0) == nil)
         // Sink + window, well-ordered, window inside n_kv.
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 128, nQHeads: 8, nKVHeads: 8,
-            nKV: 64, kvStride: 256, sinkEnd: 4, windowStart: 32) == nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 128, nQHeads: 8, nKVHeads: 8,
+                nKV: 64, kvStride: 256, sinkEnd: 4, windowStart: 32) == nil)
         // sinkEnd == windowStart (gap is empty) is fine.
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 128, nQHeads: 8, nKVHeads: 8,
-            nKV: 64, kvStride: 256, sinkEnd: 8, windowStart: 8) == nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 128, nQHeads: 8, nKVHeads: 8,
+                nKV: 64, kvStride: 256, sinkEnd: 8, windowStart: 8) == nil)
     }
 
     @Test("sdpaDecode rejects sink/window on dense-only head dims")
     func sdpaDecodeRejectsSinkWindowOnD64D256() {
         // d64 / d256 kernels carry no sink_end/window_start constexpr.
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 64, nQHeads: 8, nKVHeads: 8,
-            nKV: 64, kvStride: 256, sinkEnd: 0, windowStart: 4) != nil)
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 256, nQHeads: 8, nKVHeads: 8,
-            nKV: 64, kvStride: 256, sinkEnd: 2, windowStart: 2) != nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 64, nQHeads: 8, nKVHeads: 8,
+                nKV: 64, kvStride: 256, sinkEnd: 0, windowStart: 4) != nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 256, nQHeads: 8, nKVHeads: 8,
+                nKV: 64, kvStride: 256, sinkEnd: 2, windowStart: 2) != nil)
     }
 
     @Test("sdpaDecode rejects overlapping or out-of-range sink/window")
     func sdpaDecodeRejectsBadSinkWindow() {
         // sinkEnd > windowStart → online-softmax double-counts the gap.
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 128, nQHeads: 8, nKVHeads: 8,
-            nKV: 64, kvStride: 256, sinkEnd: 32, windowStart: 8) != nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 128, nQHeads: 8, nKVHeads: 8,
+                nKV: 64, kvStride: 256, sinkEnd: 32, windowStart: 8) != nil)
         // windowStart > n_kv → window pass walks an inverted range.
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 128, nQHeads: 8, nKVHeads: 8,
-            nKV: 16, kvStride: 256, sinkEnd: 0, windowStart: 32) != nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 128, nQHeads: 8, nKVHeads: 8,
+                nKV: 16, kvStride: 256, sinkEnd: 0, windowStart: 32) != nil)
         // Negative bounds rejected.
-        #expect(OpsValidation.validateSdpaDecode(
-            headDim: 128, nQHeads: 8, nKVHeads: 8,
-            nKV: 64, kvStride: 256, sinkEnd: -1, windowStart: 4) != nil)
+        #expect(
+            OpsValidation.validateSdpaDecode(
+                headDim: 128, nQHeads: 8, nKVHeads: 8,
+                nKV: 64, kvStride: 256, sinkEnd: -1, windowStart: 4) != nil)
     }
 
     // ─── sdpaMulti ─────────────────────────────────────────────────
@@ -218,17 +239,20 @@ struct OpsValidationTests {
     func sdpaMultiAcceptsLegal() {
         // Nemotron-Labs-Diffusion 3B: 32 q-heads / 8 kv-heads, head_dim
         // 128, a 32-token block on top of a cached prefix.
-        #expect(OpsValidation.validateSdpaMulti(
-            headDim: 128, nQHeads: 32, nKVHeads: 8,
-            baseKV: 64, nQuery: 32, kvStride: 96) == nil)
+        #expect(
+            OpsValidation.validateSdpaMulti(
+                headDim: 128, nQHeads: 32, nKVHeads: 8,
+                baseKV: 64, nQuery: 32, kvStride: 96) == nil)
         // No prefix (first block).
-        #expect(OpsValidation.validateSdpaMulti(
-            headDim: 128, nQHeads: 32, nKVHeads: 8,
-            baseKV: 0, nQuery: 32, kvStride: 32) == nil)
+        #expect(
+            OpsValidation.validateSdpaMulti(
+                headDim: 128, nQHeads: 32, nKVHeads: 8,
+                baseKV: 0, nQuery: 32, kvStride: 32) == nil)
         // MHA (no GQA fan-out).
-        #expect(OpsValidation.validateSdpaMulti(
-            headDim: 128, nQHeads: 4, nKVHeads: 4,
-            baseKV: 8, nQuery: 8, kvStride: 4096) == nil)
+        #expect(
+            OpsValidation.validateSdpaMulti(
+                headDim: 128, nQHeads: 4, nKVHeads: 4,
+                baseKV: 8, nQuery: 8, kvStride: 4096) == nil)
     }
 
     @Test("sdpaMulti rejects head_dim != 128")
@@ -236,42 +260,48 @@ struct OpsValidationTests {
         // The kernel hardcodes 4 elements/lane (128/32); other head
         // dims OOB-read.
         for hd in [32, 64, 96, 256] {
-            #expect(OpsValidation.validateSdpaMulti(
-                headDim: hd, nQHeads: 8, nKVHeads: 8,
-                baseKV: 0, nQuery: 8, kvStride: 8) != nil,
+            #expect(
+                OpsValidation.validateSdpaMulti(
+                    headDim: hd, nQHeads: 8, nKVHeads: 8,
+                    baseKV: 0, nQuery: 8, kvStride: 8) != nil,
                 "head_dim \(hd) should be rejected")
         }
     }
 
     @Test("sdpaMulti rejects non-integer GQA fan-out")
     func sdpaMultiRejectsBadGQA() {
-        #expect(OpsValidation.validateSdpaMulti(
-            headDim: 128, nQHeads: 7, nKVHeads: 4,
-            baseKV: 0, nQuery: 8, kvStride: 8) != nil)
+        #expect(
+            OpsValidation.validateSdpaMulti(
+                headDim: 128, nQHeads: 7, nKVHeads: 4,
+                baseKV: 0, nQuery: 8, kvStride: 8) != nil)
     }
 
     @Test("sdpaMulti rejects empty block and out-of-range baseKV")
     func sdpaMultiRejectsBadBlock() {
         // nQuery must be ≥ 1.
-        #expect(OpsValidation.validateSdpaMulti(
-            headDim: 128, nQHeads: 8, nKVHeads: 8,
-            baseKV: 0, nQuery: 0, kvStride: 8) != nil)
+        #expect(
+            OpsValidation.validateSdpaMulti(
+                headDim: 128, nQHeads: 8, nKVHeads: 8,
+                baseKV: 0, nQuery: 0, kvStride: 8) != nil)
         // Negative prefix.
-        #expect(OpsValidation.validateSdpaMulti(
-            headDim: 128, nQHeads: 8, nKVHeads: 8,
-            baseKV: -1, nQuery: 8, kvStride: 8) != nil)
+        #expect(
+            OpsValidation.validateSdpaMulti(
+                headDim: 128, nQHeads: 8, nKVHeads: 8,
+                baseKV: -1, nQuery: 8, kvStride: 8) != nil)
     }
 
     @Test("sdpaMulti rejects baseKV + nQuery > kvStride")
     func sdpaMultiRejectsOverflowingCache() {
         // The block's K/V would land past the allocated cache depth.
-        #expect(OpsValidation.validateSdpaMulti(
-            headDim: 128, nQHeads: 8, nKVHeads: 8,
-            baseKV: 80, nQuery: 32, kvStride: 96) != nil)
+        #expect(
+            OpsValidation.validateSdpaMulti(
+                headDim: 128, nQHeads: 8, nKVHeads: 8,
+                baseKV: 80, nQuery: 32, kvStride: 96) != nil)
         // Exactly full is fine.
-        #expect(OpsValidation.validateSdpaMulti(
-            headDim: 128, nQHeads: 8, nKVHeads: 8,
-            baseKV: 64, nQuery: 32, kvStride: 96) == nil)
+        #expect(
+            OpsValidation.validateSdpaMulti(
+                headDim: 128, nQHeads: 8, nKVHeads: 8,
+                baseKV: 64, nQuery: 32, kvStride: 96) == nil)
     }
 
     // ─── addAndRmsNorm ─────────────────────────────────────────────
@@ -280,16 +310,16 @@ struct OpsValidationTests {
     func addAndRmsNormAcceptsLegal() {
         // Production transformer hidden sizes within the kernel's
         // 4096 cap.
-        #expect(OpsValidation.validateAddRmsNorm(n: 2048) == nil)   // Llama 3.2 1B
-        #expect(OpsValidation.validateAddRmsNorm(n: 2560) == nil)   // Qwen 3 4B
-        #expect(OpsValidation.validateAddRmsNorm(n: 4096) == nil)   // Llama 3.1 8B (exact)
-        #expect(OpsValidation.validateAddRmsNorm(n: 128) == nil)    // Tiny edge case
+        #expect(OpsValidation.validateAddRmsNorm(n: 2048) == nil)  // Llama 3.2 1B
+        #expect(OpsValidation.validateAddRmsNorm(n: 2560) == nil)  // Qwen 3 4B
+        #expect(OpsValidation.validateAddRmsNorm(n: 4096) == nil)  // Llama 3.1 8B (exact)
+        #expect(OpsValidation.validateAddRmsNorm(n: 128) == nil)  // Tiny edge case
     }
 
     @Test("addAndRmsNorm rejects n > 4096 (Gemma 4 27B+ hidden)")
     func addAndRmsNormRejectsTooWide() {
         // n/4 would exceed 1024 (Apple Silicon's TPG cap).
-        #expect(OpsValidation.validateAddRmsNorm(n: 5376) != nil)   // Gemma 4 31B
+        #expect(OpsValidation.validateAddRmsNorm(n: 5376) != nil)  // Gemma 4 31B
         #expect(OpsValidation.validateAddRmsNorm(n: 4100) != nil)
     }
 
@@ -297,8 +327,9 @@ struct OpsValidationTests {
     func addAndRmsNormRejectsBadAlignment() {
         // Kernel vectorises in 4-elem chunks (tid * 4).
         for n in [100, 257, 1023] {
-            #expect(OpsValidation.validateAddRmsNorm(n: n) != nil,
-                    "n=\(n) should be rejected (not a multiple of 4)")
+            #expect(
+                OpsValidation.validateAddRmsNorm(n: n) != nil,
+                "n=\(n) should be rejected (not a multiple of 4)")
         }
     }
 
@@ -308,7 +339,7 @@ struct OpsValidationTests {
         #expect(OpsValidation.validateAddRmsNorm(n: 0) != nil)
         #expect(OpsValidation.validateAddRmsNorm(n: -4) != nil)
         #expect(OpsValidation.validateAddRmsNorm(n: 4) != nil)
-        #expect(OpsValidation.validateAddRmsNorm(n: 124) != nil)   // 124/4=31, below 32
+        #expect(OpsValidation.validateAddRmsNorm(n: 124) != nil)  // 124/4=31, below 32
     }
 
     // ─── sdpaBidirectional ─────────────────────────────────────────
@@ -316,17 +347,20 @@ struct OpsValidationTests {
     @Test("sdpaBidirectional accepts every supported head_dim")
     func sdpaBidirectionalAcceptsLegal() {
         // d32 (FastViT-HD): tiny per-head footprint, GQA fan-out.
-        #expect(OpsValidation.validateSdpaBidirectional(
-            headDim: 32, nQHeads: 4, nKVHeads: 2,
-            baseKV: 0, nQuery: 8, kvStride: 8) == nil)
+        #expect(
+            OpsValidation.validateSdpaBidirectional(
+                headDim: 32, nQHeads: 4, nKVHeads: 2,
+                baseKV: 0, nQuery: 8, kvStride: 8) == nil)
         // d64 (SigLIP-base / large, CLIP-L): the most common vision case.
-        #expect(OpsValidation.validateSdpaBidirectional(
-            headDim: 64, nQHeads: 12, nKVHeads: 12,
-            baseKV: 16, nQuery: 16, kvStride: 64) == nil)
+        #expect(
+            OpsValidation.validateSdpaBidirectional(
+                headDim: 64, nQHeads: 12, nKVHeads: 12,
+                baseKV: 16, nQuery: 16, kvStride: 64) == nil)
         // d72 (PaliGemma SigLIP-So400m): ragged 3-elems-per-lane layout.
-        #expect(OpsValidation.validateSdpaBidirectional(
-            headDim: 72, nQHeads: 16, nKVHeads: 16,
-            baseKV: 0, nQuery: 64, kvStride: 64) == nil)
+        #expect(
+            OpsValidation.validateSdpaBidirectional(
+                headDim: 72, nQHeads: 16, nKVHeads: 16,
+                baseKV: 0, nQuery: 64, kvStride: 64) == nil)
     }
 
     @Test("sdpaBidirectional rejects unsupported head_dims")
@@ -336,46 +370,53 @@ struct OpsValidationTests {
         // OpsValidation.sdpaBidirectionalSupportedHeadDims = {32, 64,
         // 72, 80, 96} — Qwen2-VL (96) and Qwen2.5-VL (80) added 2026-05.
         for hd in [16, 48, 100, 112, 128, 192, 256] {
-            #expect(OpsValidation.validateSdpaBidirectional(
-                headDim: hd, nQHeads: 8, nKVHeads: 8,
-                baseKV: 0, nQuery: 8, kvStride: 8) != nil,
+            #expect(
+                OpsValidation.validateSdpaBidirectional(
+                    headDim: hd, nQHeads: 8, nKVHeads: 8,
+                    baseKV: 0, nQuery: 8, kvStride: 8) != nil,
                 "head_dim \(hd) should be rejected")
         }
         // Smoke the positive side too — every supported dim accepts.
         for hd in [32, 64, 72, 80, 96] {
-            #expect(OpsValidation.validateSdpaBidirectional(
-                headDim: hd, nQHeads: 8, nKVHeads: 8,
-                baseKV: 0, nQuery: 8, kvStride: 8) == nil,
+            #expect(
+                OpsValidation.validateSdpaBidirectional(
+                    headDim: hd, nQHeads: 8, nKVHeads: 8,
+                    baseKV: 0, nQuery: 8, kvStride: 8) == nil,
                 "head_dim \(hd) should be accepted")
         }
     }
 
     @Test("sdpaBidirectional rejects non-integer GQA fan-out")
     func sdpaBidirectionalRejectsBadGQA() {
-        #expect(OpsValidation.validateSdpaBidirectional(
-            headDim: 64, nQHeads: 7, nKVHeads: 4,
-            baseKV: 0, nQuery: 8, kvStride: 8) != nil)
+        #expect(
+            OpsValidation.validateSdpaBidirectional(
+                headDim: 64, nQHeads: 7, nKVHeads: 4,
+                baseKV: 0, nQuery: 8, kvStride: 8) != nil)
     }
 
     @Test("sdpaBidirectional rejects empty block and negative baseKV")
     func sdpaBidirectionalRejectsBadBlock() {
-        #expect(OpsValidation.validateSdpaBidirectional(
-            headDim: 64, nQHeads: 8, nKVHeads: 8,
-            baseKV: 0, nQuery: 0, kvStride: 8) != nil)
-        #expect(OpsValidation.validateSdpaBidirectional(
-            headDim: 64, nQHeads: 8, nKVHeads: 8,
-            baseKV: -1, nQuery: 8, kvStride: 8) != nil)
+        #expect(
+            OpsValidation.validateSdpaBidirectional(
+                headDim: 64, nQHeads: 8, nKVHeads: 8,
+                baseKV: 0, nQuery: 0, kvStride: 8) != nil)
+        #expect(
+            OpsValidation.validateSdpaBidirectional(
+                headDim: 64, nQHeads: 8, nKVHeads: 8,
+                baseKV: -1, nQuery: 8, kvStride: 8) != nil)
     }
 
     @Test("sdpaBidirectional rejects baseKV + nQuery > kvStride")
     func sdpaBidirectionalRejectsOverflowingCache() {
-        #expect(OpsValidation.validateSdpaBidirectional(
-            headDim: 72, nQHeads: 8, nKVHeads: 8,
-            baseKV: 80, nQuery: 32, kvStride: 96) != nil)
+        #expect(
+            OpsValidation.validateSdpaBidirectional(
+                headDim: 72, nQHeads: 8, nKVHeads: 8,
+                baseKV: 80, nQuery: 32, kvStride: 96) != nil)
         // Exact fit is fine.
-        #expect(OpsValidation.validateSdpaBidirectional(
-            headDim: 72, nQHeads: 8, nKVHeads: 8,
-            baseKV: 64, nQuery: 32, kvStride: 96) == nil)
+        #expect(
+            OpsValidation.validateSdpaBidirectional(
+                headDim: 72, nQHeads: 8, nKVHeads: 8,
+                baseKV: 64, nQuery: 32, kvStride: 96) == nil)
     }
 
     // ─── gemm (multi-row) ──────────────────────────────────────────
@@ -414,13 +455,15 @@ struct OpsValidationTests {
         // AURA scheme dims from the planning doc — all multiples of 32
         // and ≤ 1024.
         for d in [64, 96, 128, 192, 256, 512, 1024] {
-            #expect(OpsValidation.validateAuraEncode(rows: 1, dim: d, bits: 4) == nil,
-                    "dim=\(d) should be legal")
+            #expect(
+                OpsValidation.validateAuraEncode(rows: 1, dim: d, bits: 4) == nil,
+                "dim=\(d) should be legal")
         }
         // All supported bit-widths at production dim=128.
         for b in [2, 3, 4, 8] {
-            #expect(OpsValidation.validateAuraEncode(rows: 1, dim: 128, bits: b) == nil,
-                    "bits=\(b) should be legal")
+            #expect(
+                OpsValidation.validateAuraEncode(rows: 1, dim: 128, bits: b) == nil,
+                "bits=\(b) should be legal")
         }
     }
 
@@ -439,8 +482,9 @@ struct OpsValidationTests {
     func auraEncodeRejectsBadBits() {
         // Only int2/3/4/8 emitted; everything else should trap.
         for badBits in [0, 1, 5, 6, 7, 9, 16] {
-            #expect(OpsValidation.validateAuraEncode(rows: 1, dim: 128, bits: badBits) != nil,
-                    "bits=\(badBits) should be rejected")
+            #expect(
+                OpsValidation.validateAuraEncode(rows: 1, dim: 128, bits: badBits) != nil,
+                "bits=\(badBits) should be rejected")
         }
     }
 
@@ -471,26 +515,30 @@ struct OpsValidationTests {
     func dequantGemvAcceptsLegal() {
         // int4 with groupSize=64. inDim=4096, outDim=4096 (Llama hidden).
         // n_groups = 4096/64 = 64. scales/biases = 4096*64 = 262144.
-        #expect(OpsValidation.validateDequantGemv(
-            outDim: 4096, inDim: 4096, bits: 4, groupSize: 64,
-            scalesCount: 4096 * 64, biasesCount: 4096 * 64) == nil)
+        #expect(
+            OpsValidation.validateDequantGemv(
+                outDim: 4096, inDim: 4096, bits: 4, groupSize: 64,
+                scalesCount: 4096 * 64, biasesCount: 4096 * 64) == nil)
         // int8 with groupSize=32. inDim=128, outDim=64.
         // n_groups = 128/32 = 4. scales/biases = 64*4 = 256.
-        #expect(OpsValidation.validateDequantGemv(
-            outDim: 64, inDim: 128, bits: 8, groupSize: 32,
-            scalesCount: 64 * 4, biasesCount: 64 * 4) == nil)
+        #expect(
+            OpsValidation.validateDequantGemv(
+                outDim: 64, inDim: 128, bits: 8, groupSize: 32,
+                scalesCount: 64 * 4, biasesCount: 64 * 4) == nil)
         // int6 (element-strided, no pack alignment).
-        #expect(OpsValidation.validateDequantGemv(
-            outDim: 2, inDim: 64, bits: 6, groupSize: 64,
-            scalesCount: 2, biasesCount: 2) == nil)
+        #expect(
+            OpsValidation.validateDequantGemv(
+                outDim: 2, inDim: 64, bits: 6, groupSize: 64,
+                scalesCount: 2, biasesCount: 2) == nil)
     }
 
     @Test("dequantGemv rejects unsupported bits")
     func dequantGemvRejectsBadBits() {
         for badBits in [0, 1, 2, 7, 9, 16, -4] {
-            #expect(OpsValidation.validateDequantGemv(
-                outDim: 64, inDim: 128, bits: badBits, groupSize: 32,
-                scalesCount: 0, biasesCount: 0) != nil,
+            #expect(
+                OpsValidation.validateDequantGemv(
+                    outDim: 64, inDim: 128, bits: badBits, groupSize: 32,
+                    scalesCount: 0, biasesCount: 0) != nil,
                 "bits=\(badBits) should be rejected")
         }
     }
@@ -499,13 +547,15 @@ struct OpsValidationTests {
     func dequantGemvRejectsPartialGroup() {
         // inDim=130, groupSize=64 → n_groups=2 (integer), but kernel
         // walks 128 elements only, dropping 2. Silent miscompute.
-        #expect(OpsValidation.validateDequantGemv(
-            outDim: 4, inDim: 130, bits: 4, groupSize: 64,
-            scalesCount: 0, biasesCount: 0) != nil)
+        #expect(
+            OpsValidation.validateDequantGemv(
+                outDim: 4, inDim: 130, bits: 4, groupSize: 64,
+                scalesCount: 0, biasesCount: 0) != nil)
         // inDim=100, groupSize=32 → n_groups=3 (truncated from 3.125).
-        #expect(OpsValidation.validateDequantGemv(
-            outDim: 4, inDim: 100, bits: 4, groupSize: 32,
-            scalesCount: 0, biasesCount: 0) != nil)
+        #expect(
+            OpsValidation.validateDequantGemv(
+                outDim: 4, inDim: 100, bits: 4, groupSize: 32,
+                scalesCount: 0, biasesCount: 0) != nil)
     }
 
     @Test("dequantGemv rejects unaligned pack tail for int4/int8")
@@ -518,43 +568,51 @@ struct OpsValidationTests {
         // Example: inDim=48, bits=4, groupSize=48 → n_groups=1 ✓; vals_per_pack=8, 48%8==0 ✓. Passes.
         // Need a case where group_size isn't pack-aligned: e.g. groupSize=6 (not multiple of 8).
         // But groupSize=6 isn't typical. Let me use groupSize=24, bits=4 (24 not multiple of 8).
-        #expect(OpsValidation.validateDequantGemv(
-            outDim: 4, inDim: 96, bits: 4, groupSize: 24,
-            scalesCount: 0, biasesCount: 0) != nil)
+        #expect(
+            OpsValidation.validateDequantGemv(
+                outDim: 4, inDim: 96, bits: 4, groupSize: 24,
+                scalesCount: 0, biasesCount: 0) != nil)
         // int8: vals_per_pack=4. groupSize=6 fails pack alignment.
-        #expect(OpsValidation.validateDequantGemv(
-            outDim: 4, inDim: 96, bits: 8, groupSize: 6,
-            scalesCount: 0, biasesCount: 0) != nil)
+        #expect(
+            OpsValidation.validateDequantGemv(
+                outDim: 4, inDim: 96, bits: 8, groupSize: 6,
+                scalesCount: 0, biasesCount: 0) != nil)
     }
 
     @Test("dequantGemv rejects scales/biases sizing mismatch")
     func dequantGemvRejectsBadScalesBiases() {
         // outDim=4, inDim=128, groupSize=64 → n_groups=2, expected scales=8.
         // Too few:
-        #expect(OpsValidation.validateDequantGemv(
-            outDim: 4, inDim: 128, bits: 4, groupSize: 64,
-            scalesCount: 4, biasesCount: 8) != nil)
+        #expect(
+            OpsValidation.validateDequantGemv(
+                outDim: 4, inDim: 128, bits: 4, groupSize: 64,
+                scalesCount: 4, biasesCount: 8) != nil)
         // Biases wrong:
-        #expect(OpsValidation.validateDequantGemv(
-            outDim: 4, inDim: 128, bits: 4, groupSize: 64,
-            scalesCount: 8, biasesCount: 4) != nil)
+        #expect(
+            OpsValidation.validateDequantGemv(
+                outDim: 4, inDim: 128, bits: 4, groupSize: 64,
+                scalesCount: 8, biasesCount: 4) != nil)
         // Exactly right:
-        #expect(OpsValidation.validateDequantGemv(
-            outDim: 4, inDim: 128, bits: 4, groupSize: 64,
-            scalesCount: 8, biasesCount: 8) == nil)
+        #expect(
+            OpsValidation.validateDequantGemv(
+                outDim: 4, inDim: 128, bits: 4, groupSize: 64,
+                scalesCount: 8, biasesCount: 8) == nil)
     }
 
     @Test("dequantGemv rejects non-positive dims")
     func dequantGemvRejectsNonPositive() {
-        #expect(OpsValidation.validateDequantGemv(
-            outDim: 0, inDim: 128, bits: 4, groupSize: 64,
-            scalesCount: 0, biasesCount: 0) != nil)
-        #expect(OpsValidation.validateDequantGemv(
-            outDim: 4, inDim: 0, bits: 4, groupSize: 64,
-            scalesCount: 0, biasesCount: 0) != nil)
-        #expect(OpsValidation.validateDequantGemv(
-            outDim: 4, inDim: 128, bits: 4, groupSize: 0,
-            scalesCount: 0, biasesCount: 0) != nil)
+        #expect(
+            OpsValidation.validateDequantGemv(
+                outDim: 0, inDim: 128, bits: 4, groupSize: 64,
+                scalesCount: 0, biasesCount: 0) != nil)
+        #expect(
+            OpsValidation.validateDequantGemv(
+                outDim: 4, inDim: 0, bits: 4, groupSize: 64,
+                scalesCount: 0, biasesCount: 0) != nil)
+        #expect(
+            OpsValidation.validateDequantGemv(
+                outDim: 4, inDim: 128, bits: 4, groupSize: 0,
+                scalesCount: 0, biasesCount: 0) != nil)
     }
 
     // ─── gatedDeltaStep ────────────────────────────────────────────
@@ -565,18 +623,19 @@ struct OpsValidationTests {
         // constexprs — any config satisfying the geometry invariants
         // is dispatchable. These cover the shipped Qwen3.5 GDN variants.
         let configs: [[Int]] = [
-            [192, 128, 4, 4],    // Qwen3.5-A3B
+            [192, 128, 4, 4],  // Qwen3.5-A3B
             [128, 128, 8, 8],
             [128, 128, 16, 16],  // Qwen3.5 dense 0.8B-9B
             [128, 128, 16, 32],  // Qwen3.5-35B
             [128, 128, 16, 48],  // Qwen3.5 dense 27B
-            [64, 64, 8, 8],      // Qwen3.5 small
-            [96, 96, 8, 8],      // arbitrary 32-multiple — runtime-parametric
+            [64, 64, 8, 8],  // Qwen3.5 small
+            [96, 96, 8, 8],  // arbitrary 32-multiple — runtime-parametric
         ]
         for config in configs {
-            #expect(OpsValidation.validateGatedDeltaStep(
-                keyHeadDim: config[0], valueHeadDim: config[1],
-                numKeyHeads: config[2], numValueHeads: config[3]) == nil,
+            #expect(
+                OpsValidation.validateGatedDeltaStep(
+                    keyHeadDim: config[0], valueHeadDim: config[1],
+                    numKeyHeads: config[2], numValueHeads: config[3]) == nil,
                 "config \(config) should be accepted")
         }
     }
@@ -612,12 +671,14 @@ struct OpsValidationTests {
 
     @Test("validateGatedDeltaStep rejects non-positive dimensions")
     func gatedDeltaStepRejectsNonPositive() {
-        #expect(OpsValidation.validateGatedDeltaStep(
-            keyHeadDim: 0, valueHeadDim: 128,
-            numKeyHeads: 4, numValueHeads: 4) != nil)
-        #expect(OpsValidation.validateGatedDeltaStep(
-            keyHeadDim: 128, valueHeadDim: 128,
-            numKeyHeads: 0, numValueHeads: 4) != nil)
+        #expect(
+            OpsValidation.validateGatedDeltaStep(
+                keyHeadDim: 0, valueHeadDim: 128,
+                numKeyHeads: 4, numValueHeads: 4) != nil)
+        #expect(
+            OpsValidation.validateGatedDeltaStep(
+                keyHeadDim: 128, valueHeadDim: 128,
+                numKeyHeads: 0, numValueHeads: 4) != nil)
     }
 
     // ─── Failure messages are useful ───────────────────────────────

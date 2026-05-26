@@ -55,8 +55,8 @@ public struct Mamba2Dense: Mamba2Variant {
         device: Device
     ) throws -> Mamba2Model {
         guard let hidden = config.hiddenSize,
-              let nLayers = config.numLayers,
-              let vocab = config.vocabSize
+            let nLayers = config.numLayers,
+            let vocab = config.vocabSize
         else { throw Mamba2Error.missingConfig("hidden / layers / vocab") }
         guard let stateDim = config.int("state_size")
         else { throw Mamba2Error.missingConfig("state_size") }
@@ -76,12 +76,14 @@ public struct Mamba2Dense: Mamba2Variant {
             throw Mamba2Error.unsupportedConfig("n_groups > 1 not yet supported (got \(nGroups))")
         }
         guard !useBias else {
-            throw Mamba2Error.unsupportedConfig("use_bias=true on in_proj/out_proj not yet supported")
+            throw Mamba2Error.unsupportedConfig(
+                "use_bias=true on in_proj/out_proj not yet supported")
         }
 
         let dInner = expand * hidden
-        precondition(dInner == nHeads * headDim,
-                     "expand*hidden (\(dInner)) must equal n_heads*head_dim (\(nHeads * headDim))")
+        precondition(
+            dInner == nHeads * headDim,
+            "expand*hidden (\(dInner)) must equal n_heads*head_dim (\(nHeads * headDim))")
         let convDim = dInner + 2 * nGroups * stateDim
 
         // Activation/inference dtype — taken from the embedding weight
@@ -89,24 +91,27 @@ public struct Mamba2Dense: Mamba2Variant {
         // bf16). The rest of the layer storage is allocated to match.
         let embedW = try weights.tensor(named: "backbone.embeddings.weight")
         let activationDtype = embedW.dtype
-        precondition(activationDtype == .f32 || activationDtype == .bf16 || activationDtype == .f16,
-                     "Mamba2: unexpected activation dtype \(activationDtype)")
+        precondition(
+            activationDtype == .f32 || activationDtype == .bf16 || activationDtype == .f16,
+            "Mamba2: unexpected activation dtype \(activationDtype)")
         let embedTokens = AnyEmbedding(Embedding(weight: embedW))
 
         // Layers
         var layers: [Mamba2Layer] = []
         layers.reserveCapacity(nLayers)
-        for i in 0..<nLayers {
+        for i in 0 ..< nLayers {
             let p = "backbone.layers.\(i)"
 
             let inputNorm = RMSNorm(
                 weight: try weights.tensor(named: "\(p).norm.weight"),
                 eps: Float(eps))
 
-            let inProj = AnyLinear(Linear(
-                weight: try weights.tensor(named: "\(p).mixer.in_proj.weight")))
-            let outProj = AnyLinear(Linear(
-                weight: try weights.tensor(named: "\(p).mixer.out_proj.weight")))
+            let inProj = AnyLinear(
+                Linear(
+                    weight: try weights.tensor(named: "\(p).mixer.in_proj.weight")))
+            let outProj = AnyLinear(
+                Linear(
+                    weight: try weights.tensor(named: "\(p).mixer.out_proj.weight")))
 
             // conv1d.weight ships as [conv_dim, 1, kernel_size]; the
             // metaltile kernel expects [kernel_size, conv_dim].
@@ -116,18 +121,21 @@ public struct Mamba2Dense: Mamba2Variant {
             // or [C, K]. All three share the same row-major byte layout
             // (channel-major, then kernel-tap). The transpose helper
             // only needs total count.
-            precondition(convWSrc.elementCount == convDim * convKernel,
-                         "conv1d.weight count mismatch: \(convWSrc.shape)")
-            let convW = transposeConv1dWeight(src: convWSrc,
-                                              kernel: convKernel,
-                                              channels: convDim,
-                                              dtype: activationDtype,
-                                              device: device)
+            precondition(
+                convWSrc.elementCount == convDim * convKernel,
+                "conv1d.weight count mismatch: \(convWSrc.shape)")
+            let convW = transposeConv1dWeight(
+                src: convWSrc,
+                kernel: convKernel,
+                channels: convDim,
+                dtype: activationDtype,
+                device: device)
 
             let convB: Tensor = {
                 if useConvBias {
                     return (try? weights.tensor(named: "\(p).mixer.conv1d.bias"))
-                        ?? Tensor.empty(shape: [convDim], dtype: activationDtype, device: device).also { $0.zero() }
+                        ?? Tensor.empty(shape: [convDim], dtype: activationDtype, device: device)
+                        .also { $0.zero() }
                 }
                 let t = Tensor.empty(shape: [convDim], dtype: activationDtype, device: device)
                 t.zero()
@@ -141,27 +149,31 @@ public struct Mamba2Dense: Mamba2Variant {
             let dLog = try weights.tensor(named: "\(p).mixer.D")
             let dtBiasSrc = try weights.tensor(named: "\(p).mixer.dt_bias")
 
-            let aEff = computeAEff(aLog: aLog, nHeads: nHeads,
-                                   dtype: activationDtype, device: device)
-            let dtBias = castVector(dtBiasSrc, count: nHeads,
-                                    dtype: activationDtype, device: device)
-            let dTiled = tileDOverHeadDim(d: dLog, nHeads: nHeads, headDim: headDim,
-                                          dtype: activationDtype, device: device)
+            let aEff = computeAEff(
+                aLog: aLog, nHeads: nHeads,
+                dtype: activationDtype, device: device)
+            let dtBias = castVector(
+                dtBiasSrc, count: nHeads,
+                dtype: activationDtype, device: device)
+            let dTiled = tileDOverHeadDim(
+                d: dLog, nHeads: nHeads, headDim: headDim,
+                dtype: activationDtype, device: device)
 
             let mixerNorm = RMSNorm(
                 weight: try weights.tensor(named: "\(p).mixer.norm.weight"),
                 eps: Float(eps))
 
-            layers.append(Mamba2Layer(
-                inputNorm: inputNorm,
-                inProj: inProj, outProj: outProj,
-                convW: convW, convB: convB,
-                aEff: aEff, dtBias: dtBias, dTiled: dTiled,
-                mixerNorm: mixerNorm,
-                hidden: hidden, dInner: dInner, convDim: convDim,
-                nHeads: nHeads, headDim: headDim, stateDim: stateDim,
-                convKernel: convKernel, dtype: activationDtype
-            ))
+            layers.append(
+                Mamba2Layer(
+                    inputNorm: inputNorm,
+                    inProj: inProj, outProj: outProj,
+                    convW: convW, convB: convB,
+                    aEff: aEff, dtBias: dtBias, dTiled: dTiled,
+                    mixerNorm: mixerNorm,
+                    hidden: hidden, dInner: dInner, convDim: convDim,
+                    nHeads: nHeads, headDim: headDim, stateDim: stateDim,
+                    convKernel: convKernel, dtype: activationDtype
+                ))
         }
 
         let finalNorm = RMSNorm(
@@ -192,23 +204,25 @@ public struct Mamba2Dense: Mamba2Variant {
 public final class Mamba2Layer: Module {
     let inputNorm: RMSNorm
     let inProj, outProj: AnyLinear
-    let convW: Tensor        // [kernel_size, conv_dim]   activation dtype
-    let convB: Tensor        // [conv_dim]                activation dtype
-    let aEff: Tensor         // [n_heads]                 activation dtype  (= -exp(A_log))
-    let dtBias: Tensor       // [n_heads]                 activation dtype
-    let dTiled: Tensor       // [d_inner]                 activation dtype  (D[h] tiled)
+    let convW: Tensor  // [kernel_size, conv_dim]   activation dtype
+    let convB: Tensor  // [conv_dim]                activation dtype
+    let aEff: Tensor  // [n_heads]                 activation dtype  (= -exp(A_log))
+    let dtBias: Tensor  // [n_heads]                 activation dtype
+    let dTiled: Tensor  // [d_inner]                 activation dtype  (D[h] tiled)
     let mixerNorm: RMSNorm
     let hidden, dInner, convDim, nHeads, headDim, stateDim, convKernel: Int
     let dtype: DType
 
-    init(inputNorm: RMSNorm,
-         inProj: AnyLinear, outProj: AnyLinear,
-         convW: Tensor, convB: Tensor,
-         aEff: Tensor, dtBias: Tensor, dTiled: Tensor,
-         mixerNorm: RMSNorm,
-         hidden: Int, dInner: Int, convDim: Int,
-         nHeads: Int, headDim: Int, stateDim: Int,
-         convKernel: Int, dtype: DType) {
+    init(
+        inputNorm: RMSNorm,
+        inProj: AnyLinear, outProj: AnyLinear,
+        convW: Tensor, convB: Tensor,
+        aEff: Tensor, dtBias: Tensor, dTiled: Tensor,
+        mixerNorm: RMSNorm,
+        hidden: Int, dInner: Int, convDim: Int,
+        nHeads: Int, headDim: Int, stateDim: Int,
+        convKernel: Int, dtype: DType
+    ) {
         self.inputNorm = inputNorm
         self.inProj = inProj
         self.outProj = outProj
@@ -218,9 +232,14 @@ public final class Mamba2Layer: Module {
         self.dtBias = dtBias
         self.dTiled = dTiled
         self.mixerNorm = mixerNorm
-        self.hidden = hidden; self.dInner = dInner; self.convDim = convDim
-        self.nHeads = nHeads; self.headDim = headDim; self.stateDim = stateDim
-        self.convKernel = convKernel; self.dtype = dtype
+        self.hidden = hidden
+        self.dInner = dInner
+        self.convDim = convDim
+        self.nHeads = nHeads
+        self.headDim = headDim
+        self.stateDim = stateDim
+        self.convKernel = convKernel
+        self.dtype = dtype
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -236,13 +255,15 @@ public final class Mamba2Layer: Module {
 
     /// Single-token decode forward. All work queued on `cmd`; cache
     /// state mutations are kernel-driven (no host sync).
-    func forward(_ h: Tensor, cache: Mamba2LayerCache,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forward(
+        _ h: Tensor, cache: Mamba2LayerCache,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // (1) pre-mixer RMSNorm
         let xNorm = inputNorm(h, on: cmd)
 
         // (2) in_proj → split into z / xBC / dt_raw
-        let proj = inProj(xNorm, on: cmd)       // [in_proj_dim]
+        let proj = inProj(xNorm, on: cmd)  // [in_proj_dim]
         let z = proj.slicedRows(start: 0, count: dInner)
         let xBC = proj.slicedRows(start: dInner, count: convDim)
         let dtRaw = proj.slicedRows(start: dInner + convDim, count: nHeads)
@@ -307,23 +328,31 @@ public final class Mamba2Model: LanguageModel {
     public let hidden, nLayers, nHeads, nKVHeads, headDim: Int
     public let stateDim, convDim, convKernel, dInner: Int
     public let vocab: Int
-    public let maxSeq: Int = .max     // SSM has no length-bound state
+    public let maxSeq: Int = .max  // SSM has no length-bound state
     public let dtype: DType
 
-    init(embedTokens: AnyEmbedding, layers: [Mamba2Layer],
-         finalNorm: RMSNorm, lmHead: AnyLinear,
-         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         stateDim: Int, convDim: Int, convKernel: Int, dInner: Int,
-         vocab: Int, dtype: DType) {
+    init(
+        embedTokens: AnyEmbedding, layers: [Mamba2Layer],
+        finalNorm: RMSNorm, lmHead: AnyLinear,
+        hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        stateDim: Int, convDim: Int, convKernel: Int, dInner: Int,
+        vocab: Int, dtype: DType
+    ) {
         self.embedTokens = embedTokens
         self.layers = layers
         self.finalNorm = finalNorm
         self.lmHead = lmHead
-        self.hidden = hidden; self.nLayers = nLayers
-        self.nHeads = nHeads; self.nKVHeads = nKVHeads; self.headDim = headDim
-        self.stateDim = stateDim; self.convDim = convDim
-        self.convKernel = convKernel; self.dInner = dInner
-        self.vocab = vocab; self.dtype = dtype
+        self.hidden = hidden
+        self.nLayers = nLayers
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.stateDim = stateDim
+        self.convDim = convDim
+        self.convKernel = convKernel
+        self.dInner = dInner
+        self.vocab = vocab
+        self.dtype = dtype
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -340,7 +369,7 @@ public final class Mamba2Model: LanguageModel {
     }
 
     public func makeLayerCaches(maxSeq _: Int?, device: Device) -> [any LayerCacheProtocol] {
-        return (0..<nLayers).map { _ in
+        return (0 ..< nLayers).map { _ in
             Mamba2LayerCache(
                 nHeads: nHeads, stateDim: stateDim, headDim: headDim,
                 convChannels: convDim, convKernelSize: convKernel,
@@ -358,9 +387,11 @@ public final class Mamba2Model: LanguageModel {
     ///
     /// Mamba 2 ignores `position` because the per-layer Mamba2LayerCache
     /// already tracks recurrent state; the `_` underscore drops it.
-    public func forward(tokenId: Int, position _: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func forward(
+        tokenId: Int, position _: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let tokenBuf = device.makeBuffer(length: 4)
         var tid = UInt32(tokenId)
         memcpy(tokenBuf.contents(), &tid, 4)
@@ -368,8 +399,9 @@ public final class Mamba2Model: LanguageModel {
         var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
 
         for (i, layer) in layers.enumerated() {
-            h = layer.forward(h, cache: caches[i] as! Mamba2LayerCache,
-                              cmd: cmd, device: device)
+            h = layer.forward(
+                h, cache: caches[i] as! Mamba2LayerCache,
+                cmd: cmd, device: device)
         }
 
         let normed = finalNorm(h, on: cmd)
@@ -391,15 +423,19 @@ public final class Mamba2Model: LanguageModel {
     ///   why Mamba 2 lacks a chunked path).
     /// - Keeps the commit-count saving (one commit per chunk instead
     ///   of one per token, courtesy of `Generate.driveGeneration`).
-    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                             caches: [any LayerCacheProtocol],
-                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(!tokenIds.isEmpty,
-                     "Mamba2Model.forwardMulti: tokenIds must be non-empty")
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "Mamba2Model.forwardMulti: tokenIds must be non-empty")
         var logits: Tensor!
         for (i, tok) in tokenIds.enumerated() {
-            logits = forward(tokenId: tok, position: position + i,
-                             caches: caches, on: cmd, device: device)
+            logits = forward(
+                tokenId: tok, position: position + i,
+                caches: caches, on: cmd, device: device)
         }
         return logits
     }
@@ -426,8 +462,10 @@ private func readFloats(_ t: Tensor) -> [Float] {
 }
 
 /// Write a `[Float]` into a fresh tensor of the requested dtype.
-private func writeFloats(_ values: [Float], shape: [Int], dtype: DType,
-                         device: Device) -> Tensor {
+private func writeFloats(
+    _ values: [Float], shape: [Int], dtype: DType,
+    device: Device
+) -> Tensor {
     let t = Tensor.empty(shape: shape, dtype: dtype, device: device)
     switch dtype {
     case .f32:
@@ -445,8 +483,10 @@ private func writeFloats(_ values: [Float], shape: [Int], dtype: DType,
 }
 
 /// A_eff = -exp(A_log), per head, in the requested activation dtype.
-private func computeAEff(aLog: Tensor, nHeads: Int,
-                         dtype: DType, device: Device) -> Tensor {
+private func computeAEff(
+    aLog: Tensor, nHeads: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     let floats = readFloats(aLog)
     precondition(floats.count == nHeads, "A_log expected [n_heads]")
     let aEff = floats.map { -Foundation.exp($0) }
@@ -454,8 +494,10 @@ private func computeAEff(aLog: Tensor, nHeads: Int,
 }
 
 /// Cast a per-head vector to the activation dtype, preserving values.
-private func castVector(_ src: Tensor, count: Int,
-                        dtype: DType, device: Device) -> Tensor {
+private func castVector(
+    _ src: Tensor, count: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     if src.dtype == dtype { return src }
     let floats = readFloats(src)
     precondition(floats.count == count, "vector size mismatch")
@@ -465,30 +507,36 @@ private func castVector(_ src: Tensor, count: Int,
 /// Tile `D[h]` across `head_dim` channels, producing `[n_heads * head_dim]`
 /// so the skip connection (`y += D * x`) reuses `Ops.mul` without needing
 /// a broadcast kernel.
-private func tileDOverHeadDim(d: Tensor, nHeads: Int, headDim: Int,
-                              dtype: DType, device: Device) -> Tensor {
+private func tileDOverHeadDim(
+    d: Tensor, nHeads: Int, headDim: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     let floats = readFloats(d)
     precondition(floats.count == nHeads, "D expected [n_heads]")
-    var tiled = [Float](); tiled.reserveCapacity(nHeads * headDim)
-    for h in 0..<nHeads {
-        for _ in 0..<headDim { tiled.append(floats[h]) }
+    var tiled = [Float]()
+    tiled.reserveCapacity(nHeads * headDim)
+    for h in 0 ..< nHeads {
+        for _ in 0 ..< headDim { tiled.append(floats[h]) }
     }
-    return writeFloats(tiled, shape: [nHeads * headDim],
-                       dtype: dtype, device: device)
+    return writeFloats(
+        tiled, shape: [nHeads * headDim],
+        dtype: dtype, device: device)
 }
 
 /// HF conv1d.weight ships as `[C, 1, K]` (depthwise grouped conv,
 /// channel-major). The metaltile kernel expects `[K, C]` (kernel-tap
 /// major). Transpose CPU-side; tiny (~K*C floats) so the cost is in the
 /// noise at load time.
-private func transposeConv1dWeight(src: Tensor,
-                                   kernel K: Int, channels C: Int,
-                                   dtype: DType, device: Device) -> Tensor {
+private func transposeConv1dWeight(
+    src: Tensor,
+    kernel K: Int, channels C: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     let floats = readFloats(src)
     precondition(floats.count == K * C, "conv1d.weight count mismatch")
     var dst = [Float](repeating: 0, count: K * C)
-    for c in 0..<C {
-        for k in 0..<K {
+    for c in 0 ..< C {
+        for k in 0 ..< K {
             dst[k * C + c] = floats[c * K + k]
         }
     }
@@ -497,7 +545,10 @@ private func transposeConv1dWeight(src: Tensor,
 
 // ─── Small Tensor convenience ────────────────────────────────────────
 
-private extension Tensor {
+extension Tensor {
     /// Inline side-effect for declarative initializers; returns self.
-    func also(_ apply: (Tensor) -> Void) -> Tensor { apply(self); return self }
+    fileprivate func also(_ apply: (Tensor) -> Void) -> Tensor {
+        apply(self)
+        return self
+    }
 }

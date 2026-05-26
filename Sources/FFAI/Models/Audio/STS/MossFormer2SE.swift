@@ -147,7 +147,7 @@ public struct MossFormer2SEConfig: Sendable {
 
 /// Activate ReLU in place.
 private func reluInPlace(_ x: inout [Float]) {
-    for i in 0..<x.count { if x[i] < 0 { x[i] = 0 } }
+    for i in 0 ..< x.count { if x[i] < 0 { x[i] = 0 } }
 }
 
 /// Element-wise sigmoid.
@@ -161,10 +161,12 @@ private func tanhF(_ x: Float) -> Float {
 }
 
 /// Compute `sqrt(sum(x*x) * scale)`, clamped below `eps`.
-private func l2NormClamped(_ x: [Float], start: Int, count: Int,
-                            scale: Float, eps: Float) -> Float {
+private func l2NormClamped(
+    _ x: [Float], start: Int, count: Int,
+    scale: Float, eps: Float
+) -> Float {
     var s: Float = 0
-    for i in start..<(start + count) { s += x[i] * x[i] }
+    for i in start ..< (start + count) { s += x[i] * x[i] }
     return max(sqrtf(s) * scale, eps)
 }
 
@@ -177,13 +179,13 @@ private func depthwiseConv1d(
     let outLen = (inLen + 2 * padding - kernelSize) / stride + 1
     var out = [Float](repeating: 0, count: inC * outLen)
     let halfK = kernelSize  // iteration below uses k directly
-    for c in 0..<inC {
+    for c in 0 ..< inC {
         let wBase = c * kernelSize
         let iBase = c * inLen
         let oBase = c * outLen
-        for t in 0..<outLen {
+        for t in 0 ..< outLen {
             var sum: Float = 0
-            for k in 0..<halfK {
+            for k in 0 ..< halfK {
                 let src = t * stride + k - padding
                 if src >= 0, src < inLen {
                     sum += input[iBase + src] * weight[wBase + k]
@@ -204,16 +206,16 @@ private func conv1d(
 ) -> [Float] {
     let outLen = (inLen + 2 * padding - kernelSize) / stride + 1
     var out = [Float](repeating: 0, count: outC * outLen)
-    for oc in 0..<outC {
+    for oc in 0 ..< outC {
         let b: Float = bias.map { $0[oc] } ?? 0
         let wOcBase = oc * inC * kernelSize
         let oBase = oc * outLen
-        for t in 0..<outLen {
+        for t in 0 ..< outLen {
             var sum: Float = b
-            for ic in 0..<inC {
+            for ic in 0 ..< inC {
                 let wIcBase = wOcBase + ic * kernelSize
                 let iBase = ic * inLen
-                for k in 0..<kernelSize {
+                for k in 0 ..< kernelSize {
                     let src = t * stride + k - padding
                     if src >= 0, src < inLen {
                         sum += input[iBase + src] * weight[wIcBase + k]
@@ -227,13 +229,15 @@ private func conv1d(
 }
 
 /// Matrix–vector multiply: weight[outF, inF] × input[inF] → [outF].
-private func linearMV(_ weight: [Float], _ bias: [Float]?,
-                       _ input: [Float], outF: Int, inF: Int) -> [Float] {
+private func linearMV(
+    _ weight: [Float], _ bias: [Float]?,
+    _ input: [Float], outF: Int, inF: Int
+) -> [Float] {
     var out = [Float](repeating: 0, count: outF)
-    for o in 0..<outF {
+    for o in 0 ..< outF {
         var s: Float = bias.map { $0[o] } ?? 0
         let base = o * inF
-        for i in 0..<inF { s += weight[base + i] * input[i] }
+        for i in 0 ..< inF { s += weight[base + i] * input[i] }
         out[o] = s
     }
     return out
@@ -248,12 +252,12 @@ private func batchMatMulRightTranspose(
 ) -> [Float] {
     // Result [aRows, bRows] = A × B^T
     var out = [Float](repeating: 0, count: aRows * bRows)
-    for i in 0..<aRows {
-        for j in 0..<bRows {
+    for i in 0 ..< aRows {
+        for j in 0 ..< bRows {
             var s: Float = bias.map { $0[j] } ?? 0
             let aBase = i * aCols
             let bBase = j * aCols
-            for k in 0..<aCols { s += a[aBase + k] * b[bBase + k] }
+            for k in 0 ..< aCols { s += a[aBase + k] * b[bBase + k] }
             out[i * bRows + j] = s
         }
     }
@@ -261,13 +265,15 @@ private func batchMatMulRightTranspose(
 }
 
 /// Generic matrix multiply [M,K]×[K,N]→[M,N], row-major.
-private func matMul(_ a: [Float], m: Int, k: Int,
-                    _ b: [Float], n: Int) -> [Float] {
+private func matMul(
+    _ a: [Float], m: Int, k: Int,
+    _ b: [Float], n: Int
+) -> [Float] {
     var out = [Float](repeating: 0, count: m * n)
-    for i in 0..<m {
-        for j in 0..<n {
+    for i in 0 ..< m {
+        for j in 0 ..< n {
             var s: Float = 0
-            for kk in 0..<k { s += a[i * k + kk] * b[kk * n + j] }
+            for kk in 0 ..< k { s += a[i * k + kk] * b[kk * n + j] }
             out[i * n + j] = s
         }
     }
@@ -279,7 +285,9 @@ private func matMul(_ a: [Float], m: Int, k: Int,
 /// Next power of two ≥ `v`.
 private func nextPow2(_ v: Int) -> Int {
     guard v > 1 else { return max(v, 1) }
-    var n = 1; while n < v { n <<= 1 }; return n
+    var n = 1
+    while n < v { n <<= 1 }
+    return n
 }
 
 /// Hamming window (non-periodic by default).
@@ -288,7 +296,7 @@ private func hammingWindow(size: Int, periodic: Bool = false) -> [Float] {
     if size == 1 { return [1.0] }
     let eff = periodic ? size + 1 : size
     let denom = Float(eff - 1)
-    var w = (0..<eff).map { n -> Float in
+    var w = (0 ..< eff).map { n -> Float in
         let phase = 2.0 * Float.pi * Float(n) / denom
         return 0.54 - 0.46 * cos(phase)
     }
@@ -302,7 +310,7 @@ private func hannWindow(size: Int, periodic: Bool = false) -> [Float] {
     if size == 1 { return [1.0] }
     let eff = periodic ? size + 1 : size
     let denom = Float(eff - 1)
-    var w = (0..<eff).map { n -> Float in
+    var w = (0 ..< eff).map { n -> Float in
         let phase = 2.0 * Float.pi * Float(n) / denom
         return 0.5 - 0.5 * cos(phase)
     }
@@ -316,9 +324,12 @@ private func fft(_ x: inout [Float], inverse: Bool = false) {
     guard n > 0, n & (n - 1) == 0 else { return }
     // Bit-reversal permutation
     var j = 0
-    for i in 1..<n {
+    for i in 1 ..< n {
         var bit = n >> 1
-        while j & bit != 0 { j ^= bit; bit >>= 1 }
+        while j & bit != 0 {
+            j ^= bit
+            bit >>= 1
+        }
         j ^= bit
         if i < j {
             x.swapAt(2 * i, 2 * j)
@@ -333,18 +344,19 @@ private func fft(_ x: inout [Float], inverse: Bool = false) {
         let wIm = sin(ang)
         var pos = 0
         while pos < n {
-            var uRe: Float = 1; var uIm: Float = 0
-            for k in 0..<(len / 2) {
+            var uRe: Float = 1
+            var uIm: Float = 0
+            for k in 0 ..< (len / 2) {
                 let eRe = x[2 * (pos + k)]
                 let eIm = x[2 * (pos + k) + 1]
                 let oRe = x[2 * (pos + k + len / 2)]
                 let oIm = x[2 * (pos + k + len / 2) + 1]
                 let tRe = uRe * oRe - uIm * oIm
                 let tIm = uRe * oIm + uIm * oRe
-                x[2 * (pos + k)]         = eRe + tRe
-                x[2 * (pos + k) + 1]     = eIm + tIm
-                x[2 * (pos + k + len/2)] = eRe - tRe
-                x[2 * (pos + k + len/2) + 1] = eIm - tIm
+                x[2 * (pos + k)] = eRe + tRe
+                x[2 * (pos + k) + 1] = eIm + tIm
+                x[2 * (pos + k + len / 2)] = eRe - tRe
+                x[2 * (pos + k + len / 2) + 1] = eIm - tIm
                 let nuRe = uRe * wRe - uIm * wIm
                 uIm = uRe * wIm + uIm * wRe
                 uRe = nuRe
@@ -355,7 +367,7 @@ private func fft(_ x: inout [Float], inverse: Bool = false) {
     }
     if inverse {
         let fn = Float(n)
-        for i in 0..<(2 * n) { x[i] /= fn }
+        for i in 0 ..< (2 * n) { x[i] /= fn }
     }
 }
 
@@ -382,16 +394,16 @@ private func stft(
     let nfft = nextPow2(fftLen)
     let effectiveWin = min(window.count, winLen)
 
-    for f in 0..<numFrames {
+    for f in 0 ..< numFrames {
         let start = f * hopLength
         var buf = [Float](repeating: 0, count: 2 * nfft)
-        for k in 0..<effectiveWin {
+        for k in 0 ..< effectiveWin {
             let s = start + k
             let v: Float = (s < sigLen) ? signal[s] : 0
             buf[2 * k] = v * window[k]
         }
         fft(&buf)
-        for b in 0..<numBins {
+        for b in 0 ..< numBins {
             realOut[b][f] = buf[2 * b]
             imagOut[b][f] = buf[2 * b + 1]
         }
@@ -419,28 +431,28 @@ private func istft(
 
     let effectiveWin = min(window.count, frameWidth)
     var synthWindow = [Float](repeating: 0, count: frameWidth)
-    for i in 0..<effectiveWin { synthWindow[i] = window[i] }
+    for i in 0 ..< effectiveWin { synthWindow[i] = window[i] }
 
-    for f in 0..<numFrames {
+    for f in 0 ..< numFrames {
         // Reconstruct complex spectrum [nfft] for irfft
         var buf = [Float](repeating: 0, count: 2 * nfft)
-        for b in 0..<numBins {
-            buf[2 * b]     = real[b][f]
+        for b in 0 ..< numBins {
+            buf[2 * b] = real[b][f]
             buf[2 * b + 1] = imag[b][f]
         }
         // Fill negative frequencies via conjugate symmetry
         if nfft > 1 {
             let lastPos = numBins - 1
-            for b in 1..<lastPos {
+            for b in 1 ..< lastPos {
                 let neg = nfft - b
-                buf[2 * neg]     =  buf[2 * b]
+                buf[2 * neg] = buf[2 * b]
                 buf[2 * neg + 1] = -buf[2 * b + 1]
             }
         }
         fft(&buf, inverse: true)
         // Overlap-add windowed frame
         let offset = f * hopLength
-        for k in 0..<frameWidth {
+        for k in 0 ..< frameWidth {
             let s = offset + k
             if s < fullLen {
                 output[s] += buf[2 * k] * synthWindow[k]
@@ -450,7 +462,7 @@ private func istft(
     }
     // Normalize by window power
     let eps: Float = 1e-8
-    for i in 0..<fullLen {
+    for i in 0 ..< fullLen {
         output[i] /= max(windowSum[i], eps)
     }
     if let audioLength, output.count > audioLength {
@@ -489,19 +501,21 @@ private func computeFbankKaldi(
     }
 
     // Mel filterbank: [numMels, nFft/2+1]
-    let melBank = melFilters(sampleRate: sampleRate, nFft: nFft,
-                             nMels: numMels, fMin: lowFreq)
+    let melBank = melFilters(
+        sampleRate: sampleRate, nFft: nFft,
+        nMels: numMels, fMin: lowFreq)
 
-    var features = [[Float]](repeating: [Float](repeating: 0, count: numMels),
-                             count: numFrames)
+    var features = [[Float]](
+        repeating: [Float](repeating: 0, count: numMels),
+        count: numFrames)
 
-    for fi in 0..<numFrames {
+    for fi in 0 ..< numFrames {
         let start = fi * winInc
-        var frame = Array(signal[start..<(start + winLen)])
+        var frame = Array(signal[start ..< (start + winLen)])
 
         if removeDCOffset {
             let mean = frame.reduce(0, +) / Float(frame.count)
-            for i in 0..<frame.count { frame[i] -= mean }
+            for i in 0 ..< frame.count { frame[i] -= mean }
         }
         if preemphasis > 0, frame.count > 1 {
             for i in stride(from: frame.count - 1, through: 1, by: -1) {
@@ -512,21 +526,22 @@ private func computeFbankKaldi(
 
         // Apply window + FFT
         var buf = [Float](repeating: 0, count: 2 * nFft)
-        for k in 0..<winLen { buf[2 * k] = frame[k] * analysisWindow[k] }
+        for k in 0 ..< winLen { buf[2 * k] = frame[k] * analysisWindow[k] }
         fft(&buf)
 
         // Power spectrum [nFft/2+1]
         let numBins = nFft / 2 + 1
         var power = [Float](repeating: 0, count: numBins)
-        for b in 0..<numBins {
-            let re = buf[2 * b]; let im = buf[2 * b + 1]
+        for b in 0 ..< numBins {
+            let re = buf[2 * b]
+            let im = buf[2 * b + 1]
             power[b] = re * re + im * im
         }
 
         // Apply mel filters
-        for m in 0..<numMels {
+        for m in 0 ..< numMels {
             var s: Float = 0
-            for b in 0..<numBins { s += power[b] * melBank[m * numBins + b] }
+            for b in 0 ..< numBins { s += power[b] * melBank[m * numBins + b] }
             features[fi][m] = log(max(s, 1e-10))
         }
     }
@@ -549,18 +564,18 @@ private func melFilters(
 
     // nMels + 2 equally spaced mel points
     var melPoints = [Float](repeating: 0, count: nMels + 2)
-    for i in 0...(nMels + 1) {
+    for i in 0 ... (nMels + 1) {
         melPoints[i] = melLow + Float(i) * (melHigh - melLow) / Float(nMels + 1)
     }
     // Convert to Hz → FFT bin index
     // Mel point conversion is done per-filter below using f0/f1/f2 directly.
 
     var fb = [Float](repeating: 0, count: nMels * numBins)
-    for m in 0..<nMels {
-        let f0 = floor(melToHz(melPoints[m])     / Float(sampleRate) * Float(nFft + 1))
+    for m in 0 ..< nMels {
+        let f0 = floor(melToHz(melPoints[m]) / Float(sampleRate) * Float(nFft + 1))
         let f1 = floor(melToHz(melPoints[m + 1]) / Float(sampleRate) * Float(nFft + 1))
         let f2 = floor(melToHz(melPoints[m + 2]) / Float(sampleRate) * Float(nFft + 1))
-        for k in 0..<numBins {
+        for k in 0 ..< numBins {
             let fk = Float(k)
             if fk >= f0, fk <= f1, f1 > f0 {
                 fb[m * numBins + k] = (fk - f0) / (f1 - f0)
@@ -584,15 +599,15 @@ private func computeDeltasKaldi(
 
     let halfWin = max(winLength / 2, 1)
     var denom: Float = 0
-    for i in 1...halfWin { denom += Float(i * i) }
+    for i in 1 ... halfWin { denom += Float(i * i) }
     denom *= 2.0
     guard denom > 0 else { return features }
 
     var out = [[Float]](repeating: [Float](repeating: 0, count: time), count: channels)
-    for c in 0..<channels {
-        for t in 0..<time {
+    for c in 0 ..< channels {
+        for t in 0 ..< time {
             var delta: Float = 0
-            for i in 1...halfWin {
+            for i in 1 ... halfWin {
                 let ta = min(max(t + i, 0), time - 1)
                 let tb = min(max(t - i, 0), time - 1)
                 delta += Float(i) * (features[c][ta] - features[c][tb])
@@ -614,7 +629,7 @@ private func scaleNorm(
     for v in x { ss += v * v }
     let norm = max(sqrtf(ss) * scale, eps)
     let factor = g / norm
-    for i in 0..<dim { x[i] *= factor }
+    for i in 0 ..< dim { x[i] *= factor }
 }
 
 /// Layer norm over last axis. Input [T, C] flattened row-major.
@@ -623,18 +638,19 @@ private func layerNormRows(
     _ x: inout [Float], rows: Int, cols: Int,
     gamma: [Float], beta: [Float], eps: Float
 ) {
-    for r in 0..<rows {
+    for r in 0 ..< rows {
         let base = r * cols
         var mean: Float = 0
-        for c in 0..<cols { mean += x[base + c] }
+        for c in 0 ..< cols { mean += x[base + c] }
         mean /= Float(cols)
         var vari: Float = 0
-        for c in 0..<cols {
-            let d = x[base + c] - mean; vari += d * d
+        for c in 0 ..< cols {
+            let d = x[base + c] - mean
+            vari += d * d
         }
         vari /= Float(cols)
         let invStd = 1.0 / sqrtf(vari + eps)
-        for c in 0..<cols {
+        for c in 0 ..< cols {
             x[base + c] = (x[base + c] - mean) * invStd * gamma[c] + beta[c]
         }
     }
@@ -654,14 +670,18 @@ private func globalLayerNorm(
     for v in x { mean += v }
     mean /= Float(n)
     var vari: Float = 0
-    for v in x { let d = v - mean; vari += d * d }
+    for v in x {
+        let d = v - mean
+        vari += d * d
+    }
     vari /= Float(n)
     let invStd = 1.0 / sqrtf(vari + eps)
     var out = [Float](repeating: 0, count: n)
-    for ch in 0..<c {
-        let w = weight[ch]; let b = bias[ch]
+    for ch in 0 ..< c {
+        let w = weight[ch]
+        let b = bias[ch]
         let base = ch * t
-        for ti in 0..<t {
+        for ti in 0 ..< t {
             out[base + ti] = (x[base + ti] - mean) * invStd * w + b
         }
     }
@@ -669,9 +689,9 @@ private func globalLayerNorm(
 }
 
 // Float16 → Float32 bit-cast helper.
-private extension Float {
-    init(float16Bits bits: UInt16) {
-        let sign: UInt32    = UInt32(bits >> 15) << 31
+extension Float {
+    fileprivate init(float16Bits bits: UInt16) {
+        let sign: UInt32 = UInt32(bits >> 15) << 31
         let exponent: UInt32 = UInt32((bits >> 10) & 0x1F)
         let mantissa: UInt32 = UInt32(bits & 0x3FF)
 
@@ -681,8 +701,12 @@ private extension Float {
                 f32bits = sign  // ±0
             } else {
                 // Denormalised: shift mantissa to normalise
-                var m = mantissa; var e: UInt32 = 0
-                while m & 0x400 == 0 { m <<= 1; e += 1 }
+                var m = mantissa
+                var e: UInt32 = 0
+                while m & 0x400 == 0 {
+                    m <<= 1
+                    e += 1
+                }
                 m &= 0x3FF
                 f32bits = sign | ((127 - 15 - e + 1) << 23) | (m << 13)
             }
@@ -695,7 +719,7 @@ private extension Float {
         self = Float(bitPattern: f32bits)
     }
 
-    init(bfloat16Bits bits: UInt16) {
+    fileprivate init(bfloat16Bits bits: UInt16) {
         let f32bits = UInt32(bits) << 16
         self = Float(bitPattern: f32bits)
     }
@@ -726,24 +750,25 @@ private struct SEConvModule {
         let dim = inChannels
         // Transpose x [T, dim] → ch-major [dim, T]
         var chMajor = [Float](repeating: 0, count: dim * t)
-        for ti in 0..<t {
-            for d in 0..<dim {
+        for ti in 0 ..< t {
+            for d in 0 ..< dim {
                 chMajor[d * t + ti] = x[ti * dim + d]
             }
         }
-        let convOut = depthwiseConv1d(chMajor, inC: dim, inLen: t,
-                                      weight: weight, kernelSize: kernelSize,
-                                      padding: padding)
+        let convOut = depthwiseConv1d(
+            chMajor, inC: dim, inLen: t,
+            weight: weight, kernelSize: kernelSize,
+            padding: padding)
         // Transpose back [dim, T] → [T, dim]
         var timeMajor = [Float](repeating: 0, count: t * dim)
-        for ti in 0..<t {
-            for d in 0..<dim {
+        for ti in 0 ..< t {
+            for d in 0 ..< dim {
                 timeMajor[ti * dim + d] = convOut[d * t + ti]
             }
         }
         // Residual add
         var out = [Float](repeating: 0, count: t * dim)
-        for i in 0..<(t * dim) { out[i] = x[i] + timeMajor[i] }
+        for i in 0 ..< (t * dim) { out[i] = x[i] + timeMajor[i] }
         return out
     }
 }
@@ -766,17 +791,18 @@ private struct SEFFConvM {
         // x: [T, dimIn]
         var y = x
         // LayerNorm over last axis (dimIn)
-        layerNormRows(&y, rows: t, cols: dimIn,
-                      gamma: lnGamma, beta: lnBeta, eps: lnEps)
+        layerNormRows(
+            &y, rows: t, cols: dimIn,
+            gamma: lnGamma, beta: lnBeta, eps: lnEps)
         // Linear [T, dimIn] → [T, dimOut]
         var lin = [Float](repeating: 0, count: t * dimOut)
-        for ti in 0..<t {
-            let row = Array(y[(ti * dimIn)..<(ti * dimIn + dimIn)])
+        for ti in 0 ..< t {
+            let row = Array(y[(ti * dimIn) ..< (ti * dimIn + dimIn)])
             let out = linearMV(linearWeight, linearBias, row, outF: dimOut, inF: dimIn)
-            for d in 0..<dimOut { lin[ti * dimOut + d] = out[d] }
+            for d in 0 ..< dimOut { lin[ti * dimOut + d] = out[d] }
         }
         // SiLU = x * sigmoid(x)
-        for i in 0..<lin.count { lin[i] = lin[i] * sigmoid(lin[i]) }
+        for i in 0 ..< lin.count { lin[i] = lin[i] * sigmoid(lin[i]) }
         // ConvModule residual
         return convMod.forward(lin, t: t)
     }
@@ -792,13 +818,14 @@ private struct SEOffsetScale {
     func forward(_ x: [Float], t: Int) -> ([Float], [Float], [Float], [Float]) {
         // Returns (quadQ, linQ, quadK, linK) each [T, qkDim]
         let heads = 4
-        var results = [[Float]](repeating: [Float](repeating: 0, count: t * qkDim),
-                                count: heads)
-        for ti in 0..<t {
+        var results = [[Float]](
+            repeating: [Float](repeating: 0, count: t * qkDim),
+            count: heads)
+        for ti in 0 ..< t {
             let xBase = ti * qkDim
-            for h in 0..<heads {
+            for h in 0 ..< heads {
                 let gBase = h * qkDim
-                for d in 0..<qkDim {
+                for d in 0 ..< qkDim {
                     results[h][ti * qkDim + d] =
                         x[xBase + d] * gamma[gBase + d] + beta[gBase + d]
                 }
@@ -815,8 +842,8 @@ private struct SEGatedFSMN {
     // to_v: FFConvM(inChannels → innerChannels)
     let toV: SEFFConvM
     // FSMN parts
-    let fsmnLinearW: [Float]   // [hiddenSize, inChannels]
-    let fsmnLinearB: [Float]   // [hiddenSize]
+    let fsmnLinearW: [Float]  // [hiddenSize, inChannels]
+    let fsmnLinearB: [Float]  // [hiddenSize]
     let fsmnProjectW: [Float]  // [outChannels, hiddenSize] (no bias)
     // Conv1 (depthwise): [outChannels, lorder*2-1] after squeezing last dims
     let fsmnConvW: [Float]
@@ -833,7 +860,7 @@ private struct SEGatedFSMN {
         xu = fsmnForward(xu, t: t)
         // Gate: xv * xu + residual
         var out = [Float](repeating: 0, count: t * outChannels)
-        for i in 0..<(t * outChannels) {
+        for i in 0 ..< (t * outChannels) {
             out[i] = xv[i] * xu[i] + inputResidual[i]
         }
         return out
@@ -842,41 +869,43 @@ private struct SEGatedFSMN {
     private func fsmnForward(_ input: [Float], t: Int) -> [Float] {
         // Linear: [T, inChannels] → [T, hiddenSize] + ReLU
         var h = [Float](repeating: 0, count: t * hiddenSize)
-        for ti in 0..<t {
-            let row = Array(input[(ti * inChannels)..<(ti * inChannels + inChannels)])
-            let out = linearMV(fsmnLinearW, fsmnLinearB, row,
-                               outF: hiddenSize, inF: inChannels)
-            for d in 0..<hiddenSize { h[ti * hiddenSize + d] = max(out[d], 0) }
+        for ti in 0 ..< t {
+            let row = Array(input[(ti * inChannels) ..< (ti * inChannels + inChannels)])
+            let out = linearMV(
+                fsmnLinearW, fsmnLinearB, row,
+                outF: hiddenSize, inF: inChannels)
+            for d in 0 ..< hiddenSize { h[ti * hiddenSize + d] = max(out[d], 0) }
         }
         // Project: [T, hiddenSize] → [T, outChannels] (no bias)
         var p = [Float](repeating: 0, count: t * outChannels)
-        for ti in 0..<t {
-            let row = Array(h[(ti * hiddenSize)..<(ti * hiddenSize + hiddenSize)])
+        for ti in 0 ..< t {
+            let row = Array(h[(ti * hiddenSize) ..< (ti * hiddenSize + hiddenSize)])
             let out = linearMV(fsmnProjectW, nil, row, outF: outChannels, inF: hiddenSize)
-            for d in 0..<outChannels { p[ti * outChannels + d] = out[d] }
+            for d in 0 ..< outChannels { p[ti * outChannels + d] = out[d] }
         }
         // Depthwise conv with padding lorder-1 on each side: [T, C] → channel-major
         let kSize = fsmnLorder * 2 - 1
         let padLeft = fsmnLorder - 1
         // Transpose p [T, C] → [C, T]
         var chMajor = [Float](repeating: 0, count: outChannels * t)
-        for ti in 0..<t {
-            for d in 0..<outChannels { chMajor[d * t + ti] = p[ti * outChannels + d] }
+        for ti in 0 ..< t {
+            for d in 0 ..< outChannels { chMajor[d * t + ti] = p[ti * outChannels + d] }
         }
         // Symmetric-pad [C, T] → [C, T+2*(lorder-1)]
         // Padding is handled inside depthwiseConv1d via the `padding` parameter.
-        let convOut = depthwiseConv1d(chMajor, inC: outChannels, inLen: t,
-                                      weight: fsmnConvW, kernelSize: kSize,
-                                      padding: padLeft)
+        let convOut = depthwiseConv1d(
+            chMajor, inC: outChannels, inLen: t,
+            weight: fsmnConvW, kernelSize: kSize,
+            padding: padLeft)
         // Transpose back [C, T] → [T, C]
         var timeMajor = [Float](repeating: 0, count: t * outChannels)
-        for ti in 0..<t {
-            for d in 0..<outChannels { timeMajor[ti * outChannels + d] = convOut[d * t + ti] }
+        for ti in 0 ..< t {
+            for d in 0 ..< outChannels { timeMajor[ti * outChannels + d] = convOut[d * t + ti] }
         }
         // Residual if inChannels == outChannels
         var enhanced = timeMajor
         if inChannels == outChannels {
-            for i in 0..<(t * outChannels) { enhanced[i] += input[i] }
+            for i in 0 ..< (t * outChannels) { enhanced[i] += input[i] }
         }
         return enhanced
     }
@@ -890,8 +919,10 @@ private struct SEGatedFSMNBlock {
     let conv1W: [Float]
     let conv1B: [Float]
     let preluW: Float
-    let norm1G: [Float]; let norm1B: [Float]
-    let norm2G: [Float]; let norm2B: [Float]
+    let norm1G: [Float]
+    let norm1B: [Float]
+    let norm2G: [Float]
+    let norm2B: [Float]
     let gatedFsmn: SEGatedFSMN
     // conv2: [T, innerChannels] → [T, dim]
     let conv2W: [Float]
@@ -901,23 +932,27 @@ private struct SEGatedFSMNBlock {
     func forward(_ x: [Float], t: Int) -> [Float] {
         let residual = x
         // conv1 (1×1 conv = linear per time step)
-        var y = apply1x1Conv(x, t: t, w: conv1W, b: conv1B,
-                              inC: dim, outC: innerChannels)
+        var y = apply1x1Conv(
+            x, t: t, w: conv1W, b: conv1B,
+            inC: dim, outC: innerChannels)
         // PReLU
-        for i in 0..<y.count { y[i] = y[i] >= 0 ? y[i] : preluW * y[i] }
+        for i in 0 ..< y.count { y[i] = y[i] >= 0 ? y[i] : preluW * y[i] }
         // CLayerNorm (same as layerNorm over last axis)
-        layerNormRows(&y, rows: t, cols: innerChannels,
-                      gamma: norm1G, beta: norm1B, eps: eps)
+        layerNormRows(
+            &y, rows: t, cols: innerChannels,
+            gamma: norm1G, beta: norm1B, eps: eps)
         // GatedFSMN
         y = gatedFsmn.forward(y, t: t)
         // CLayerNorm
-        layerNormRows(&y, rows: t, cols: innerChannels,
-                      gamma: norm2G, beta: norm2B, eps: eps)
+        layerNormRows(
+            &y, rows: t, cols: innerChannels,
+            gamma: norm2G, beta: norm2B, eps: eps)
         // conv2 (1×1 conv)
-        y = apply1x1Conv(y, t: t, w: conv2W, b: conv2B,
-                         inC: innerChannels, outC: dim)
+        y = apply1x1Conv(
+            y, t: t, w: conv2W, b: conv2B,
+            inC: innerChannels, outC: dim)
         // Residual
-        for i in 0..<(t * dim) { y[i] += residual[i] }
+        for i in 0 ..< (t * dim) { y[i] += residual[i] }
         return y
     }
 
@@ -925,10 +960,10 @@ private struct SEGatedFSMNBlock {
         _ x: [Float], t: Int, w: [Float], b: [Float], inC: Int, outC: Int
     ) -> [Float] {
         var out = [Float](repeating: 0, count: t * outC)
-        for ti in 0..<t {
-            let row = Array(x[(ti * inC)..<(ti * inC + inC)])
+        for ti in 0 ..< t {
+            let row = Array(x[(ti * inC) ..< (ti * inC + inC)])
             let r = linearMV(w, b, row, outF: outC, inF: inC)
-            for d in 0..<outC { out[ti * outC + d] = r[d] }
+            for d in 0 ..< outC { out[ti * outC + d] = r[d] }
         }
         return out
     }
@@ -937,14 +972,15 @@ private struct SEGatedFSMNBlock {
 /// RoPE: rotary position embedding over [T, dim], applied in-place.
 private func applyRoPE(_ x: inout [Float], t: Int, dim: Int, base: Float = 10000.0) {
     let halfDim = dim / 2
-    for ti in 0..<t {
+    for ti in 0 ..< t {
         let base2 = ti * dim
-        for d in 0..<halfDim {
+        for d in 0 ..< halfDim {
             let theta = Float(ti) / pow(base, Float(2 * d) / Float(dim))
-            let cosT = cos(theta); let sinT = sin(theta)
+            let cosT = cos(theta)
+            let sinT = sin(theta)
             let re = x[base2 + d]
             let im = x[base2 + halfDim + d]
-            x[base2 + d]          = re * cosT - im * sinT
+            x[base2 + d] = re * cosT - im * sinT
             x[base2 + halfDim + d] = re * sinT + im * cosT
         }
     }
@@ -973,11 +1009,11 @@ private struct SEFlashShareA {
             var shifted = normedX
             // xShift = normedX[..., 0:half], pad left by 1 time step
             for ti in stride(from: t - 1, through: 1, by: -1) {
-                for d in 0..<half {
+                for d in 0 ..< half {
                     shifted[ti * dim + d] = normedX[(ti - 1) * dim + d]
                 }
             }
-            for d in 0..<half { shifted[0 * dim + d] = 0 }
+            for d in 0 ..< half { shifted[0 * dim + d] = 0 }
             normedX = shifted
         }
 
@@ -986,8 +1022,8 @@ private struct SEFlashShareA {
         let halfH = hiddenDim / 2
         var v = [Float](repeating: 0, count: t * halfH)
         var u = [Float](repeating: 0, count: t * halfH)
-        for ti in 0..<t {
-            for d in 0..<halfH {
+        for ti in 0 ..< t {
+            for d in 0 ..< halfH {
                 v[ti * halfH + d] = hidden[ti * hiddenDim + d]
                 u[ti * halfH + d] = hidden[ti * hiddenDim + halfH + d]
             }
@@ -999,13 +1035,15 @@ private struct SEFlashShareA {
 
         // Apply RoPE to q and k (min(32, qkDim) dims)
         let ropeDim = min(32, qkDim)
-        var quadQR = quadQ; var linQR = linQ
-        var quadKR = quadK; var linKR = linK
+        var quadQR = quadQ
+        var linQR = linQ
+        var quadKR = quadK
+        var linKR = linK
         if ropeDim > 0 {
             applyRoPEPartial(&quadQR, t: t, dim: qkDim, ropeDim: ropeDim)
-            applyRoPEPartial(&linQR,  t: t, dim: qkDim, ropeDim: ropeDim)
+            applyRoPEPartial(&linQR, t: t, dim: qkDim, ropeDim: ropeDim)
             applyRoPEPartial(&quadKR, t: t, dim: qkDim, ropeDim: ropeDim)
-            applyRoPEPartial(&linKR,  t: t, dim: qkDim, ropeDim: ropeDim)
+            applyRoPEPartial(&linKR, t: t, dim: qkDim, ropeDim: ropeDim)
         }
 
         // Quadratic + linear attention
@@ -1017,13 +1055,13 @@ private struct SEFlashShareA {
         // out = (attU * v) * sigmoid(attV * u) → [T, halfH].
         // toOut: FFConvM(dimIn = halfH = dim*2, dimOut = dim). ✓
         var outFinal = [Float](repeating: 0, count: t * halfH)
-        for i in 0..<(t * halfH) {
+        for i in 0 ..< (t * halfH) {
             outFinal[i] = attU[i] * v[i] * sigmoid(attV[i] * u[i])
         }
         let toOutResult = toOut.forward(outFinal, t: t)  // [T, dim]
         // Residual
         var result = [Float](repeating: 0, count: t * dim)
-        for i in 0..<(t * dim) { result[i] = x[i] + toOutResult[i] }
+        for i in 0 ..< (t * dim) { result[i] = x[i] + toOutResult[i] }
         return result
     }
 
@@ -1031,14 +1069,15 @@ private struct SEFlashShareA {
         _ x: inout [Float], t: Int, dim: Int, ropeDim: Int
     ) {
         let halfRope = ropeDim / 2
-        for ti in 0..<t {
+        for ti in 0 ..< t {
             let base = ti * dim
-            for d in 0..<halfRope {
+            for d in 0 ..< halfRope {
                 let theta = Float(ti) / pow(Float(10000.0), Float(2 * d) / Float(ropeDim))
-                let cosT = cos(theta); let sinT = sin(theta)
+                let cosT = cos(theta)
+                let sinT = sin(theta)
                 let re = x[base + d]
                 let im = x[base + halfRope + d]
-                x[base + d]          = re * cosT - im * sinT
+                x[base + d] = re * cosT - im * sinT
                 x[base + halfRope + d] = re * sinT + im * cosT
             }
         }
@@ -1061,11 +1100,11 @@ private struct SEFlashShareA {
         }
 
         let pQuadQ = pad(quadQ, cols: qkDim)
-        let pLinQ  = pad(linQ,  cols: qkDim)
+        let pLinQ = pad(linQ, cols: qkDim)
         let pQuadK = pad(quadK, cols: qkDim)
-        let pLinK  = pad(linK,  cols: qkDim)
-        let pV     = pad(v, cols: vDim)
-        let pU     = pad(u, cols: vDim)
+        let pLinK = pad(linK, cols: qkDim)
+        let pV = pad(v, cols: vDim)
+        let pU = pad(u, cols: vDim)
 
         // Quadratic attention: for each group, Q_g @ K_g^T → scaled → relu²
         // then @ V_g. Linear: linK^T @ V / n, then linQ @ result.
@@ -1076,15 +1115,16 @@ private struct SEFlashShareA {
         // the output arrays (non-overlapping), so no locking is needed.
         var outV = [Float](repeating: 0, count: n * vDim)
         var outU = [Float](repeating: 0, count: n * vDim)
-        for gi in 0..<numGroups {
-            for qi in 0..<g {
-                for vj in 0..<vDim {
-                    var sv: Float = 0; var su: Float = 0
-                    for ki in 0..<g {
+        for gi in 0 ..< numGroups {
+            for qi in 0 ..< g {
+                for vj in 0 ..< vDim {
+                    var sv: Float = 0
+                    var su: Float = 0
+                    for ki in 0 ..< g {
                         var dot: Float = 0
                         let qBase = (gi * g + qi) * qkDim
                         let kBase = (gi * g + ki) * qkDim
-                        for d in 0..<qkDim { dot += pQuadQ[qBase + d] * pQuadK[kBase + d] }
+                        for d in 0 ..< qkDim { dot += pQuadQ[qBase + d] * pQuadK[kBase + d] }
                         let relu = max(dot * scale, 0)
                         let attn = relu * relu
                         sv += attn * pV[(gi * g + ki) * vDim + vj]
@@ -1100,10 +1140,11 @@ private struct SEFlashShareA {
         let fn = Float(n)
         var linKV = [Float](repeating: 0, count: qkDim * vDim)
         var linKU = [Float](repeating: 0, count: qkDim * vDim)
-        for d in 0..<qkDim {
-            for vj in 0..<vDim {
-                var sv: Float = 0; var su: Float = 0
-                for ti in 0..<n {
+        for d in 0 ..< qkDim {
+            for vj in 0 ..< vDim {
+                var sv: Float = 0
+                var su: Float = 0
+                for ti in 0 ..< n {
                     sv += pLinK[ti * qkDim + d] * pV[ti * vDim + vj]
                     su += pLinK[ti * qkDim + d] * pU[ti * vDim + vj]
                 }
@@ -1112,10 +1153,11 @@ private struct SEFlashShareA {
             }
         }
         // linOut = linQ @ linKV  [n, vDim]
-        for ti in 0..<n {
-            for vj in 0..<vDim {
-                var sv: Float = 0; var su: Float = 0
-                for d in 0..<qkDim {
+        for ti in 0 ..< n {
+            for vj in 0 ..< vDim {
+                var sv: Float = 0
+                var su: Float = 0
+                for d in 0 ..< qkDim {
                     sv += pLinQ[ti * qkDim + d] * linKV[d * vDim + vj]
                     su += pLinQ[ti * qkDim + d] * linKU[d * vDim + vj]
                 }
@@ -1171,17 +1213,21 @@ private struct SEMaskNet {
     let layers: [SEMossFormerBlockLayer]
 
     // LayerNorm after blocks [outChannels]
-    let normGamma: [Float]; let normBeta: [Float]
+    let normGamma: [Float]
+    let normBeta: [Float]
 
     // PReLU
     let preluW: Float
 
     // conv1d_out: [outChannels → outChannels*2] (1×1, bias)
-    let conv1dOutW: [Float]; let conv1dOutB: [Float]
+    let conv1dOutW: [Float]
+    let conv1dOutB: [Float]
 
     // Gate: output + outputGate (each [outChannels, outChannels])
-    let outputW: [Float]; let outputB: [Float]
-    let outputGateW: [Float]; let outputGateB: [Float]
+    let outputW: [Float]
+    let outputB: [Float]
+    let outputGateW: [Float]
+    let outputGateB: [Float]
 
     // conv1_decoder: [outChannels → outChannelsFinal] (no bias)
     let decoderW: [Float]
@@ -1192,41 +1238,44 @@ private struct SEMaskNet {
         // features: [T, inChannels] time-major
         let t = features.count
         guard t > 0 else { return [] }
-        let inC = inChannels; let outC = outChannels; let outCF = outChannelsFinal
+        let inC = inChannels
+        let outC = outChannels
+        let outCF = outChannelsFinal
 
         // Flatten to [T*inC] row-major
         var flat = [Float](repeating: 0, count: t * inC)
-        for ti in 0..<t {
-            for d in 0..<inC { flat[ti * inC + d] = features[ti][d] }
+        for ti in 0 ..< t {
+            for d in 0 ..< inC { flat[ti * inC + d] = features[ti][d] }
         }
 
         // GlobalLayerNorm: operate on channel-major [inC, T]
         var chMajor = [Float](repeating: 0, count: inC * t)
-        for ti in 0..<t {
-            for d in 0..<inC { chMajor[d * t + ti] = flat[ti * inC + d] }
+        for ti in 0 ..< t {
+            for d in 0 ..< inC { chMajor[d * t + ti] = flat[ti * inC + d] }
         }
-        chMajor = globalLayerNorm(chMajor, c: inC, t: t,
-                                  weight: glnW, bias: glnB, eps: normEps)
+        chMajor = globalLayerNorm(
+            chMajor, c: inC, t: t,
+            weight: glnW, bias: glnB, eps: normEps)
         // Transpose back
         var x = [Float](repeating: 0, count: t * outC)
         // conv1d_encoder: [inC, T] → [outC, T] (1×1 = linear per time step)
         // transpose chMajor [inC, T] → [T, inC] first
         var timeMajor = [Float](repeating: 0, count: t * inC)
-        for ti in 0..<t {
-            for d in 0..<inC { timeMajor[ti * inC + d] = chMajor[d * t + ti] }
+        for ti in 0 ..< t {
+            for d in 0 ..< inC { timeMajor[ti * inC + d] = chMajor[d * t + ti] }
         }
         // Encoder: linear [T, inC] → [T, outC]
-        for ti in 0..<t {
-            let row = Array(timeMajor[(ti * inC)..<(ti * inC + inC)])
+        for ti in 0 ..< t {
+            let row = Array(timeMajor[(ti * inC) ..< (ti * inC + inC)])
             let out = linearMV(encW, nil, row, outF: outC, inF: inC)
-            for d in 0..<outC { x[ti * outC + d] = out[d] }
+            for d in 0 ..< outC { x[ti * outC + d] = out[d] }
         }
 
         // Positional encoding (ScaledSinuEmbedding)
         let halfFreq = posEncInvFreq.count
         if halfFreq > 0, posEncScale != 0 {
-            for ti in 0..<t {
-                for d in 0..<halfFreq {
+            for ti in 0 ..< t {
+                for d in 0 ..< halfFreq {
                     let angle = Float(ti) * posEncInvFreq[d]
                     if 2 * d < outC {
                         x[ti * outC + 2 * d] += sin(angle) * posEncScale
@@ -1244,53 +1293,55 @@ private struct SEMaskNet {
         }
 
         // LayerNorm over outC
-        layerNormRows(&x, rows: t, cols: outC,
-                      gamma: normGamma, beta: normBeta, eps: normEps)
+        layerNormRows(
+            &x, rows: t, cols: outC,
+            gamma: normGamma, beta: normBeta, eps: normEps)
 
         // PReLU
-        for i in 0..<x.count { x[i] = x[i] >= 0 ? x[i] : preluW * x[i] }
+        for i in 0 ..< x.count { x[i] = x[i] >= 0 ? x[i] : preluW * x[i] }
 
         // conv1d_out: [T, outC] → [T, outC * (numSpks+1)] (1×1)
         let convOutC = outC * 2  // numSpks=2 in the reference, but we take spk 0
         var afterConvOut = [Float](repeating: 0, count: t * convOutC)
-        for ti in 0..<t {
-            let row = Array(x[(ti * outC)..<(ti * outC + outC)])
-            let out = linearMV(conv1dOutW, conv1dOutB, row,
-                               outF: convOutC, inF: outC)
-            for d in 0..<convOutC { afterConvOut[ti * convOutC + d] = out[d] }
+        for ti in 0 ..< t {
+            let row = Array(x[(ti * outC) ..< (ti * outC + outC)])
+            let out = linearMV(
+                conv1dOutW, conv1dOutB, row,
+                outF: convOutC, inF: outC)
+            for d in 0 ..< convOutC { afterConvOut[ti * convOutC + d] = out[d] }
         }
 
         // Take speaker 0: first outC channels
         var spk0 = [Float](repeating: 0, count: t * outC)
-        for ti in 0..<t {
-            for d in 0..<outC { spk0[ti * outC + d] = afterConvOut[ti * convOutC + d] }
+        for ti in 0 ..< t {
+            for d in 0 ..< outC { spk0[ti * outC + d] = afterConvOut[ti * convOutC + d] }
         }
 
         // Gate: tanh(output(x)) * sigmoid(outputGate(x))
         var gated = [Float](repeating: 0, count: t * outC)
-        for ti in 0..<t {
-            let row = Array(spk0[(ti * outC)..<(ti * outC + outC)])
-            let outV  = linearMV(outputW,    outputB,    row, outF: outC, inF: outC)
+        for ti in 0 ..< t {
+            let row = Array(spk0[(ti * outC) ..< (ti * outC + outC)])
+            let outV = linearMV(outputW, outputB, row, outF: outC, inF: outC)
             let gateV = linearMV(outputGateW, outputGateB, row, outF: outC, inF: outC)
-            for d in 0..<outC {
+            for d in 0 ..< outC {
                 gated[ti * outC + d] = tanhF(outV[d]) * sigmoid(gateV[d])
             }
         }
 
         // conv1_decoder: [T, outC] → [T, outCF]
         var decoded = [Float](repeating: 0, count: t * outCF)
-        for ti in 0..<t {
-            let row = Array(gated[(ti * outC)..<(ti * outC + outC)])
+        for ti in 0 ..< t {
+            let row = Array(gated[(ti * outC) ..< (ti * outC + outC)])
             let out = linearMV(decoderW, nil, row, outF: outCF, inF: outC)
-            for d in 0..<outCF {
+            for d in 0 ..< outCF {
                 decoded[ti * outCF + d] = max(out[d], 0)  // ReLU
             }
         }
 
         // Return mask as [[Float]] [T, outCF]
         var mask = [[Float]](repeating: [Float](repeating: 0, count: outCF), count: t)
-        for ti in 0..<t {
-            for d in 0..<outCF {
+        for ti in 0 ..< t {
+            for d in 0 ..< outCF {
                 mask[ti][d] = decoded[ti * outCF + d]
             }
         }
@@ -1339,7 +1390,8 @@ public final class MossFormer2SEModel: @unchecked Sendable {
 
         // Build analysis window.
         let lowType = config.winType.lowercased()
-        let window: [Float] = lowType.contains("hann")
+        let window: [Float] =
+            lowType.contains("hann")
             ? hannWindow(size: config.winLen, periodic: false)
             : hammingWindow(size: config.winLen, periodic: false)
 
@@ -1355,30 +1407,34 @@ public final class MossFormer2SEModel: @unchecked Sendable {
         )
         guard !fbank.isEmpty else {
             throw MossFormer2SEError.invalidInput(
-                "audio too short for feature extraction (need ≥ \(config.winLen) samples at \(config.sampleRate) Hz)")
+                "audio too short for feature extraction (need ≥ \(config.winLen) samples at \(config.sampleRate) Hz)"
+            )
         }
 
         let numFrames = fbank.count
         let numMels = config.numMels
 
         // Compute deltas: transpose to [C, T] for delta computation, then back.
-        var fbankCT = [[Float]](repeating: [Float](repeating: 0, count: numFrames),
-                                count: numMels)
-        for ti in 0..<numFrames {
-            for m in 0..<numMels { fbankCT[m][ti] = fbank[ti][m] }
+        var fbankCT = [[Float]](
+            repeating: [Float](repeating: 0, count: numFrames),
+            count: numMels)
+        for ti in 0 ..< numFrames {
+            for m in 0 ..< numMels { fbankCT[m][ti] = fbank[ti][m] }
         }
-        let deltaCT      = computeDeltasKaldi(fbankCT, winLength: 5)
+        let deltaCT = computeDeltasKaldi(fbankCT, winLength: 5)
         let deltaDeltaCT = computeDeltasKaldi(deltaCT, winLength: 5)
 
         // Concatenate [numMels+numMels+numMels, T] → [T, 3*numMels=inChannels].
-        precondition(3 * numMels == config.inChannels,
-                     "MossFormer2SE: 3*numMels (\(3*numMels)) != inChannels (\(config.inChannels))")
-        var features = [[Float]](repeating: [Float](repeating: 0, count: config.inChannels),
-                                 count: numFrames)
-        for ti in 0..<numFrames {
-            for m in 0..<numMels {
-                features[ti][m]              = fbankCT[m][ti]
-                features[ti][numMels + m]    = deltaCT[m][ti]
+        precondition(
+            3 * numMels == config.inChannels,
+            "MossFormer2SE: 3*numMels (\(3*numMels)) != inChannels (\(config.inChannels))")
+        var features = [[Float]](
+            repeating: [Float](repeating: 0, count: config.inChannels),
+            count: numFrames)
+        for ti in 0 ..< numFrames {
+            for m in 0 ..< numMels {
+                features[ti][m] = fbankCT[m][ti]
+                features[ti][numMels + m] = deltaCT[m][ti]
                 features[ti][2 * numMels + m] = deltaDeltaCT[m][ti]
             }
         }
@@ -1406,13 +1462,13 @@ public final class MossFormer2SEModel: @unchecked Sendable {
         let numSTFTFrames = stftReal[0].count
         let numMaskFrames = mask.count
         let frames = min(numSTFTFrames, numMaskFrames)
-        let bins   = min(numBins, config.outChannelsFinal)
+        let bins = min(numBins, config.outChannelsFinal)
 
         // Apply mask: enhancedComplex = stftComplex * mask.
         var enhReal = [[Float]](repeating: [Float](repeating: 0, count: frames), count: bins)
         var enhImag = [[Float]](repeating: [Float](repeating: 0, count: frames), count: bins)
-        for b in 0..<bins {
-            for f in 0..<frames {
+        for b in 0 ..< bins {
+            for f in 0 ..< frames {
                 let m = mask[f][b]
                 enhReal[b][f] = stftReal[b][f] * m
                 enhImag[b][f] = stftImag[b][f] * m
@@ -1451,8 +1507,9 @@ extension MossFormer2SEModel {
         if let mt = config.modelType, modelTypes.contains(mt) { return true }
         // Structural fallback: has the SE-specific keys, no LLM keys.
         if config.raw["in_channels"] != nil,
-           config.raw["out_channels_final"] != nil,
-           config.raw["hidden_size"] == nil {
+            config.raw["out_channels_final"] != nil,
+            config.raw["hidden_size"] == nil
+        {
             return true
         }
         return false
@@ -1492,7 +1549,8 @@ extension MossFormer2SEModel {
         let modelConfig: ModelConfig
         let configURL = directory.appendingPathComponent("config.json")
         if FileManager.default.fileExists(atPath: configURL.path) {
-            modelConfig = (try? ModelConfig.load(from: directory))
+            modelConfig =
+                (try? ModelConfig.load(from: directory))
                 ?? ModelConfig(architecture: nil, modelType: "mossformer2_se", raw: [:])
         } else {
             modelConfig = ModelConfig(architecture: nil, modelType: "mossformer2_se", raw: [:])
@@ -1501,9 +1559,11 @@ extension MossFormer2SEModel {
 
         // Load weights from all safetensors files in `directory`.
         let fm = FileManager.default
-        let contents = (try? fm.contentsOfDirectory(
-            at: directory, includingPropertiesForKeys: nil)) ?? []
-        let stFiles = contents
+        let contents =
+            (try? fm.contentsOfDirectory(
+                at: directory, includingPropertiesForKeys: nil)) ?? []
+        let stFiles =
+            contents
             .filter { $0.pathExtension.lowercased() == "safetensors" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
@@ -1518,8 +1578,9 @@ extension MossFormer2SEModel {
             let singleFile = try SafeTensorsFile(url: fileURL, device: device)
             for (rawKey, entry) in singleFile.entries {
                 let normKey = normaliseKey(rawKey)
-                let t = Tensor(buffer: entry.buffer, offset: 0,
-                               shape: entry.shape, dtype: entry.dtype)
+                let t = Tensor(
+                    buffer: entry.buffer, offset: 0,
+                    shape: entry.shape, dtype: entry.dtype)
                 let floats: [Float]
                 switch t.dtype {
                 case .f32:
@@ -1562,8 +1623,8 @@ extension MossFormer2SEModel {
             return v.first ?? d
         }
 
-        let inC   = config.inChannels
-        let outC  = config.outChannels
+        let inC = config.inChannels
+        let outC = config.outChannels
         let outCF = config.outChannelsFinal
         let nBlks = config.numBlocks
 
@@ -1575,16 +1636,17 @@ extension MossFormer2SEModel {
         let encW = try w("\(pfx).conv1d_encoder.weight")
 
         // ScaledSinuEmbedding
-        let posScale  = scalarOpt("\(pfx).pos_enc.scale", default: 1.0)
-        let posInvFreq = opt("\(pfx).pos_enc.inv_freq",
-                             default: buildDefaultInvFreq(dim: outC))
+        let posScale = scalarOpt("\(pfx).pos_enc.scale", default: 1.0)
+        let posInvFreq = opt(
+            "\(pfx).pos_enc.inv_freq",
+            default: buildDefaultInvFreq(dim: outC))
 
         // Blocks: model.mossformer.mdl.intra_mdl.mossformerM.layers[i].*
         //         model.mossformer.mdl.intra_mdl.mossformerM.fsmn[i].*
         let blkPfx = "\(pfx).mdl.intra_mdl.mossformerM"
         var layers = [SEMossFormerBlockLayer]()
-        for i in 0..<nBlks {
-            let flPfx  = "\(blkPfx).layers.\(i)"
+        for i in 0 ..< nBlks {
+            let flPfx = "\(blkPfx).layers.\(i)"
             let fsmnPfx = "\(blkPfx).fsmn.\(i)"
             let layer = try buildBlock(
                 flashPfx: flPfx, fsmnPfx: fsmnPfx,
@@ -1595,7 +1657,7 @@ extension MossFormer2SEModel {
         // Post-block LayerNorm
         let normPfx = "\(pfx).mdl.intra_mdl.norm"
         let normGamma = try w("\(normPfx).weight")
-        let normBeta  = try w("\(normPfx).bias")
+        let normBeta = try w("\(normPfx).bias")
 
         // PReLU
         let preluW = scalarOpt("\(pfx).prelu.weight", default: 0.25)
@@ -1605,8 +1667,8 @@ extension MossFormer2SEModel {
         let conv1dOutB = try w("\(pfx).conv1d_out.bias")
 
         // Gate layers
-        let outputW    = try w("\(pfx).output.weight")
-        let outputB    = try w("\(pfx).output.bias")
+        let outputW = try w("\(pfx).output.weight")
+        let outputB = try w("\(pfx).output.bias")
         let outputGateW = try w("\(pfx).output_gate.weight")
         let outputGateB = try w("\(pfx).output_gate.bias")
 
@@ -1631,7 +1693,7 @@ extension MossFormer2SEModel {
 
     private static func buildDefaultInvFreq(dim: Int) -> [Float] {
         let half = dim / 2
-        return (0..<half).map { i -> Float in
+        return (0 ..< half).map { i -> Float in
             1.0 / pow(10000.0, Float(2 * i) / Float(dim))
         }
     }
@@ -1661,22 +1723,25 @@ extension MossFormer2SEModel {
 
         // ─── FLASH_ShareA_FFConvM ─────────────────────────────────────
         // to_hidden: FFConvM(dim → hiddenDim)
-        let toHidden = try buildFFConvM(prefix: "\(flashPfx).to_hidden",
-                                         dimIn: dim, dimOut: hiddenDim,
-                                         weights: weights)
+        let toHidden = try buildFFConvM(
+            prefix: "\(flashPfx).to_hidden",
+            dimIn: dim, dimOut: hiddenDim,
+            weights: weights)
         // to_qk: FFConvM(dim → qkDim)
-        let toQk = try buildFFConvM(prefix: "\(flashPfx).to_qk",
-                                     dimIn: dim, dimOut: qkDim,
-                                     weights: weights)
+        let toQk = try buildFFConvM(
+            prefix: "\(flashPfx).to_qk",
+            dimIn: dim, dimOut: qkDim,
+            weights: weights)
         // qk_offset_scale
         let qkGamma = try w("\(flashPfx).qk_offset_scale.gamma")
-        let qkBeta  = try w("\(flashPfx).qk_offset_scale.beta")
+        let qkBeta = try w("\(flashPfx).qk_offset_scale.beta")
         let offsetScale = SEOffsetScale(qkDim: qkDim, gamma: qkGamma, beta: qkBeta)
 
         // to_out: FFConvM(halfH → dim)
-        let toOut = try buildFFConvM(prefix: "\(flashPfx).to_out",
-                                      dimIn: halfH, dimOut: dim,
-                                      weights: weights)
+        let toOut = try buildFFConvM(
+            prefix: "\(flashPfx).to_out",
+            dimIn: halfH, dimOut: dim,
+            weights: weights)
 
         let flashLayer = SEFlashShareA(
             dim: dim, groupSize: 256, qkDim: qkDim,
@@ -1690,8 +1755,10 @@ extension MossFormer2SEModel {
         let conv1W = try w("\(fsmnPfx).conv1.weight")
         let conv1B = try w("\(fsmnPfx).conv1.bias")
         let fPreluW = scalarOpt("\(fsmnPfx).prelu.weight", default: 0.25)
-        let norm1G = try w("\(fsmnPfx).norm1.weight"); let norm1B = try w("\(fsmnPfx).norm1.bias")
-        let norm2G = try w("\(fsmnPfx).norm2.weight"); let norm2B = try w("\(fsmnPfx).norm2.bias")
+        let norm1G = try w("\(fsmnPfx).norm1.weight")
+        let norm1B = try w("\(fsmnPfx).norm1.bias")
+        let norm2G = try w("\(fsmnPfx).norm2.weight")
+        let norm2B = try w("\(fsmnPfx).norm2.bias")
         let conv2W = try w("\(fsmnPfx).conv2.weight")
         let conv2B = try w("\(fsmnPfx).conv2.bias")
 
@@ -1731,7 +1798,9 @@ extension MossFormer2SEModel {
 
         // LayerNorm (norm sub-module key = "norm")
         // For scalenorm: prefix.norm.g; for layernorm: prefix.norm.weight/bias
-        let normG: [Float]; let normB: [Float]; let normEps: Float = 1e-8
+        let normG: [Float]
+        let normB: [Float]
+        let normEps: Float = 1e-8
         // Try layernorm first (used in FFAI port's normType logic)
         if let lg = weights["\(prefix).norm.weight"] {
             normG = lg
@@ -1753,15 +1822,17 @@ extension MossFormer2SEModel {
         let kSize = rawConvW.count / dimOut  // kernelSize derived from stored shape
         let convW = squeezeLast(rawConvW)  // drop trailing dim-1
 
-        let convMod = SEConvModule(inChannels: dimOut, kernelSize: kSize,
-                                   padding: (kSize - 1) / 2, weight: convW)
+        let convMod = SEConvModule(
+            inChannels: dimOut, kernelSize: kSize,
+            padding: (kSize - 1) / 2, weight: convW)
 
         // Determine if norm is ScaleNorm (g is scalar) or LayerNorm
         // For forward: if normG.count == 1 → scale norm, else layernorm
-        return SEFFConvM(dimIn: dimIn, dimOut: dimOut,
-                         lnGamma: normG, lnBeta: normB, lnEps: normEps,
-                         linearWeight: linearW, linearBias: linearB,
-                         convMod: convMod)
+        return SEFFConvM(
+            dimIn: dimIn, dimOut: dimOut,
+            lnGamma: normG, lnBeta: normB, lnEps: normEps,
+            linearWeight: linearW, linearBias: linearB,
+            convMod: convMod)
     }
 
     private static func buildGatedFSMN(
@@ -1779,12 +1850,14 @@ extension MossFormer2SEModel {
             weights[key] ?? [Float](repeating: 0, count: size)
         }
 
-        let toU = try buildFFConvM(prefix: "\(prefix).to_u",
-                                    dimIn: inChannels, dimOut: hiddenSize,
-                                    weights: weights)
-        let toV = try buildFFConvM(prefix: "\(prefix).to_v",
-                                    dimIn: inChannels, dimOut: hiddenSize,
-                                    weights: weights)
+        let toU = try buildFFConvM(
+            prefix: "\(prefix).to_u",
+            dimIn: inChannels, dimOut: hiddenSize,
+            weights: weights)
+        let toV = try buildFFConvM(
+            prefix: "\(prefix).to_v",
+            dimIn: inChannels, dimOut: hiddenSize,
+            weights: weights)
 
         let fsmnLinW = try w("\(prefix).fsmn.linear.weight")
         let fsmnLinB = opt("\(prefix).fsmn.linear.bias", size: hiddenSize)

@@ -87,10 +87,10 @@ public struct PixtralVisionConfig {
 
     static func decode(_ c: ModelConfig) throws -> PixtralVisionConfig {
         guard let numLayers = c.int("num_hidden_layers"),
-              let hiddenSize = c.int("hidden_size"),
-              let intermediateSize = c.int("intermediate_size"),
-              let numHeads = c.int("num_attention_heads"),
-              let patchSize = c.int("patch_size")
+            let hiddenSize = c.int("hidden_size"),
+            let intermediateSize = c.int("intermediate_size"),
+            let numHeads = c.int("num_attention_heads"),
+            let patchSize = c.int("patch_size")
         else {
             throw PixtralError.missingConfig
         }
@@ -134,7 +134,7 @@ public struct PixtralVisionConfig {
 final class PixtralRoPE {
     /// `[maxPatches², headDim]` precomputed inv_freq * position, stored as
     /// `[maxPatches², headDim]` — cos and sin arrays.
-    let cosTable: [Float]   // [maxPositions, headDim]
+    let cosTable: [Float]  // [maxPositions, headDim]
     let sinTable: [Float]
     let maxPatchesPerSide: Int
     let headDim: Int
@@ -150,7 +150,7 @@ final class PixtralRoPE {
         // inv_freq over D/2 positions: `1 / theta^(2i / D)` for i in 0..<D/2.
         // (D/2 not D because each half covers one spatial axis.)
         var invFreq = [Float](repeating: 0, count: half)
-        for i in 0..<half {
+        for i in 0 ..< half {
             invFreq[i] = 1.0 / pow(cfg.ropeTheta, Float(2 * i) / Float(D))
         }
 
@@ -161,8 +161,8 @@ final class PixtralRoPE {
         //  from mlx-swift-lm — the `indicesEven` / `indicesOdd` split.)
         var freqsH = [Float](repeating: 0, count: quarter)
         var freqsW = [Float](repeating: 0, count: quarter)
-        for i in 0..<quarter {
-            freqsH[i] = invFreq[2 * i]      // even indices → height
+        for i in 0 ..< quarter {
+            freqsH[i] = invFreq[2 * i]  // even indices → height
             freqsW[i] = invFreq[2 * i + 1]  // odd  indices → width
         }
 
@@ -171,8 +171,8 @@ final class PixtralRoPE {
         // freqsWPos[col, i] = col * freqsW[i]
         var freqsHPos = [Float](repeating: 0, count: maxP * quarter)
         var freqsWPos = [Float](repeating: 0, count: maxP * quarter)
-        for pos in 0..<maxP {
-            for i in 0..<quarter {
+        for pos in 0 ..< maxP {
+            for i in 0 ..< quarter {
                 freqsHPos[pos * quarter + i] = Float(pos) * freqsH[i]
                 freqsWPos[pos * quarter + i] = Float(pos) * freqsW[i]
             }
@@ -188,21 +188,21 @@ final class PixtralRoPE {
         let totalPositions = maxP * maxP
         var cosT = [Float](repeating: 0, count: totalPositions * D)
         var sinT = [Float](repeating: 0, count: totalPositions * D)
-        for row in 0..<maxP {
-            for col in 0..<maxP {
+        for row in 0 ..< maxP {
+            for col in 0 ..< maxP {
                 let patchIdx = row * maxP + col
                 let base = patchIdx * D
-                for i in 0..<quarter {
+                for i in 0 ..< quarter {
                     let fh = freqsHPos[row * quarter + i]
                     let fw = freqsWPos[col * quarter + i]
                     // Height half: band1 [i] and band2 [i + quarter]
-                    cosT[base + i]          = cos(fh)
-                    sinT[base + i]          = sin(fh)
+                    cosT[base + i] = cos(fh)
+                    sinT[base + i] = sin(fh)
                     cosT[base + i + quarter] = cos(fh)
                     sinT[base + i + quarter] = sin(fh)
                     // Width half: band1 [half + i] and band2 [half + i + quarter]
-                    cosT[base + half + i]           = cos(fw)
-                    sinT[base + half + i]           = sin(fw)
+                    cosT[base + half + i] = cos(fw)
+                    sinT[base + half + i] = sin(fw)
                     cosT[base + half + i + quarter] = cos(fw)
                     sinT[base + half + i + quarter] = sin(fw)
                 }
@@ -216,8 +216,10 @@ final class PixtralRoPE {
     /// `(row, col)`.
     func cosSin(row: Int, col: Int) -> (cos: ArraySlice<Float>, sin: ArraySlice<Float>) {
         let idx = (row * maxPatchesPerSide + col) * headDim
-        return (cosTable[idx..<(idx + headDim)],
-                sinTable[idx..<(idx + headDim)])
+        return (
+            cosTable[idx ..< (idx + headDim)],
+            sinTable[idx ..< (idx + headDim)]
+        )
     }
 }
 
@@ -229,39 +231,48 @@ final class PixtralRoPE {
 final class PixtralVisionBlock {
     /// Attention sub-block.
     let attNorm: RMSNorm
-    let qProj: Linear    // [hidden, hidden] no bias
+    let qProj: Linear  // [hidden, hidden] no bias
     let kProj: Linear
     let vProj: Linear
     let oProj: Linear
     /// Feed-forward sub-block.
     let ffnNorm: RMSNorm
-    let gateProj: Linear // [intermediate, hidden] no bias
+    let gateProj: Linear  // [intermediate, hidden] no bias
     let upProj: Linear
     let downProj: Linear
     let cfg: PixtralVisionConfig
 
-    init(attNorm: RMSNorm, qProj: Linear, kProj: Linear, vProj: Linear,
-         oProj: Linear, ffnNorm: RMSNorm, gateProj: Linear, upProj: Linear,
-         downProj: Linear, cfg: PixtralVisionConfig) {
+    init(
+        attNorm: RMSNorm, qProj: Linear, kProj: Linear, vProj: Linear,
+        oProj: Linear, ffnNorm: RMSNorm, gateProj: Linear, upProj: Linear,
+        downProj: Linear, cfg: PixtralVisionConfig
+    ) {
         self.attNorm = attNorm
-        self.qProj = qProj; self.kProj = kProj
-        self.vProj = vProj; self.oProj = oProj
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
         self.ffnNorm = ffnNorm
-        self.gateProj = gateProj; self.upProj = upProj; self.downProj = downProj
+        self.gateProj = gateProj
+        self.upProj = upProj
+        self.downProj = downProj
         self.cfg = cfg
     }
 
     /// Forward `[nPatches, hidden]` activations through one block.
     /// `rope` provides the 2D RoPE tables; `gridSide` is `√nPatches`
     /// (the patch grid is square).
-    func forward(_ h: Tensor, nPatches: Int, gridSide: Int,
-                 rope: PixtralRoPE, device: Device) -> Tensor {
+    func forward(
+        _ h: Tensor, nPatches: Int, gridSide: Int,
+        rope: PixtralRoPE, device: Device
+    ) -> Tensor {
         let hidden = cfg.hiddenSize
 
         // ── Attention sub-block ──
         let cmd = device.makeCommandBuffer()
-        let normed = Ops.rmsNormRows(h, weight: attNorm.weight, eps: attNorm.eps,
-                                     nRows: nPatches, rowSize: hidden, on: cmd)
+        let normed = Ops.rmsNormRows(
+            h, weight: attNorm.weight, eps: attNorm.eps,
+            nRows: nPatches, rowSize: hidden, on: cmd)
         let q = Ops.gemm(weight: qProj.weight, input: normed, nRows: nPatches, on: cmd)
         let k = Ops.gemm(weight: kProj.weight, input: normed, nRows: nPatches, on: cmd)
         let v = Ops.gemm(weight: vProj.weight, input: normed, nRows: nPatches, on: cmd)
@@ -269,27 +280,33 @@ final class PixtralVisionBlock {
         cmd.waitUntilCompleted()
 
         // CPU 2D-RoPE + bidirectional multi-head attention.
-        let attnOut = cpuAttention(q: q, k: k, v: v, nPatches: nPatches,
-                                   gridSide: gridSide, rope: rope, device: device)
+        let attnOut = cpuAttention(
+            q: q, k: k, v: v, nPatches: nPatches,
+            gridSide: gridSide, rope: rope, device: device)
 
         // Output projection + residual.
         let cmd2 = device.makeCommandBuffer()
-        let attnProj = Ops.gemm(weight: oProj.weight, input: attnOut,
-                                nRows: nPatches, on: cmd2)
+        let attnProj = Ops.gemm(
+            weight: oProj.weight, input: attnOut,
+            nRows: nPatches, on: cmd2)
         let postAttn = Ops.add(h, attnProj, on: cmd2)
 
         // ── Feed-forward sub-block ──
-        let normed2 = Ops.rmsNormRows(postAttn, weight: ffnNorm.weight,
-                                      eps: ffnNorm.eps, nRows: nPatches,
-                                      rowSize: hidden, on: cmd2)
-        let gate = Ops.gemm(weight: gateProj.weight, input: normed2,
-                            nRows: nPatches, on: cmd2)
-        let up   = Ops.gemm(weight: upProj.weight, input: normed2,
-                            nRows: nPatches, on: cmd2)
+        let normed2 = Ops.rmsNormRows(
+            postAttn, weight: ffnNorm.weight,
+            eps: ffnNorm.eps, nRows: nPatches,
+            rowSize: hidden, on: cmd2)
+        let gate = Ops.gemm(
+            weight: gateProj.weight, input: normed2,
+            nRows: nPatches, on: cmd2)
+        let up = Ops.gemm(
+            weight: upProj.weight, input: normed2,
+            nRows: nPatches, on: cmd2)
         let activated = Ops.silu(gate, on: cmd2)
         let gated = Ops.mul(activated, up, on: cmd2)
-        let ffnOut = Ops.gemm(weight: downProj.weight, input: gated,
-                              nRows: nPatches, on: cmd2)
+        let ffnOut = Ops.gemm(
+            weight: downProj.weight, input: gated,
+            nRows: nPatches, on: cmd2)
         let result = Ops.add(postAttn, ffnOut, on: cmd2)
         cmd2.commit()
         cmd2.waitUntilCompleted()
@@ -305,9 +322,11 @@ final class PixtralVisionBlock {
     /// and the writes are disjoint, so `concurrentPerform` is safe.
     /// Stage 2 (GPU) is one `Ops.sdpaBidirectional(headDim: 64)`
     /// dispatch — Pixtral SigLIP uses 1024/16 = 64.
-    private func cpuAttention(q: Tensor, k: Tensor, v: Tensor,
-                              nPatches: Int, gridSide: Int,
-                              rope: PixtralRoPE, device: Device) -> Tensor {
+    private func cpuAttention(
+        q: Tensor, k: Tensor, v: Tensor,
+        nPatches: Int, gridSide: Int,
+        rope: PixtralRoPE, device: Device
+    ) -> Tensor {
         let nHeads = cfg.numHeads
         let headDim = cfg.headDim
         let hidden = cfg.hiddenSize
@@ -338,9 +357,9 @@ final class PixtralVisionBlock {
             let hOff = head * headDim
             let base = patch * hidden
 
-            var qSlice = Array(qa[(base + hOff)..<(base + hOff + headDim)])
-            var kSlice = Array(ka[(base + hOff)..<(base + hOff + headDim)])
-            let vSlice = Array(va[(base + hOff)..<(base + hOff + headDim)])
+            var qSlice = Array(qa[(base + hOff) ..< (base + hOff + headDim)])
+            var kSlice = Array(ka[(base + hOff) ..< (base + hOff + headDim)])
+            let vSlice = Array(va[(base + hOff) ..< (base + hOff + headDim)])
 
             // Apply 2D RoPE to Q and K using the rotate-half scheme.
             // The [headDim] position encoding has height in [0, half) and
@@ -361,16 +380,16 @@ final class PixtralVisionBlock {
         var qFlat = [Float](repeating: 0, count: nPatches * hidden)
         var kFlat = [Float](repeating: 0, count: nHeads * nPatches * headDim)
         var vFlat = [Float](repeating: 0, count: nHeads * nPatches * headDim)
-        for head in 0..<nHeads {
+        for head in 0 ..< nHeads {
             let hOff = head * headDim
-            for patch in 0..<nPatches {
+            for patch in 0 ..< nPatches {
                 let src = qH[head * nPatches + patch]
                 let qDst = patch * hidden + hOff
-                for d in 0..<headDim { qFlat[qDst + d] = src[d] }
+                for d in 0 ..< headDim { qFlat[qDst + d] = src[d] }
                 let kvDst = (head * nPatches + patch) * headDim
                 let kSrc = kH[head * nPatches + patch]
                 let vSrc = vH[head * nPatches + patch]
-                for d in 0..<headDim {
+                for d in 0 ..< headDim {
                     kFlat[kvDst + d] = kSrc[d]
                     vFlat[kvDst + d] = vSrc[d]
                 }
@@ -397,8 +416,9 @@ final class PixtralVisionBlock {
         // Output is [nPatches, nHeads, headDim] = [nPatches, hidden] flat.
         // Copy into a tensor of the caller-expected dtype (e.g. bf16/f16
         // for downstream `Ops.gemm`).
-        let result = Tensor.empty(shape: [nPatches, hidden], dtype: q.dtype,
-                                  device: device)
+        let result = Tensor.empty(
+            shape: [nPatches, hidden], dtype: q.dtype,
+            device: device)
         ImagePreprocessing.copyFloats(outT.toFloatArray(), into: result)
         return result
     }
@@ -421,19 +441,25 @@ private func applyRoPE2D(
     let D = x.count
     let quarter = half / 2
     // Height half [0, half): rotate-half within [0, half).
-    for i in 0..<quarter {
-        let xi = x[i]; let xi2 = x[i + quarter]
-        let c = cos[cos.startIndex + i]; let s = sin[sin.startIndex + i]
-        let c2 = cos[cos.startIndex + i + quarter]; let s2 = sin[sin.startIndex + i + quarter]
-        x[i]          = xi * c  - xi2 * s
+    for i in 0 ..< quarter {
+        let xi = x[i]
+        let xi2 = x[i + quarter]
+        let c = cos[cos.startIndex + i]
+        let s = sin[sin.startIndex + i]
+        let c2 = cos[cos.startIndex + i + quarter]
+        let s2 = sin[sin.startIndex + i + quarter]
+        x[i] = xi * c - xi2 * s
         x[i + quarter] = xi * s2 + xi2 * c2
     }
     // Width half [half, D): rotate-half within [half, D).
-    for i in 0..<quarter {
-        let xi = x[half + i]; let xi2 = x[half + i + quarter]
-        let c = cos[cos.startIndex + half + i]; let s = sin[sin.startIndex + half + i]
-        let c2 = cos[cos.startIndex + half + i + quarter]; let s2 = sin[sin.startIndex + half + i + quarter]
-        x[half + i]          = xi * c  - xi2 * s
+    for i in 0 ..< quarter {
+        let xi = x[half + i]
+        let xi2 = x[half + i + quarter]
+        let c = cos[cos.startIndex + half + i]
+        let s = sin[sin.startIndex + half + i]
+        let c2 = cos[cos.startIndex + half + i + quarter]
+        let s2 = sin[sin.startIndex + half + i + quarter]
+        x[half + i] = xi * c - xi2 * s
         x[half + i + quarter] = xi * s2 + xi2 * c2
     }
     _ = D  // suppress unused warning
@@ -453,8 +479,10 @@ final class PixtralVisionEncoder: @unchecked Sendable {
     let rope: PixtralRoPE
     let dtype: DType
 
-    init(cfg: PixtralVisionConfig, patchConvWeight: Tensor, lnPre: RMSNorm,
-         blocks: [PixtralVisionBlock], rope: PixtralRoPE, dtype: DType) {
+    init(
+        cfg: PixtralVisionConfig, patchConvWeight: Tensor, lnPre: RMSNorm,
+        blocks: [PixtralVisionBlock], rope: PixtralRoPE, dtype: DType
+    ) {
         self.cfg = cfg
         self.patchConvWeight = patchConvWeight
         self.lnPre = lnPre
@@ -485,32 +513,35 @@ final class PixtralVisionEncoder: @unchecked Sendable {
         // Build the block stack.
         var blocks: [PixtralVisionBlock] = []
         blocks.reserveCapacity(cfg.numLayers)
-        for i in 0..<cfg.numLayers {
+        for i in 0 ..< cfg.numLayers {
             let p = "vision_model.transformer.layers.\(i)"
             func norm(_ key: String) throws -> RMSNorm {
-                RMSNorm(weight: try weights.tensor(named: "\(p).\(key).weight"),
-                        eps: cfg.rmsNormEps)
+                RMSNorm(
+                    weight: try weights.tensor(named: "\(p).\(key).weight"),
+                    eps: cfg.rmsNormEps)
             }
             func lin(_ key: String) throws -> Linear {
                 Linear(weight: try weights.tensor(named: "\(p).\(key).weight"))
             }
-            blocks.append(PixtralVisionBlock(
-                attNorm: try norm("attention_norm"),
-                qProj: try lin("attention.q_proj"),
-                kProj: try lin("attention.k_proj"),
-                vProj: try lin("attention.v_proj"),
-                oProj: try lin("attention.o_proj"),
-                ffnNorm: try norm("ffn_norm"),
-                gateProj: try lin("feed_forward.gate_proj"),
-                upProj:   try lin("feed_forward.up_proj"),
-                downProj: try lin("feed_forward.down_proj"),
-                cfg: cfg))
+            blocks.append(
+                PixtralVisionBlock(
+                    attNorm: try norm("attention_norm"),
+                    qProj: try lin("attention.q_proj"),
+                    kProj: try lin("attention.k_proj"),
+                    vProj: try lin("attention.v_proj"),
+                    oProj: try lin("attention.o_proj"),
+                    ffnNorm: try norm("ffn_norm"),
+                    gateProj: try lin("feed_forward.gate_proj"),
+                    upProj: try lin("feed_forward.up_proj"),
+                    downProj: try lin("feed_forward.down_proj"),
+                    cfg: cfg))
         }
 
         let rope = PixtralRoPE(cfg: cfg)
-        return PixtralVisionEncoder(cfg: cfg, patchConvWeight: patchW,
-                                    lnPre: lnPre, blocks: blocks,
-                                    rope: rope, dtype: dtype)
+        return PixtralVisionEncoder(
+            cfg: cfg, patchConvWeight: patchW,
+            lnPre: lnPre, blocks: blocks,
+            rope: rope, dtype: dtype)
     }
 
     /// Encode a preprocessed image `[1, inChannels, imageSize, imageSize]`
@@ -534,20 +565,23 @@ final class PixtralVisionEncoder: @unchecked Sendable {
         cmd.waitUntilCompleted()
 
         // Transpose NCHW → [nPatches, hidden] token-major (CPU).
-        var h = channelMajorToTokenMajor(conv, hidden: hidden,
-                                          numPatches: nPatches, device: device)
+        var h = channelMajorToTokenMajor(
+            conv, hidden: hidden,
+            numPatches: nPatches, device: device)
 
         // ── Pre-norm ──
         let cmdN = device.makeCommandBuffer()
-        h = Ops.rmsNormRows(h, weight: lnPre.weight, eps: lnPre.eps,
-                             nRows: nPatches, rowSize: hidden, on: cmdN)
+        h = Ops.rmsNormRows(
+            h, weight: lnPre.weight, eps: lnPre.eps,
+            nRows: nPatches, rowSize: hidden, on: cmdN)
         cmdN.commit()
         cmdN.waitUntilCompleted()
 
         // ── Transformer block stack ──
         for block in blocks {
-            h = block.forward(h, nPatches: nPatches, gridSide: gridSide,
-                              rope: rope, device: device)
+            h = block.forward(
+                h, nPatches: nPatches, gridSide: gridSide,
+                rope: rope, device: device)
         }
         return h
     }
@@ -568,13 +602,14 @@ final class PixtralVisionEncoder: @unchecked Sendable {
     ) -> Tensor {
         let src = conv.toFloatArray()
         var dst = [Float](repeating: 0, count: numPatches * hidden)
-        for c in 0..<hidden {
-            for p in 0..<numPatches {
+        for c in 0 ..< hidden {
+            for p in 0 ..< numPatches {
                 dst[p * hidden + c] = src[c * numPatches + p]
             }
         }
-        let out = Tensor.empty(shape: [numPatches, hidden], dtype: dtype,
-                               device: device)
+        let out = Tensor.empty(
+            shape: [numPatches, hidden], dtype: dtype,
+            device: device)
         ImagePreprocessing.copyFloats(dst, into: out)
         return out
     }
@@ -586,8 +621,8 @@ final class PixtralVisionEncoder: @unchecked Sendable {
 /// Maps `[numPatches, visionHidden]` encoder tokens into
 /// `[numPatches, textHidden]` so the VLM splice can inject them.
 final class PixtralProjector: @unchecked Sendable {
-    let linear1: Linear   // [textHidden, visionHidden] — with bias
-    let linear2: Linear   // [textHidden, textHidden]   — with bias
+    let linear1: Linear  // [textHidden, visionHidden] — with bias
+    let linear2: Linear  // [textHidden, textHidden]   — with bias
     let visionHidden: Int
     let textHidden: Int
 
@@ -603,27 +638,31 @@ final class PixtralProjector: @unchecked Sendable {
         weights: SafeTensorsBundle, device: Device
     ) throws -> PixtralProjector {
         func lin(_ key: String) throws -> Linear {
-            Linear(weight: try weights.tensor(named: "\(key).weight"),
-                   bias: try? weights.tensor(named: "\(key).bias"))
+            Linear(
+                weight: try weights.tensor(named: "\(key).weight"),
+                bias: try? weights.tensor(named: "\(key).bias"))
         }
         let linear1 = try lin("multi_modal_projector.linear_1")
         let linear2 = try lin("multi_modal_projector.linear_2")
-        return PixtralProjector(linear1: linear1, linear2: linear2,
-                                visionHidden: visionHidden, textHidden: textHidden)
+        return PixtralProjector(
+            linear1: linear1, linear2: linear2,
+            visionHidden: visionHidden, textHidden: textHidden)
     }
 
     /// Project `[nTokens, visionHidden]` vision tokens into
     /// `[nTokens, textHidden]` via `GELU(linear1(x)) → linear2`.
     func project(tokens: Tensor, nTokens: Int, device: Device) -> Tensor {
         let cmd = device.makeCommandBuffer()
-        var x = Ops.gemm(weight: linear1.weight, input: tokens,
-                         nRows: nTokens, on: cmd)
+        var x = Ops.gemm(
+            weight: linear1.weight, input: tokens,
+            nRows: nTokens, on: cmd)
         if let b = linear1.bias {
             x = addRowBias(x, bias: b, nRows: nTokens, rowSize: textHidden, on: cmd)
         }
         x = Ops.gelu(x, on: cmd)
-        var y = Ops.gemm(weight: linear2.weight, input: x,
-                         nRows: nTokens, on: cmd)
+        var y = Ops.gemm(
+            weight: linear2.weight, input: x,
+            nRows: nTokens, on: cmd)
         if let b = linear2.bias {
             y = addRowBias(y, bias: b, nRows: nTokens, rowSize: textHidden, on: cmd)
         }
@@ -646,8 +685,10 @@ final class PixtralComposedTower {
     let textHidden: Int
     let dtype: DType
 
-    init(encoder: PixtralVisionEncoder, projector: PixtralProjector,
-         visionCfg: PixtralVisionConfig, textHidden: Int, dtype: DType) {
+    init(
+        encoder: PixtralVisionEncoder, projector: PixtralProjector,
+        visionCfg: PixtralVisionConfig, textHidden: Int, dtype: DType
+    ) {
         self.encoder = encoder
         self.projector = projector
         self.visionCfg = visionCfg
@@ -680,11 +721,12 @@ final class PixtralComposedEncoder: VisionEncoder {
         // Placeholder tensors — the base `encode` is fully overridden
         // below so these are never read.
         let placeholder = tower.encoder.patchConvWeight
-        super.init(config: facadeConfig,
-                   patchEmbedWeight: placeholder, patchEmbedBias: placeholder,
-                   positionEmbedding: placeholder, layers: [],
-                   postLayerNorm: tower.encoder.lnPre.asLayerNorm(),
-                   projection: nil, dtype: tower.dtype)
+        super.init(
+            config: facadeConfig,
+            patchEmbedWeight: placeholder, patchEmbedBias: placeholder,
+            positionEmbedding: placeholder, layers: [],
+            postLayerNorm: tower.encoder.lnPre.asLayerNorm(),
+            projection: nil, dtype: tower.dtype)
     }
 
     /// Run the Pixtral vision tower + projector.

@@ -17,9 +17,10 @@
 
 import Foundation
 import Metal
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("OpsFused — fused gate / norm wrappers")
 struct OpsFusedTests {
@@ -96,8 +97,9 @@ struct OpsFusedTests {
             epsBuf.copyIn(from: [Float(1e-12)])
             var out: Tensor!
             runAndWait { cb in
-                out = Ops.rmsNormResidual(x: x, residual: residual,
-                                          weight: weight, epsBuf: epsBuf, on: cb)
+                out = Ops.rmsNormResidual(
+                    x: x, residual: residual,
+                    weight: weight, epsBuf: epsBuf, on: cb)
             }
             let r = out.toArray(as: Float.self)
             for v in r { #expect(abs(v - 1) < 1e-3) }
@@ -152,7 +154,7 @@ struct OpsFusedTests {
     @Test("validateRmsNormResidual rejects bad widths")
     func validateRmsNormResidualWidth() {
         #expect(OpsValidation.validateRmsNormResidual(n: 0) != nil)
-        #expect(OpsValidation.validateRmsNormResidual(n: 100) != nil)   // not multiple of 128
+        #expect(OpsValidation.validateRmsNormResidual(n: 100) != nil)  // not multiple of 128
         #expect(OpsValidation.validateRmsNormResidual(n: 8192) != nil)  // > 4096
         #expect(OpsValidation.validateRmsNormResidual(n: 128) == nil)
         #expect(OpsValidation.validateRmsNormResidual(n: 4096) == nil)
@@ -168,8 +170,8 @@ struct OpsFusedTests {
     @Test("validateRmsNormSmall enforces n ∈ [64, 2048] and even")
     func validateRmsNormSmallWidth() {
         #expect(OpsValidation.validateRmsNormSmall(n: 0) != nil)
-        #expect(OpsValidation.validateRmsNormSmall(n: 63) != nil)    // odd
-        #expect(OpsValidation.validateRmsNormSmall(n: 32) != nil)    // < 64
+        #expect(OpsValidation.validateRmsNormSmall(n: 63) != nil)  // odd
+        #expect(OpsValidation.validateRmsNormSmall(n: 32) != nil)  // < 64
         #expect(OpsValidation.validateRmsNormSmall(n: 4096) != nil)  // > 2048
         #expect(OpsValidation.validateRmsNormSmall(n: 64) == nil)
         #expect(OpsValidation.validateRmsNormSmall(n: 96) == nil)
@@ -186,7 +188,9 @@ struct OpsFusedTests {
             let u16 = Tensor.empty(shape: [4], dtype: .f16)
             g16.copyIn(from: [Float16(0.5), -1, 2, 0])
             u16.copyIn(from: [Float16(2), 4, 6, 8])
-            var t1: Tensor!, t2: Tensor!, t3: Tensor!
+            var t1: Tensor!
+            var t2: Tensor!
+            var t3: Tensor!
             runAndWait { cb in
                 t1 = Ops.fusedGateGelu(gate: g16, up: u16, on: cb)
                 t2 = Ops.fusedGateClippedSwiglu(gate: g16, up: u16, on: cb)
@@ -208,12 +212,15 @@ struct OpsFusedTests {
             residBF.copyIn(from: Array(repeating: UInt16(0), count: n))
             let epsBuf = Tensor.empty(shape: [1], dtype: .f32)
             epsBuf.copyIn(from: [Float(1e-12)])
-            var rBF: Tensor!, smBF: Tensor!
+            var rBF: Tensor!
+            var smBF: Tensor!
             runAndWait { cb in
-                rBF = Ops.rmsNormResidual(x: xBF, residual: residBF,
-                                          weight: wBF, epsBuf: epsBuf, on: cb)
-                smBF = Ops.rmsNormSmall(xBF.reshaped(to: [n]), weight: wBF,
-                                        epsBuf: epsBuf, on: cb)
+                rBF = Ops.rmsNormResidual(
+                    x: xBF, residual: residBF,
+                    weight: wBF, epsBuf: epsBuf, on: cb)
+                smBF = Ops.rmsNormSmall(
+                    xBF.reshaped(to: [n]), weight: wBF,
+                    epsBuf: epsBuf, on: cb)
             }
             #expect(rBF.dtype == .bf16)
             #expect(smBF.dtype == .bf16)
@@ -227,8 +234,9 @@ struct OpsFusedTests {
             zBF.copyIn(from: Array(repeating: UInt16(0x3F80), count: n))
             var gBF: Tensor!
             runAndWait { cb in
-                gBF = Ops.gatedRmsNorm(y: yF32, z: zBF, weight: wBF,
-                                       epsBuf: epsBuf, on: cb)
+                gBF = Ops.gatedRmsNorm(
+                    y: yF32, z: zBF, weight: wBF,
+                    epsBuf: epsBuf, on: cb)
             }
             #expect(gBF.dtype == .bf16)
             for v in gBF.toFloatArray() { #expect(v.isFinite) }

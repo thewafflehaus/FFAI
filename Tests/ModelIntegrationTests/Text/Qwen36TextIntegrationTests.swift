@@ -23,9 +23,10 @@
 // from each test.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 private let qwen36LocalPath = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
 private let qwen36CheckpointAvailable =
@@ -51,8 +52,12 @@ struct Qwen36TextIntegrationTests {
         print("LOAD OK")
         #expect(m.qwen35 != nil, "expected Qwen35Model engine")
         if let q = m.qwen35 {
-            print("hidden=\(q.hidden) layers=\(q.nLayers) heads=\(q.nHeads) kv=\(q.nKVHeads) headDim=\(q.headDim)")
-            print("GDN dims: Hk=\(q.numKeyHeads) Hv=\(q.numValueHeads) Dk=\(q.keyHeadDim) Dv=\(q.valueHeadDim)")
+            print(
+                "hidden=\(q.hidden) layers=\(q.nLayers) heads=\(q.nHeads) kv=\(q.nKVHeads) headDim=\(q.headDim)"
+            )
+            print(
+                "GDN dims: Hk=\(q.numKeyHeads) Hv=\(q.numValueHeads) Dk=\(q.keyHeadDim) Dv=\(q.valueHeadDim)"
+            )
             print("hasMoE=\(q.hasMoE) vocab=\(q.vocab) dtype=\(q.dtype)")
             let gdnCount = q.layers.filter { $0 is Qwen35GDNLayer }.count
             let attnCount = q.layers.filter { $0 is Qwen35AttentionLayer }.count
@@ -97,8 +102,9 @@ struct Qwen36TextIntegrationTests {
         }
         // Build a prompt of approximately the target length by repeating
         // a paragraph until we hit it.
-        let base = "The quick brown fox jumps over the lazy dog. " +
-                   "Pack my box with five dozen liquor jugs. "
+        let base =
+            "The quick brown fox jumps over the lazy dog. "
+            + "Pack my box with five dozen liquor jugs. "
         var text = ""
         var tokens = m.tokenizer.encode(text: base)
         while tokens.count < targetPromptTokens {
@@ -121,7 +127,9 @@ struct Qwen36TextIntegrationTests {
         let prefillSecs = Date().timeIntervalSince(prefillStart)
         let prefillMs = prefillSecs * 1000
         let prefillTps = Double(tokens.count) / prefillSecs
-        print("\(label): prefill \(String(format: "%.0f", prefillMs))ms (\(String(format: "%.1f", prefillTps)) tok/s)")
+        print(
+            "\(label): prefill \(String(format: "%.0f", prefillMs))ms (\(String(format: "%.1f", prefillTps)) tok/s)"
+        )
 
         // Greedy sample first generated token.
         var logits = lastLogits.toFloatArray()
@@ -130,7 +138,7 @@ struct Qwen36TextIntegrationTests {
         // ── Decode loop ──────────────────────────────────────────────
         var stepTimes: [Double] = []
         var pos = tokens.count
-        for _ in 0..<decodeSteps {
+        for _ in 0 ..< decodeSteps {
             let t0 = Date()
             lastLogits = m.engine.forward(tokenId: nextTok, position: pos, caches: caches)
             logits = lastLogits.toFloatArray()
@@ -145,9 +153,15 @@ struct Qwen36TextIntegrationTests {
         let steadySteps = stepTimes.dropFirst(steadyCutoff)
         let steadySecs = steadySteps.reduce(0, +)
         let steadyTps = Double(steadySteps.count) / max(steadySecs, 1e-9)
-        print("\(label): decode \(decodeSteps) steps in \(String(format: "%.2f", decodeSecs))s (avg \(String(format: "%.2f", decodeTps)) tok/s, steady \(String(format: "%.2f", steadyTps)) tok/s)")
-        print("\(label): per-step ms (first 8): \(stepTimes.prefix(8).map { String(format: "%.0f", $0 * 1000) })")
-        print("\(label): RESULT prefill_ms=\(String(format: "%.0f", prefillMs)) decode_tps=\(String(format: "%.2f", decodeTps)) steady_tps=\(String(format: "%.2f", steadyTps)) prefill_tps=\(String(format: "%.1f", prefillTps))")
+        print(
+            "\(label): decode \(decodeSteps) steps in \(String(format: "%.2f", decodeSecs))s (avg \(String(format: "%.2f", decodeTps)) tok/s, steady \(String(format: "%.2f", steadyTps)) tok/s)"
+        )
+        print(
+            "\(label): per-step ms (first 8): \(stepTimes.prefix(8).map { String(format: "%.0f", $0 * 1000) })"
+        )
+        print(
+            "\(label): RESULT prefill_ms=\(String(format: "%.0f", prefillMs)) decode_tps=\(String(format: "%.2f", decodeTps)) steady_tps=\(String(format: "%.2f", steadyTps)) prefill_tps=\(String(format: "%.1f", prefillTps))"
+        )
     }
 
     @Test("Qwen3.6-35B-A3B forwardMany bench — T=32 prefill, batched vs per-token")
@@ -175,7 +189,8 @@ struct Qwen36TextIntegrationTests {
         }
         let qwen = try #require(m.qwen35, "expected Qwen35Model engine")
         // Seed prompt — 32 tokens. Tile until we hit targetT, then trim.
-        let seed = "The history of the printing press began when European craftsmen of the 15th century combined movable metal type with oil based ink screw presses paper to mass produce printed books pamphlets and broadsheets revolutionising communication"
+        let seed =
+            "The history of the printing press began when European craftsmen of the 15th century combined movable metal type with oil based ink screw presses paper to mass produce printed books pamphlets and broadsheets revolutionising communication"
         let seedEncoded = m.tokenizer.encode(text: seed)
         var encoded = seedEncoded
         while encoded.count < targetT {
@@ -189,15 +204,16 @@ struct Qwen36TextIntegrationTests {
         // mlx-lm bench convention is `model(batch[:1]); mx.eval()` once;
         // here we do 2 iters of each path so the second iter benches at
         // steady-state-ish (PSOs compiled, page caches warm).
-        for warmIter in 0..<2 {
+        for warmIter in 0 ..< 2 {
             let warmCachesP = qwen.makeLayerCaches()
             for (i, tok) in encoded.prefix(2).enumerated() {
                 _ = qwen.forward(tokenId: tok, position: i, caches: warmCachesP)
             }
             let warmCachesB = qwen.makeLayerCaches()
             let warmCmd = Device.shared.makeCommandBuffer()
-            _ = qwen.forwardMany(tokenIds: encoded, startPosition: 0,
-                                 caches: warmCachesB, on: warmCmd, device: Device.shared)
+            _ = qwen.forwardMany(
+                tokenIds: encoded, startPosition: 0,
+                caches: warmCachesB, on: warmCmd, device: Device.shared)
             warmCmd.commit()
             await warmCmd.completed()
             _ = warmIter  // silence
@@ -205,7 +221,7 @@ struct Qwen36TextIntegrationTests {
 
         // Per-token loop baseline (5 runs, median).
         var perTokenSecs: [Double] = []
-        for _ in 0..<5 {
+        for _ in 0 ..< 5 {
             let caches = qwen.makeLayerCaches()
             let t0 = Date()
             for (i, tok) in encoded.enumerated() {
@@ -215,26 +231,33 @@ struct Qwen36TextIntegrationTests {
         }
         perTokenSecs.sort()
         let perTokenMedian = perTokenSecs[perTokenSecs.count / 2]
-        print("per-token T=\(T): runs=\(perTokenSecs.map { String(format: "%.3f", $0) }) median=\(String(format: "%.3f", perTokenMedian))s = \(String(format: "%.2f", Double(T)/perTokenMedian)) tps")
+        print(
+            "per-token T=\(T): runs=\(perTokenSecs.map { String(format: "%.3f", $0) }) median=\(String(format: "%.3f", perTokenMedian))s = \(String(format: "%.2f", Double(T)/perTokenMedian)) tps"
+        )
 
         // Batched forwardMany (5 runs, median).
         var batchedSecs: [Double] = []
-        for _ in 0..<5 {
+        for _ in 0 ..< 5 {
             let caches = qwen.makeLayerCaches()
             let bCmd = Device.shared.makeCommandBuffer()
             let t0 = Date()
-            _ = qwen.forwardMany(tokenIds: encoded, startPosition: 0,
-                                 caches: caches, on: bCmd, device: Device.shared)
+            _ = qwen.forwardMany(
+                tokenIds: encoded, startPosition: 0,
+                caches: caches, on: bCmd, device: Device.shared)
             bCmd.commit()
             await bCmd.completed()
             batchedSecs.append(Date().timeIntervalSince(t0))
         }
         batchedSecs.sort()
         let batchedMedian = batchedSecs[batchedSecs.count / 2]
-        print("batched T=\(T): runs=\(batchedSecs.map { String(format: "%.3f", $0) }) median=\(String(format: "%.3f", batchedMedian))s = \(String(format: "%.2f", Double(T)/batchedMedian)) tps")
+        print(
+            "batched T=\(T): runs=\(batchedSecs.map { String(format: "%.3f", $0) }) median=\(String(format: "%.3f", batchedMedian))s = \(String(format: "%.2f", Double(T)/batchedMedian)) tps"
+        )
 
         let speedup = perTokenMedian / batchedMedian
-        print("forwardManyBench RESULT T=\(T): per_token=\(String(format: "%.0f", perTokenMedian*1000))ms batched=\(String(format: "%.0f", batchedMedian*1000))ms speedup=\(String(format: "%.2fx", speedup))")
+        print(
+            "forwardManyBench RESULT T=\(T): per_token=\(String(format: "%.0f", perTokenMedian*1000))ms batched=\(String(format: "%.0f", batchedMedian*1000))ms speedup=\(String(format: "%.2fx", speedup))"
+        )
     }
 
     @Test("Qwen3.6-35B-A3B forwardMany matches per-token forward")
@@ -249,8 +272,9 @@ struct Qwen36TextIntegrationTests {
         let qwen = try #require(m.qwen35, "expected Qwen35Model engine, got \(type(of: m.engine))")
         let prompt = "The history of the printing press began when"
         let encoded = m.tokenizer.encode(text: prompt)
-        precondition(encoded.count >= 4,
-                     "forwardManyEquivalence: prompt encoded to \(encoded.count) tokens; need ≥ 4")
+        precondition(
+            encoded.count >= 4,
+            "forwardManyEquivalence: prompt encoded to \(encoded.count) tokens; need ≥ 4")
 
         // ── Reference path: T per-token `forward` calls on fresh caches.
         let refCaches = qwen.makeLayerCaches()
@@ -272,7 +296,9 @@ struct Qwen36TextIntegrationTests {
         let manyLogits = manyLogitsTensor.toFloatArray()
         let manyArgmax = manyLogits.enumerated().max(by: { $0.element < $1.element })!.offset
 
-        print("forwardManyEquivalence T=\(encoded.count): ref argmax=\(refArgmax) batched argmax=\(manyArgmax)")
+        print(
+            "forwardManyEquivalence T=\(encoded.count): ref argmax=\(refArgmax) batched argmax=\(manyArgmax)"
+        )
         let refTop5 = refLogits.enumerated().sorted { $0.element > $1.element }.prefix(5)
             .map { (id: $0.offset, logit: $0.element) }
         let manyTop5 = manyLogits.enumerated().sorted { $0.element > $1.element }.prefix(5)
@@ -280,13 +306,16 @@ struct Qwen36TextIntegrationTests {
         print("  ref top5: \(refTop5)")
         print("  many top5: \(manyTop5)")
 
-        #expect(refArgmax == manyArgmax,
-                "forwardMany batched argmax \(manyArgmax) ≠ per-token forward argmax \(refArgmax)")
+        #expect(
+            refArgmax == manyArgmax,
+            "forwardMany batched argmax \(manyArgmax) ≠ per-token forward argmax \(refArgmax)")
         let refTopLogit = refLogits[refArgmax]
         let manyTopLogit = manyLogits[manyArgmax]
         let absDelta = abs(refTopLogit - manyTopLogit)
-        #expect(absDelta < 0.5,
-                "forwardMany batched top-1 logit \(manyTopLogit) drifted \(absDelta) from per-token \(refTopLogit)")
+        #expect(
+            absDelta < 0.5,
+            "forwardMany batched top-1 logit \(manyTopLogit) drifted \(absDelta) from per-token \(refTopLogit)"
+        )
     }
 
     @Test("Qwen3.6-35B-A3B forward pass — first-token greedy decode")
@@ -319,8 +348,9 @@ struct Qwen36TextIntegrationTests {
         print("prefill \(encoded.count) tokens: \(String(format: "%.3f", prefillSecs))s")
 
         let logits = lastLogits.toFloatArray()
-        precondition(logits.count == m.engine.vocab,
-                     "logits length \(logits.count) != vocab \(m.engine.vocab)")
+        precondition(
+            logits.count == m.engine.vocab,
+            "logits length \(logits.count) != vocab \(m.engine.vocab)")
         let argmax = logits.enumerated().max(by: { $0.element < $1.element })!.offset
         print("first-token argmax = \(argmax)")
         print("decoded first token: \(tokenizer.decode(tokens: [argmax]))")

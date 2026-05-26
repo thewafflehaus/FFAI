@@ -21,6 +21,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Idefics3 Family Root — variant + defaults")
@@ -28,8 +29,9 @@ struct Idefics3RootTests {
 
     @Test("variant(for:) returns Idefics3Dense (the only variant today)")
     func variantDispatch() throws {
-        let cfg = ModelConfig(architecture: "Idefics3ForConditionalGeneration",
-                              modelType: "idefics3", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "Idefics3ForConditionalGeneration",
+            modelType: "idefics3", raw: [:])
         let v = try Idefics3.variant(for: cfg)
         #expect(String(describing: v) == String(describing: Idefics3Dense.self))
     }
@@ -51,11 +53,14 @@ struct Idefics3RootTests {
 
     @Test("Idefics3Error stringifies every case with its payload")
     func errorDescriptions() {
-        #expect(Idefics3Error.missingConfig("text_config").description
-            .contains("text_config"))
-        #expect(Idefics3Error.missingVisionConfig("hidden_size").description
-            .contains("hidden_size"))
-        #expect(Idefics3Error.missingTextConfig("vocab_size").description
-            .contains("vocab_size"))
+        #expect(
+            Idefics3Error.missingConfig("text_config").description
+                .contains("text_config"))
+        #expect(
+            Idefics3Error.missingVisionConfig("hidden_size").description
+                .contains("hidden_size"))
+        #expect(
+            Idefics3Error.missingTextConfig("vocab_size").description
+                .contains("vocab_size"))
     }
 }

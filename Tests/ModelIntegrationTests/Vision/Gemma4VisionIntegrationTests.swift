@@ -29,9 +29,10 @@
 // load failure fails the test.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Gemma4 Vision Integration", .serialized)
 struct Gemma4VisionIntegrationTests {
@@ -80,8 +81,10 @@ struct Gemma4VisionIntegrationTests {
         let questionTokens = m.tokenizer.encode(
             text: "<start_of_turn>user\nDescribe this image.<end_of_turn>\n"
                 + "<start_of_turn>model\n")
-        let promptTokens = Array(repeating: imageTokenId,
-                                 count: vlm.imageTokenCount) + questionTokens
+        let promptTokens =
+            Array(
+                repeating: imageTokenId,
+                count: vlm.imageTokenCount) + questionTokens
 
         // A real photograph — the golden-retriever fixture.
         let image = try VisionTestHelpers.dogImage()
@@ -92,8 +95,9 @@ struct Gemma4VisionIntegrationTests {
 
         // Coherence first, then the content check: the caption should
         // mention a dog.
-        expectCoherentOutput(generated, minTokens: 8,
-                             label: "Gemma 4 VL image+text")
+        expectCoherentOutput(
+            generated, minTokens: 8,
+            label: "Gemma 4 VL image+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("Gemma 4 VL generated: \(text)")
         VisionTestHelpers.expectMentionsDog(text, label: "Gemma 4 VL")

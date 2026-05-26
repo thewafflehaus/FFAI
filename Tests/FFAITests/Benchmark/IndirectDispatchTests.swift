@@ -40,9 +40,10 @@
 
 import Foundation
 import Metal
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Indirect dispatch — dequant gemv int4")
 struct IndirectDispatchTests {
@@ -62,7 +63,7 @@ struct IndirectDispatchTests {
     static func pack8(_ nibbles: [UInt32]) -> UInt32 {
         precondition(nibbles.count == 8)
         var word: UInt32 = 0
-        for i in 0..<8 {
+        for i in 0 ..< 8 {
             word |= (nibbles[i] & 0xF) << (UInt32(i) * 4)
         }
         return word
@@ -80,25 +81,29 @@ struct IndirectDispatchTests {
             let nGroups = inDim / gs
 
             var q = [[UInt32]](repeating: [], count: outDim)
-            for r in 0..<outDim {
-                q[r] = (0..<inDim).map { UInt32(($0 + r * 3) % 16) }
+            for r in 0 ..< outDim {
+                q[r] = (0 ..< inDim).map { UInt32(($0 + r * 3) % 16) }
             }
-            let scales: [Float] = (0..<(outDim * nGroups)).map { Float($0 + 1) * 0.02 }
-            let biases: [Float] = (0..<(outDim * nGroups)).map { Float($0) * -0.01 }
-            let input: [Float] = (0..<inDim).map { Float($0) * 0.05 - 3.2 }
+            let scales: [Float] = (0 ..< (outDim * nGroups)).map { Float($0 + 1) * 0.02 }
+            let biases: [Float] = (0 ..< (outDim * nGroups)).map { Float($0) * -0.01 }
+            let input: [Float] = (0 ..< inDim).map { Float($0) * 0.05 - 3.2 }
 
             var packed: [UInt32] = []
-            for r in 0..<outDim {
+            for r in 0 ..< outDim {
                 for i in stride(from: 0, to: inDim, by: 8) {
-                    let nibbles = Array(q[r][i..<i+8])
+                    let nibbles = Array(q[r][i ..< i + 8])
                     packed.append(Self.pack8(nibbles))
                 }
             }
 
             // bf16 storage: shift floats >> 16 to extract top 16 bits
-            let scalesBits: [UInt16] = scales.map { UInt16(truncatingIfNeeded: $0.bitPattern >> 16) }
-            let biasesBits: [UInt16] = biases.map { UInt16(truncatingIfNeeded: $0.bitPattern >> 16) }
-            let inputBits: [UInt16]  = input.map  { UInt16(truncatingIfNeeded: $0.bitPattern >> 16) }
+            let scalesBits: [UInt16] = scales.map {
+                UInt16(truncatingIfNeeded: $0.bitPattern >> 16)
+            }
+            let biasesBits: [UInt16] = biases.map {
+                UInt16(truncatingIfNeeded: $0.bitPattern >> 16)
+            }
+            let inputBits: [UInt16] = input.map { UInt16(truncatingIfNeeded: $0.bitPattern >> 16) }
 
             let weight = Tensor.empty(shape: [outDim, inDim / 8], dtype: .u32)
             weight.copyIn(from: packed)
@@ -134,8 +139,10 @@ struct IndirectDispatchTests {
             // arg source. Any divergence means the indirect arg buffer
             // had wrong contents (threadgroup count vs thread count) or
             // the PSO name didn't match.
-            #expect(directBits == indirectBits,
-                    "indirect bf16 output must bit-match direct (got: \(indirectBits.map { String($0, radix: 16) }), expected: \(directBits.map { String($0, radix: 16) }))")
+            #expect(
+                directBits == indirectBits,
+                "indirect bf16 output must bit-match direct (got: \(indirectBits.map { String($0, radix: 16) }), expected: \(directBits.map { String($0, radix: 16) }))"
+            )
         }
     }
 
@@ -155,24 +162,28 @@ struct IndirectDispatchTests {
             let nGroups = inDim / gs
 
             var q = [[UInt32]](repeating: [], count: outDim)
-            for r in 0..<outDim {
-                q[r] = (0..<inDim).map { UInt32(($0 + r * 3) % 16) }
+            for r in 0 ..< outDim {
+                q[r] = (0 ..< inDim).map { UInt32(($0 + r * 3) % 16) }
             }
-            let scales: [Float] = (0..<(outDim * nGroups)).map { Float($0 + 1) * 0.02 }
-            let biases: [Float] = (0..<(outDim * nGroups)).map { Float($0) * -0.01 }
-            let input: [Float] = (0..<inDim).map { Float($0) * 0.05 - 3.2 }
+            let scales: [Float] = (0 ..< (outDim * nGroups)).map { Float($0 + 1) * 0.02 }
+            let biases: [Float] = (0 ..< (outDim * nGroups)).map { Float($0) * -0.01 }
+            let input: [Float] = (0 ..< inDim).map { Float($0) * 0.05 - 3.2 }
 
             var packed: [UInt32] = []
-            for r in 0..<outDim {
+            for r in 0 ..< outDim {
                 for i in stride(from: 0, to: inDim, by: 8) {
-                    let nibbles = Array(q[r][i..<i+8])
+                    let nibbles = Array(q[r][i ..< i + 8])
                     packed.append(Self.pack8(nibbles))
                 }
             }
 
-            let scalesBits: [UInt16] = scales.map { UInt16(truncatingIfNeeded: $0.bitPattern >> 16) }
-            let biasesBits: [UInt16] = biases.map { UInt16(truncatingIfNeeded: $0.bitPattern >> 16) }
-            let inputBits: [UInt16]  = input.map  { UInt16(truncatingIfNeeded: $0.bitPattern >> 16) }
+            let scalesBits: [UInt16] = scales.map {
+                UInt16(truncatingIfNeeded: $0.bitPattern >> 16)
+            }
+            let biasesBits: [UInt16] = biases.map {
+                UInt16(truncatingIfNeeded: $0.bitPattern >> 16)
+            }
+            let inputBits: [UInt16] = input.map { UInt16(truncatingIfNeeded: $0.bitPattern >> 16) }
 
             let weight = Tensor.empty(shape: [outDim, inDim / 8], dtype: .u32)
             weight.copyIn(from: packed)
@@ -196,8 +207,12 @@ struct IndirectDispatchTests {
             let device = Device.shared
             let indirect = device.makeBuffer(length: 24)
             let ptr = indirect.contents().bindMemory(to: UInt32.self, capacity: 6)
-            ptr[0] = 9999; ptr[1] = 1; ptr[2] = 1
-            ptr[3] = UInt32(outDim); ptr[4] = 1; ptr[5] = 1
+            ptr[0] = 9999
+            ptr[1] = 1
+            ptr[2] = 1
+            ptr[3] = UInt32(outDim)
+            ptr[4] = 1
+            ptr[5] = 1
 
             let indirectOut = Tensor.empty(shape: [outDim], dtype: .bf16)
             runAndWait { cb in
@@ -209,8 +224,9 @@ struct IndirectDispatchTests {
             }
             let indirectBits = indirectOut.toArray(as: UInt16.self)
 
-            #expect(directBits == indirectBits,
-                    "indirect bf16 at offset 12 must bit-match direct")
+            #expect(
+                directBits == indirectBits,
+                "indirect bf16 at offset 12 must bit-match direct")
         }
     }
 }

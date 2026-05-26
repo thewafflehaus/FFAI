@@ -47,18 +47,22 @@ public struct BenchRow: Sendable, Codable, Equatable {
     public let genKLDivergence: Double?
     public let outputPreview: String?
 
-    public init(model: String, method: String, quantization: String?,
-                contextSize: Int, promptTokens: Int,
-                prefillTokensPerSecond: Double, decodeTokensPerSecond: Double,
-                steadyTokensPerSecond: Double?, timeToFirstTokenMs: Double,
-                generatedTokens: Int,
-                baselineGPUBytes: Int, peakGPUBytes: Int,
-                kvCacheUsedBytes: Int, weightsBytes: Int, wiredTicketBytes: Int,
-                genPerplexity: Double?, genKLDivergence: Double?,
-                outputPreview: String?) {
-        self.model = model; self.method = method
+    public init(
+        model: String, method: String, quantization: String?,
+        contextSize: Int, promptTokens: Int,
+        prefillTokensPerSecond: Double, decodeTokensPerSecond: Double,
+        steadyTokensPerSecond: Double?, timeToFirstTokenMs: Double,
+        generatedTokens: Int,
+        baselineGPUBytes: Int, peakGPUBytes: Int,
+        kvCacheUsedBytes: Int, weightsBytes: Int, wiredTicketBytes: Int,
+        genPerplexity: Double?, genKLDivergence: Double?,
+        outputPreview: String?
+    ) {
+        self.model = model
+        self.method = method
         self.quantization = quantization
-        self.contextSize = contextSize; self.promptTokens = promptTokens
+        self.contextSize = contextSize
+        self.promptTokens = promptTokens
         self.prefillTokensPerSecond = prefillTokensPerSecond
         self.decodeTokensPerSecond = decodeTokensPerSecond
         self.steadyTokensPerSecond = steadyTokensPerSecond
@@ -82,8 +86,10 @@ public struct BenchReport: Sendable, Codable {
     public var createdAt: Date
     public var rows: [BenchRow]
 
-    public init(chip: String, systemRAMBytes: Int, osVersion: String,
-                createdAt: Date = Date(), rows: [BenchRow] = []) {
+    public init(
+        chip: String, systemRAMBytes: Int, osVersion: String,
+        createdAt: Date = Date(), rows: [BenchRow] = []
+    ) {
         self.chip = chip
         self.systemRAMBytes = systemRAMBytes
         self.osVersion = osVersion
@@ -120,8 +126,10 @@ public struct BenchmarkWriter: Sendable {
 
     /// Append `row` to today's report. Idempotent against the date —
     /// multiple appends in the same day grow the same files.
-    public func append(_ row: BenchRow,
-                       date: Date = Date()) throws -> (markdown: URL, sidecar: URL) {
+    public func append(
+        _ row: BenchRow,
+        date: Date = Date()
+    ) throws -> (markdown: URL, sidecar: URL) {
         try ensureDirectory()
         let stem = "\(chipSlug)-\(Self.dateStamp(date))"
         let mdURL = reportDirectory.appendingPathComponent("\(stem).md")
@@ -158,8 +166,9 @@ public struct BenchmarkWriter: Sendable {
 
         // Re-render markdown deterministically from the sidecar.
         do {
-            try Self.renderMarkdown(report: report).write(to: mdURL, atomically: true,
-                                                          encoding: .utf8)
+            try Self.renderMarkdown(report: report).write(
+                to: mdURL, atomically: true,
+                encoding: .utf8)
         } catch {
             throw BenchmarkWriterError.writeFailed(mdURL, error)
         }
@@ -199,10 +208,12 @@ public struct BenchmarkWriter: Sendable {
         do { try task.run() } catch { return "apple-silicon" }
         task.waitUntilExit()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let raw = String(data: data, encoding: .utf8)?
+        let raw =
+            String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if raw.isEmpty { return "apple-silicon" }
-        return raw
+        return
+            raw
             .lowercased()
             .replacingOccurrences(of: "apple ", with: "")
             .replacingOccurrences(of: " ", with: "-")
@@ -223,23 +234,26 @@ public struct BenchmarkWriter: Sendable {
         out += "- System RAM: \(formatBytes(report.systemRAMBytes))\n"
         out += "- OS: \(report.osVersion)\n"
         out += "- Created: \(report.createdAt.ISO8601Format())\n\n"
-        out += "| Model | Method | Quant | Ctx | Prompt | Prefill tok/s | Decode tok/s | Steady tok/s | TTFT (ms) | Gen tokens | Baseline GPU | Peak GPU | KV used | Weights | Gen PPL | Gen KLD | Sample |\n"
+        out +=
+            "| Model | Method | Quant | Ctx | Prompt | Prefill tok/s | Decode tok/s | Steady tok/s | TTFT (ms) | Gen tokens | Baseline GPU | Peak GPU | KV used | Weights | Gen PPL | Gen KLD | Sample |\n"
         out += "|---|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|\n"
         for r in report.rows {
-            out += "| \(r.model) | \(r.method) | \(r.quantization ?? "-") | \(r.contextSize) | \(r.promptTokens) | "
-            out += String(format: "%.2f | %.2f | %@ | %.2f | %d | %@ | %@ | %@ | %@ | %@ | %@ | %@ |\n",
-                          r.prefillTokensPerSecond,
-                          r.decodeTokensPerSecond,
-                          r.steadyTokensPerSecond.map { String(format: "%.2f", $0) } ?? "-",
-                          r.timeToFirstTokenMs,
-                          r.generatedTokens,
-                          formatBytes(r.baselineGPUBytes),
-                          formatBytes(r.peakGPUBytes),
-                          formatBytes(r.kvCacheUsedBytes),
-                          formatBytes(r.weightsBytes),
-                          r.genPerplexity.map { String(format: "%.3f", $0) } ?? "-",
-                          r.genKLDivergence.map { String(format: "%.4f", $0) } ?? "-",
-                          (r.outputPreview ?? "").replacingOccurrences(of: "|", with: "\\|"))
+            out +=
+                "| \(r.model) | \(r.method) | \(r.quantization ?? "-") | \(r.contextSize) | \(r.promptTokens) | "
+            out += String(
+                format: "%.2f | %.2f | %@ | %.2f | %d | %@ | %@ | %@ | %@ | %@ | %@ | %@ |\n",
+                r.prefillTokensPerSecond,
+                r.decodeTokensPerSecond,
+                r.steadyTokensPerSecond.map { String(format: "%.2f", $0) } ?? "-",
+                r.timeToFirstTokenMs,
+                r.generatedTokens,
+                formatBytes(r.baselineGPUBytes),
+                formatBytes(r.peakGPUBytes),
+                formatBytes(r.kvCacheUsedBytes),
+                formatBytes(r.weightsBytes),
+                r.genPerplexity.map { String(format: "%.3f", $0) } ?? "-",
+                r.genKLDivergence.map { String(format: "%.4f", $0) } ?? "-",
+                (r.outputPreview ?? "").replacingOccurrences(of: "|", with: "\\|"))
         }
         return out
     }
@@ -251,13 +265,15 @@ public struct BenchmarkWriter: Sendable {
     }
 }
 
-public extension BenchRow {
+extension BenchRow {
     /// Construct a BenchRow from a `GenerationStats` + identifying
     /// fields. The bench harness always has the stats already; this
     /// keeps the call site one line.
-    init(model: String, method: String, quantization: String?,
-         stats: GenerationStats, outputPreview: String?,
-         genPerplexity: Double? = nil, genKLDivergence: Double? = nil) {
+    public init(
+        model: String, method: String, quantization: String?,
+        stats: GenerationStats, outputPreview: String?,
+        genPerplexity: Double? = nil, genKLDivergence: Double? = nil
+    ) {
         self.init(
             model: model, method: method, quantization: quantization,
             contextSize: stats.contextSize, promptTokens: stats.promptTokens,

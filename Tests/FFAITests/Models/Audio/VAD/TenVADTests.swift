@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // Unit tests for TenVAD — config decoding, post-processing logic, and
@@ -86,7 +87,7 @@ struct TenVADTests {
         // 60 frames @ 256 samples / 16 kHz: silence, then a ~1.5s burst
         // of speech above threshold, then silence again.
         var probs = [Float](repeating: 0.05, count: 60)
-        for i in 15..<50 { probs[i] = 0.85 }
+        for i in 15 ..< 50 { probs[i] = 0.85 }
         let segments = TenVADModel.probsToSegments(
             probs, audioLen: 60 * 256, sampleRate: 16000,
             hopSize: 256, threshold: 0.5,
@@ -133,8 +134,8 @@ struct TenVADTests {
         // which clears minSpeechDurationMs=250ms. The gap between bursts
         // is 10 frames × 256 / 16000 = 160ms > minSilenceDurationMs=100ms.
         var probs = [Float](repeating: 0.02, count: 100)
-        for i in 5..<30 { probs[i] = 0.9 }   // burst 1: 25 frames, 400ms
-        for i in 40..<65 { probs[i] = 0.9 }   // burst 2: 25 frames, 400ms
+        for i in 5 ..< 30 { probs[i] = 0.9 }  // burst 1: 25 frames, 400ms
+        for i in 40 ..< 65 { probs[i] = 0.9 }  // burst 2: 25 frames, 400ms
         let segments = TenVADModel.probsToSegments(
             probs, audioLen: 100 * 256, sampleRate: 16000,
             hopSize: 256, threshold: 0.5,
@@ -156,16 +157,18 @@ struct TenVADTests {
 
     @Test("VADModelRegistry.detectKind — recognizes ten_vad model_type")
     func registryDetectKindTenVAD() throws {
-        let dir = try writeTempConfig(["model_type": "ten_vad"],
-                                      named: "ten-vad-checkpoint")
+        let dir = try writeTempConfig(
+            ["model_type": "ten_vad"],
+            named: "ten-vad-checkpoint")
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(try VADModelRegistry.detectKind(in: dir) == .tenVAD)
     }
 
     @Test("VADModelRegistry.detectKind — recognizes ten-vad model_type")
     func registryDetectKindTenVADDash() throws {
-        let dir = try writeTempConfig(["model_type": "ten-vad"],
-                                      named: "ten-vad-checkpoint-2")
+        let dir = try writeTempConfig(
+            ["model_type": "ten-vad"],
+            named: "ten-vad-checkpoint-2")
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(try VADModelRegistry.detectKind(in: dir) == .tenVAD)
     }
@@ -232,8 +235,10 @@ struct TenVADTests {
     // ─── Helpers ────────────────────────────────────────────────────
 
     /// Write a minimal config.json into a fresh temp directory.
-    private func writeTempConfig(_ config: [String: Any],
-                                 named: String) throws -> URL {
+    private func writeTempConfig(
+        _ config: [String: Any],
+        named: String
+    ) throws -> URL {
         let base = FileManager.default.temporaryDirectory
         let dir = base.appendingPathComponent("\(named)-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

@@ -19,6 +19,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("ThinkingSplit")
@@ -45,9 +46,10 @@ struct ThinkingSplitTests {
     @Test("ChatML scanner partitions on the supplied marker ids")
     func chatMLPartition() {
         let stream = [50, 100, 1, 2, 3, 101, 7, 8, 9]
-        let split = ThinkingSplit.splitChatML(tokens: stream,
-                                              openMarker: 100,
-                                              closeMarker: 101)
+        let split = ThinkingSplit.splitChatML(
+            tokens: stream,
+            openMarker: 100,
+            closeMarker: 101)
         #expect(split != nil)
         if let s = split {
             #expect(Array(s.thinkTokens) == [1, 2, 3])
@@ -58,25 +60,30 @@ struct ThinkingSplitTests {
 
     @Test("ChatML scanner returns nil when open marker absent")
     func chatMLNoOpen() {
-        #expect(ThinkingSplit.splitChatML(tokens: [1, 2, 3],
-                                          openMarker: 100,
-                                          closeMarker: 101) == nil)
+        #expect(
+            ThinkingSplit.splitChatML(
+                tokens: [1, 2, 3],
+                openMarker: 100,
+                closeMarker: 101) == nil)
     }
 
     @Test("ChatML scanner returns nil when block never closes")
     func chatMLPartialBlock() {
         let stream = [100, 1, 2, 3]
-        #expect(ThinkingSplit.splitChatML(tokens: stream,
-                                          openMarker: 100,
-                                          closeMarker: 101) == nil)
+        #expect(
+            ThinkingSplit.splitChatML(
+                tokens: stream,
+                openMarker: 100,
+                closeMarker: 101) == nil)
     }
 
     @Test("Empty think segment yields an empty thinkTokens slice")
     func chatMLEmptyThink() {
         let stream = [100, 101, 5, 6]
-        let split = ThinkingSplit.splitChatML(tokens: stream,
-                                              openMarker: 100,
-                                              closeMarker: 101)
+        let split = ThinkingSplit.splitChatML(
+            tokens: stream,
+            openMarker: 100,
+            closeMarker: 101)
         #expect(split?.thinkTokens.isEmpty == true)
         #expect(Array(split?.genTokens ?? []) == [5, 6])
     }

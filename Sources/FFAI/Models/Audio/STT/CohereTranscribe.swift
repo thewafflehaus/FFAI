@@ -237,13 +237,15 @@ final class CohereConformerAttn: Module {
     let posBiasU: [Float]  // bias_u
     let posBiasV: [Float]  // bias_v
 
-    init(qkvProj: Linear, posProj: Linear, outProj: Linear,
-         nHeads: Int, dK: Int, posBiasU: [Float], posBiasV: [Float]) {
-        self.qkvProj  = qkvProj
-        self.posProj  = posProj
-        self.outProj  = outProj
-        self.nHeads   = nHeads
-        self.dK       = dK
+    init(
+        qkvProj: Linear, posProj: Linear, outProj: Linear,
+        nHeads: Int, dK: Int, posBiasU: [Float], posBiasV: [Float]
+    ) {
+        self.qkvProj = qkvProj
+        self.posProj = posProj
+        self.outProj = outProj
+        self.nHeads = nHeads
+        self.dK = dK
         self.posBiasU = posBiasU
         self.posBiasV = posBiasV
     }
@@ -258,18 +260,20 @@ final class CohereConformerConv: Module {
     let depthwiseWeights: [Float]
     let kernelSize: Int
     let batchNormWeight: [Float]  // gamma
-    let batchNormBias: [Float]    // beta
+    let batchNormBias: [Float]  // beta
     let batchNormRunningMean: [Float]
     let batchNormRunningVar: [Float]
     let batchNormEps: Float
     let pointwiseConv2: Linear  // dModel → dModel
 
-    init(pointwiseConv1: Linear,
-         depthwiseWeights: [Float], kernelSize: Int,
-         batchNormWeight: [Float], batchNormBias: [Float],
-         batchNormRunningMean: [Float], batchNormRunningVar: [Float],
-         batchNormEps: Float,
-         pointwiseConv2: Linear) {
+    init(
+        pointwiseConv1: Linear,
+        depthwiseWeights: [Float], kernelSize: Int,
+        batchNormWeight: [Float], batchNormBias: [Float],
+        batchNormRunningMean: [Float], batchNormRunningVar: [Float],
+        batchNormEps: Float,
+        pointwiseConv2: Linear
+    ) {
         self.pointwiseConv1 = pointwiseConv1
         self.depthwiseWeights = depthwiseWeights
         self.kernelSize = kernelSize
@@ -295,15 +299,21 @@ final class CohereConformerLayer: Module {
     let ff2: CohereConformerFFN
     let normOut: LayerNorm
 
-    init(normFF1: LayerNorm, ff1: CohereConformerFFN,
-         normSelfAttn: LayerNorm, selfAttn: CohereConformerAttn,
-         normConv: LayerNorm, conv: CohereConformerConv,
-         normFF2: LayerNorm, ff2: CohereConformerFFN,
-         normOut: LayerNorm) {
-        self.normFF1 = normFF1; self.ff1 = ff1
-        self.normSelfAttn = normSelfAttn; self.selfAttn = selfAttn
-        self.normConv = normConv; self.conv = conv
-        self.normFF2 = normFF2; self.ff2 = ff2
+    init(
+        normFF1: LayerNorm, ff1: CohereConformerFFN,
+        normSelfAttn: LayerNorm, selfAttn: CohereConformerAttn,
+        normConv: LayerNorm, conv: CohereConformerConv,
+        normFF2: LayerNorm, ff2: CohereConformerFFN,
+        normOut: LayerNorm
+    ) {
+        self.normFF1 = normFF1
+        self.ff1 = ff1
+        self.normSelfAttn = normSelfAttn
+        self.selfAttn = selfAttn
+        self.normConv = normConv
+        self.conv = conv
+        self.normFF2 = normFF2
+        self.ff2 = ff2
         self.normOut = normOut
     }
     public func parameters() -> [(String, Tensor)] { [] }
@@ -320,20 +330,21 @@ final class CohereDecoderAttn: Module {
     init(qkvProj: Linear, outProj: Linear, nHeads: Int, headDim: Int) {
         self.qkvProj = qkvProj
         self.outProj = outProj
-        self.nHeads  = nHeads
+        self.nHeads = nHeads
         self.headDim = headDim
-        self.scale   = 1.0 / Float(Double(headDim).squareRoot())
+        self.scale = 1.0 / Float(Double(headDim).squareRoot())
     }
     public func parameters() -> [(String, Tensor)] { [] }
 }
 
 /// One Transformer decoder FFN weight holder.
 final class CohereDecoderFFN: Module {
-    let denseIn: Linear   // hiddenSize → innerSize
+    let denseIn: Linear  // hiddenSize → innerSize
     let denseOut: Linear  // innerSize → hiddenSize
 
     init(denseIn: Linear, denseOut: Linear) {
-        self.denseIn = denseIn; self.denseOut = denseOut
+        self.denseIn = denseIn
+        self.denseOut = denseOut
     }
     public func parameters() -> [(String, Tensor)] { [] }
 }
@@ -347,12 +358,17 @@ final class CohereDecoderLayer: Module {
     let norm3: LayerNorm
     let ffn: CohereDecoderFFN
 
-    init(norm1: LayerNorm, selfAttn: CohereDecoderAttn,
-         norm2: LayerNorm, crossAttn: CohereDecoderAttn,
-         norm3: LayerNorm, ffn: CohereDecoderFFN) {
-        self.norm1 = norm1; self.selfAttn = selfAttn
-        self.norm2 = norm2; self.crossAttn = crossAttn
-        self.norm3 = norm3; self.ffn = ffn
+    init(
+        norm1: LayerNorm, selfAttn: CohereDecoderAttn,
+        norm2: LayerNorm, crossAttn: CohereDecoderAttn,
+        norm3: LayerNorm, ffn: CohereDecoderFFN
+    ) {
+        self.norm1 = norm1
+        self.selfAttn = selfAttn
+        self.norm2 = norm2
+        self.crossAttn = crossAttn
+        self.norm3 = norm3
+        self.ffn = ffn
     }
     public func parameters() -> [(String, Tensor)] { [] }
 }
@@ -432,12 +448,15 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         dtype: DType
     ) {
         self.config = config
-        self.conv0Weight = conv0Weight; self.conv0Bias = conv0Bias
+        self.conv0Weight = conv0Weight
+        self.conv0Bias = conv0Bias
         self.conv0OutCh = conv0OutCh
         self.conv2DwWeight = conv2DwWeight
-        self.conv3Weight = conv3Weight; self.conv3Bias = conv3Bias
+        self.conv3Weight = conv3Weight
+        self.conv3Bias = conv3Bias
         self.conv5DwWeight = conv5DwWeight
-        self.conv6Weight = conv6Weight; self.conv6Bias = conv6Bias
+        self.conv6Weight = conv6Weight
+        self.conv6Bias = conv6Bias
         self.subsamplingOut = subsamplingOut
         self.relPETable = relPETable
         self.encoderLayers = encoderLayers
@@ -464,19 +483,19 @@ public final class CohereTranscribeModel: @unchecked Sendable {
     ///
     /// Returns a flat `[nFrames * featIn]` float array in [nMel, T] scan order.
     private func computeMelFeatures(waveform: [Float]) -> (melFlat: [Float], T: Int) {
-        let ec   = config.encoder
-        let sr   = config.sampleRate
+        let ec = config.encoder
+        let sr = config.sampleRate
         let featIn = ec.featIn
         let nFFT = 512
         let winLen = 400
-        let hop  = 160
+        let hop = 160
 
         // ── Pre-emphasis ──
         var pcm = waveform
         if pcm.count > 1 {
             var emp = [Float](repeating: 0, count: pcm.count)
             emp[0] = pcm[0]
-            for i in 1..<pcm.count {
+            for i in 1 ..< pcm.count {
                 emp[i] = pcm[i] - 0.97 * pcm[i - 1]
             }
             pcm = emp
@@ -486,7 +505,7 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         // Win is centred: left pad = (nFFT - winLen) / 2 zeros, then Hann, then right pad.
         let leftPad = (nFFT - winLen) / 2
         var window = [Float](repeating: 0, count: nFFT)
-        for i in 0..<winLen {
+        for i in 0 ..< winLen {
             let w = Float(0.5 - 0.5 * cos(2.0 * Double.pi * Double(i) / Double(winLen)))
             window[leftPad + i] = w
         }
@@ -494,11 +513,13 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         // ── Constant-pad the signal by nFFT/2 on each side ──
         let pad = nFFT / 2
         var padded = [Float](repeating: 0, count: pcm.count + 2 * pad)
-        for i in 0..<pcm.count { padded[pad + i] = pcm[i] }
+        for i in 0 ..< pcm.count { padded[pad + i] = pcm[i] }
 
         // ── STFT → power spectrum ──
         let nFrames: Int
-        if padded.count < nFFT { nFrames = 0 } else {
+        if padded.count < nFFT {
+            nFrames = 0
+        } else {
             nFrames = (padded.count - nFFT) / hop + 1
         }
         guard nFrames > 0 else { return ([], 0) }
@@ -506,13 +527,14 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let nFreq = nFFT / 2 + 1
         var power = [Float](repeating: 0, count: nFrames * nFreq)
         // CPU STFT over frames.
-        for f in 0..<nFrames {
+        for f in 0 ..< nFrames {
             let start = f * hop
             // DFT over nFFT points with the window applied.
-            for k in 0..<nFreq {
+            for k in 0 ..< nFreq {
                 let angle = -2.0 * Float.pi * Float(k) / Float(nFFT)
-                var re: Float = 0, im: Float = 0
-                for n in 0..<nFFT {
+                var re: Float = 0
+                var im: Float = 0
+                for n in 0 ..< nFFT {
                     let x = padded[start + n] * window[n]
                     re += x * cos(angle * Float(n))
                     im += x * sin(angle * Float(n))
@@ -547,20 +569,22 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let melHi = hzToSlaney(fMaxHz)
         // nMels+2 edge points.
         var edges = [Double](repeating: 0, count: featIn + 2)
-        for i in 0..<(featIn + 2) {
+        for i in 0 ..< (featIn + 2) {
             edges[i] = slaneyToHz(melLo + (melHi - melLo) * Double(i) / Double(featIn + 1))
         }
         // FFT bin centre frequencies.
         var fftFreqs = [Double](repeating: 0, count: nFreq)
-        for k in 0..<nFreq { fftFreqs[k] = Double(k) * Double(sr) / Double(nFFT) }
+        for k in 0 ..< nFreq { fftFreqs[k] = Double(k) * Double(sr) / Double(nFFT) }
 
         // [featIn, nFreq] filterbank with Slaney normalisation.
         var melFB = [Float](repeating: 0, count: featIn * nFreq)
-        for m in 0..<featIn {
-            let lo = edges[m]; let ctr = edges[m + 1]; let hi = edges[m + 2]
+        for m in 0 ..< featIn {
+            let lo = edges[m]
+            let ctr = edges[m + 1]
+            let hi = edges[m + 2]
             // Slaney normalisation: enorm = 2 / (hi_hz - lo_hz).
             let enorm = 2.0 / (hi - lo)
-            for k in 0..<nFreq {
+            for k in 0 ..< nFreq {
                 let f = fftFreqs[k]
                 let lower = (f - lo) / max(ctr - lo, 1e-9)
                 let upper = (hi - f) / max(hi - ctr, 1e-9)
@@ -573,12 +597,12 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         // Output layout: [nFrames, featIn] (time-major).
         var mel = [Float](repeating: 0, count: nFrames * featIn)
         let logFloor = Float(pow(2.0, -24.0))
-        for f in 0..<nFrames {
-            for m in 0..<featIn {
+        for f in 0 ..< nFrames {
+            for m in 0 ..< featIn {
                 var acc: Float = 0
                 let pBase = f * nFreq
                 let fbBase = m * nFreq
-                for k in 0..<nFreq { acc += power[pBase + k] * melFB[fbBase + k] }
+                for k in 0 ..< nFreq { acc += power[pBase + k] * melFB[fbBase + k] }
                 mel[f * featIn + m] = log(acc + logFloor)
             }
         }
@@ -591,12 +615,12 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         for v in mel { variance += (v - mean) * (v - mean) }
         variance /= Float(mel.count)
         let invStd = 1.0 / sqrt(variance + 1e-5)
-        for i in 0..<mel.count { mel[i] = (mel[i] - mean) * invStd }
+        for i in 0 ..< mel.count { mel[i] = (mel[i] - mean) * invStd }
 
         // ── Convert to [featIn, nFrames] (channel-first) for Conv2d input ──
         var melCF = [Float](repeating: 0, count: featIn * nFrames)
-        for m in 0..<featIn {
-            for f in 0..<nFrames {
+        for m in 0 ..< featIn {
+            for f in 0 ..< nFrames {
                 melCF[m * nFrames + f] = mel[f * featIn + m]
             }
         }
@@ -616,17 +640,17 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let outH = (inH + 2 * padH - kH) / strideH + 1
         let outW = (inW + 2 * padW - kW) / strideW + 1
         var out = [Float](repeating: 0, count: outCh * outH * outW)
-        for oc in 0..<outCh {
+        for oc in 0 ..< outCh {
             let b = bias[oc]
-            for oh in 0..<outH {
-                for ow in 0..<outW {
+            for oh in 0 ..< outH {
+                for ow in 0 ..< outW {
                     var acc = b
-                    for ic in 0..<inCh {
+                    for ic in 0 ..< inCh {
                         let wBase = ((oc * inCh + ic) * kH)
-                        for kh in 0..<kH {
+                        for kh in 0 ..< kH {
                             let ih = oh * strideH + kh - padH
                             if ih < 0 || ih >= inH { continue }
-                            for kw in 0..<kW {
+                            for kw in 0 ..< kW {
                                 let iw = ow * strideW + kw - padW
                                 if iw < 0 || iw >= inW { continue }
                                 let wIdx = (wBase + kh) * kW + kw
@@ -652,19 +676,20 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let outH = (inH + 2 * padH - kH) / strideH + 1
         let outW = (inW + 2 * padW - kW) / strideW + 1
         var out = [Float](repeating: 0, count: nCh * outH * outW)
-        for ch in 0..<nCh {
+        for ch in 0 ..< nCh {
             let wBase = ch * kH * kW
-            for oh in 0..<outH {
-                for ow in 0..<outW {
+            for oh in 0 ..< outH {
+                for ow in 0 ..< outW {
                     var acc: Float = 0
-                    for kh in 0..<kH {
+                    for kh in 0 ..< kH {
                         let ih = oh * strideH + kh - padH
                         if ih < 0 || ih >= inH { continue }
-                        for kw in 0..<kW {
+                        for kw in 0 ..< kW {
                             let iw = ow * strideW + kw - padW
                             if iw < 0 || iw >= inW { continue }
-                            acc += weight[wBase + kh * kW + kw]
-                                 * input[ch * inH * inW + ih * inW + iw]
+                            acc +=
+                                weight[wBase + kh * kW + kw]
+                                * input[ch * inH * inW + ih * inW + iw]
                         }
                     }
                     out[ch * outH * outW + oh * outW + ow] = acc
@@ -676,7 +701,7 @@ public final class CohereTranscribeModel: @unchecked Sendable {
 
     /// CPU ReLU in-place.
     private func reluInPlace(_ x: inout [Float]) {
-        for i in 0..<x.count { if x[i] < 0 { x[i] = 0 } }
+        for i in 0 ..< x.count { if x[i] < 0 { x[i] = 0 } }
     }
 
     /// Apply the 5-layer ConvSubsampling stack to `melCF` ([featIn, T]).
@@ -730,9 +755,9 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let outT = h6W
         let flatFreq = convCh * h6H
         var reshaped = [Float](repeating: 0, count: outT * flatFreq)
-        for t in 0..<outT {
-            for ch in 0..<convCh {
-                for fq in 0..<h6H {
+        for t in 0 ..< outT {
+            for ch in 0 ..< convCh {
+                for fq in 0 ..< h6H {
                     reshaped[t * flatFreq + ch * h6H + fq] =
                         h6[ch * h6H * h6W + fq * h6W + t]
                 }
@@ -744,12 +769,12 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let wVals = subsamplingOut.weight.toFloatArray()  // [dModel, flatFreq]
         let bVals = subsamplingOut.bias?.toFloatArray()
         var linear = [Float](repeating: 0, count: outT * dModel)
-        for t in 0..<outT {
-            for d in 0..<dModel {
+        for t in 0 ..< outT {
+            for d in 0 ..< dModel {
                 var acc: Float = bVals?[d] ?? 0
                 let wBase = d * flatFreq
                 let xBase = t * flatFreq
-                for f in 0..<flatFreq { acc += wVals[wBase + f] * reshaped[xBase + f] }
+                for f in 0 ..< flatFreq { acc += wVals[wBase + f] * reshaped[xBase + f] }
                 linear[t * dModel + d] = acc
             }
         }
@@ -765,11 +790,11 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let peSliceLen = 2 * T - 1
         let peSliceStart = (totalLen / 2) - T + 1
         var posEmb = [Float](repeating: 0, count: peSliceLen * dModel)
-        for i in 0..<peSliceLen {
+        for i in 0 ..< peSliceLen {
             let srcRow = peSliceStart + i
             let srcBase = srcRow * dModel
             let dstBase = i * dModel
-            for d in 0..<dModel { posEmb[dstBase + d] = relPETable[srcBase + d] }
+            for d in 0 ..< dModel { posEmb[dstBase + d] = relPETable[srcBase + d] }
         }
         return posEmb
     }
@@ -783,22 +808,26 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         T: Int, dModel: Int
     ) -> [Float] {
         // 1. FF1: residual + 0.5 * dropout(silu(linear1(norm(x))))
-        var h = applyConformerFFN(layer.ff1, norm: layer.normFF1,
-                                   seq: seqIn, T: T, dModel: dModel)
-        for i in 0..<seqIn.count { h[i] = seqIn[i] + 0.5 * (h[i] - seqIn[i]) }
+        var h = applyConformerFFN(
+            layer.ff1, norm: layer.normFF1,
+            seq: seqIn, T: T, dModel: dModel)
+        for i in 0 ..< seqIn.count { h[i] = seqIn[i] + 0.5 * (h[i] - seqIn[i]) }
 
         // 2. Self-attention with relative pos.
-        h = applyRelPosMHA(layer.selfAttn, norm: layer.normSelfAttn,
-                            seq: h, posEmb: posEmb, T: T, dModel: dModel)
+        h = applyRelPosMHA(
+            layer.selfAttn, norm: layer.normSelfAttn,
+            seq: h, posEmb: posEmb, T: T, dModel: dModel)
 
         // 3. Conformer convolution.
-        h = applyConformerConv(layer.conv, norm: layer.normConv,
-                                seq: h, T: T, dModel: dModel)
+        h = applyConformerConv(
+            layer.conv, norm: layer.normConv,
+            seq: h, T: T, dModel: dModel)
 
         // 4. FF2: residual + 0.5 * silu(linear1(norm(x))) → linear2.
-        let ff2Out = applyConformerFFN(layer.ff2, norm: layer.normFF2,
-                                       seq: h, T: T, dModel: dModel)
-        for i in 0..<h.count { h[i] = h[i] + 0.5 * (ff2Out[i] - h[i]) }
+        let ff2Out = applyConformerFFN(
+            layer.ff2, norm: layer.normFF2,
+            seq: h, T: T, dModel: dModel)
+        for i in 0 ..< h.count { h[i] = h[i] + 0.5 * (ff2Out[i] - h[i]) }
 
         // 5. Final norm.
         h = layerNormRows(layer.normOut, rows: h, T: T, dim: dModel)
@@ -815,11 +844,12 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let w1 = ffn.linear1.weight.toFloatArray()
         let b1 = ffn.linear1.bias?.toFloatArray()
         var h = [Float](repeating: 0, count: T * dFF)
-        for t in 0..<T {
-            for d in 0..<dFF {
+        for t in 0 ..< T {
+            for d in 0 ..< dFF {
                 var acc: Float = b1?[d] ?? 0
-                let wBase = d * dModel; let xBase = t * dModel
-                for i in 0..<dModel { acc += w1[wBase + i] * normed[xBase + i] }
+                let wBase = d * dModel
+                let xBase = t * dModel
+                for i in 0 ..< dModel { acc += w1[wBase + i] * normed[xBase + i] }
                 // SiLU activation.
                 h[t * dFF + d] = acc * (1.0 / (1.0 + exp(-acc)))
             }
@@ -827,11 +857,12 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let w2 = ffn.linear2.weight.toFloatArray()
         let b2 = ffn.linear2.bias?.toFloatArray()
         var out = [Float](repeating: 0, count: T * dModel)
-        for t in 0..<T {
-            for d in 0..<dModel {
+        for t in 0 ..< T {
+            for d in 0 ..< dModel {
                 var acc: Float = b2?[d] ?? 0
-                let wBase = d * dFF; let xBase = t * dFF
-                for i in 0..<dFF { acc += w2[wBase + i] * h[xBase + i] }
+                let wBase = d * dFF
+                let xBase = t * dFF
+                for i in 0 ..< dFF { acc += w2[wBase + i] * h[xBase + i] }
                 out[t * dModel + d] = acc
             }
         }
@@ -856,11 +887,12 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let qkvW = attn.qkvProj.weight.toFloatArray()
         let qkvB = attn.qkvProj.bias?.toFloatArray()
         var qkv = [Float](repeating: 0, count: T * 3 * stride)
-        for t in 0..<T {
-            for d in 0..<(3 * stride) {
+        for t in 0 ..< T {
+            for d in 0 ..< (3 * stride) {
                 var acc: Float = qkvB?[d] ?? 0
-                let wBase = d * dModel; let xBase = t * dModel
-                for i in 0..<dModel { acc += qkvW[wBase + i] * normed[xBase + i] }
+                let wBase = d * dModel
+                let xBase = t * dModel
+                for i in 0 ..< dModel { acc += qkvW[wBase + i] * normed[xBase + i] }
                 qkv[t * 3 * stride + d] = acc
             }
         }
@@ -868,9 +900,9 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         var qParts = [Float](repeating: 0, count: T * stride)
         var kParts = [Float](repeating: 0, count: T * stride)
         var vParts = [Float](repeating: 0, count: T * stride)
-        for t in 0..<T {
+        for t in 0 ..< T {
             let base = t * 3 * stride
-            for d in 0..<stride {
+            for d in 0 ..< stride {
                 qParts[t * stride + d] = qkv[base + d]
                 kParts[t * stride + d] = qkv[base + stride + d]
                 vParts[t * stride + d] = qkv[base + 2 * stride + d]
@@ -880,11 +912,12 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         // Positional projection: [peLen, dModel] → [peLen, stride].
         let posW = attn.posProj.weight.toFloatArray()
         var pProj = [Float](repeating: 0, count: peLen * stride)
-        for p in 0..<peLen {
-            for d in 0..<stride {
+        for p in 0 ..< peLen {
+            for d in 0 ..< stride {
                 var acc: Float = 0
-                let wBase = d * dModel; let xBase = p * dModel
-                for i in 0..<dModel { acc += posW[wBase + i] * posEmb[xBase + i] }
+                let wBase = d * dModel
+                let xBase = p * dModel
+                for i in 0 ..< dModel { acc += posW[wBase + i] * posEmb[xBase + i] }
                 pProj[p * stride + d] = acc
             }
         }
@@ -896,87 +929,104 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         attnOut.withUnsafeMutableBufferPointer { outBuf in
             let outPtr = outBuf.baseAddress!
             qParts.withUnsafeBufferPointer { qBuf in
-            kParts.withUnsafeBufferPointer { kBuf in
-            vParts.withUnsafeBufferPointer { vBuf in
-            pProj.withUnsafeBufferPointer { pBuf in
-            attn.posBiasU.withUnsafeBufferPointer { uBuf in
-            attn.posBiasV.withUnsafeBufferPointer { vbBuf in
-                let qb = qBuf.baseAddress!
-                let kb = kBuf.baseAddress!
-                let vb = vBuf.baseAddress!
-                let pb = pBuf.baseAddress!
-                let ub = uBuf.baseAddress!
-                let vbb = vbBuf.baseAddress!
-                DispatchQueue.concurrentPerform(iterations: nH) { h in
-                    let hOff = h * dK
-                    var scores = [Float](repeating: 0, count: T * T)
-                    // AC: (Q + biasU) · K^T
-                    for i in 0..<T {
-                        for j in 0..<T {
-                            var dot: Float = 0
-                            let qBase = i * stride + hOff
-                            let kBase = j * stride + hOff
-                            for d in 0..<dK {
-                                dot += (qb[qBase + d] + ub[hOff + d]) * kb[kBase + d]
+                kParts.withUnsafeBufferPointer { kBuf in
+                    vParts.withUnsafeBufferPointer { vBuf in
+                        pProj.withUnsafeBufferPointer { pBuf in
+                            attn.posBiasU.withUnsafeBufferPointer { uBuf in
+                                attn.posBiasV.withUnsafeBufferPointer { vbBuf in
+                                    let qb = qBuf.baseAddress!
+                                    let kb = kBuf.baseAddress!
+                                    let vb = vBuf.baseAddress!
+                                    let pb = pBuf.baseAddress!
+                                    let ub = uBuf.baseAddress!
+                                    let vbb = vbBuf.baseAddress!
+                                    DispatchQueue.concurrentPerform(iterations: nH) { h in
+                                        let hOff = h * dK
+                                        var scores = [Float](repeating: 0, count: T * T)
+                                        // AC: (Q + biasU) · K^T
+                                        for i in 0 ..< T {
+                                            for j in 0 ..< T {
+                                                var dot: Float = 0
+                                                let qBase = i * stride + hOff
+                                                let kBase = j * stride + hOff
+                                                for d in 0 ..< dK {
+                                                    dot +=
+                                                        (qb[qBase + d] + ub[hOff + d])
+                                                        * kb[kBase + d]
+                                                }
+                                                scores[i * T + j] = dot * scale
+                                            }
+                                        }
+                                        // BD: (Q + biasV) · P^T, then rel-shift to [T, T].
+                                        var bdRaw = [Float](repeating: 0, count: T * peLen)
+                                        for i in 0 ..< T {
+                                            for p in 0 ..< peLen {
+                                                var dot: Float = 0
+                                                let qBase = i * stride + hOff
+                                                let pBase = p * stride + hOff
+                                                for d in 0 ..< dK {
+                                                    dot +=
+                                                        (qb[qBase + d] + vbb[hOff + d])
+                                                        * pb[pBase + d]
+                                                }
+                                                bdRaw[i * peLen + p] = dot * scale
+                                            }
+                                        }
+                                        // Rel-shift: pick last T columns of the [T, peLen] bdRaw.
+                                        let bdOff = peLen - T
+                                        for i in 0 ..< T {
+                                            for j in 0 ..< T {
+                                                scores[i * T + j] += bdRaw[i * peLen + bdOff + j]
+                                            }
+                                        }
+                                        // Softmax + weighted V.
+                                        for i in 0 ..< T {
+                                            var maxS = -Float.greatestFiniteMagnitude
+                                            for j in 0 ..< T {
+                                                if scores[i * T + j] > maxS {
+                                                    maxS = scores[i * T + j]
+                                                }
+                                            }
+                                            var sumE: Float = 0
+                                            for j in 0 ..< T {
+                                                let e = exp(scores[i * T + j] - maxS)
+                                                scores[i * T + j] = e
+                                                sumE += e
+                                            }
+                                            let inv = sumE > 0 ? 1.0 / sumE : 0
+                                            let oBase = i * stride + hOff
+                                            for j in 0 ..< T {
+                                                let w = scores[i * T + j] * inv
+                                                let vBase = j * stride + hOff
+                                                for d in 0 ..< dK {
+                                                    outPtr[oBase + d] += w * vb[vBase + d]
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
-                            scores[i * T + j] = dot * scale
-                        }
-                    }
-                    // BD: (Q + biasV) · P^T, then rel-shift to [T, T].
-                    var bdRaw = [Float](repeating: 0, count: T * peLen)
-                    for i in 0..<T {
-                        for p in 0..<peLen {
-                            var dot: Float = 0
-                            let qBase = i * stride + hOff
-                            let pBase = p * stride + hOff
-                            for d in 0..<dK {
-                                dot += (qb[qBase + d] + vbb[hOff + d]) * pb[pBase + d]
-                            }
-                            bdRaw[i * peLen + p] = dot * scale
-                        }
-                    }
-                    // Rel-shift: pick last T columns of the [T, peLen] bdRaw.
-                    let bdOff = peLen - T
-                    for i in 0..<T {
-                        for j in 0..<T {
-                            scores[i * T + j] += bdRaw[i * peLen + bdOff + j]
-                        }
-                    }
-                    // Softmax + weighted V.
-                    for i in 0..<T {
-                        var maxS = -Float.greatestFiniteMagnitude
-                        for j in 0..<T { if scores[i * T + j] > maxS { maxS = scores[i * T + j] } }
-                        var sumE: Float = 0
-                        for j in 0..<T {
-                            let e = exp(scores[i * T + j] - maxS)
-                            scores[i * T + j] = e; sumE += e
-                        }
-                        let inv = sumE > 0 ? 1.0 / sumE : 0
-                        let oBase = i * stride + hOff
-                        for j in 0..<T {
-                            let w = scores[i * T + j] * inv
-                            let vBase = j * stride + hOff
-                            for d in 0..<dK { outPtr[oBase + d] += w * vb[vBase + d] }
                         }
                     }
                 }
-            }}}}}}
+            }
         }
 
         // out_proj + residual.
         let outW = attn.outProj.weight.toFloatArray()
         let outB = attn.outProj.bias?.toFloatArray()
         var proj = [Float](repeating: 0, count: T * dModel)
-        for t in 0..<T {
-            for d in 0..<dModel {
+        for t in 0 ..< T {
+            for d in 0 ..< dModel {
                 var acc: Float = outB?[d] ?? 0
-                let wBase = d * stride; let xBase = t * stride
-                for i in 0..<stride { acc += outW[wBase + i] * attnOut[xBase + i] }
+                let wBase = d * stride
+                let xBase = t * stride
+                for i in 0 ..< stride { acc += outW[wBase + i] * attnOut[xBase + i] }
                 proj[t * dModel + d] = acc
             }
         }
         var result = proj
-        for i in 0..<seqIn.count { result[i] += seqIn[i] }
+        for i in 0 ..< seqIn.count { result[i] += seqIn[i] }
         return result
     }
 
@@ -993,20 +1043,22 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let pw1B = cb.pointwiseConv1.bias?.toFloatArray()
         let gluDim = dModel * 2
         var gluIn = [Float](repeating: 0, count: T * gluDim)
-        for t in 0..<T {
-            for d in 0..<gluDim {
+        for t in 0 ..< T {
+            for d in 0 ..< gluDim {
                 var acc: Float = pw1B?[d] ?? 0
-                let wBase = d * dModel; let xBase = t * dModel
-                for i in 0..<dModel { acc += pw1W[wBase + i] * normed[xBase + i] }
+                let wBase = d * dModel
+                let xBase = t * dModel
+                for i in 0 ..< dModel { acc += pw1W[wBase + i] * normed[xBase + i] }
                 gluIn[t * gluDim + d] = acc
             }
         }
         // GLU: gate = sigmoid(upper half), output = lower half * gate.
         var gated = [Float](repeating: 0, count: T * dModel)
-        for t in 0..<T {
+        for t in 0 ..< T {
             let base = t * gluDim
-            for d in 0..<dModel {
-                gated[t * dModel + d] = gluIn[base + d]
+            for d in 0 ..< dModel {
+                gated[t * dModel + d] =
+                    gluIn[base + d]
                     * (1.0 / (1.0 + exp(-gluIn[base + dModel + d])))
             }
         }
@@ -1015,11 +1067,11 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let kSize = cb.kernelSize
         let halfPad = (kSize - 1) / 2
         var dwOut = [Float](repeating: 0, count: T * dModel)
-        for t in 0..<T {
-            for ch in 0..<dModel {
+        for t in 0 ..< T {
+            for ch in 0 ..< dModel {
                 var acc: Float = 0
                 let wBase = ch * kSize
-                for k in 0..<kSize {
+                for k in 0 ..< kSize {
                     let st = t + k - halfPad
                     if st >= 0, st < T {
                         acc += cb.depthwiseWeights[wBase + k] * gated[st * dModel + ch]
@@ -1031,18 +1083,19 @@ public final class CohereTranscribeModel: @unchecked Sendable {
 
         // BatchNorm (inference mode): (x - running_mean) / sqrt(running_var + eps) * gamma + beta.
         let bnEps = cb.batchNormEps
-        for t in 0..<T {
+        for t in 0 ..< T {
             let base = t * dModel
-            for d in 0..<dModel {
+            for d in 0 ..< dModel {
                 let v = dwOut[base + d]
-                let normalised = (v - cb.batchNormRunningMean[d])
+                let normalised =
+                    (v - cb.batchNormRunningMean[d])
                     / sqrt(cb.batchNormRunningVar[d] + bnEps)
                 dwOut[base + d] = normalised * cb.batchNormWeight[d] + cb.batchNormBias[d]
             }
         }
 
         // SiLU.
-        for i in 0..<dwOut.count {
+        for i in 0 ..< dwOut.count {
             let v = dwOut[i]
             dwOut[i] = v * (1.0 / (1.0 + exp(-v)))
         }
@@ -1051,17 +1104,18 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let pw2W = cb.pointwiseConv2.weight.toFloatArray()
         let pw2B = cb.pointwiseConv2.bias?.toFloatArray()
         var pw2Out = [Float](repeating: 0, count: T * dModel)
-        for t in 0..<T {
-            for d in 0..<dModel {
+        for t in 0 ..< T {
+            for d in 0 ..< dModel {
                 var acc: Float = pw2B?[d] ?? 0
-                let wBase = d * dModel; let xBase = t * dModel
-                for i in 0..<dModel { acc += pw2W[wBase + i] * dwOut[xBase + i] }
+                let wBase = d * dModel
+                let xBase = t * dModel
+                for i in 0 ..< dModel { acc += pw2W[wBase + i] * dwOut[xBase + i] }
                 pw2Out[t * dModel + d] = acc
             }
         }
 
         var result = pw2Out
-        for i in 0..<seqIn.count { result[i] += seqIn[i] }
+        for i in 0 ..< seqIn.count { result[i] += seqIn[i] }
         return result
     }
 
@@ -1074,19 +1128,19 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let bVals = ln.bias.toFloatArray()
         var out = [Float](repeating: 0, count: T * dim)
         let eps = ln.eps
-        for r in 0..<T {
+        for r in 0 ..< T {
             let base = r * dim
             var mean: Float = 0
-            for d in 0..<dim { mean += rows[base + d] }
+            for d in 0 ..< dim { mean += rows[base + d] }
             mean /= Float(dim)
             var variance: Float = 0
-            for d in 0..<dim {
+            for d in 0 ..< dim {
                 let diff = rows[base + d] - mean
                 variance += diff * diff
             }
             variance /= Float(dim)
             let invStd = 1.0 / sqrt(variance + eps)
-            for d in 0..<dim {
+            for d in 0 ..< dim {
                 out[base + d] = (rows[base + d] - mean) * invStd * wVals[d] + bVals[d]
             }
         }
@@ -1115,8 +1169,9 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         // ── 4. Conformer encoder layers (all CPU) ──
         var encSeq = subOut
         for layer in encoderLayers {
-            encSeq = runConformerLayer(layer, seq: encSeq, posEmb: posEmb,
-                                       T: outT, dModel: dModel)
+            encSeq = runConformerLayer(
+                layer, seq: encSeq, posEmb: posEmb,
+                T: outT, dModel: dModel)
         }
 
         // ── 5. Bridge projection (optional) ──
@@ -1125,11 +1180,12 @@ public final class CohereTranscribeModel: @unchecked Sendable {
             let bpW = bp.weight.toFloatArray()
             let bpB = bp.bias?.toFloatArray()
             var projected = [Float](repeating: 0, count: outT * decH)
-            for t in 0..<outT {
-                for d in 0..<decH {
+            for t in 0 ..< outT {
+                for d in 0 ..< decH {
                     var acc: Float = bpB?[d] ?? 0
-                    let wBase = d * dModel; let xBase = t * dModel
-                    for i in 0..<dModel { acc += bpW[wBase + i] * encSeq[xBase + i] }
+                    let wBase = d * dModel
+                    let xBase = t * dModel
+                    for i in 0 ..< dModel { acc += bpW[wBase + i] * encSeq[xBase + i] }
                     projected[t * decH + d] = acc
                 }
             }
@@ -1155,7 +1211,7 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let selfOut = causalSelfAttn(
             layer.selfAttn, seq: normSelf, S: S, hiddenSize: hiddenSize)
         var h = [Float](repeating: 0, count: seqIn.count)
-        for i in 0..<seqIn.count { h[i] = seqIn[i] + selfOut[i] }
+        for i in 0 ..< seqIn.count { h[i] = seqIn[i] + selfOut[i] }
 
         // ── 2. Cross-attention to encoder output ──
         let normCross = layerNormRows(layer.norm2, rows: h, T: S, dim: hiddenSize)
@@ -1163,7 +1219,7 @@ public final class CohereTranscribeModel: @unchecked Sendable {
             layer.crossAttn, q: normCross, S: S,
             kv: encOut, encT: encT, hiddenSize: hiddenSize)
         var h2 = [Float](repeating: 0, count: h.count)
-        for i in 0..<h.count { h2[i] = h[i] + crossOut[i] }
+        for i in 0 ..< h.count { h2[i] = h[i] + crossOut[i] }
 
         // ── 3. FFN (ReLU activation) ──
         let normMLP = layerNormRows(layer.norm3, rows: h2, T: S, dim: hiddenSize)
@@ -1171,27 +1227,29 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let w1 = layer.ffn.denseIn.weight.toFloatArray()
         let b1 = layer.ffn.denseIn.bias?.toFloatArray()
         var ffnH = [Float](repeating: 0, count: S * innerSize)
-        for t in 0..<S {
-            for d in 0..<innerSize {
+        for t in 0 ..< S {
+            for d in 0 ..< innerSize {
                 var acc: Float = b1?[d] ?? 0
-                let wBase = d * hiddenSize; let xBase = t * hiddenSize
-                for i in 0..<hiddenSize { acc += w1[wBase + i] * normMLP[xBase + i] }
+                let wBase = d * hiddenSize
+                let xBase = t * hiddenSize
+                for i in 0 ..< hiddenSize { acc += w1[wBase + i] * normMLP[xBase + i] }
                 ffnH[t * innerSize + d] = acc > 0 ? acc : 0  // ReLU
             }
         }
         let w2 = layer.ffn.denseOut.weight.toFloatArray()
         let b2 = layer.ffn.denseOut.bias?.toFloatArray()
         var ffnOut = [Float](repeating: 0, count: S * hiddenSize)
-        for t in 0..<S {
-            for d in 0..<hiddenSize {
+        for t in 0 ..< S {
+            for d in 0 ..< hiddenSize {
                 var acc: Float = b2?[d] ?? 0
-                let wBase = d * innerSize; let xBase = t * innerSize
-                for i in 0..<innerSize { acc += w2[wBase + i] * ffnH[xBase + i] }
+                let wBase = d * innerSize
+                let xBase = t * innerSize
+                for i in 0 ..< innerSize { acc += w2[wBase + i] * ffnH[xBase + i] }
                 ffnOut[t * hiddenSize + d] = acc
             }
         }
         var out = [Float](repeating: 0, count: h2.count)
-        for i in 0..<h2.count { out[i] = h2[i] + ffnOut[i] }
+        for i in 0 ..< h2.count { out[i] = h2[i] + ffnOut[i] }
         return out
     }
 
@@ -1209,20 +1267,21 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let qkvB = attn.qkvProj.bias?.toFloatArray()
         // Project: [S, hiddenSize] → [S, 3 * stride].
         var qkv = [Float](repeating: 0, count: S * 3 * stride)
-        for t in 0..<S {
-            for d in 0..<(3 * stride) {
+        for t in 0 ..< S {
+            for d in 0 ..< (3 * stride) {
                 var acc: Float = qkvB?[d] ?? 0
-                let wBase = d * hiddenSize; let xBase = t * hiddenSize
-                for i in 0..<hiddenSize { acc += qkvW[wBase + i] * seq[xBase + i] }
+                let wBase = d * hiddenSize
+                let xBase = t * hiddenSize
+                for i in 0 ..< hiddenSize { acc += qkvW[wBase + i] * seq[xBase + i] }
                 qkv[t * 3 * stride + d] = acc
             }
         }
         var q = [Float](repeating: 0, count: S * stride)
         var k = [Float](repeating: 0, count: S * stride)
         var v = [Float](repeating: 0, count: S * stride)
-        for t in 0..<S {
+        for t in 0 ..< S {
             let base = t * 3 * stride
-            for d in 0..<stride {
+            for d in 0 ..< stride {
                 q[t * stride + d] = qkv[base + d]
                 k[t * stride + d] = qkv[base + stride + d]
                 v[t * stride + d] = qkv[base + 2 * stride + d]
@@ -1234,51 +1293,55 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         attnOut.withUnsafeMutableBufferPointer { outBuf in
             let outPtr = outBuf.baseAddress!
             q.withUnsafeBufferPointer { qb in
-            k.withUnsafeBufferPointer { kb in
-            v.withUnsafeBufferPointer { vb in
-                let qPtr = qb.baseAddress!
-                let kPtr = kb.baseAddress!
-                let vPtr = vb.baseAddress!
-                DispatchQueue.concurrentPerform(iterations: nH) { h in
-                    let hOff = h * hd
-                    for i in 0..<S {
-                        var scores = [Float](repeating: 0, count: i + 1)
-                        var maxS = -Float.greatestFiniteMagnitude
-                        for j in 0...i {
-                            var dot: Float = 0
-                            let qBase = i * stride + hOff
-                            let kBase = j * stride + hOff
-                            for d in 0..<hd { dot += qPtr[qBase + d] * kPtr[kBase + d] }
-                            let s = dot * scale
-                            scores[j] = s
-                            if s > maxS { maxS = s }
-                        }
-                        var sumE: Float = 0
-                        for j in 0...i {
-                            let e = exp(scores[j] - maxS)
-                            scores[j] = e; sumE += e
-                        }
-                        let inv = sumE > 0 ? 1.0 / sumE : 0
-                        let oBase = i * stride + hOff
-                        for j in 0...i {
-                            let w = scores[j] * inv
-                            let vBase = j * stride + hOff
-                            for d in 0..<hd { outPtr[oBase + d] += w * vPtr[vBase + d] }
+                k.withUnsafeBufferPointer { kb in
+                    v.withUnsafeBufferPointer { vb in
+                        let qPtr = qb.baseAddress!
+                        let kPtr = kb.baseAddress!
+                        let vPtr = vb.baseAddress!
+                        DispatchQueue.concurrentPerform(iterations: nH) { h in
+                            let hOff = h * hd
+                            for i in 0 ..< S {
+                                var scores = [Float](repeating: 0, count: i + 1)
+                                var maxS = -Float.greatestFiniteMagnitude
+                                for j in 0 ... i {
+                                    var dot: Float = 0
+                                    let qBase = i * stride + hOff
+                                    let kBase = j * stride + hOff
+                                    for d in 0 ..< hd { dot += qPtr[qBase + d] * kPtr[kBase + d] }
+                                    let s = dot * scale
+                                    scores[j] = s
+                                    if s > maxS { maxS = s }
+                                }
+                                var sumE: Float = 0
+                                for j in 0 ... i {
+                                    let e = exp(scores[j] - maxS)
+                                    scores[j] = e
+                                    sumE += e
+                                }
+                                let inv = sumE > 0 ? 1.0 / sumE : 0
+                                let oBase = i * stride + hOff
+                                for j in 0 ... i {
+                                    let w = scores[j] * inv
+                                    let vBase = j * stride + hOff
+                                    for d in 0 ..< hd { outPtr[oBase + d] += w * vPtr[vBase + d] }
+                                }
+                            }
                         }
                     }
                 }
-            }}}
+            }
         }
 
         // out_proj.
         let outW = attn.outProj.weight.toFloatArray()
         let outB = attn.outProj.bias?.toFloatArray()
         var proj = [Float](repeating: 0, count: S * hiddenSize)
-        for t in 0..<S {
-            for d in 0..<hiddenSize {
+        for t in 0 ..< S {
+            for d in 0 ..< hiddenSize {
                 var acc: Float = outB?[d] ?? 0
-                let wBase = d * stride; let xBase = t * stride
-                for i in 0..<stride { acc += outW[wBase + i] * attnOut[xBase + i] }
+                let wBase = d * stride
+                let xBase = t * stride
+                for i in 0 ..< stride { acc += outW[wBase + i] * attnOut[xBase + i] }
                 proj[t * hiddenSize + d] = acc
             }
         }
@@ -1302,29 +1365,31 @@ public final class CohereTranscribeModel: @unchecked Sendable {
 
         // Project decoder query [S, hiddenSize] → [S, 3*stride], take only Q part.
         var qPart = [Float](repeating: 0, count: S * stride)
-        for t in 0..<S {
-            for d in 0..<stride {
+        for t in 0 ..< S {
+            for d in 0 ..< stride {
                 var acc: Float = qkvB?[d] ?? 0
-                let wBase = d * hiddenSize; let xBase = t * hiddenSize
-                for i in 0..<hiddenSize { acc += qkvW[wBase + i] * q[xBase + i] }
+                let wBase = d * hiddenSize
+                let xBase = t * hiddenSize
+                for i in 0 ..< hiddenSize { acc += qkvW[wBase + i] * q[xBase + i] }
                 qPart[t * stride + d] = acc
             }
         }
         // Project encoder KV [encT, hiddenSize] → [encT, 3*stride], take K and V.
         var kvFull = [Float](repeating: 0, count: encT * 3 * stride)
-        for t in 0..<encT {
-            for d in 0..<(3 * stride) {
+        for t in 0 ..< encT {
+            for d in 0 ..< (3 * stride) {
                 var acc: Float = qkvB?[d] ?? 0
-                let wBase = d * hiddenSize; let xBase = t * hiddenSize
-                for i in 0..<hiddenSize { acc += qkvW[wBase + i] * kv[xBase + i] }
+                let wBase = d * hiddenSize
+                let xBase = t * hiddenSize
+                for i in 0 ..< hiddenSize { acc += qkvW[wBase + i] * kv[xBase + i] }
                 kvFull[t * 3 * stride + d] = acc
             }
         }
         var kPart = [Float](repeating: 0, count: encT * stride)
         var vPart = [Float](repeating: 0, count: encT * stride)
-        for t in 0..<encT {
+        for t in 0 ..< encT {
             let base = t * 3 * stride
-            for d in 0..<stride {
+            for d in 0 ..< stride {
                 kPart[t * stride + d] = kvFull[base + stride + d]
                 vPart[t * stride + d] = kvFull[base + 2 * stride + d]
             }
@@ -1335,51 +1400,55 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         attnOut.withUnsafeMutableBufferPointer { outBuf in
             let outPtr = outBuf.baseAddress!
             qPart.withUnsafeBufferPointer { qb in
-            kPart.withUnsafeBufferPointer { kb in
-            vPart.withUnsafeBufferPointer { vb in
-                let qPtr = qb.baseAddress!
-                let kPtr = kb.baseAddress!
-                let vPtr = vb.baseAddress!
-                DispatchQueue.concurrentPerform(iterations: nH * S) { work in
-                    let h = work / S
-                    let i = work % S
-                    let hOff = h * hd
-                    var scores = [Float](repeating: 0, count: encT)
-                    var maxS = -Float.greatestFiniteMagnitude
-                    for j in 0..<encT {
-                        var dot: Float = 0
-                        let qBase = i * stride + hOff
-                        let kBase = j * stride + hOff
-                        for d in 0..<hd { dot += qPtr[qBase + d] * kPtr[kBase + d] }
-                        let s = dot * scale
-                        scores[j] = s
-                        if s > maxS { maxS = s }
-                    }
-                    var sumE: Float = 0
-                    for j in 0..<encT {
-                        let e = exp(scores[j] - maxS)
-                        scores[j] = e; sumE += e
-                    }
-                    let inv = sumE > 0 ? 1.0 / sumE : 0
-                    let oBase = i * stride + hOff
-                    for j in 0..<encT {
-                        let w = scores[j] * inv
-                        let vBase = j * stride + hOff
-                        for d in 0..<hd { outPtr[oBase + d] += w * vPtr[vBase + d] }
+                kPart.withUnsafeBufferPointer { kb in
+                    vPart.withUnsafeBufferPointer { vb in
+                        let qPtr = qb.baseAddress!
+                        let kPtr = kb.baseAddress!
+                        let vPtr = vb.baseAddress!
+                        DispatchQueue.concurrentPerform(iterations: nH * S) { work in
+                            let h = work / S
+                            let i = work % S
+                            let hOff = h * hd
+                            var scores = [Float](repeating: 0, count: encT)
+                            var maxS = -Float.greatestFiniteMagnitude
+                            for j in 0 ..< encT {
+                                var dot: Float = 0
+                                let qBase = i * stride + hOff
+                                let kBase = j * stride + hOff
+                                for d in 0 ..< hd { dot += qPtr[qBase + d] * kPtr[kBase + d] }
+                                let s = dot * scale
+                                scores[j] = s
+                                if s > maxS { maxS = s }
+                            }
+                            var sumE: Float = 0
+                            for j in 0 ..< encT {
+                                let e = exp(scores[j] - maxS)
+                                scores[j] = e
+                                sumE += e
+                            }
+                            let inv = sumE > 0 ? 1.0 / sumE : 0
+                            let oBase = i * stride + hOff
+                            for j in 0 ..< encT {
+                                let w = scores[j] * inv
+                                let vBase = j * stride + hOff
+                                for d in 0 ..< hd { outPtr[oBase + d] += w * vPtr[vBase + d] }
+                            }
+                        }
                     }
                 }
-            }}}
+            }
         }
 
         // out_proj.
         let outW = attn.outProj.weight.toFloatArray()
         let outB = attn.outProj.bias?.toFloatArray()
         var proj = [Float](repeating: 0, count: S * hiddenSize)
-        for t in 0..<S {
-            for d in 0..<hiddenSize {
+        for t in 0 ..< S {
+            for d in 0 ..< hiddenSize {
                 var acc: Float = outB?[d] ?? 0
-                let wBase = d * stride; let xBase = t * stride
-                for i in 0..<stride { acc += outW[wBase + i] * attnOut[xBase + i] }
+                let wBase = d * stride
+                let xBase = t * stride
+                for i in 0 ..< stride { acc += outW[wBase + i] * attnOut[xBase + i] }
                 proj[t * hiddenSize + d] = acc
             }
         }
@@ -1421,24 +1490,30 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         var seqIds = promptIds
         var seqEmb = embedAndNorm(tokenIds: seqIds, hiddenSize: hiddenSize)
         for layer in decoderLayers {
-            seqEmb = runDecoderLayer(layer, seqIn: seqEmb, S: seqIds.count,
-                                     encOut: encOut, encT: encT,
-                                     hiddenSize: hiddenSize)
+            seqEmb = runDecoderLayer(
+                layer, seqIn: seqEmb, S: seqIds.count,
+                encOut: encOut, encT: encT,
+                hiddenSize: hiddenSize)
         }
         // Get logits from the last position.
         var lastHidden = Array(seqEmb.suffix(hiddenSize))
         let finalNormW = decoderFinalNorm.weight.toFloatArray()
         let finalNormB = decoderFinalNorm.bias.toFloatArray()
-        applyLayerNorm1D(&lastHidden, weight: finalNormW, bias: finalNormB,
-                          eps: decoderFinalNorm.eps)
+        applyLayerNorm1D(
+            &lastHidden, weight: finalNormW, bias: finalNormB,
+            eps: decoderFinalNorm.eps)
 
         // ── 4. Greedy autoregressive decode ──
         var generated: [Int] = []
-        for _ in 0..<maxTokens {
+        for _ in 0 ..< maxTokens {
             let logits = projectToVocab(lastHidden, hiddenSize: hiddenSize)
             // Greedy: argmax.
-            var bestId = 0; var bestVal = -Float.greatestFiniteMagnitude
-            for (i, v) in logits.enumerated() where v > bestVal { bestVal = v; bestId = i }
+            var bestId = 0
+            var bestVal = -Float.greatestFiniteMagnitude
+            for (i, v) in logits.enumerated() where v > bestVal {
+                bestVal = v
+                bestId = i
+            }
 
             if bestId == eosId { break }
             generated.append(bestId)
@@ -1450,13 +1525,15 @@ public final class CohereTranscribeModel: @unchecked Sendable {
             // Next embed + decode.
             var nextEmb = embedAndNorm(tokenIds: seqIds, hiddenSize: hiddenSize)
             for layer in decoderLayers {
-                nextEmb = runDecoderLayer(layer, seqIn: nextEmb, S: seqIds.count,
-                                          encOut: encOut, encT: encT,
-                                          hiddenSize: hiddenSize)
+                nextEmb = runDecoderLayer(
+                    layer, seqIn: nextEmb, S: seqIds.count,
+                    encOut: encOut, encT: encT,
+                    hiddenSize: hiddenSize)
             }
             lastHidden = Array(nextEmb.suffix(hiddenSize))
-            applyLayerNorm1D(&lastHidden, weight: finalNormW, bias: finalNormB,
-                              eps: decoderFinalNorm.eps)
+            applyLayerNorm1D(
+                &lastHidden, weight: finalNormW, bias: finalNormB,
+                eps: decoderFinalNorm.eps)
         }
 
         return tokenizer.decode(tokens: generated)
@@ -1477,7 +1554,7 @@ public final class CohereTranscribeModel: @unchecked Sendable {
             let embBase = safe * hiddenSize
             let peBase = t * hiddenSize
             let dstBase = t * hiddenSize
-            for d in 0..<hiddenSize {
+            for d in 0 ..< hiddenSize {
                 out[dstBase + d] = embVals[embBase + d] + decoderPETable[peBase + d]
             }
         }
@@ -1485,19 +1562,19 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let wVals = decoderNormEmb.weight.toFloatArray()
         let bVals = decoderNormEmb.bias.toFloatArray()
         let eps = decoderNormEmb.eps
-        for t in 0..<S {
+        for t in 0 ..< S {
             let base = t * hiddenSize
             var mean: Float = 0
-            for d in 0..<hiddenSize { mean += out[base + d] }
+            for d in 0 ..< hiddenSize { mean += out[base + d] }
             mean /= Float(hiddenSize)
             var variance: Float = 0
-            for d in 0..<hiddenSize {
+            for d in 0 ..< hiddenSize {
                 let diff = out[base + d] - mean
                 variance += diff * diff
             }
             variance /= Float(hiddenSize)
             let invStd = 1.0 / sqrt(variance + eps)
-            for d in 0..<hiddenSize {
+            for d in 0 ..< hiddenSize {
                 out[base + d] = (out[base + d] - mean) * invStd * wVals[d] + bVals[d]
             }
         }
@@ -1516,7 +1593,7 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         for v in x { variance += (v - mean) * (v - mean) }
         variance /= Float(dim)
         let invStd = 1.0 / sqrt(variance + eps)
-        for d in 0..<dim {
+        for d in 0 ..< dim {
             x[d] = (x[d] - mean) * invStd * weight[d] + bias[d]
         }
     }
@@ -1526,10 +1603,10 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let vocabSize = config.vocabSize
         let lmW = lmHeadWeight.toFloatArray()  // [vocabSize, hiddenSize]
         var logits = [Float](repeating: 0, count: vocabSize)
-        for o in 0..<vocabSize {
+        for o in 0 ..< vocabSize {
             var acc: Float = 0
             let wBase = o * hiddenSize
-            for d in 0..<hiddenSize { acc += lmW[wBase + d] * hidden[d] }
+            for d in 0 ..< hiddenSize { acc += lmW[wBase + d] * hidden[d] }
             logits[o] = acc
         }
         return logits
@@ -1546,10 +1623,12 @@ public final class CohereTranscribeTokenizer: @unchecked Sendable {
     private let specialIds: Set<Int>
     public let eosId: Int
 
-    public init(tokenizer: any Tokenizer,
-                specialTokenToId: [String: Int],
-                specialIds: Set<Int>,
-                eosId: Int) {
+    public init(
+        tokenizer: any Tokenizer,
+        specialTokenToId: [String: Int],
+        specialIds: Set<Int>,
+        eosId: Int
+    ) {
         self.inner = tokenizer
         self.specialTokenToId = specialTokenToId
         self.specialIds = specialIds
@@ -1563,12 +1642,14 @@ public final class CohereTranscribeTokenizer: @unchecked Sendable {
     /// `async` because `AutoTokenizer.from(modelFolder:)` is async in
     /// swift-transformers 1.x.
     public static func load(from directory: URL) async throws
-        -> CohereTranscribeTokenizer {
+        -> CohereTranscribeTokenizer
+    {
         let configURL = directory.appendingPathComponent("tokenizer_config.json")
         let configData = try Data(contentsOf: configURL)
-        guard let parsed = try JSONSerialization.jsonObject(with: configData)
+        guard
+            let parsed = try JSONSerialization.jsonObject(with: configData)
                 as? [String: Any],
-              let addedDecoder = parsed["added_tokens_decoder"] as? [String: Any]
+            let addedDecoder = parsed["added_tokens_decoder"] as? [String: Any]
         else {
             throw CohereTranscribeError.tokenizerConfigMissing
         }
@@ -1576,8 +1657,8 @@ public final class CohereTranscribeTokenizer: @unchecked Sendable {
         var tokenToId: [String: Int] = [:]
         for (key, value) in addedDecoder {
             guard let id = Int(key),
-                  let dict = value as? [String: Any],
-                  let content = dict["content"] as? String
+                let dict = value as? [String: Any],
+                let content = dict["content"] as? String
             else { continue }
             tokenToId[content] = id
         }
@@ -1677,7 +1758,7 @@ extension CohereTranscribeModel {
     ///   conversion side, not in the model code, so both load identically.
     public static let modelTypes: Set<String> = ["cohere_transcribe", "cohere_asr"]
     public static let architectures: Set<String> = [
-        "CohereTranscribeForConditionalGeneration",
+        "CohereTranscribeForConditionalGeneration"
     ]
 
     public static func handles(_ config: ModelConfig) -> Bool {
@@ -1691,7 +1772,8 @@ extension CohereTranscribeModel {
     /// `async` because the tokenizer loader (`AutoTokenizer.from`) is async
     /// in swift-transformers 1.x.
     public static func load(directory: URL, device: Device = .shared)
-        async throws -> CohereTranscribeModel {
+        async throws -> CohereTranscribeModel
+    {
         let rawConfig = try ModelConfig.load(from: directory)
         guard let ct = CohereTranscribeConfig.from(rawConfig) else {
             throw ModelError.unsupportedModelType(
@@ -1716,14 +1798,16 @@ extension CohereTranscribeModel {
         let quant = rawConfig?.quantization
 
         // ── Detect dtype from first float tensor ──
-        let dtype = (try? bundle.tensor(
-            named: "encoder.subsampling.conv0.weight"))?.dtype
+        let dtype =
+            (try? bundle.tensor(
+                named: "encoder.subsampling.conv0.weight"))?.dtype
             ?? .f32
 
         // ─ Helper: load a dense-only linear (no quantization needed for these) ─
         func denseLinear(_ key: String, hasBias: Bool = true) throws -> Linear {
             let w = try bundle.tensor(named: "\(key).weight")
-            let b = hasBias && bundle.has("\(key).bias")
+            let b =
+                hasBias && bundle.has("\(key).bias")
                 ? try bundle.tensor(named: "\(key).bias")
                 : nil
             return Linear(weight: w, bias: b)
@@ -1732,7 +1816,7 @@ extension CohereTranscribeModel {
         func ln(_ base: String) throws -> LayerNorm {
             LayerNorm(
                 weight: try bundle.tensor(named: "\(base).weight"),
-                bias:   try bundle.tensor(named: "\(base).bias"),
+                bias: try bundle.tensor(named: "\(base).bias"),
                 eps: 1e-5)
         }
 
@@ -1758,11 +1842,11 @@ extension CohereTranscribeModel {
         }
 
         let conv2DwW = try loadDepthwiseConv2d("encoder.subsampling.conv2.weight")
-        let conv3W   = try loadConv2dFlat("encoder.subsampling.conv3.weight")
-        let conv3B   = try loadConv2dFlat("encoder.subsampling.conv3.bias")
+        let conv3W = try loadConv2dFlat("encoder.subsampling.conv3.weight")
+        let conv3B = try loadConv2dFlat("encoder.subsampling.conv3.bias")
         let conv5DwW = try loadDepthwiseConv2d("encoder.subsampling.conv5.weight")
-        let conv6W   = try loadConv2dFlat("encoder.subsampling.conv6.weight")
-        let conv6B   = try loadConv2dFlat("encoder.subsampling.conv6.bias")
+        let conv6W = try loadConv2dFlat("encoder.subsampling.conv6.weight")
+        let conv6B = try loadConv2dFlat("encoder.subsampling.conv6.bias")
         // out: Linear [dModel, convCh * (featIn / subsamplingFactor)].
         let subsampOut = try denseLinear("encoder.subsampling.out")
 
@@ -1774,7 +1858,7 @@ extension CohereTranscribeModel {
         // ─── Conformer encoder layers ─────────────────────────────────
         var encLayers: [CohereConformerLayer] = []
         encLayers.reserveCapacity(ec.nLayers)
-        for i in 0..<ec.nLayers {
+        for i in 0 ..< ec.nLayers {
             let p = "encoder.layers.\(i)"
             // FF1
             let ff1 = CohereConformerFFN(
@@ -1794,16 +1878,17 @@ extension CohereTranscribeModel {
                 linear1: try denseLinear("\(p).feed_forward2.linear1"),
                 linear2: try denseLinear("\(p).feed_forward2.linear2"))
 
-            encLayers.append(CohereConformerLayer(
-                normFF1:    try ln("\(p).norm_feed_forward1"),
-                ff1: ff1,
-                normSelfAttn: try ln("\(p).norm_self_att"),
-                selfAttn: selfAttn,
-                normConv:   try ln("\(p).norm_conv"),
-                conv: convBlock,
-                normFF2:    try ln("\(p).norm_feed_forward2"),
-                ff2: ff2,
-                normOut:    try ln("\(p).norm_out")))
+            encLayers.append(
+                CohereConformerLayer(
+                    normFF1: try ln("\(p).norm_feed_forward1"),
+                    ff1: ff1,
+                    normSelfAttn: try ln("\(p).norm_self_att"),
+                    selfAttn: selfAttn,
+                    normConv: try ln("\(p).norm_conv"),
+                    conv: convBlock,
+                    normFF2: try ln("\(p).norm_feed_forward2"),
+                    ff2: ff2,
+                    normOut: try ln("\(p).norm_out")))
         }
 
         // ─── Bridge projection ────────────────────────────────────────
@@ -1824,27 +1909,30 @@ extension CohereTranscribeModel {
 
         var decLayers: [CohereDecoderLayer] = []
         decLayers.reserveCapacity(dc.numLayers)
-        for i in 0..<dc.numLayers {
+        for i in 0 ..< dc.numLayers {
             let p = "decoder.core.layers.\(i)"
             let norm1 = try ln("\(p).layer_norm_1")
             let norm2 = try ln("\(p).layer_norm_2")
             let norm3 = try ln("\(p).layer_norm_3")
 
-            let firstAttn  = try loadDecoderAttn(bundle: bundle,
-                                                  base: "\(p).first_sub_layer",
-                                                  nHeads: dc.numAttentionHeads,
-                                                  headDim: dc.hiddenSize / dc.numAttentionHeads)
-            let secondAttn = try loadDecoderAttn(bundle: bundle,
-                                                  base: "\(p).second_sub_layer",
-                                                  nHeads: dc.numAttentionHeads,
-                                                  headDim: dc.hiddenSize / dc.numAttentionHeads)
+            let firstAttn = try loadDecoderAttn(
+                bundle: bundle,
+                base: "\(p).first_sub_layer",
+                nHeads: dc.numAttentionHeads,
+                headDim: dc.hiddenSize / dc.numAttentionHeads)
+            let secondAttn = try loadDecoderAttn(
+                bundle: bundle,
+                base: "\(p).second_sub_layer",
+                nHeads: dc.numAttentionHeads,
+                headDim: dc.hiddenSize / dc.numAttentionHeads)
             let ffn = CohereDecoderFFN(
-                denseIn:  try denseLinear("\(p).third_sub_layer.dense_in"),
+                denseIn: try denseLinear("\(p).third_sub_layer.dense_in"),
                 denseOut: try denseLinear("\(p).third_sub_layer.dense_out"))
-            decLayers.append(CohereDecoderLayer(
-                norm1: norm1, selfAttn: firstAttn,
-                norm2: norm2, crossAttn: secondAttn,
-                norm3: norm3, ffn: ffn))
+            decLayers.append(
+                CohereDecoderLayer(
+                    norm1: norm1, selfAttn: firstAttn,
+                    norm2: norm2, crossAttn: secondAttn,
+                    norm3: norm3, ffn: ffn))
         }
 
         let decFinalNorm = try ln("decoder.core.final_layer_norm")
@@ -1880,13 +1968,13 @@ extension CohereTranscribeModel {
         var table = [Float](repeating: 0, count: totalLen * dModel)
         let halfDim = dModel / 2
         let divTermDenom = Double(dModel)
-        for p in 0..<totalLen {
+        for p in 0 ..< totalLen {
             let pos = Double(posEmbMaxLen - 1 - p)  // (maxLen-1) down to -(maxLen-1)
-            for i in 0..<halfDim {
+            for i in 0 ..< halfDim {
                 let divTerm = exp(-Double(i * 2) * log(10_000.0) / divTermDenom)
                 let angle = pos * divTerm
                 // sin at even index, cos at odd index.
-                table[p * dModel + i * 2]     = Float(sin(angle))
+                table[p * dModel + i * 2] = Float(sin(angle))
                 table[p * dModel + i * 2 + 1] = Float(cos(angle))
             }
         }
@@ -1900,12 +1988,12 @@ extension CohereTranscribeModel {
         let halfDim = hiddenSize / 2
         let scale = 1.0 / Float(sqrt(Double(hiddenSize)))
         var table = [Float](repeating: 0, count: maxLen * hiddenSize)
-        for pos in 0..<maxLen {
-            for i in 0..<halfDim {
+        for pos in 0 ..< maxLen {
+            for i in 0 ..< halfDim {
                 let divTerm = exp(-Double(i) * log(10_000.0) / Double(halfDim))
                 let angle = Double(pos) * divTerm
                 // Interleaved: [sin0, cos0, sin1, cos1, ...].
-                table[pos * hiddenSize + i * 2]     = Float(sin(angle)) * scale
+                table[pos * hiddenSize + i * 2] = Float(sin(angle)) * scale
                 table[pos * hiddenSize + i * 2 + 1] = Float(cos(angle)) * scale
             }
         }
@@ -1920,9 +2008,9 @@ extension CohereTranscribeModel {
         nHeads: Int, dModel: Int
     ) throws -> CohereConformerAttn {
         // After normalizeCohereWeightKeys, QKV are merged into qkv_proj.
-        let qkvProj  = try loadLinear(base: "\(base).qkv_proj", in: bundle, quantization: quant)
-        let posProj  = try loadLinear(base: "\(base).pos_proj",  in: bundle, quantization: nil)
-        let outProj  = try loadLinear(base: "\(base).out_proj",  in: bundle, quantization: quant)
+        let qkvProj = try loadLinear(base: "\(base).qkv_proj", in: bundle, quantization: quant)
+        let posProj = try loadLinear(base: "\(base).pos_proj", in: bundle, quantization: nil)
+        let outProj = try loadLinear(base: "\(base).out_proj", in: bundle, quantization: quant)
 
         // pos_bias_u and pos_bias_v are 1D parameter tensors [nHeads * dK].
         let dK = dModel / nHeads
@@ -1938,10 +2026,10 @@ extension CohereTranscribeModel {
         }
 
         return CohereConformerAttn(
-            qkvProj:  qkvProj.inner as! Linear,   // dense-only for conformer attn
-            posProj:  posProj.inner as! Linear,
-            outProj:  outProj.inner as! Linear,
-            nHeads:   nHeads, dK: dK,
+            qkvProj: qkvProj.inner as! Linear,  // dense-only for conformer attn
+            posProj: posProj.inner as! Linear,
+            outProj: outProj.inner as! Linear,
+            nHeads: nHeads, dK: dK,
             posBiasU: biasU, posBiasV: biasV)
     }
 
@@ -1959,25 +2047,27 @@ extension CohereTranscribeModel {
         let dwWeight = Array(dwRaw.prefix(dModel * kernelSize))
 
         // BatchNorm parameters.
-        let bnW    = try bundle.tensor(named: "\(base).batch_norm.weight").toFloatArray()
-        let bnB    = try bundle.tensor(named: "\(base).batch_norm.bias").toFloatArray()
-        let bnMean = bundle.has("\(base).batch_norm.running_mean")
+        let bnW = try bundle.tensor(named: "\(base).batch_norm.weight").toFloatArray()
+        let bnB = try bundle.tensor(named: "\(base).batch_norm.bias").toFloatArray()
+        let bnMean =
+            bundle.has("\(base).batch_norm.running_mean")
             ? try bundle.tensor(named: "\(base).batch_norm.running_mean").toFloatArray()
             : [Float](repeating: 0, count: dModel)
-        let bnVar  = bundle.has("\(base).batch_norm.running_var")
+        let bnVar =
+            bundle.has("\(base).batch_norm.running_var")
             ? try bundle.tensor(named: "\(base).batch_norm.running_var").toFloatArray()
             : [Float](repeating: 1, count: dModel)
 
         return CohereConformerConv(
-            pointwiseConv1:       pw1.inner as! Linear,
-            depthwiseWeights:     dwWeight,
-            kernelSize:           kernelSize,
-            batchNormWeight:      bnW,
-            batchNormBias:        bnB,
+            pointwiseConv1: pw1.inner as! Linear,
+            depthwiseWeights: dwWeight,
+            kernelSize: kernelSize,
+            batchNormWeight: bnW,
+            batchNormBias: bnB,
             batchNormRunningMean: bnMean,
-            batchNormRunningVar:  bnVar,
-            batchNormEps:         1e-5,
-            pointwiseConv2:       pw2.inner as! Linear)
+            batchNormRunningVar: bnVar,
+            batchNormEps: 1e-5,
+            pointwiseConv2: pw2.inner as! Linear)
     }
 
     /// Load a decoder attention block (self or cross).
@@ -1987,11 +2077,13 @@ extension CohereTranscribeModel {
     ) throws -> CohereDecoderAttn {
         // After normalizeCohereWeightKeys, QKV is merged into qkv_proj.
         let qkvW = try bundle.tensor(named: "\(base).qkv_proj.weight")
-        let qkvB = bundle.has("\(base).qkv_proj.bias")
+        let qkvB =
+            bundle.has("\(base).qkv_proj.bias")
             ? try bundle.tensor(named: "\(base).qkv_proj.bias")
             : nil
         let outW = try bundle.tensor(named: "\(base).out_proj.weight")
-        let outB = bundle.has("\(base).out_proj.bias")
+        let outB =
+            bundle.has("\(base).out_proj.bias")
             ? try bundle.tensor(named: "\(base).out_proj.bias")
             : nil
         return CohereDecoderAttn(

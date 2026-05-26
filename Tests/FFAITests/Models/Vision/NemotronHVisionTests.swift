@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // Unit tests for the Nemotron-VLM family (NVIDIA's
@@ -54,8 +55,9 @@ struct NemotronHVisionConfigTests {
             "vision_config": visionConfig,
             "text_config": textConfig,
         ]
-        return ModelConfig(architecture: nil,
-                           modelType: "llama_nemotron_nano_vl", raw: raw)
+        return ModelConfig(
+            architecture: nil,
+            modelType: "llama_nemotron_nano_vl", raw: raw)
     }
 
     @Test("routes as a Nemotron vision-language checkpoint")
@@ -104,7 +106,7 @@ struct NemotronHVisionConfigTests {
         // 512 / 16 = 32 patches per side → 1024 raw patches.
         #expect(enc.patchesPerSide == 32)
         #expect(enc.numPatches == 1024)
-        #expect(enc.headDim == 80)              // 1280 / 16
+        #expect(enc.headDim == 80)  // 1280 / 16
     }
 
     @Test("text_config exposes the NemotronH backbone")

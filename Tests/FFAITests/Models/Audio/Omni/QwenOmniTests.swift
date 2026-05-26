@@ -27,6 +27,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("QwenOmni")
@@ -72,7 +73,7 @@ struct QwenOmniTests {
                     "encoder_attention_heads": 20,
                 ] as [String: Any],
                 "text_config": [
-                    "hidden_size": 3584,
+                    "hidden_size": 3584
                 ] as [String: Any],
             ] as [String: Any],
         ]
@@ -102,8 +103,9 @@ struct QwenOmniTests {
     @Test("QwenOmniAudioConfig.from — returns nil for unrelated configs")
     func configReturnsNilForUnrelated() {
         let raw: [String: Any] = ["model_type": "llama", "hidden_size": 4096]
-        let config = ModelConfig(architecture: "LlamaForCausalLM",
-                                 modelType: "llama", raw: raw)
+        let config = ModelConfig(
+            architecture: "LlamaForCausalLM",
+            modelType: "llama", raw: raw)
         #expect(QwenOmniAudioConfig.from(config) == nil)
     }
 
@@ -139,8 +141,9 @@ struct QwenOmniTests {
 
     @Test("QwenOmniModel.handles — true for qwen3_omni model_type")
     func handlesByModelType() {
-        let config = ModelConfig(architecture: nil, modelType: "qwen3_omni",
-                                 raw: ["model_type": "qwen3_omni"])
+        let config = ModelConfig(
+            architecture: nil, modelType: "qwen3_omni",
+            raw: ["model_type": "qwen3_omni"])
         #expect(QwenOmniModel.handles(config))
     }
 
@@ -155,7 +158,7 @@ struct QwenOmniTests {
     @Test("QwenOmniModel.handles — structural fallback via top-level audio_config")
     func handlesStructural() {
         let raw: [String: Any] = [
-            "audio_config": ["d_model": 1280] as [String: Any],
+            "audio_config": ["d_model": 1280] as [String: Any]
         ]
         let config = ModelConfig(architecture: nil, modelType: nil, raw: raw)
         #expect(QwenOmniModel.handles(config))
@@ -163,9 +166,10 @@ struct QwenOmniTests {
 
     @Test("QwenOmniModel.handles — false for unrelated text model")
     func handlesFalseForTextModel() {
-        let config = ModelConfig(architecture: "LlamaForCausalLM",
-                                 modelType: "llama",
-                                 raw: ["model_type": "llama"])
+        let config = ModelConfig(
+            architecture: "LlamaForCausalLM",
+            modelType: "llama",
+            raw: ["model_type": "llama"])
         #expect(!QwenOmniModel.handles(config))
     }
 
@@ -173,8 +177,9 @@ struct QwenOmniTests {
 
     @Test("AudioModelRegistry.capabilities — QwenOmni maps to omniAudio")
     func registryCapabilityOmni() {
-        let config = ModelConfig(architecture: nil, modelType: "qwen3_omni",
-                                 raw: ["model_type": "qwen3_omni"])
+        let config = ModelConfig(
+            architecture: nil, modelType: "qwen3_omni",
+            raw: ["model_type": "qwen3_omni"])
         let caps = AudioModelRegistry.capabilities(for: config)
         #expect(caps == Capability.omniAudio)
     }

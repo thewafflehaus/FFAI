@@ -22,6 +22,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Gemma2Dense Variant Surface")
@@ -52,7 +53,7 @@ struct Gemma2TextTests {
     @Test("alternating sliding/full pattern matches HF formula for pattern=2")
     func slidingPattern2Alternates() {
         let pattern = 2
-        let kinds = (0..<6).map { i in (i + 1) % pattern != 0 }
+        let kinds = (0 ..< 6).map { i in (i + 1) % pattern != 0 }
         #expect(kinds == [true, false, true, false, true, false])
     }
 
@@ -62,7 +63,7 @@ struct Gemma2TextTests {
     @Test("pattern=6 puts every 6th layer on the global path")
     func slidingPattern6Spreads() {
         let pattern = 6
-        let kinds = (0..<12).map { i in (i + 1) % pattern != 0 }
+        let kinds = (0 ..< 12).map { i in (i + 1) % pattern != 0 }
         for (i, isSliding) in kinds.enumerated() {
             if (i + 1) % pattern == 0 {
                 #expect(!isSliding, "layer \(i) must be global")

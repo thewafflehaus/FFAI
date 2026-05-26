@@ -20,6 +20,7 @@
 import Foundation
 import Metal
 import Testing
+
 @testable import FFAI
 
 @Suite("Perplexity / KL divergence math")
@@ -31,15 +32,17 @@ struct PerplexityTests {
         let buf = device.makeBuffer(length: values.count * 4)
         let ptr = buf.contents().assumingMemoryBound(to: Float.self)
         for (i, v) in values.enumerated() { ptr[i] = v }
-        return Tensor(buffer: buf, offset: 0,
-                      shape: [1, values.count], dtype: .f32)
+        return Tensor(
+            buffer: buf, offset: 0,
+            shape: [1, values.count], dtype: .f32)
     }
 
     @Test("Result + KLDResult shape")
     func resultShapes() {
-        let r = Perplexity.Result(perplexity: 2.0,
-                                  meanNegLogLikelihood: log(2.0),
-                                  scoredTokens: 4)
+        let r = Perplexity.Result(
+            perplexity: 2.0,
+            meanNegLogLikelihood: log(2.0),
+            scoredTokens: 4)
         #expect(r.perplexity == 2.0)
         #expect(r.scoredTokens == 4)
         let k = Perplexity.KLDResult(meanKLDivergence: 0.42, scoredTokens: 7)
@@ -52,7 +55,7 @@ struct PerplexityTests {
         // Uniform → p(v) = 1/N → -log p(target) = log N for any target.
         let n = 4
         let uniform = makeLogits(Array(repeating: Float(0), count: n))
-        for target in 0..<n {
+        for target in 0 ..< n {
             let nll = Perplexity.negLogSoftmaxAt(logits: uniform, index: target)
             #expect(abs(nll - log(Double(n))) < 1e-6)
         }

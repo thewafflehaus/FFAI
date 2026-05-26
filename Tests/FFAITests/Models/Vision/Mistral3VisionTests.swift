@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // Config-parse unit tests for the Mistral3 family (the Pixtral 2D-RoPE
@@ -64,8 +65,9 @@ struct Mistral3Tests {
             "vision_config": visionConfig,
             "text_config": textConfig,
         ]
-        return ModelConfig(architecture: "Mistral3ForConditionalGeneration",
-                           modelType: "mistral3", raw: raw)
+        return ModelConfig(
+            architecture: "Mistral3ForConditionalGeneration",
+            modelType: "mistral3", raw: raw)
     }
 
     @Test("routes as a vision-language checkpoint via model_type")
@@ -76,8 +78,9 @@ struct Mistral3Tests {
         // vision_config presence triggers VL routing.
         #expect(VisionLanguageArchitectures.isVisionLanguage(cfg))
         // architecture string is in the VL set.
-        #expect(VisionLanguageArchitectures.architectures
-            .contains("Mistral3ForConditionalGeneration"))
+        #expect(
+            VisionLanguageArchitectures.architectures
+                .contains("Mistral3ForConditionalGeneration"))
         // defaults
         #expect(Mistral3.defaultImageTokenId == 10)
         #expect(Mistral3.defaultSpatialMergeSize == 2)
@@ -106,7 +109,7 @@ struct Mistral3Tests {
         #expect(parsed.ropeTheta == Float(10_000.0))
         // Derived geometry.
         #expect(parsed.patchesPerSide == 110)  // 1540 / 14
-        #expect(parsed.numPatches == 12100)     // 110 × 110
+        #expect(parsed.numPatches == 12100)  // 110 × 110
     }
 
     @Test("merged token count is patchesPerSide² / spatialMergeSize²")

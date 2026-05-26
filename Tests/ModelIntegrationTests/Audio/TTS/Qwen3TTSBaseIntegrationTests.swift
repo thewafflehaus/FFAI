@@ -36,6 +36,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Qwen3TTSBase Integration", .serialized)
@@ -75,7 +76,7 @@ struct Qwen3TTSBaseIntegrationTests {
     @Test("promptTokens — voice prefix is incorporated into the token sequence")
     func promptTokens_voicePrefix() async throws {
         let model = try await loadModel()
-        let withVoice    = model.promptTokens(text: "Hi.", voice: "en-us-1")
+        let withVoice = model.promptTokens(text: "Hi.", voice: "en-us-1")
         let withoutVoice = model.promptTokens(text: "Hi.")
         // The voiced sequence should be longer (prefix "en-us-1: " is extra).
         #expect(withVoice.count > withoutVoice.count)

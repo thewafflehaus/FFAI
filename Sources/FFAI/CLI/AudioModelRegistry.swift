@@ -127,7 +127,8 @@ public enum AudioModelRegistry {
     /// The capability set a checkpoint at `directory` would expose,
     /// without loading its weights. `nil` when it is not an audio model.
     public static func capabilities(forConfigAt directory: URL)
-        -> Set<Capability>? {
+        -> Set<Capability>?
+    {
         guard let config = try? ModelConfig.load(from: directory) else {
             return nil
         }
@@ -142,7 +143,8 @@ public enum AudioModelRegistry {
     /// config — Qwen3-ASR's distinctive `qwen3_asr` model_type lets us
     /// route it precisely if we check first.
     public static func capabilities(for config: ModelConfig)
-        -> Set<Capability>? {
+        -> Set<Capability>?
+    {
         if Qwen3TTSModel.handles(config) { return Capability.textToSpeech }
         if Qwen3ASRModel.handles(config) { return Capability.speechToText }
         if QwenOmniModel.handles(config) { return Capability.omniAudio }
@@ -183,117 +185,152 @@ public enum AudioModelRegistry {
     /// checkpoint can carry a plain `LlamaForCausalLM` architecture and
     /// its loader needs the tokenizer (hence the async signature).
     public static func load(directory: URL, device: Device = .shared)
-        async throws -> LoadedAudioModel {
+        async throws -> LoadedAudioModel
+    {
         let config = try ModelConfig.load(from: directory)
         // Qwen3TTS is checked before QwenOmni: both are Qwen-family
         // audio models, but Qwen3TTS's `talker_config` is its own marker.
         if Qwen3TTSModel.handles(config) {
-            return .qwen3TTS(try Qwen3TTSModel.load(directory: directory,
-                                                    device: device))
+            return .qwen3TTS(
+                try Qwen3TTSModel.load(
+                    directory: directory,
+                    device: device))
         }
         // Qwen3ASR before QwenOmni — see `capabilities(for:)` for the
         // routing-precedence reasoning (Qwen3-ASR's `audio_config` is
         // also matched by QwenOmni's structural fallback).
         if Qwen3ASRModel.handles(config) {
-            return .qwen3ASR(try Qwen3ASRModel.load(directory: directory,
-                                                    device: device))
+            return .qwen3ASR(
+                try Qwen3ASRModel.load(
+                    directory: directory,
+                    device: device))
         }
         if QwenOmniModel.handles(config) {
-            return .qwenOmni(try QwenOmniModel.load(directory: directory,
-                                                    device: device))
+            return .qwenOmni(
+                try QwenOmniModel.load(
+                    directory: directory,
+                    device: device))
         }
         if MarvisModel.handles(config) {
-            return .marvis(try await MarvisModel.load(
-                directory: directory, device: device))
+            return .marvis(
+                try await MarvisModel.load(
+                    directory: directory, device: device))
         }
         if LlamaTTSModel.handles(config) {
-            return .llamaTTS(try await LlamaTTSModel.load(
-                directory: directory, device: device))
+            return .llamaTTS(
+                try await LlamaTTSModel.load(
+                    directory: directory, device: device))
         }
         if WhisperModel.handles(config) {
-            return .whisper(try WhisperModel.load(directory: directory,
-                                                  device: device))
+            return .whisper(
+                try WhisperModel.load(
+                    directory: directory,
+                    device: device))
         }
         if SenseVoiceModel.handles(config) {
-            return .senseVoice(try SenseVoiceModel.load(directory: directory,
-                                                        device: device))
+            return .senseVoice(
+                try SenseVoiceModel.load(
+                    directory: directory,
+                    device: device))
         }
         // StyleTTS2 / KittenTTS before Kokoro — see `capabilities(for:)`
         // routing-precedence note. Kitten's `kitten_tts` model_type would
         // otherwise be claimed by Kokoro's structural fallback.
         if StyleTTS2Model.handles(config) {
-            return .styleTTS2(try StyleTTS2Model.load(
-                directory: directory, device: device))
+            return .styleTTS2(
+                try StyleTTS2Model.load(
+                    directory: directory, device: device))
         }
         if KokoroModel.handles(config) {
-            return .kokoro(try KokoroModel.load(directory: directory,
-                                                device: device))
+            return .kokoro(
+                try KokoroModel.load(
+                    directory: directory,
+                    device: device))
         }
         if EchoTTSModel.handles(config) {
-            return .echoTTS(try EchoTTSModel.load(directory: directory,
-                                                  device: device))
+            return .echoTTS(
+                try EchoTTSModel.load(
+                    directory: directory,
+                    device: device))
         }
         if Qwen3TTSBaseModel.handles(config) {
-            return .qwen3TTSBase(try await Qwen3TTSBaseModel.load(
-                directory: directory, device: device))
+            return .qwen3TTSBase(
+                try await Qwen3TTSBaseModel.load(
+                    directory: directory, device: device))
         }
         if ParakeetModel.handles(config) {
-            return .parakeet(try ParakeetModel.load(directory: directory,
-                                                    device: device))
+            return .parakeet(
+                try ParakeetModel.load(
+                    directory: directory,
+                    device: device))
         }
         if ChatterboxModel.handles(config) {
-            return .chatterbox(try ChatterboxModel.load(directory: directory,
-                                                        device: device))
+            return .chatterbox(
+                try ChatterboxModel.load(
+                    directory: directory,
+                    device: device))
         }
         if FireRedASR2Model.handles(config) {
-            return .fireRedASR2(try FireRedASR2Model.load(
-                directory: directory, device: device))
+            return .fireRedASR2(
+                try FireRedASR2Model.load(
+                    directory: directory, device: device))
         }
         // Nano checked before MossTTS-8B — both share the Moss family but
         // Nano has a distinctive `gpt2_config` block.
         if MossTTSNanoModel.handles(config) {
-            return .mossTTSNano(try MossTTSNanoModel.load(
-                directory: directory, device: device))
+            return .mossTTSNano(
+                try MossTTSNanoModel.load(
+                    directory: directory, device: device))
         }
         if MossTTSModel.handles(config) {
-            return .mossTTS(try MossTTSModel.load(
-                directory: directory, device: device))
+            return .mossTTS(
+                try MossTTSModel.load(
+                    directory: directory, device: device))
         }
         if LFMAudioModel.handles(config) {
-            return .lfmAudio(try LFMAudioModel.load(
-                directory: directory, device: device))
+            return .lfmAudio(
+                try LFMAudioModel.load(
+                    directory: directory, device: device))
         }
         if VoxtralRealtimeModel.handles(config) {
-            return .voxtralRealtime(try VoxtralRealtimeModel.load(
-                directory: directory, device: device))
+            return .voxtralRealtime(
+                try VoxtralRealtimeModel.load(
+                    directory: directory, device: device))
         }
         if GLMASRModel.handles(config) {
-            return .glmASR(try GLMASRModel.load(
-                directory: directory, device: device))
+            return .glmASR(
+                try GLMASRModel.load(
+                    directory: directory, device: device))
         }
         if PocketTTSModel.handles(config) {
-            return .pocketTTS(try PocketTTSModel.load(
-                directory: directory, device: device))
+            return .pocketTTS(
+                try PocketTTSModel.load(
+                    directory: directory, device: device))
         }
         if SopranoModel.handles(config) {
-            return .soprano(try await SopranoModel.load(
-                directory: directory, device: device))
+            return .soprano(
+                try await SopranoModel.load(
+                    directory: directory, device: device))
         }
         if GraniteSpeech.handles(config) {
-            return .graniteSpeech(try await GraniteSpeech.load(
-                directory: directory, device: device))
+            return .graniteSpeech(
+                try await GraniteSpeech.load(
+                    directory: directory, device: device))
         }
         if DeepFilterNetModel.handles(config) {
-            return .deepFilterNet(try DeepFilterNetModel.load(
-                from: directory, device: device))
+            return .deepFilterNet(
+                try DeepFilterNetModel.load(
+                    from: directory, device: device))
         }
         if CohereTranscribeModel.handles(config) {
-            return .cohereTranscribe(try await CohereTranscribeModel.load(
-                directory: directory, device: device))
+            return .cohereTranscribe(
+                try await CohereTranscribeModel.load(
+                    directory: directory, device: device))
         }
         if MossFormer2SEModel.handles(config) {
-            return .mossFormer2SE(try MossFormer2SEModel.load(
-                directory: directory, device: device))
+            return .mossFormer2SE(
+                try MossFormer2SEModel.load(
+                    directory: directory, device: device))
         }
         if SAMAudio.handles(config) {
             let samConfig = SAMAudioModel.loadConfig(from: directory)

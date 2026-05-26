@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // Unit tests for the Pixtral family (the custom 2D-RoPE
@@ -62,8 +63,9 @@ struct PixtralVisionConfigTests {
             "vision_config": visionConfig,
             "text_config": textConfig,
         ]
-        return ModelConfig(architecture: "LlavaForConditionalGeneration",
-                           modelType: "pixtral", raw: raw)
+        return ModelConfig(
+            architecture: "LlavaForConditionalGeneration",
+            modelType: "pixtral", raw: raw)
     }
 
     @Test("routes as a vision-language checkpoint via model_type")
@@ -75,8 +77,9 @@ struct PixtralVisionConfigTests {
         // vision_config presence triggers VL routing
         #expect(VisionLanguageArchitectures.isVisionLanguage(cfg))
         // architecture string is in the VL set
-        #expect(VisionLanguageArchitectures.architectures
-            .contains("LlavaForConditionalGeneration"))
+        #expect(
+            VisionLanguageArchitectures.architectures
+                .contains("LlavaForConditionalGeneration"))
         // default image token id
         #expect(Pixtral.defaultImageTokenId == 10)
         #expect(cfg.int("image_token_id") == 10)
@@ -98,19 +101,21 @@ struct PixtralVisionConfigTests {
         #expect(parsed.ropeTheta == Float(10_000.0))
         // Derived geometry.
         #expect(parsed.patchesPerSide == 24)  // 336 / 14
-        #expect(parsed.numPatches == 576)      // 24 × 24
+        #expect(parsed.numPatches == 576)  // 24 × 24
     }
 
     @Test("vision_config decode falls back to documented defaults")
     func visionConfigDefaults() throws {
         // Minimal config — only the fields required by `decode`.
-        let minimal = ModelConfig(architecture: nil, modelType: nil, raw: [
-            "num_hidden_layers": 12,
-            "hidden_size": 512,
-            "intermediate_size": 2048,
-            "num_attention_heads": 8,
-            "patch_size": 14,
-        ])
+        let minimal = ModelConfig(
+            architecture: nil, modelType: nil,
+            raw: [
+                "num_hidden_layers": 12,
+                "hidden_size": 512,
+                "intermediate_size": 2048,
+                "num_attention_heads": 8,
+                "patch_size": 14,
+            ])
         let parsed = try PixtralVisionConfig.decode(minimal)
         // Derived head_dim fallback: 512 / 8 = 64.
         #expect(parsed.headDim == 64)
@@ -120,7 +125,7 @@ struct PixtralVisionConfigTests {
         #expect(parsed.rmsNormEps == Float(1e-5))
         #expect(parsed.ropeTheta == Float(10_000.0))
         // Derived patch geometry.
-        #expect(parsed.patchesPerSide == 24)   // 336 / 14
+        #expect(parsed.patchesPerSide == 24)  // 336 / 14
         #expect(parsed.numPatches == 576)
     }
 
@@ -129,18 +134,20 @@ struct PixtralVisionConfigTests {
         // Build a minimal config with a 2×2 patch grid (image_size = 28,
         // patch_size = 14 → patchesPerSide = 2). headDim = 4, half = 2,
         // quarter = 1.
-        let minimal = ModelConfig(architecture: nil, modelType: nil, raw: [
-            "num_hidden_layers": 1,
-            "hidden_size": 4,
-            "intermediate_size": 8,
-            "num_attention_heads": 1,
-            "head_dim": 4,
-            "patch_size": 14,
-            "image_size": 28,
-            "num_channels": 3,
-            "rms_norm_eps": 1e-5,
-            "rope_theta": 10_000.0,
-        ])
+        let minimal = ModelConfig(
+            architecture: nil, modelType: nil,
+            raw: [
+                "num_hidden_layers": 1,
+                "hidden_size": 4,
+                "intermediate_size": 8,
+                "num_attention_heads": 1,
+                "head_dim": 4,
+                "patch_size": 14,
+                "image_size": 28,
+                "num_channels": 3,
+                "rms_norm_eps": 1e-5,
+                "rope_theta": 10_000.0,
+            ])
         let cfg = try PixtralVisionConfig.decode(minimal)
         let rope = PixtralRoPE(cfg: cfg)
 

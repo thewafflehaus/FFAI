@@ -23,6 +23,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("LlamaDense Variant Surface")
@@ -51,8 +52,9 @@ struct LlamaTextTests {
     func missingConfigRejected() throws {
         // No fields set on the config — the guard at the top of
         // loadModel must short-circuit with missingConfig.
-        let cfg = ModelConfig(architecture: "LlamaForCausalLM",
-                              modelType: "llama", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "LlamaForCausalLM",
+            modelType: "llama", raw: [:])
         // SafeTensorsBundle creation requires a real file path; we
         // can't reach the weight-reading code here. The guard fires
         // BEFORE any weight access, so an empty bundle would never be

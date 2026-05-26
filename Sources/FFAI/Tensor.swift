@@ -41,14 +41,16 @@ public struct Tensor: @unchecked Sendable {
     public static func empty(shape: [Int], dtype: DType, device: Device = .shared) -> Tensor {
         let count = shape.reduce(1, *)
         let bytes = count * dtype.byteSize
-        return Tensor(buffer: device.makeBuffer(length: bytes), offset: 0, shape: shape, dtype: dtype)
+        return Tensor(
+            buffer: device.makeBuffer(length: bytes), offset: 0, shape: shape, dtype: dtype)
     }
 
     /// Reshape (no copy). Element count must match.
     public func reshaped(to newShape: [Int]) -> Tensor {
         let newCount = newShape.reduce(1, *)
-        precondition(newCount == elementCount,
-                     "reshape mismatch: \(shape) (\(elementCount)) -> \(newShape) (\(newCount))")
+        precondition(
+            newCount == elementCount,
+            "reshape mismatch: \(shape) (\(elementCount)) -> \(newShape) (\(newCount))")
         return Tensor(buffer: buffer, offset: offset, shape: newShape, dtype: dtype)
     }
 
@@ -83,8 +85,9 @@ public struct Tensor: @unchecked Sendable {
         precondition(array.count == elementCount, "copyIn count mismatch")
         let dst = buffer.contents().advanced(by: offset)
         array.withUnsafeBufferPointer { src in
-            dst.copyMemory(from: UnsafeRawPointer(src.baseAddress!),
-                           byteCount: elementCount * MemoryLayout<T>.stride)
+            dst.copyMemory(
+                from: UnsafeRawPointer(src.baseAddress!),
+                byteCount: elementCount * MemoryLayout<T>.stride)
         }
     }
 
@@ -128,8 +131,10 @@ public struct Tensor: @unchecked Sendable {
     /// stored in `dtype`. Used to broadcast a CPU scalar into an
     /// element-wise op (e.g. an MoE combine weight). Only the floating
     /// dtypes are supported.
-    public static func filled(_ value: Float, shape: [Int], dtype: DType,
-                              device: Device = .shared) -> Tensor {
+    public static func filled(
+        _ value: Float, shape: [Int], dtype: DType,
+        device: Device = .shared
+    ) -> Tensor {
         let t = Tensor.empty(shape: shape, dtype: dtype, device: device)
         let n = t.elementCount
         switch dtype {

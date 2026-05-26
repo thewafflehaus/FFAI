@@ -14,19 +14,22 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("SafeTensors")
 struct SafeTensorsTests {
     /// Build a minimal valid safetensors file in `directory` containing one
     /// f32 tensor named `tensorName` with the given values + shape.
-    static func writeSyntheticFile(directory: URL, tensorName: String,
-                                   shape: [Int], values: [Float],
-                                   filename: String = "model.safetensors") throws -> URL
-    {
+    static func writeSyntheticFile(
+        directory: URL, tensorName: String,
+        shape: [Int], values: [Float],
+        filename: String = "model.safetensors"
+    ) throws -> URL {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let dataLen = values.count * MemoryLayout<Float>.size
-        let header = #"{"\#(tensorName)":{"dtype":"F32","shape":\#(shape.description),"data_offsets":[0,\#(dataLen)]}}"#
+        let header =
+            #"{"\#(tensorName)":{"dtype":"F32","shape":\#(shape.description),"data_offsets":[0,\#(dataLen)]}}"#
         let headerBytes = Array(header.utf8)
         var headerLen = UInt64(headerBytes.count)
 
@@ -77,8 +80,9 @@ struct SafeTensorsTests {
         )
 
         let f = try SafeTensorsFile(url: url)
-        #expect(f.isMmapRetained == false,
-                "init must munmap; otherwise we leak virtual address space")
+        #expect(
+            f.isMmapRetained == false,
+            "init must munmap; otherwise we leak virtual address space")
 
         // Tensor access still works — the bytes were copied into the
         // MTLBuffer before munmap, so reads don't touch the mapping.
@@ -99,7 +103,8 @@ struct SafeTensorsTests {
             _ = try f.tensor(named: "absent")
             Issue.record("expected error")
         } catch let e as SafeTensorsError {
-            if case .missingTensor = e { /* ok */ } else {
+            if case .missingTensor = e { /* ok */
+            } else {
                 Issue.record("expected .missingTensor, got \(e)")
             }
         }
@@ -111,7 +116,8 @@ struct SafeTensorsTests {
             _ = try SafeTensorsFile(url: URL(fileURLWithPath: "/__nope__/missing.safetensors"))
             Issue.record("expected error")
         } catch let e as SafeTensorsError {
-            if case .fileNotFound = e { /* ok */ } else {
+            if case .fileNotFound = e { /* ok */
+            } else {
                 Issue.record("expected .fileNotFound, got \(e)")
             }
         } catch {
@@ -154,11 +160,12 @@ struct SafeTensorsTests {
         )
         // Index file
         let index = """
-        {"weight_map": {"a": "model-00001-of-00002.safetensors",
-                        "b": "model-00002-of-00002.safetensors"}}
-        """
-        try index.write(to: dir.appendingPathComponent("model.safetensors.index.json"),
-                        atomically: true, encoding: .utf8)
+            {"weight_map": {"a": "model-00001-of-00002.safetensors",
+                            "b": "model-00002-of-00002.safetensors"}}
+            """
+        try index.write(
+            to: dir.appendingPathComponent("model.safetensors.index.json"),
+            atomically: true, encoding: .utf8)
 
         let bundle = try SafeTensorsBundle(directory: dir)
         #expect(try bundle.tensor(named: "a").toArray(as: Float.self) == [10])

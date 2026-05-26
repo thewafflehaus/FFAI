@@ -21,9 +21,10 @@
 // Skipped automatically if the checkpoint isn't available.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Mistral Integration", .serialized)
 struct MistralIntegrationTests {

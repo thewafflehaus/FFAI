@@ -33,9 +33,9 @@
 // each call. Per Apple's Memory Management docs this is the standard
 // fix for objc-bridged code in tight loops.
 
+import FFAI
 import Foundation
 import Metal
-import FFAI
 
 /// Run `block` on a fresh `MTLCommandBuffer`, commit it, and wait for
 /// completion. Wrapped in an autoreleasepool so cmdbuf retention drains

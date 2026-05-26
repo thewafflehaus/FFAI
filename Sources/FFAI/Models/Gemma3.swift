@@ -40,7 +40,7 @@ import Foundation
 public enum Gemma3 {
     public static let modelTypes: Set<String> = ["gemma3", "gemma3_text"]
     public static let architectures: Set<String> = [
-        "Gemma3ForCausalLM", "Gemma3TextForCausalLM"
+        "Gemma3ForCausalLM", "Gemma3TextForCausalLM",
     ]
 
     public static func variant(for config: ModelConfig) throws -> any Gemma3Variant.Type {

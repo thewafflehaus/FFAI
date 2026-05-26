@@ -40,13 +40,16 @@ public final class SSMStateCache: @unchecked Sendable {
     /// Recurrent state h, shape `[nHeads, stateDim, headDim]`. Always fp32.
     public let h: Tensor
 
-    public init(nHeads: Int, stateDim: Int, headDim: Int,
-                device: Device = .shared) {
+    public init(
+        nHeads: Int, stateDim: Int, headDim: Int,
+        device: Device = .shared
+    ) {
         self.nHeads = nHeads
         self.stateDim = stateDim
         self.headDim = headDim
-        self.h = Tensor.empty(shape: [nHeads, stateDim, headDim],
-                              dtype: .f32, device: device)
+        self.h = Tensor.empty(
+            shape: [nHeads, stateDim, headDim],
+            dtype: .f32, device: device)
         self.h.zero()
     }
 
@@ -61,7 +64,7 @@ public final class SSMStateCache: @unchecked Sendable {
     }
 }
 
-public extension Array where Element == SSMStateCache {
+extension Array where Element == SSMStateCache {
     /// Sum of `bytesAllocated` across all per-layer SSM caches.
-    var totalBytesAllocated: Int { reduce(0) { $0 + $1.bytesAllocated } }
+    public var totalBytesAllocated: Int { reduce(0) { $0 + $1.bytesAllocated } }
 }

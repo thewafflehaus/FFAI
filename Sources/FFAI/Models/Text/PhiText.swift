@@ -48,11 +48,11 @@ public struct Phi3Dense: PhiVariant {
         device: Device
     ) throws -> LlamaModel {
         guard let hidden = config.hiddenSize,
-              let nLayers = config.numLayers,
-              let nHeads = config.numAttentionHeads,
-              let vocab = config.vocabSize,
-              let intermediate = config.intermediateSize,
-              let eps = config.rmsNormEps
+            let nLayers = config.numLayers,
+            let nHeads = config.numAttentionHeads,
+            let vocab = config.vocabSize,
+            let intermediate = config.intermediateSize,
+            let eps = config.rmsNormEps
         else {
             throw PhiError.missingConfig
         }
@@ -69,8 +69,8 @@ public struct Phi3Dense: PhiVariant {
         // refuse those variants explicitly so the user gets a clear
         // error instead of a silently-wrong RoPE.
         if let rs = config.nested("rope_scaling"),
-           let t = rs["type"] as? String ?? rs["rope_type"] as? String,
-           t != "default" && t != "linear"
+            let t = rs["type"] as? String ?? rs["rope_type"] as? String,
+            t != "default" && t != "linear"
         {
             throw PhiError.unsupportedRopeScaling(t)
         }
@@ -78,7 +78,7 @@ public struct Phi3Dense: PhiVariant {
         // via the Llama machinery's ropeScaling.scaleFactor.
         let ropeScaling: Ops.RoPEScaling
         if let rs = config.nested("rope_scaling"),
-           let factor = rs["factor"] as? Double
+            let factor = rs["factor"] as? Double
         {
             // Linear scaling reduces frequencies uniformly; Llama's
             // Ops.RoPEScaling expresses this as `scaleFactor`.
@@ -107,7 +107,7 @@ public struct Phi3Dense: PhiVariant {
         let qSize = nHeads * headDim
         let kvSize = nKVHeads * headDim
 
-        for i in 0..<nLayers {
+        for i in 0 ..< nLayers {
             let p = "model.layers.\(i)"
 
             // Fused qkv split. Phi-3 quantized fused projections need
@@ -129,8 +129,9 @@ public struct Phi3Dense: PhiVariant {
             let kProj = AnyLinear(Linear(weight: kWeight))
             let vProj = AnyLinear(Linear(weight: vWeight))
 
-            let oProj = try loadLinear(base: "\(p).self_attn.o_proj",
-                                       in: weights, quantization: quant)
+            let oProj = try loadLinear(
+                base: "\(p).self_attn.o_proj",
+                in: weights, quantization: quant)
 
             // Fused gate_up split.
             if quant != nil, weights.isQuantized("\(p).mlp.gate_up_proj") {
@@ -146,8 +147,9 @@ public struct Phi3Dense: PhiVariant {
             let gateProj = AnyLinear(Linear(weight: gateWeight))
             let upProj = AnyLinear(Linear(weight: upWeight))
 
-            let downProj = try loadLinear(base: "\(p).mlp.down_proj",
-                                          in: weights, quantization: quant)
+            let downProj = try loadLinear(
+                base: "\(p).mlp.down_proj",
+                in: weights, quantization: quant)
 
             let inputNorm = RMSNorm(
                 weight: try weights.tensor(named: "\(p).input_layernorm.weight"),
@@ -156,14 +158,15 @@ public struct Phi3Dense: PhiVariant {
                 weight: try weights.tensor(named: "\(p).post_attention_layernorm.weight"),
                 eps: Float(eps))
 
-            layers.append(LlamaLayer(
-                qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
-                gateProj: gateProj, upProj: upProj, downProj: downProj,
-                inputNorm: inputNorm, postAttnNorm: postAttnNorm,
-                hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
-                headDim: headDim, intermediate: intermediate,
-                ropeTheta: theta, ropeScaling: ropeScaling
-            ))
+            layers.append(
+                LlamaLayer(
+                    qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
+                    gateProj: gateProj, upProj: upProj, downProj: downProj,
+                    inputNorm: inputNorm, postAttnNorm: postAttnNorm,
+                    hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
+                    headDim: headDim, intermediate: intermediate,
+                    ropeTheta: theta, ropeScaling: ropeScaling
+                ))
         }
 
         let finalNorm = RMSNorm(
@@ -179,17 +182,19 @@ public struct Phi3Dense: PhiVariant {
                 weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
                 scaleCols: t.scales.shape[t.scales.shape.count - 1],
                 groupSize: q.groupSize)
-            lmHead = AnyLinear(QuantizedLinear(
-                weight: t.weight, scales: t.scales, biases: t.biases,
-                bits: bits, groupSize: q.groupSize
-            ))
+            lmHead = AnyLinear(
+                QuantizedLinear(
+                    weight: t.weight, scales: t.scales, biases: t.biases,
+                    bits: bits, groupSize: q.groupSize
+                ))
         } else {
             lmHead = AnyLinear(Linear(weight: embedTokens.weight))
         }
 
         let activationDtype: DType
         if weights.isQuantized("model.embed_tokens"),
-           let scales = try? weights.tensor(named: "model.embed_tokens.scales") {
+            let scales = try? weights.tensor(named: "model.embed_tokens.scales")
+        {
             activationDtype = scales.dtype
         } else {
             activationDtype = embedTokens.weight.dtype

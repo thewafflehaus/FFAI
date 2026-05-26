@@ -29,6 +29,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("LlamaTTS")
@@ -77,8 +78,9 @@ struct LlamaTTSTests {
 
     @Test("LlamaTTSModel.handles — true for orpheus model_type")
     func handlesByModelType() {
-        let config = ModelConfig(architecture: nil, modelType: "orpheus",
-                                 raw: ["model_type": "orpheus"])
+        let config = ModelConfig(
+            architecture: nil, modelType: "orpheus",
+            raw: ["model_type": "orpheus"])
         #expect(LlamaTTSModel.handles(config))
     }
 
@@ -98,8 +100,9 @@ struct LlamaTTSTests {
             "vocab_size": 156_940,  // > audioTokenOffset (128_266)
             "sample_rate": 24_000,
         ]
-        let config = ModelConfig(architecture: "LlamaForCausalLM",
-                                 modelType: "llama", raw: raw)
+        let config = ModelConfig(
+            architecture: "LlamaForCausalLM",
+            modelType: "llama", raw: raw)
         #expect(LlamaTTSModel.handles(config))
     }
 
@@ -109,8 +112,9 @@ struct LlamaTTSTests {
             "model_type": "llama",
             "vocab_size": 32_000,
         ]
-        let config = ModelConfig(architecture: "LlamaForCausalLM",
-                                 modelType: "llama", raw: raw)
+        let config = ModelConfig(
+            architecture: "LlamaForCausalLM",
+            modelType: "llama", raw: raw)
         #expect(!LlamaTTSModel.handles(config))
     }
 
@@ -118,8 +122,9 @@ struct LlamaTTSTests {
 
     @Test("AudioModelRegistry.capabilities — LlamaTTS maps to textToSpeech")
     func registryCapability() {
-        let config = ModelConfig(architecture: nil, modelType: "orpheus",
-                                 raw: ["model_type": "orpheus"])
+        let config = ModelConfig(
+            architecture: nil, modelType: "orpheus",
+            raw: ["model_type": "orpheus"])
         #expect(AudioModelRegistry.capabilities(for: config) == Capability.textToSpeech)
     }
 
@@ -139,7 +144,7 @@ struct LlamaTTSTests {
         let stride = OrpheusTokens.snacCodebookStride
         // Token at position k is `k * stride` so each layer subtracts its
         // offset and ends up at zero (per-position offset round-trip).
-        let frame = (0..<7).map { $0 * stride }
+        let frame = (0 ..< 7).map { $0 * stride }
         let planes = LlamaTTSModel.deinterleaveSNACCodes(frame)
         #expect(planes[0].count == 1)
         #expect(planes[1].count == 2)
@@ -153,7 +158,7 @@ struct LlamaTTSTests {
     @Test("deinterleaveSNACCodes — partial trailing frame is dropped")
     func deinterleavePartialFrameDropped() {
         // 9 tokens = 1 full frame (7) + 2 leftover.
-        let tokens = Array(0..<9)
+        let tokens = Array(0 ..< 9)
         let planes = LlamaTTSModel.deinterleaveSNACCodes(tokens)
         #expect(planes[0].count == 1)
         #expect(planes[1].count == 2)

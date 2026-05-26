@@ -21,6 +21,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("KVEvictionState — slot allocation")
@@ -29,7 +30,7 @@ struct KVEvictionStateTests {
     @Test("unbounded mode hands out 0..<bufferCapacity then panics")
     func unboundedSequential() {
         var s = KVEvictionState(policy: .unbounded, bufferCapacity: 8)
-        for i in 0..<8 {
+        for i in 0 ..< 8 {
             #expect(s.length == i)
             #expect(s.absolutePosition == i)
             #expect(s.reserveNextSlot() == i)
@@ -40,16 +41,20 @@ struct KVEvictionStateTests {
     @Test("unbounded length saturates at absolutePosition")
     func unboundedLengthMatchesPosition() {
         var s = KVEvictionState(policy: .unbounded, bufferCapacity: 16)
-        for i in 0..<10 { _ = s.reserveNextSlot(); _ = i }
+        for i in 0 ..< 10 {
+            _ = s.reserveNextSlot()
+            _ = i
+        }
         #expect(s.length == 10)
         #expect(s.absolutePosition == 10)
     }
 
     @Test("window(maxSize: 4, keep: 0) rotates after maxSize appends")
     func windowNoKeepRotates() {
-        var s = KVEvictionState(policy: .window(maxSize: 4, keep: 0),
-                                bufferCapacity: 16)
-        let expected = [0, 1, 2, 3,  0, 1, 2, 3,  0, 1, 2, 3]
+        var s = KVEvictionState(
+            policy: .window(maxSize: 4, keep: 0),
+            bufferCapacity: 16)
+        let expected = [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3]
         for i in expected {
             #expect(s.reserveNextSlot() == i)
         }
@@ -60,10 +65,11 @@ struct KVEvictionStateTests {
 
     @Test("window(maxSize: 6, keep: 2) pins first 2 slots, rotates the rest")
     func windowWithKeepPreservesSinks() {
-        var s = KVEvictionState(policy: .window(maxSize: 6, keep: 2),
-                                bufferCapacity: 16)
+        var s = KVEvictionState(
+            policy: .window(maxSize: 6, keep: 2),
+            bufferCapacity: 16)
         // First 6 appends: linear fill.
-        for i in 0..<6 {
+        for i in 0 ..< 6 {
             #expect(s.reserveNextSlot() == i)
         }
         // Past maxSize: ring within [keep, maxSize) = [2, 6).
@@ -78,9 +84,10 @@ struct KVEvictionStateTests {
 
     @Test("length grows up to maxSize then sticks; absolutePosition keeps climbing")
     func lengthSaturatesAtWindow() {
-        var s = KVEvictionState(policy: .window(maxSize: 3, keep: 0),
-                                bufferCapacity: 8)
-        for step in 0..<8 {
+        var s = KVEvictionState(
+            policy: .window(maxSize: 3, keep: 0),
+            bufferCapacity: 8)
+        for step in 0 ..< 8 {
             _ = s.reserveNextSlot()
             #expect(s.length == min(step + 1, 3))
             #expect(s.absolutePosition == step + 1)
@@ -89,9 +96,10 @@ struct KVEvictionStateTests {
 
     @Test("reset zeros both length and absolutePosition")
     func resetClearsState() {
-        var s = KVEvictionState(policy: .window(maxSize: 4),
-                                bufferCapacity: 8)
-        for _ in 0..<10 { _ = s.reserveNextSlot() }
+        var s = KVEvictionState(
+            policy: .window(maxSize: 4),
+            bufferCapacity: 8)
+        for _ in 0 ..< 10 { _ = s.reserveNextSlot() }
         #expect(s.length == 4)
         #expect(s.absolutePosition == 10)
         s.reset()
@@ -103,8 +111,9 @@ struct KVEvictionStateTests {
 
     @Test("keep = maxSize - 1 produces a degenerate 1-slot rotation")
     func keepLeavesOnlyOneRotatingSlot() {
-        var s = KVEvictionState(policy: .window(maxSize: 4, keep: 3),
-                                bufferCapacity: 8)
+        var s = KVEvictionState(
+            policy: .window(maxSize: 4, keep: 3),
+            bufferCapacity: 8)
         // 0, 1, 2 are pinned. After that, slot 3 is the only one
         // that rotates — every subsequent append targets slot 3.
         let expected = [0, 1, 2, 3, 3, 3, 3]
@@ -116,7 +125,7 @@ struct KVEvictionStateTests {
     @Test("truncate rolls unbounded state back and resumes from that slot")
     func truncateUnboundedRollsBack() {
         var s = KVEvictionState(policy: .unbounded, bufferCapacity: 16)
-        for _ in 0..<10 { _ = s.reserveNextSlot() }
+        for _ in 0 ..< 10 { _ = s.reserveNextSlot() }
         #expect(s.length == 10)
         s.truncate(toLength: 6)
         #expect(s.length == 6)
@@ -129,19 +138,20 @@ struct KVEvictionStateTests {
     @Test("truncate to current length and to zero are both valid")
     func truncateBoundaries() {
         var s = KVEvictionState(policy: .unbounded, bufferCapacity: 8)
-        for _ in 0..<5 { _ = s.reserveNextSlot() }
-        s.truncate(toLength: 5)        // no-op
+        for _ in 0 ..< 5 { _ = s.reserveNextSlot() }
+        s.truncate(toLength: 5)  // no-op
         #expect(s.length == 5)
-        s.truncate(toLength: 0)        // full rollback
+        s.truncate(toLength: 0)  // full rollback
         #expect(s.length == 0)
         #expect(s.reserveNextSlot() == 0)
     }
 
     @Test("truncate on a window cache before rotation is allowed")
     func truncateWindowPreRotation() {
-        var s = KVEvictionState(policy: .window(maxSize: 8, keep: 0),
-                                bufferCapacity: 8)
-        for _ in 0..<5 { _ = s.reserveNextSlot() }   // absoluteCount 5 ≤ maxSize 8
+        var s = KVEvictionState(
+            policy: .window(maxSize: 8, keep: 0),
+            bufferCapacity: 8)
+        for _ in 0 ..< 5 { _ = s.reserveNextSlot() }  // absoluteCount 5 ≤ maxSize 8
         s.truncate(toLength: 3)
         #expect(s.length == 3)
         #expect(s.reserveNextSlot() == 3)
@@ -174,7 +184,7 @@ struct KVCacheSlidingWindowTests {
         let buf = device.makeBuffer(length: 8)
         // Stamp slot ID + 1.0 into K and V at each append so we can
         // tell which physical row holds which absolute token.
-        for absPos in 0..<7 {
+        for absPos in 0 ..< 7 {
             let f = Float(absPos) + 1.0
             buf.contents().assumingMemoryBound(to: Float.self)[0] = f
             buf.contents().assumingMemoryBound(to: Float.self)[1] = f

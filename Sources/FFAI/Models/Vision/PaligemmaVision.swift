@@ -61,19 +61,22 @@ private func readF32(_ t: Tensor) -> [Float] {
 /// Half-precision to Float (IEEE 754 binary16).
 private func float16ToFloat(_ h: UInt16) -> Float {
     // Fast path using bit-manipulation. Adapted from standard conversion.
-    let sign    = UInt32(h & 0x8000) << 16
-    let exp     = UInt32((h >> 10) & 0x1f)
+    let sign = UInt32(h & 0x8000) << 16
+    let exp = UInt32((h >> 10) & 0x1f)
     let mantisa = UInt32(h & 0x3ff)
     if exp == 0x1f {
         // Inf or NaN
-        let bits = sign | 0x7f800000 | (mantisa << 13)
+        let bits = sign | 0x7f80_0000 | (mantisa << 13)
         return Float(bitPattern: bits)
     } else if exp == 0 {
         if mantisa == 0 { return Float(bitPattern: sign) }
         // Denormal
         var m = mantisa
         var e: UInt32 = 127 - 14
-        while m & 0x400 == 0 { m <<= 1; e -= 1 }
+        while m & 0x400 == 0 {
+            m <<= 1
+            e -= 1
+        }
         m &= 0x3ff
         let bits = sign | ((e) << 23) | (m << 13)
         return Float(bitPattern: bits)
@@ -105,11 +108,11 @@ private func dequantRow(
     let wordIdx = row * wordsPerRow
     let scaleIdx = row * numGroups
 
-    for g in 0..<numGroups {
+    for g in 0 ..< numGroups {
         let scale = scales[scaleIdx + g]
-        let bias  = biases[scaleIdx + g]
+        let bias = biases[scaleIdx + g]
         let startCol = g * groupSize
-        for col in startCol..<(startCol + groupSize) {
+        for col in startCol ..< (startCol + groupSize) {
             let wi = wordIdx + (col / packFactor)
             let shift = (col % packFactor) * bits
             let q = Int((weight[wi] >> UInt32(shift)) & maskBits)
@@ -124,8 +127,8 @@ private func dequantRow(
 /// A CPU-side embedding table, either plain float or quantized.
 /// Read-only after init — @unchecked Sendable is safe.
 final class CpuEmbedding: @unchecked Sendable {
-    private let plain: [Float]?          // [vocab * hidden] flat
-    private let quantW: [UInt32]?        // packed
+    private let plain: [Float]?  // [vocab * hidden] flat
+    private let quantW: [UInt32]?  // packed
     private let quantScales: [Float]?
     private let quantBiases: [Float]?
     let hidden: Int
@@ -134,13 +137,18 @@ final class CpuEmbedding: @unchecked Sendable {
 
     init(weight: Tensor) {
         self.hidden = weight.shape[1]
-        self.bits = 0; self.groupSize = 0
+        self.bits = 0
+        self.groupSize = 0
         self.plain = readF32(weight)
-        self.quantW = nil; self.quantScales = nil; self.quantBiases = nil
+        self.quantW = nil
+        self.quantScales = nil
+        self.quantBiases = nil
     }
 
-    init(quantized: Tensor, scales: Tensor, biases: Tensor,
-         hidden: Int, bits: Int, groupSize: Int) {
+    init(
+        quantized: Tensor, scales: Tensor, biases: Tensor,
+        hidden: Int, bits: Int, groupSize: Int
+    ) {
         self.hidden = hidden
         self.bits = bits
         self.groupSize = groupSize
@@ -154,7 +162,7 @@ final class CpuEmbedding: @unchecked Sendable {
     func row(_ idx: Int) -> [Float] {
         if let p = plain {
             let s = idx * hidden
-            return Array(p[s..<s + hidden])
+            return Array(p[s ..< s + hidden])
         }
         return dequantRow(
             weight: quantW!, scales: quantScales!, biases: quantBiases!,
@@ -191,8 +199,9 @@ final class CpuEmbedding: @unchecked Sendable {
 final class CpuLinear: @unchecked Sendable {
     private enum Storage {
         case plain(weight: Tensor)  // [outDim, inDim] f32 GPU tensor
-        case quant(weight: Tensor, scales: Tensor, biases: Tensor,
-                   bits: Int, groupSize: Int)
+        case quant(
+            weight: Tensor, scales: Tensor, biases: Tensor,
+            bits: Int, groupSize: Int)
     }
     private let storage: Storage
     let outDim: Int
@@ -205,31 +214,38 @@ final class CpuLinear: @unchecked Sendable {
     /// (matching the original CPU path) so projector / per-layer mat-muls
     /// share one dtype contract.
     init(weight: Tensor, bias: Tensor? = nil) {
-        precondition(weight.shape.count == 2,
-                     "CpuLinear: weight must be 2D (got \(weight.shape))")
+        precondition(
+            weight.shape.count == 2,
+            "CpuLinear: weight must be 2D (got \(weight.shape))")
         self.outDim = weight.shape[0]
-        self.inDim  = weight.shape[1]
-        self.storage = .plain(weight: Self.uploadF32(weight,
-                                                    shape: [weight.shape[0], weight.shape[1]]))
+        self.inDim = weight.shape[1]
+        self.storage = .plain(
+            weight: Self.uploadF32(
+                weight,
+                shape: [weight.shape[0], weight.shape[1]]))
         self.biasTensor = bias.map { Self.uploadF32($0, shape: $0.shape) }
     }
 
     /// Quantized weight triplet. Stored as GPU tensors so `Ops.dequantGemv`
     /// can read them directly. Scales / biases must be uploaded as the
     /// activation dtype (f32 here — the SigLIP encoder is f32 throughout).
-    init(quantized: Tensor, scales: Tensor, biases: Tensor,
-         outDim: Int, inDim: Int, bits: Int, groupSize: Int,
-         bias: Tensor? = nil) {
-        precondition(quantized.dtype == .u32,
-                     "CpuLinear: quantized weight must be u32 packed")
+    init(
+        quantized: Tensor, scales: Tensor, biases: Tensor,
+        outDim: Int, inDim: Int, bits: Int, groupSize: Int,
+        bias: Tensor? = nil
+    ) {
+        precondition(
+            quantized.dtype == .u32,
+            "CpuLinear: quantized weight must be u32 packed")
         self.outDim = outDim
-        self.inDim  = inDim
+        self.inDim = inDim
         // Scales / biases must match the input dtype the kernel sees
         // (f32 for the SigLIP CPU-resident encoder).
         let scalesF32 = Self.uploadF32(scales, shape: scales.shape)
         let biasesF32 = Self.uploadF32(biases, shape: biases.shape)
-        self.storage = .quant(weight: quantized, scales: scalesF32, biases: biasesF32,
-                              bits: bits, groupSize: groupSize)
+        self.storage = .quant(
+            weight: quantized, scales: scalesF32, biases: biasesF32,
+            bits: bits, groupSize: groupSize)
         self.biasTensor = bias.map { Self.uploadF32($0, shape: $0.shape) }
     }
 
@@ -254,12 +270,13 @@ final class CpuLinear: @unchecked Sendable {
         precondition(nRows > 0, "CpuLinear.forwardBatch: nRows must be positive")
         // Flatten input rows into a single f32 GPU tensor [nRows, inDim].
         var flatIn = [Float](repeating: 0, count: nRows * inDim)
-        for r in 0..<nRows {
+        for r in 0 ..< nRows {
             // Defensive copy in case the caller hands us a row of the wrong width.
-            precondition(rows[r].count == inDim,
-                         "CpuLinear.forwardBatch: row \(r) has \(rows[r].count) cols, expected \(inDim)")
+            precondition(
+                rows[r].count == inDim,
+                "CpuLinear.forwardBatch: row \(r) has \(rows[r].count) cols, expected \(inDim)")
             let base = r * inDim
-            for c in 0..<inDim { flatIn[base + c] = rows[r][c] }
+            for c in 0 ..< inDim { flatIn[base + c] = rows[r][c] }
         }
         let inTensor = Tensor.empty(shape: [nRows, inDim], dtype: .f32, device: device)
         inTensor.copyIn(from: flatIn)
@@ -281,13 +298,15 @@ final class CpuLinear: @unchecked Sendable {
             let outT = Tensor.empty(shape: [nRows, outDim], dtype: .f32, device: device)
             let inElemBytes = inDim * MemoryLayout<Float>.size
             let outElemBytes = outDim * MemoryLayout<Float>.size
-            for r in 0..<nRows {
-                let xRow = Tensor(buffer: inTensor.buffer,
-                                  offset: inTensor.offset + r * inElemBytes,
-                                  shape: [inDim], dtype: .f32)
-                let outRow = Tensor(buffer: outT.buffer,
-                                    offset: outT.offset + r * outElemBytes,
-                                    shape: [outDim], dtype: .f32)
+            for r in 0 ..< nRows {
+                let xRow = Tensor(
+                    buffer: inTensor.buffer,
+                    offset: inTensor.offset + r * inElemBytes,
+                    shape: [inDim], dtype: .f32)
+                let outRow = Tensor(
+                    buffer: outT.buffer,
+                    offset: outT.offset + r * outElemBytes,
+                    shape: [outDim], dtype: .f32)
                 _ = Ops.dequantGemv(
                     weight: w, scales: sc, biases: bi,
                     input: xRow, bits: bits, groupSize: gs,
@@ -301,9 +320,9 @@ final class CpuLinear: @unchecked Sendable {
         if let bias = biasTensor {
             let biasVals = bias.toFloatArray()
             var tiledFlat = [Float](repeating: 0, count: nRows * outDim)
-            for r in 0..<nRows {
+            for r in 0 ..< nRows {
                 let base = r * outDim
-                for c in 0..<outDim { tiledFlat[base + c] = biasVals[c] }
+                for c in 0 ..< outDim { tiledFlat[base + c] = biasVals[c] }
             }
             let tiled = Tensor.empty(shape: [nRows, outDim], dtype: .f32, device: device)
             tiled.copyIn(from: tiledFlat)
@@ -318,9 +337,9 @@ final class CpuLinear: @unchecked Sendable {
         // Unflatten back into [[Float]] rows for the caller.
         let outFlat = withBias.toFloatArray()
         var result = [[Float]](repeating: [], count: nRows)
-        for r in 0..<nRows {
+        for r in 0 ..< nRows {
             let base = r * outDim
-            result[r] = Array(outFlat[base..<(base + outDim)])
+            result[r] = Array(outFlat[base ..< (base + outDim)])
         }
         return result
     }
@@ -342,7 +361,7 @@ private func layerNorm(_ x: [Float], weight: [Float], bias: [Float], eps: Float)
     let mean = x.reduce(0, +) / Float(n)
     let variance = x.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Float(n)
     let invStd = 1.0 / (variance + eps).squareRoot()
-    return (0..<n).map { i in (x[i] - mean) * invStd * weight[i] + bias[i] }
+    return (0 ..< n).map { i in (x[i] - mean) * invStd * weight[i] + bias[i] }
 }
 
 // ─── CPU GeLU (fast/approximate used by SigLIP MLP) ──────────────────────────
@@ -377,30 +396,33 @@ private func cpuSDPA(
     // Flatten Q into [nPatches, numHeads, headDim] — same memory order as
     // `q[i][h*headDim + d]`, so this is just a row-major copy.
     var qFlat = [Float](repeating: 0, count: nPatches * hidden)
-    for i in 0..<nPatches {
+    for i in 0 ..< nPatches {
         let base = i * hidden
-        for d in 0..<hidden { qFlat[base + d] = q[i][d] }
+        for d in 0 ..< hidden { qFlat[base + d] = q[i][d] }
     }
     // K/V need transpose to [numHeads, nPatches, headDim] for the kernel.
     var kFlat = [Float](repeating: 0, count: nPatches * hidden)
     var vFlat = [Float](repeating: 0, count: nPatches * hidden)
-    for j in 0..<nPatches {
-        for h in 0..<numHeads {
+    for j in 0 ..< nPatches {
+        for h in 0 ..< numHeads {
             let srcOff = h * headDim
             let dst = (h * nPatches + j) * headDim
-            for d in 0..<headDim {
+            for d in 0 ..< headDim {
                 kFlat[dst + d] = k[j][srcOff + d]
                 vFlat[dst + d] = v[j][srcOff + d]
             }
         }
     }
 
-    let qT = paligemmaFloatsToTensor(qFlat, shape: [nPatches, numHeads, headDim],
-                                     device: device)
-    let kT = paligemmaFloatsToTensor(kFlat, shape: [numHeads, nPatches, headDim],
-                                     device: device)
-    let vT = paligemmaFloatsToTensor(vFlat, shape: [numHeads, nPatches, headDim],
-                                     device: device)
+    let qT = paligemmaFloatsToTensor(
+        qFlat, shape: [nPatches, numHeads, headDim],
+        device: device)
+    let kT = paligemmaFloatsToTensor(
+        kFlat, shape: [numHeads, nPatches, headDim],
+        device: device)
+    let vT = paligemmaFloatsToTensor(
+        vFlat, shape: [numHeads, nPatches, headDim],
+        device: device)
     let cmd = device.makeCommandBuffer()
     let outT = Ops.sdpaBidirectional(
         q: qT, k: kT, v: vT,
@@ -412,15 +434,17 @@ private func cpuSDPA(
     let outFlat = outT.toFloatArray()  // [nPatches, numHeads, headDim] flat
 
     // Reassemble into [nPatches, numHeads * headDim].
-    return (0..<nPatches).map { i in
+    return (0 ..< nPatches).map { i in
         let src = i * hidden
-        return Array(outFlat[src..<src + hidden])
+        return Array(outFlat[src ..< src + hidden])
     }
 }
 
 /// Write a Float32 array into a fresh GPU tensor for one-shot kernel input.
-private func paligemmaFloatsToTensor(_ values: [Float], shape: [Int],
-                                     device: Device = .shared) -> Tensor {
+private func paligemmaFloatsToTensor(
+    _ values: [Float], shape: [Int],
+    device: Device = .shared
+) -> Tensor {
     let t = Tensor.empty(shape: shape, dtype: .f32, device: device)
     t.copyIn(from: values)
     return t
@@ -438,8 +462,10 @@ final class SigLIPLayer: @unchecked Sendable {
     let outProj: CpuLinear
 
     // Layer norms
-    let ln1W: [Float]; let ln1B: [Float]
-    let ln2W: [Float]; let ln2B: [Float]
+    let ln1W: [Float]
+    let ln1B: [Float]
+    let ln2W: [Float]
+    let ln2B: [Float]
 
     // MLP
     let fc1: CpuLinear
@@ -450,27 +476,41 @@ final class SigLIPLayer: @unchecked Sendable {
     let hidden: Int
     let eps: Float
 
-    init(qProj: CpuLinear, kProj: CpuLinear, vProj: CpuLinear, outProj: CpuLinear,
-         ln1W: [Float], ln1B: [Float], ln2W: [Float], ln2B: [Float],
-         fc1: CpuLinear, fc2: CpuLinear,
-         numHeads: Int, hidden: Int, eps: Float) {
-        self.qProj = qProj; self.kProj = kProj; self.vProj = vProj; self.outProj = outProj
-        self.ln1W = ln1W; self.ln1B = ln1B; self.ln2W = ln2W; self.ln2B = ln2B
-        self.fc1 = fc1; self.fc2 = fc2
-        self.numHeads = numHeads; self.headDim = hidden / numHeads
-        self.hidden = hidden; self.eps = eps
+    init(
+        qProj: CpuLinear, kProj: CpuLinear, vProj: CpuLinear, outProj: CpuLinear,
+        ln1W: [Float], ln1B: [Float], ln2W: [Float], ln2B: [Float],
+        fc1: CpuLinear, fc2: CpuLinear,
+        numHeads: Int, hidden: Int, eps: Float
+    ) {
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.outProj = outProj
+        self.ln1W = ln1W
+        self.ln1B = ln1B
+        self.ln2W = ln2W
+        self.ln2B = ln2B
+        self.fc1 = fc1
+        self.fc2 = fc2
+        self.numHeads = numHeads
+        self.headDim = hidden / numHeads
+        self.hidden = hidden
+        self.eps = eps
     }
 
     /// Load one SigLIP encoder layer from the safetensors bundle.
-    static func load(prefix: String, from bundle: SafeTensorsBundle,
-                     hidden: Int, intermediate: Int, numHeads: Int, eps: Float,
-                     quantization: ModelConfig.QuantizationConfig?) throws -> SigLIPLayer {
+    static func load(
+        prefix: String, from bundle: SafeTensorsBundle,
+        hidden: Int, intermediate: Int, numHeads: Int, eps: Float,
+        quantization: ModelConfig.QuantizationConfig?
+    ) throws -> SigLIPLayer {
         func lin(_ base: String) throws -> CpuLinear {
-            if let q = quantization, [3,4,5,6,8].contains(q.bits), bundle.isQuantized(base) {
+            if let q = quantization, [3, 4, 5, 6, 8].contains(q.bits), bundle.isQuantized(base) {
                 let t = try bundle.quantizedTriplet(base)
                 // Quantized weight shape: [outDim, inDim/packFactor]. shape[0] == outDim.
                 let outDim = t.weight.shape[0]
-                let bias = bundle.has("\(base).bias") ? try bundle.tensor(named: "\(base).bias") : nil
+                let bias =
+                    bundle.has("\(base).bias") ? try bundle.tensor(named: "\(base).bias") : nil
                 return CpuLinear(
                     quantized: t.weight, scales: t.scales, biases: t.biases,
                     outDim: outDim, inDim: hidden, bits: q.bits, groupSize: q.groupSize,
@@ -482,12 +522,12 @@ final class SigLIPLayer: @unchecked Sendable {
             return CpuLinear(weight: w, bias: bias)
         }
 
-        let qProj   = try lin("\(prefix).self_attn.q_proj")
-        let kProj   = try lin("\(prefix).self_attn.k_proj")
-        let vProj   = try lin("\(prefix).self_attn.v_proj")
+        let qProj = try lin("\(prefix).self_attn.q_proj")
+        let kProj = try lin("\(prefix).self_attn.k_proj")
+        let vProj = try lin("\(prefix).self_attn.v_proj")
         let outProj = try lin("\(prefix).self_attn.out_proj")
-        let fc1     = try lin("\(prefix).mlp.fc1")
-        let fc2     = try lin("\(prefix).mlp.fc2")
+        let fc1 = try lin("\(prefix).mlp.fc1")
+        let fc2 = try lin("\(prefix).mlp.fc2")
 
         let ln1W = readF32(try bundle.tensor(named: "\(prefix).layer_norm1.weight"))
         let ln1B = readF32(try bundle.tensor(named: "\(prefix).layer_norm1.bias"))
@@ -516,12 +556,13 @@ final class SigLIPLayer: @unchecked Sendable {
         let k = kProj.forwardBatch(xNorm1)
         let v = vProj.forwardBatch(xNorm1)
 
-        let attnOut = cpuSDPA(q: q, k: k, v: v, nPatches: nPatches, numHeads: numHeads, headDim: headDim)
+        let attnOut = cpuSDPA(
+            q: q, k: k, v: v, nPatches: nPatches, numHeads: numHeads, headDim: headDim)
         let projected = outProj.forwardBatch(attnOut)
 
         // Residual
-        var h: [[Float]] = (0..<nPatches).map { i in
-            (0..<hidden).map { d in x[i][d] + projected[i][d] }
+        var h: [[Float]] = (0 ..< nPatches).map { i in
+            (0 ..< hidden).map { d in x[i][d] + projected[i][d] }
         }
 
         // ── MLP ───────────────────────────────────────────────────────
@@ -530,22 +571,21 @@ final class SigLIPLayer: @unchecked Sendable {
         // between (the activation is element-wise, no reduction, so a
         // small CPU loop is fine and avoids an extra round-trip).
         var fc1Out = fc1.forwardBatch(xNorm2)
-        for r in 0..<nPatches {
+        for r in 0 ..< nPatches {
             let row = fc1Out[r]
             var activated = [Float](repeating: 0, count: row.count)
-            for d in 0..<row.count { activated[d] = geluFast(row[d]) }
+            for d in 0 ..< row.count { activated[d] = geluFast(row[d]) }
             fc1Out[r] = activated
         }
         let mlpOut = fc2.forwardBatch(fc1Out)
 
         // Residual
-        h = (0..<nPatches).map { i in
-            (0..<self.hidden).map { d in h[i][d] + mlpOut[i][d] }
+        h = (0 ..< nPatches).map { i in
+            (0 ..< self.hidden).map { d in h[i][d] + mlpOut[i][d] }
         }
         return h
     }
 }
-
 
 // ─── PaligemmaModel ───────────────────────────────────────────────────────────
 
@@ -587,7 +627,7 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
 
     // ── Projector ────────────────────────────────────────────────────────
     private let projLinear: CpuLinear
-    let projDim: Int        // == textEngine.hidden
+    let projDim: Int  // == textEngine.hidden
 
     // ── Shared ───────────────────────────────────────────────────────────
     /// Token id the chat template emits as an image placeholder. The
@@ -680,13 +720,14 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
         // ── Patch embedding (CPU conv2d) ──────────────────────────────────
         // patchW: [outC, kH, kW, inC] in MLX layout (already transposed from PyTorch).
         let outC = patchW.shape[0]
-        let kH   = patchW.shape[1]
-        let kW   = patchW.shape[2]
-        let inC  = patchW.shape[3]
-        precondition(kH == visPatchSize && kW == visPatchSize && inC == visNumChannels,
-                     "Paligemma: patch embedding kernel shape mismatch")
-        let wFlat = readF32(patchW)          // [outC, kH, kW, inC]
-        let bFlat = readF32(patchB)          // [outC]
+        let kH = patchW.shape[1]
+        let kW = patchW.shape[2]
+        let inC = patchW.shape[3]
+        precondition(
+            kH == visPatchSize && kW == visPatchSize && inC == visNumChannels,
+            "Paligemma: patch embedding kernel shape mismatch")
+        let wFlat = readF32(patchW)  // [outC, kH, kW, inC]
+        let bFlat = readF32(patchB)  // [outC]
 
         // numPatches per side
         let nGrid = visImgSize / visPatchSize
@@ -708,11 +749,11 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
             let yStart = py * visPatchSize
             let xStart = px * visPatchSize
             let base = patchIdx * outC
-            for oc in 0..<outC {
+            for oc in 0 ..< outC {
                 var acc = bFlat[oc]
-                for ky in 0..<kH {
-                    for kx in 0..<kW {
-                        for ic in 0..<inC {
+                for ky in 0 ..< kH {
+                    for kx in 0 ..< kW {
+                        for ic in 0 ..< inC {
                             // wFlat[oc, ky, kx, ic] in row-major [outC, kH, kW, inC]
                             let wi = oc * kH * kW * inC + ky * kW * inC + kx * inC + ic
                             let pv = pixels[ic * hw + (yStart + ky) * visImgSize + (xStart + kx)]
@@ -725,14 +766,14 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
         }
 
         // Convert flat buffer → [[Float]] row view for the encoder.
-        var patchEmbed: [[Float]] = (0..<nPatches).map { i in
+        var patchEmbed: [[Float]] = (0 ..< nPatches).map { i in
             Array(UnsafeBufferPointer(start: pePtr.advanced(by: i * outC), count: outC))
         }
 
         // ── Add position embeddings ────────────────────────────────────────
-        for i in 0..<nPatches {
-            let posRow = posEmbedding.row(i)   // [visHidden]
-            for d in 0..<visHidden {
+        for i in 0 ..< nPatches {
+            let posRow = posEmbedding.row(i)  // [visHidden]
+            for d in 0 ..< visHidden {
                 patchEmbed[i][d] += posRow[d]
             }
         }
@@ -760,8 +801,8 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
         // straight to EOS).
         let invScale = 1.0 / Float(Double(textEngine.hidden).squareRoot())
         var projected = projLinear.forwardBatch(x)
-        for i in 0..<projected.count {
-            for d in 0..<projected[i].count { projected[i][d] *= invScale }
+        for i in 0 ..< projected.count {
+            for d in 0 ..< projected[i].count { projected[i][d] *= invScale }
         }
 
         // ── Copy to GPU Tensor [nPatches, hidden] in textEngine.dtype ──
@@ -775,20 +816,20 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
         case .f32:
             let ptr = feat.buffer.contents().advanced(by: feat.offset)
                 .bindMemory(to: Float.self, capacity: nPatches * h)
-            for i in 0..<nPatches {
-                for d in 0..<h { ptr[i * h + d] = projected[i][d] }
+            for i in 0 ..< nPatches {
+                for d in 0 ..< h { ptr[i * h + d] = projected[i][d] }
             }
         case .f16:
             let ptr = feat.buffer.contents().advanced(by: feat.offset)
                 .bindMemory(to: UInt16.self, capacity: nPatches * h)
-            for i in 0..<nPatches {
-                for d in 0..<h { ptr[i * h + d] = floatToFloat16(projected[i][d]) }
+            for i in 0 ..< nPatches {
+                for d in 0 ..< h { ptr[i * h + d] = floatToFloat16(projected[i][d]) }
             }
         case .bf16:
             let ptr = feat.buffer.contents().advanced(by: feat.offset)
                 .bindMemory(to: UInt16.self, capacity: nPatches * h)
-            for i in 0..<nPatches {
-                for d in 0..<h { ptr[i * h + d] = floatToBFloat16(projected[i][d]) }
+            for i in 0 ..< nPatches {
+                for d in 0 ..< h { ptr[i * h + d] = floatToBFloat16(projected[i][d]) }
             }
         default:
             fatalError("Paligemma.setImagePixels: unsupported activation dtype \(dt)")
@@ -807,23 +848,30 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
     /// tokens take the standard `textEngine.forward(tokenId:)` path.
     /// The `position` argument is used to index into the image features:
     /// image tokens span positions 0..<numImageTokens.
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         if tokenId == imageTokenIndex {
             let row = imageFeatureRow(position: position)
-            return textEngine.forward(inputEmbedding: row, position: position,
-                                      caches: caches, on: cmd, device: device)
+            return textEngine.forward(
+                inputEmbedding: row, position: position,
+                caches: caches, on: cmd, device: device)
         }
-        return textEngine.forward(tokenId: tokenId, position: position,
-                                  caches: caches, on: cmd, device: device)
+        return textEngine.forward(
+            tokenId: tokenId, position: position,
+            caches: caches, on: cmd, device: device)
     }
 
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol], device: Device) -> Tensor {
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol], device: Device
+    ) -> Tensor {
         let cmd = device.makeCommandBuffer()
-        let logits = forward(tokenId: tokenId, position: position,
-                             caches: caches, on: cmd, device: device)
+        let logits = forward(
+            tokenId: tokenId, position: position,
+            caches: caches, on: cmd, device: device)
         cmd.commit()
         cmd.waitUntilCompleted()
         return logits
@@ -836,24 +884,31 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
     /// architecture, so a vectorised "which positions are image tokens"
     /// chunked path is future work; today this is commit-count-batched
     /// only.
-    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                             caches: [any LayerCacheProtocol],
-                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(!tokenIds.isEmpty,
-                     "PaligemmaModel.forwardMulti: tokenIds must be non-empty")
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "PaligemmaModel.forwardMulti: tokenIds must be non-empty")
         var logits: Tensor!
         for (i, tok) in tokenIds.enumerated() {
-            logits = forward(tokenId: tok, position: position + i,
-                             caches: caches, on: cmd, device: device)
+            logits = forward(
+                tokenId: tok, position: position + i,
+                caches: caches, on: cmd, device: device)
         }
         return logits
     }
 
-    public func forwardSample(tokenId: Int, position: Int,
-                              caches: [any LayerCacheProtocol], device: Device) -> Int {
+    public func forwardSample(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol], device: Device
+    ) -> Int {
         let cmd = device.makeCommandBuffer()
-        let logits = forward(tokenId: tokenId, position: position,
-                             caches: caches, on: cmd, device: device)
+        let logits = forward(
+            tokenId: tokenId, position: position,
+            caches: caches, on: cmd, device: device)
         let outBuf = device.makeBuffer(length: 4)
         let outTensor = Tensor(buffer: outBuf, offset: 0, shape: [1], dtype: .u32)
         Ops.argmax(logits, into: outTensor, on: cmd)
@@ -885,9 +940,9 @@ private func floatToFloat16(_ x: Float) -> UInt16 {
     var out: UInt16 = 0
     withUnsafeBytes(of: x) { fBuf in
         let bits = fBuf.load(as: UInt32.self)
-        let sign    = UInt16((bits >> 16) & 0x8000)
-        let exp32   = Int((bits >> 23) & 0xff)
-        let mant32  = bits & 0x7fffff
+        let sign = UInt16((bits >> 16) & 0x8000)
+        let exp32 = Int((bits >> 23) & 0xff)
+        let mant32 = bits & 0x7fffff
         if exp32 == 255 {
             out = sign | 0x7c00 | UInt16(mant32 >> 13)
         } else if exp32 > 142 {
@@ -913,15 +968,15 @@ private func fillScale(_ buf: MTLBuffer, value: Float, n: Int, dtype: DType) {
     switch dtype {
     case .f32:
         let ptr = buf.contents().bindMemory(to: Float.self, capacity: n)
-        for i in 0..<n { ptr[i] = value }
+        for i in 0 ..< n { ptr[i] = value }
     case .f16:
         let ptr = buf.contents().bindMemory(to: UInt16.self, capacity: n)
         let h16 = floatToFloat16(value)
-        for i in 0..<n { ptr[i] = h16 }
+        for i in 0 ..< n { ptr[i] = h16 }
     case .bf16:
         let ptr = buf.contents().bindMemory(to: UInt16.self, capacity: n)
         let bf = floatToBFloat16(value)
-        for i in 0..<n { ptr[i] = bf }
+        for i in 0 ..< n { ptr[i] = bf }
     default:
         fatalError("fillScale: unsupported dtype \(dtype)")
     }

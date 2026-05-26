@@ -26,6 +26,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("FishSpeechConfig")

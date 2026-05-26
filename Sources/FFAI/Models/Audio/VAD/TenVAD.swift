@@ -90,11 +90,13 @@ public struct TenVADConfig: Sendable {
     /// Padding added to each detected segment (ms).
     public let speechPadMs: Int
 
-    public init(hopSize: Int = 256,
-                threshold: Float = 0.5,
-                minSpeechDurationMs: Int = 250,
-                minSilenceDurationMs: Int = 100,
-                speechPadMs: Int = 30) {
+    public init(
+        hopSize: Int = 256,
+        threshold: Float = 0.5,
+        minSpeechDurationMs: Int = 250,
+        minSilenceDurationMs: Int = 100,
+        speechPadMs: Int = 30
+    ) {
         self.hopSize = hopSize
         self.threshold = threshold
         self.minSpeechDurationMs = minSpeechDurationMs
@@ -124,23 +126,26 @@ public struct TenVADConfig: Sendable {
 // resolved at runtime via dlopen / dlsym so the package has no link-time
 // dependency on the framework binary.
 
-private typealias TenVadCreateFn = @convention(c) (
-    UnsafeMutablePointer<UnsafeMutableRawPointer?>,
-    Int,
-    Float
-) -> Int32
+private typealias TenVadCreateFn =
+    @convention(c) (
+        UnsafeMutablePointer<UnsafeMutableRawPointer?>,
+        Int,
+        Float
+    ) -> Int32
 
-private typealias TenVadProcessFn = @convention(c) (
-    UnsafeMutableRawPointer?,
-    UnsafePointer<Int16>,
-    Int,
-    UnsafeMutablePointer<Float>,
-    UnsafeMutablePointer<Int32>
-) -> Int32
+private typealias TenVadProcessFn =
+    @convention(c) (
+        UnsafeMutableRawPointer?,
+        UnsafePointer<Int16>,
+        Int,
+        UnsafeMutablePointer<Float>,
+        UnsafeMutablePointer<Int32>
+    ) -> Int32
 
-private typealias TenVadDestroyFn = @convention(c) (
-    UnsafeMutablePointer<UnsafeMutableRawPointer?>
-) -> Int32
+private typealias TenVadDestroyFn =
+    @convention(c) (
+        UnsafeMutablePointer<UnsafeMutableRawPointer?>
+    ) -> Int32
 
 // ─── Native wrapper ───────────────────────────────────────────────────
 
@@ -163,7 +168,7 @@ private final class TenVADNative {
             }
             return unsafeBitCast(ptr, to: T.self)
         }
-        self.createFn  = try sym("ten_vad_create")
+        self.createFn = try sym("ten_vad_create")
         self.processFn = try sym("ten_vad_process")
         self.destroyFn = try sym("ten_vad_destroy")
 
@@ -229,8 +234,9 @@ public final class TenVADModel: @unchecked Sendable {
             throw TenVADError.unsupportedSampleRate(sampleRate)
         }
         if audio.isEmpty {
-            return VADOutput(probabilities: [], frameStrideSamples: config.hopSize,
-                             sampleRate: sampleRate, segments: [])
+            return VADOutput(
+                probabilities: [], frameStrideSamples: config.hopSize,
+                sampleRate: sampleRate, segments: [])
         }
 
         // Create a fresh native instance for this detection pass. Each
@@ -252,10 +258,10 @@ public final class TenVADModel: @unchecked Sendable {
 
         // Process hop by hop, converting float → int16 each time.
         var pcm16 = [Int16](repeating: 0, count: hs)
-        for hopIdx in 0..<(padded.count / hs) {
+        for hopIdx in 0 ..< (padded.count / hs) {
             let base = hopIdx * hs
             // Scale [-1, 1] → int16. Values outside [-1, 1] are clamped.
-            for i in 0..<hs {
+            for i in 0 ..< hs {
                 let s = padded[base + i]
                 let clamped = max(-1, min(1, s))
                 pcm16[i] = Int16(clamped * 32767)
@@ -271,8 +277,9 @@ public final class TenVADModel: @unchecked Sendable {
             minSilenceDurationMs: config.minSilenceDurationMs,
             speechPadMs: config.speechPadMs)
 
-        return VADOutput(probabilities: probs, frameStrideSamples: hs,
-                         sampleRate: sampleRate, segments: segments)
+        return VADOutput(
+            probabilities: probs, frameStrideSamples: hs,
+            sampleRate: sampleRate, segments: segments)
     }
 
     // ─── Probability stream → segments ───────────────────────────────
@@ -291,7 +298,10 @@ public final class TenVADModel: @unchecked Sendable {
         // Hysteresis: a lower threshold ends speech than starts it.
         let negThreshold = max(threshold - 0.15, 0.01)
 
-        struct Run { var start: Int; var end: Int }
+        struct Run {
+            var start: Int
+            var end: Int
+        }
         var speeches: [Run] = []
         var triggered = false
         var currentStart = 0
@@ -339,8 +349,9 @@ public final class TenVADModel: @unchecked Sendable {
             }
         }
         return padded.map {
-            VADSpeechSegment(startSample: $0.start, endSample: $0.end,
-                             sampleRate: sampleRate)
+            VADSpeechSegment(
+                startSample: $0.start, endSample: $0.end,
+                sampleRate: sampleRate)
         }
     }
 
@@ -354,7 +365,8 @@ public final class TenVADModel: @unchecked Sendable {
     /// itself in that case rather than throwing a misleading error).
     public static func frameworkBinary(in directory: URL) -> URL? {
         // Canonical path inside the TEN-framework/ten-vad snapshot.
-        let canonical = directory
+        let canonical =
+            directory
             .appendingPathComponent("lib/macOS/ten_vad.framework")
             .appendingPathComponent("Versions/A/ten_vad")
         if FileManager.default.fileExists(atPath: canonical.path) {
@@ -372,13 +384,16 @@ public final class TenVADModel: @unchecked Sendable {
     ///
     /// Throws `TenVADError.frameworkNotFound` if the ten_vad framework
     /// binary is not present under the snapshot's `lib/macOS/` path.
-    public static func loadFromDirectory(_ directory: URL,
-                                          device _: Device = .shared) throws -> TenVADModel {
+    public static func loadFromDirectory(
+        _ directory: URL,
+        device _: Device = .shared
+    ) throws -> TenVADModel {
         // config.json is optional; published defaults are sufficient.
         var config = TenVADConfig()
         let configURL = directory.appendingPathComponent("config.json")
         if let data = try? Data(contentsOf: configURL),
-           let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        {
             config = TenVADConfig.decode(from: raw)
         }
 
@@ -386,14 +401,17 @@ public final class TenVADModel: @unchecked Sendable {
             throw TenVADError.frameworkNotFound(
                 directory.appendingPathComponent("lib/macOS/ten_vad.framework/Versions/A/ten_vad"))
         }
-        return TenVADModel(config: config, frameworkBinaryURL: binaryURL,
-                           directory: directory)
+        return TenVADModel(
+            config: config, frameworkBinaryURL: binaryURL,
+            directory: directory)
     }
 
     /// Download (or hit cache) the `TEN-framework/ten-vad` HuggingFace
     /// snapshot and load the model from the local directory.
-    public static func fromPretrained(_ idOrPath: String,
-                                       device: Device = .shared) async throws -> TenVADModel {
+    public static func fromPretrained(
+        _ idOrPath: String,
+        device: Device = .shared
+    ) async throws -> TenVADModel {
         let dir = try await ModelLocator().resolve(idOrPath: idOrPath)
         return try loadFromDirectory(dir, device: device)
     }

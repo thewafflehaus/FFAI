@@ -62,9 +62,11 @@ public struct AudioEncoderConfig: Sendable {
     /// LayerNorm epsilon.
     public let layerNormEps: Float
 
-    public init(nMels: Int, hidden: Int, intermediate: Int,
-                nLayers: Int, nHeads: Int, maxAudioCtx: Int = 1500,
-                layerNormEps: Float = 1e-5) {
+    public init(
+        nMels: Int, hidden: Int, intermediate: Int,
+        nLayers: Int, nHeads: Int, maxAudioCtx: Int = 1500,
+        layerNormEps: Float = 1e-5
+    ) {
         self.nMels = nMels
         self.hidden = hidden
         self.intermediate = intermediate
@@ -91,16 +93,22 @@ public final class AudioEncoderLayer: Module {
     let hidden, nHeads, headDim, intermediate: Int
     let scale: Float
 
-    init(layerNorm1: LayerNorm,
-         qProj: Linear, kProj: Linear, vProj: Linear, oProj: Linear,
-         layerNorm2: LayerNorm, fc1: Linear, fc2: Linear,
-         hidden: Int, nHeads: Int, intermediate: Int) {
+    init(
+        layerNorm1: LayerNorm,
+        qProj: Linear, kProj: Linear, vProj: Linear, oProj: Linear,
+        layerNorm2: LayerNorm, fc1: Linear, fc2: Linear,
+        hidden: Int, nHeads: Int, intermediate: Int
+    ) {
         self.layerNorm1 = layerNorm1
-        self.qProj = qProj; self.kProj = kProj
-        self.vProj = vProj; self.oProj = oProj
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
         self.layerNorm2 = layerNorm2
-        self.fc1 = fc1; self.fc2 = fc2
-        self.hidden = hidden; self.nHeads = nHeads
+        self.fc1 = fc1
+        self.fc2 = fc2
+        self.hidden = hidden
+        self.nHeads = nHeads
         self.headDim = hidden / nHeads
         self.intermediate = intermediate
         self.scale = 1.0 / Float(Double(hidden / nHeads).squareRoot())
@@ -129,12 +137,15 @@ public final class AudioEncoderLayer: Module {
     /// O(nFrames²·headDim) attention per head is cheap next to the GPU
     /// projection GEMMs and unambiguously correct. A head-dim-agnostic
     /// audio SDPA kernel is a later performance pass.
-    func forward(_ h: Tensor, nFrames: Int, device: Device,
-                 on cmd: MTLCommandBuffer) -> Tensor {
+    func forward(
+        _ h: Tensor, nFrames: Int, device: Device,
+        on cmd: MTLCommandBuffer
+    ) -> Tensor {
         // ── Attention sub-block ──
-        let normed = Ops.layerNorm(h, weight: layerNorm1.weight,
-                                   bias: layerNorm1.bias, eps: layerNorm1.eps,
-                                   nRows: nFrames, rowSize: hidden, on: cmd)
+        let normed = Ops.layerNorm(
+            h, weight: layerNorm1.weight,
+            bias: layerNorm1.bias, eps: layerNorm1.eps,
+            nRows: nFrames, rowSize: hidden, on: cmd)
         let q = projectRows(qProj, normed, nRows: nFrames, on: cmd)
         let k = projectRows(kProj, normed, nRows: nFrames, on: cmd)
         let v = projectRows(vProj, normed, nRows: nFrames, on: cmd)
@@ -143,21 +154,25 @@ public final class AudioEncoderLayer: Module {
         cmd.commit()
         cmd.waitUntilCompleted()
 
-        let attnFlat = cpuAttention(q: q, k: k, v: v, nFrames: nFrames,
-                                    device: device)
+        let attnFlat = cpuAttention(
+            q: q, k: k, v: v, nFrames: nFrames,
+            device: device)
 
         // ── Residual + MLP sub-block ──
         let cmd2 = device.makeCommandBuffer()
         let attnProj = projectRows(oProj, attnFlat, nRows: nFrames, on: cmd2)
         let postAttn = Ops.add(h, attnProj, on: cmd2)
-        let normed2 = Ops.layerNorm(postAttn, weight: layerNorm2.weight,
-                                    bias: layerNorm2.bias, eps: layerNorm2.eps,
-                                    nRows: nFrames, rowSize: hidden, on: cmd2)
-        let ff1 = projectRows(fc1, normed2, nRows: nFrames,
-                              outDim: intermediate, on: cmd2)
+        let normed2 = Ops.layerNorm(
+            postAttn, weight: layerNorm2.weight,
+            bias: layerNorm2.bias, eps: layerNorm2.eps,
+            nRows: nFrames, rowSize: hidden, on: cmd2)
+        let ff1 = projectRows(
+            fc1, normed2, nRows: nFrames,
+            outDim: intermediate, on: cmd2)
         let act = Ops.gelu(ff1, on: cmd2)
-        let ff2 = projectRows(fc2, act, nRows: nFrames, outDim: hidden,
-                              on: cmd2)
+        let ff2 = projectRows(
+            fc2, act, nRows: nFrames, outDim: hidden,
+            on: cmd2)
         let result = Ops.add(postAttn, ff2, on: cmd2)
         cmd2.commit()
         cmd2.waitUntilCompleted()
@@ -176,8 +191,10 @@ public final class AudioEncoderLayer: Module {
     /// Race-free because each iteration writes to a disjoint
     /// `[oBase, oBase + headDim)` output slice — no two iterations touch
     /// the same element, so the writes need no synchronization.
-    private func cpuAttention(q: Tensor, k: Tensor, v: Tensor,
-                              nFrames: Int, device: Device) -> Tensor {
+    private func cpuAttention(
+        q: Tensor, k: Tensor, v: Tensor,
+        nFrames: Int, device: Device
+    ) -> Tensor {
         let qa = q.toFloatArray()
         let ka = k.toFloatArray()
         let va = v.toFloatArray()
@@ -190,46 +207,49 @@ public final class AudioEncoderLayer: Module {
         out.withUnsafeMutableBufferPointer { outBuf in
             let outPtr = outBuf.baseAddress!
             qa.withUnsafeBufferPointer { qPtr in
-            ka.withUnsafeBufferPointer { kPtr in
-            va.withUnsafeBufferPointer { vPtr in
-                let qb = qPtr.baseAddress!
-                let kb = kPtr.baseAddress!
-                let vb = vPtr.baseAddress!
-                DispatchQueue.concurrentPerform(iterations: nHeadsLocal * nFrames) { work in
-                    let head = work / nFrames
-                    let i = work % nFrames
-                    let hOff = head * headDimLocal
-                    var scores = [Float](repeating: 0, count: nFrames)
-                    var maxScore = -Float.greatestFiniteMagnitude
-                    let qBase = i * stride + hOff
-                    for j in 0..<nFrames {
-                        var dot: Float = 0
-                        let kBase = j * stride + hOff
-                        for d in 0..<headDimLocal { dot += qb[qBase + d] * kb[kBase + d] }
-                        let s = dot * scaleLocal
-                        scores[j] = s
-                        if s > maxScore { maxScore = s }
-                    }
-                    var sumExp: Float = 0
-                    for j in 0..<nFrames {
-                        let e = exp(scores[j] - maxScore)
-                        scores[j] = e
-                        sumExp += e
-                    }
-                    let inv = sumExp > 0 ? 1 / sumExp : 0
-                    let oBase = i * stride + hOff
-                    for j in 0..<nFrames {
-                        let w = scores[j] * inv
-                        let vBase = j * stride + hOff
-                        for d in 0..<headDimLocal { outPtr[oBase + d] += w * vb[vBase + d] }
+                ka.withUnsafeBufferPointer { kPtr in
+                    va.withUnsafeBufferPointer { vPtr in
+                        let qb = qPtr.baseAddress!
+                        let kb = kPtr.baseAddress!
+                        let vb = vPtr.baseAddress!
+                        DispatchQueue.concurrentPerform(iterations: nHeadsLocal * nFrames) { work in
+                            let head = work / nFrames
+                            let i = work % nFrames
+                            let hOff = head * headDimLocal
+                            var scores = [Float](repeating: 0, count: nFrames)
+                            var maxScore = -Float.greatestFiniteMagnitude
+                            let qBase = i * stride + hOff
+                            for j in 0 ..< nFrames {
+                                var dot: Float = 0
+                                let kBase = j * stride + hOff
+                                for d in 0 ..< headDimLocal { dot += qb[qBase + d] * kb[kBase + d] }
+                                let s = dot * scaleLocal
+                                scores[j] = s
+                                if s > maxScore { maxScore = s }
+                            }
+                            var sumExp: Float = 0
+                            for j in 0 ..< nFrames {
+                                let e = exp(scores[j] - maxScore)
+                                scores[j] = e
+                                sumExp += e
+                            }
+                            let inv = sumExp > 0 ? 1 / sumExp : 0
+                            let oBase = i * stride + hOff
+                            for j in 0 ..< nFrames {
+                                let w = scores[j] * inv
+                                let vBase = j * stride + hOff
+                                for d in 0 ..< headDimLocal {
+                                    outPtr[oBase + d] += w * vb[vBase + d]
+                                }
+                            }
+                        }
                     }
                 }
             }
-            }
-            }
         }
-        let result = Tensor.empty(shape: [nFrames, stride], dtype: q.dtype,
-                                  device: device)
+        let result = Tensor.empty(
+            shape: [nFrames, stride], dtype: q.dtype,
+            device: device)
         AudioPreprocessing.copyFloats(out, into: result)
         return result
     }
@@ -238,14 +258,17 @@ public final class AudioEncoderLayer: Module {
     /// `Ops.gemm`, then broadcast-add the bias. Whisper Linears all
     /// carry a bias except `k_proj` (which has none — handled by the
     /// optional `Linear.bias`).
-    private func projectRows(_ linear: Linear, _ x: Tensor, nRows: Int,
-                             outDim: Int? = nil,
-                             on cmd: MTLCommandBuffer) -> Tensor {
+    private func projectRows(
+        _ linear: Linear, _ x: Tensor, nRows: Int,
+        outDim: Int? = nil,
+        on cmd: MTLCommandBuffer
+    ) -> Tensor {
         let outD = outDim ?? linear.weight.shape[0]
         let y = Ops.gemm(weight: linear.weight, input: x, nRows: nRows, on: cmd)
         guard let bias = linear.bias else { return y }
-        return AudioEncoder.addRowBias(y, bias: bias, nRows: nRows,
-                                       rowSize: outD, on: cmd)
+        return AudioEncoder.addRowBias(
+            y, bias: bias, nRows: nRows,
+            rowSize: outD, on: cmd)
     }
 }
 
@@ -275,11 +298,13 @@ public final class AudioEncoder: Module {
 
     public let dtype: DType
 
-    public init(config: AudioEncoderConfig,
-                conv1Weight: Tensor, conv1Bias: Tensor,
-                conv2Weight: Tensor, conv2Bias: Tensor,
-                positionEmbedding: Tensor, layers: [AudioEncoderLayer],
-                postLayerNorm: LayerNorm, dtype: DType) {
+    public init(
+        config: AudioEncoderConfig,
+        conv1Weight: Tensor, conv1Bias: Tensor,
+        conv2Weight: Tensor, conv2Bias: Tensor,
+        positionEmbedding: Tensor, layers: [AudioEncoderLayer],
+        postLayerNorm: LayerNorm, dtype: DType
+    ) {
         self.config = config
         self.conv1Weight = conv1Weight
         self.conv1Bias = conv1Bias
@@ -321,24 +346,29 @@ public final class AudioEncoder: Module {
     /// All GPU work is queued on private command buffers committed +
     /// waited before returning, since callers consume the result on the
     /// CPU or hand it to a decoder loop.
-    public func encode(mel: Tensor, melFrameMajor: Bool = false,
-                       device: Device = .shared) -> Tensor {
+    public func encode(
+        mel: Tensor, melFrameMajor: Bool = false,
+        device: Device = .shared
+    ) -> Tensor {
         precondition(mel.shape.count == 2, "AudioEncoder.encode: mel must be 2D")
         // Normalise to channel-major [nMels, nFrames] — the conv-stem
         // input layout.
         let nFrames: Int
         let melCM: Tensor
         if melFrameMajor {
-            precondition(mel.shape[1] == config.nMels,
-                         "AudioEncoder.encode: frame-major mel must be "
-                         + "[nFrames, nMels=\(config.nMels)]")
+            precondition(
+                mel.shape[1] == config.nMels,
+                "AudioEncoder.encode: frame-major mel must be "
+                    + "[nFrames, nMels=\(config.nMels)]")
             nFrames = mel.shape[0]
-            melCM = transpose2D(mel, rows: nFrames, cols: config.nMels,
-                                device: device)
+            melCM = transpose2D(
+                mel, rows: nFrames, cols: config.nMels,
+                device: device)
         } else {
-            precondition(mel.shape[0] == config.nMels,
-                         "AudioEncoder.encode: channel-major mel must be "
-                         + "[nMels=\(config.nMels), nFrames]")
+            precondition(
+                mel.shape[0] == config.nMels,
+                "AudioEncoder.encode: channel-major mel must be "
+                    + "[nMels=\(config.nMels), nFrames]")
             nFrames = mel.shape[1]
             melCM = mel
         }
@@ -365,14 +395,16 @@ public final class AudioEncoder: Module {
 
         // conv output is channel-major [hidden, nAudioCtx]; the
         // transformer wants frame-major [nAudioCtx, hidden].
-        var h = transpose2D(conv2Act.reshaped(to: [config.hidden, nAudioCtx]),
-                            rows: config.hidden, cols: nAudioCtx,
-                            device: device)
+        var h = transpose2D(
+            conv2Act.reshaped(to: [config.hidden, nAudioCtx]),
+            rows: config.hidden, cols: nAudioCtx,
+            device: device)
 
         // ── + position embedding ──
-        precondition(nAudioCtx <= config.maxAudioCtx,
-                     "AudioEncoder.encode: \(nAudioCtx) frames exceed "
-                     + "maxAudioCtx \(config.maxAudioCtx)")
+        precondition(
+            nAudioCtx <= config.maxAudioCtx,
+            "AudioEncoder.encode: \(nAudioCtx) frames exceed "
+                + "maxAudioCtx \(config.maxAudioCtx)")
         let posSlice = positionEmbedding.slicedRows(start: 0, count: nAudioCtx)
         let cmdP = device.makeCommandBuffer()
         h = Ops.add(h, posSlice, on: cmdP)
@@ -387,9 +419,10 @@ public final class AudioEncoder: Module {
 
         // ── Post-encoder LayerNorm ──
         let cmdN = device.makeCommandBuffer()
-        h = Ops.layerNorm(h, weight: postLayerNorm.weight,
-                          bias: postLayerNorm.bias, eps: postLayerNorm.eps,
-                          nRows: nAudioCtx, rowSize: config.hidden, on: cmdN)
+        h = Ops.layerNorm(
+            h, weight: postLayerNorm.weight,
+            bias: postLayerNorm.bias, eps: postLayerNorm.eps,
+            nRows: nAudioCtx, rowSize: config.hidden, on: cmdN)
         cmdN.commit()
         cmdN.waitUntilCompleted()
         return h
@@ -398,12 +431,14 @@ public final class AudioEncoder: Module {
     /// CPU transpose of a 2D `[rows, cols]` tensor to `[cols, rows]`.
     /// Frame counts × hidden are at most a couple million elements —
     /// cheap relative to the encoder GEMMs.
-    private func transpose2D(_ x: Tensor, rows: Int, cols: Int,
-                             device: Device) -> Tensor {
+    private func transpose2D(
+        _ x: Tensor, rows: Int, cols: Int,
+        device: Device
+    ) -> Tensor {
         let src = x.toFloatArray()
         var dst = [Float](repeating: 0, count: rows * cols)
-        for r in 0..<rows {
-            for c in 0..<cols {
+        for r in 0 ..< rows {
+            for c in 0 ..< cols {
                 dst[c * rows + r] = src[r * cols + c]
             }
         }
@@ -414,13 +449,15 @@ public final class AudioEncoder: Module {
 
     /// Add a `[rowSize]` bias to each of `nRows` rows of a flat
     /// `[nRows, rowSize]` tensor. Shared by `AudioEncoderLayer`.
-    static func addRowBias(_ x: Tensor, bias: Tensor, nRows: Int,
-                           rowSize: Int, on cmd: MTLCommandBuffer) -> Tensor {
+    static func addRowBias(
+        _ x: Tensor, bias: Tensor, nRows: Int,
+        rowSize: Int, on cmd: MTLCommandBuffer
+    ) -> Tensor {
         let tiled = Tensor.empty(shape: [nRows, rowSize], dtype: x.dtype)
         let biasVals = bias.toFloatArray()
         var flat = [Float](repeating: 0, count: nRows * rowSize)
-        for r in 0..<nRows {
-            for c in 0..<rowSize { flat[r * rowSize + c] = biasVals[c] }
+        for r in 0 ..< nRows {
+            for c in 0 ..< rowSize { flat[r * rowSize + c] = biasVals[c] }
         }
         AudioPreprocessing.copyFloats(flat, into: tiled)
         return Ops.add(x, tiled, on: cmd)

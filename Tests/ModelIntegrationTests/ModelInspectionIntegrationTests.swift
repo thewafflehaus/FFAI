@@ -24,9 +24,10 @@
 // from silent regressions.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Model Inspection Integration", .serialized)
 struct ModelInspectionIntegrationTests {
@@ -53,8 +54,10 @@ struct ModelInspectionIntegrationTests {
         let tokens = m.tokenizer.encode(text: prompt)
         #expect(!tokens.isEmpty)
         let roundtrip = m.tokenizer.decode(tokens: tokens, skipSpecialTokens: false)
-        #expect(roundtrip.contains("quiet"),
-                "tokenizer round-trip should preserve a recognizable substring of the prompt; got \"\(roundtrip)\"")
+        #expect(
+            roundtrip.contains("quiet"),
+            "tokenizer round-trip should preserve a recognizable substring of the prompt; got \"\(roundtrip)\""
+        )
 
         // Per-layer KV cache layout — inspect prints `bytesAllocated`
         // and the layer 0 stride. Asserting just on the totals
@@ -77,7 +80,9 @@ struct ModelInspectionIntegrationTests {
         let top = Sampling.topN(l, n: 5)
         #expect(top.count == 5)
         for (_, value) in top {
-            #expect(value.isFinite, "inspect top-5 logits must be finite (no NaN, no inf); got \(value)")
+            #expect(
+                value.isFinite, "inspect top-5 logits must be finite (no NaN, no inf); got \(value)"
+            )
         }
     }
 }

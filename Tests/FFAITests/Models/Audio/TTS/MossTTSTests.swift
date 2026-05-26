@@ -27,6 +27,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("MossTTS")
@@ -269,14 +270,16 @@ struct MossTTSTests {
         let hfRoot = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".cache/huggingface/hub")
         let candidates = [
-            "models--mlx-community--MOSS-TTS-8B-8bit",
+            "models--mlx-community--MOSS-TTS-8B-8bit"
         ]
         let fm = FileManager.default
         for slug in candidates {
             let base = hfRoot.appendingPathComponent(slug)
                 .appendingPathComponent("snapshots")
-            guard let sub = try? fm.contentsOfDirectory(
-                at: base, includingPropertiesForKeys: nil).first
+            guard
+                let sub = try? fm.contentsOfDirectory(
+                    at: base, includingPropertiesForKeys: nil
+                ).first
             else { continue }
             guard fm.fileExists(atPath: sub.appendingPathComponent("config.json").path)
             else { continue }

@@ -23,6 +23,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("BigVGAN vocoder — structure + decode")
@@ -33,18 +34,18 @@ struct BigVGANCodecTests {
     @Test("BigVGANConfig decodes a representative config.json")
     func configDecode() throws {
         let json = """
-        {
-          "num_mels": 100,
-          "upsample_rates": [4, 4, 2, 2, 2, 2],
-          "upsample_kernel_sizes": [8, 8, 4, 4, 4, 4],
-          "upsample_initial_channel": 1536,
-          "resblock": "1",
-          "resblock_kernel_sizes": [3, 7, 11],
-          "resblock_dilation_sizes": [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
-          "activation": "snakebeta",
-          "snake_logscale": true
-        }
-        """
+            {
+              "num_mels": 100,
+              "upsample_rates": [4, 4, 2, 2, 2, 2],
+              "upsample_kernel_sizes": [8, 8, 4, 4, 4, 4],
+              "upsample_initial_channel": 1536,
+              "resblock": "1",
+              "resblock_kernel_sizes": [3, 7, 11],
+              "resblock_dilation_sizes": [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+              "activation": "snakebeta",
+              "snake_logscale": true
+            }
+            """
         let config = try JSONDecoder().decode(
             BigVGANConfig.self, from: Data(json.utf8))
         #expect(config.numMels == 100)
@@ -108,8 +109,8 @@ struct BigVGANCodecTests {
         let melBins = vocoder.melChannels
         let frames = 32
         var feats = [Float](repeating: 0, count: melBins * frames)
-        for ch in 0..<melBins {
-            for t in 0..<frames {
+        for ch in 0 ..< melBins {
+            for t in 0 ..< frames {
                 feats[ch * frames + t] =
                     0.1 * sin(Float(t) * 0.07 + Float(ch) * 0.03)
             }

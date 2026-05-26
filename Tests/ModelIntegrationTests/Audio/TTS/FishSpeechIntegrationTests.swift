@@ -31,9 +31,10 @@
 // Heavy GPU usage; do NOT run in parallel with other ModelTests.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("FishSpeech Integration", .serialized)
 struct FishSpeechIntegrationTests {
@@ -127,7 +128,9 @@ struct FishSpeechIntegrationTests {
 
         } catch AudioGenerationError.codecNotAvailable {
             // Codec weights absent from this snapshot — acceptable.
-            print("FishSpeech Stage-2: codec weights not found, synthesize threw codecNotAvailable (expected).")
+            print(
+                "FishSpeech Stage-2: codec weights not found, synthesize threw codecNotAvailable (expected)."
+            )
         } catch {
             Issue.record("synthesize threw unexpected error: \(error)")
         }

@@ -43,46 +43,60 @@ import Foundation
 struct InspectCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "inspect",
-        abstract: "Load a model and print architecture, tokens, and top-5 logits for a fixed probe prompt."
+        abstract:
+            "Load a model and print architecture, tokens, and top-5 logits for a fixed probe prompt."
     )
 
-    @Option(name: .shortAndLong,
-            help: "HuggingFace repo id or local model path.")
+    @Option(
+        name: .shortAndLong,
+        help: "HuggingFace repo id or local model path.")
     var model: String = "unsloth/Llama-3.2-1B"
 
-    @Option(name: .shortAndLong,
-            help: "Probe prompt — kept short on purpose to make the top-5 output easy to eyeball.")
+    @Option(
+        name: .shortAndLong,
+        help: "Probe prompt — kept short on purpose to make the top-5 output easy to eyeball.")
     var prompt: String = "Once upon a time, in a quiet"
 
-    @Option(name: .long,
-            help: "How many of the top next-token logits to print (default 5).")
+    @Option(
+        name: .long,
+        help: "How many of the top next-token logits to print (default 5).")
     var topK: Int = 5
 
-    @Option(name: .long,
-            help: "KV cache scheme: \"raw\", \"affine8\", \"affine4\", or any \"auraNvM\" recipe.")
+    @Option(
+        name: .long,
+        help: "KV cache scheme: \"raw\", \"affine8\", \"affine4\", or any \"auraNvM\" recipe.")
     var kvCache: String?
 
-    @Option(name: .long,
-            help: "Maximum positions retained per attention layer. 0 / unset = unbounded.")
+    @Option(
+        name: .long,
+        help: "Maximum positions retained per attention layer. 0 / unset = unbounded.")
     var kvWindowSize: Int?
 
-    @Option(name: .long,
-            help: "Attention-sink positions to pin across FIFO eviction. Default 0.")
+    @Option(
+        name: .long,
+        help: "Attention-sink positions to pin across FIFO eviction. Default 0.")
     var kvWindowKeep: Int?
 
     @Flag(name: .long, help: "Enable debug logging for every FFAI subsystem.")
     var debug: Bool = false
 
-    @Option(name: .long,
-            help: "Profiling level: 0 (off), 1 (wallclock breakdown), 2 (level 1 + os_signpost).")
+    @Option(
+        name: .long,
+        help: "Profiling level: 0 (off), 1 (wallclock breakdown), 2 (level 1 + os_signpost).")
     var profiling: Int = 0
 
-    @Flag(name: .long,
-          help: "Print per-layer intermediate-value stats (min/max/nan/inf + first 4 values) at every layer boundary during prefill. Slow — first-light debugging only. Sets FFAI_INSPECT=1.")
+    @Flag(
+        name: .long,
+        help:
+            "Print per-layer intermediate-value stats (min/max/nan/inf + first 4 values) at every layer boundary during prefill. Slow — first-light debugging only. Sets FFAI_INSPECT=1."
+    )
     var layerTrace: Bool = false
 
-    @Option(name: .long,
-            help: "Comma-separated layer indices to trace. Only meaningful with --layer-trace. Example: --trace-layers 0,1,5,15")
+    @Option(
+        name: .long,
+        help:
+            "Comma-separated layer indices to trace. Only meaningful with --layer-trace. Example: --trace-layers 0,1,5,15"
+    )
     var traceLayers: String?
 
     func run() async throws {
@@ -154,7 +168,9 @@ struct InspectCommand: AsyncParsableCommand {
         print("│ head_dim           \(info.headDim)")
         print("│ vocab_size         \(info.vocab)")
         print("│ max_position_emb   \(info.maxSeq)")
-        print("│ parameters         \(formatCount(info.parameterCount)) (\(formatBytes(info.parameterBytes)))")
+        print(
+            "│ parameters         \(formatCount(info.parameterCount)) (\(formatBytes(info.parameterBytes)))"
+        )
         if let q = info.quantization {
             print("│ weight quant       int\(q.bits) group_size=\(q.groupSize)")
         } else {
@@ -248,7 +264,8 @@ struct InspectCommand: AsyncParsableCommand {
         }
         if tokInfo.hasChatTemplate {
             let markers = tokInfo.chatTemplateMarkers
-            let markersStr = markers.isEmpty
+            let markersStr =
+                markers.isEmpty
                 ? "(no recognized markers)"
                 : markers.joined(separator: ", ")
             print("│ chat_template     present — mentions: \(markersStr)")
@@ -267,7 +284,9 @@ struct InspectCommand: AsyncParsableCommand {
         print("│ per-layer caches   \(caches.count)")
         print("│ total bytes alloc  \(formatBytes(bytesAllocated))")
         if let kv = caches.first as? any KVCacheProtocol {
-            print("│ layer 0 stride     [nKVHeads=\(kv.nKVHeads), maxSeq=\(kv.maxSeq), headDim=\(kv.headDim)]")
+            print(
+                "│ layer 0 stride     [nKVHeads=\(kv.nKVHeads), maxSeq=\(kv.maxSeq), headDim=\(kv.headDim)]"
+            )
             print("│ layer 0 dtype      \(kv.dtype)")
             print("│ layer 0 maxSize    \(kv.effectiveMaxSize)")
         }
@@ -290,9 +309,14 @@ struct InspectCommand: AsyncParsableCommand {
         for (id, value) in top {
             let s = m.tokenizer.decode(tokens: [id], skipSpecialTokens: false)
             let valueStr: String
-            if value.isNaN { valueStr = "NaN"; anyNaN = true }
-            else if !value.isFinite { valueStr = "inf" }
-            else { valueStr = String(format: "%+.4f", value) }
+            if value.isNaN {
+                valueStr = "NaN"
+                anyNaN = true
+            } else if !value.isFinite {
+                valueStr = "inf"
+            } else {
+                valueStr = String(format: "%+.4f", value)
+            }
             print("│ \(String(format: "%6d", id))  \(valueStr)  \"\(s)\"")
         }
         print("└────────────────────────────────────────────────────────")

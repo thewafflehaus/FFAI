@@ -13,6 +13,7 @@
 // limitations under the License.
 //
 import Testing
+
 @testable import FFAI
 
 @Suite("AURACodebook")
@@ -26,10 +27,12 @@ struct AURACodebookTests {
     @Test("centroid table is 2^bits long for every supported bit width at d=128")
     func centroidsLengthD128() {
         for bits in [2, 3, 4, 8] {
-            #expect(AURACodebook.centroids(dim: 128, bits: bits).count == 1 << bits,
-                    "wrong centroid count at bits=\(bits)")
-            #expect(AURACodebook.boundaries(dim: 128, bits: bits).count == (1 << bits) - 1,
-                    "wrong boundary count at bits=\(bits)")
+            #expect(
+                AURACodebook.centroids(dim: 128, bits: bits).count == 1 << bits,
+                "wrong centroid count at bits=\(bits)")
+            #expect(
+                AURACodebook.boundaries(dim: 128, bits: bits).count == (1 << bits) - 1,
+                "wrong boundary count at bits=\(bits)")
         }
     }
 
@@ -37,7 +40,7 @@ struct AURACodebookTests {
     func centroidsSorted() {
         for bits in [2, 3, 4, 8] {
             let c = AURACodebook.centroids(dim: 128, bits: bits)
-            for i in 1..<c.count {
+            for i in 1 ..< c.count {
                 #expect(c[i] >= c[i - 1], "centroid \(i) regresses at bits=\(bits)")
             }
         }
@@ -48,9 +51,11 @@ struct AURACodebookTests {
         for bits in [2, 3, 4, 8] {
             let c = AURACodebook.centroids(dim: 128, bits: bits)
             let b = AURACodebook.boundaries(dim: 128, bits: bits)
-            for i in 0..<b.count {
-                #expect(b[i] >= c[i] && b[i] <= c[i + 1],
-                        "boundary \(i)=\(b[i]) not between c[\(i)]=\(c[i]) and c[\(i+1)]=\(c[i+1]) at bits=\(bits)")
+            for i in 0 ..< b.count {
+                #expect(
+                    b[i] >= c[i] && b[i] <= c[i + 1],
+                    "boundary \(i)=\(b[i]) not between c[\(i)]=\(c[i]) and c[\(i+1)]=\(c[i+1]) at bits=\(bits)"
+                )
             }
         }
     }
@@ -76,18 +81,20 @@ struct AURACodebookTests {
 
         let c64 = AURACodebook.centroids(dim: 64, bits: 4)
         let expectedScale64 = Float((128.0 / 64.0).squareRoot())  // sqrt(2)
-        for i in 0..<c128.count {
+        for i in 0 ..< c128.count {
             let want = c128[i] * expectedScale64
-            #expect(abs(c64[i] - want) < 1e-6,
-                    "d=64 scaling diverges at i=\(i): got \(c64[i]), want \(want)")
+            #expect(
+                abs(c64[i] - want) < 1e-6,
+                "d=64 scaling diverges at i=\(i): got \(c64[i]), want \(want)")
         }
 
         let c256 = AURACodebook.centroids(dim: 256, bits: 4)
         let expectedScale256 = Float((128.0 / 256.0).squareRoot())  // sqrt(0.5)
-        for i in 0..<c128.count {
+        for i in 0 ..< c128.count {
             let want = c128[i] * expectedScale256
-            #expect(abs(c256[i] - want) < 1e-6,
-                    "d=256 scaling diverges at i=\(i): got \(c256[i]), want \(want)")
+            #expect(
+                abs(c256[i] - want) < 1e-6,
+                "d=256 scaling diverges at i=\(i): got \(c256[i]), want \(want)")
         }
     }
 
@@ -95,17 +102,19 @@ struct AURACodebookTests {
     func packedWidthFormula() {
         // (dim, bits) → expected packed_width (u32 words)
         let cases: [(Int, Int, Int)] = [
-            (128, 2, 8),    // 128*2 = 256 bits → 8 words
-            (128, 3, 12),   // 128*3 = 384 bits → 12 words
-            (128, 4, 16),   // 128*4 = 512 bits → 16 words
-            (128, 8, 32),   // 128*8 = 1024 bits → 32 words
-            (64,  4, 8),
-            (96,  4, 12),
-            (80,  3, 8),    // 80*3 = 240 bits → ceil 8 words
+            (128, 2, 8),  // 128*2 = 256 bits → 8 words
+            (128, 3, 12),  // 128*3 = 384 bits → 12 words
+            (128, 4, 16),  // 128*4 = 512 bits → 16 words
+            (128, 8, 32),  // 128*8 = 1024 bits → 32 words
+            (64, 4, 8),
+            (96, 4, 12),
+            (80, 3, 8),  // 80*3 = 240 bits → ceil 8 words
         ]
         for (dim, bits, want) in cases {
-            #expect(AURACodebook.packedWidth(dim: dim, bits: bits) == want,
-                    "packedWidth(\(dim), \(bits)) = \(AURACodebook.packedWidth(dim: dim, bits: bits)), want \(want)")
+            #expect(
+                AURACodebook.packedWidth(dim: dim, bits: bits) == want,
+                "packedWidth(\(dim), \(bits)) = \(AURACodebook.packedWidth(dim: dim, bits: bits)), want \(want)"
+            )
         }
     }
 
@@ -159,13 +168,13 @@ struct AURASchemeTests {
 
     @Test("parse rejects unsupported bit widths and malformed inputs")
     func parseRejects() {
-        #expect(AURAScheme.parse("aura5") == nil)        // 5-bit not in supportedBits
+        #expect(AURAScheme.parse("aura5") == nil)  // 5-bit not in supportedBits
         #expect(AURAScheme.parse("aura6") == nil)
         #expect(AURAScheme.parse("aura16") == nil)
-        #expect(AURAScheme.parse("aura4v5") == nil)      // 5-bit V not supported
-        #expect(AURAScheme.parse("aura4v") == nil)       // empty V
-        #expect(AURAScheme.parse("aurav4") == nil)       // empty K
-        #expect(AURAScheme.parse("turbo4v2") == nil)     // wrong prefix
+        #expect(AURAScheme.parse("aura4v5") == nil)  // 5-bit V not supported
+        #expect(AURAScheme.parse("aura4v") == nil)  // empty V
+        #expect(AURAScheme.parse("aurav4") == nil)  // empty K
+        #expect(AURAScheme.parse("turbo4v2") == nil)  // wrong prefix
         #expect(AURAScheme.parse("") == nil)
         #expect(AURAScheme.parse("aura4-2") == nil)
     }
@@ -184,7 +193,7 @@ struct LoadOptionsAURATests {
     @Test("auraQuantized round-trips through KVCacheKind")
     func roundTrip() {
         let opts = LoadOptions(kvCache: .auraQuantized(scheme: .aura4v2))
-        if case let .auraQuantized(scheme) = opts.kvCache {
+        if case .auraQuantized(let scheme) = opts.kvCache {
             #expect(scheme == .aura4v2)
         } else {
             Issue.record("expected .auraQuantized(scheme: aura4v2)")
@@ -194,7 +203,7 @@ struct LoadOptionsAURATests {
     @Test("auraQuantized default scheme — bare .auraQuantized() is aura4v4")
     func defaultSchemeInLoadOptions() {
         let opts = LoadOptions(kvCache: .auraQuantized())
-        if case let .auraQuantized(scheme) = opts.kvCache {
+        if case .auraQuantized(let scheme) = opts.kvCache {
             #expect(scheme == .default)
             #expect(scheme.name == "aura4")
         } else {

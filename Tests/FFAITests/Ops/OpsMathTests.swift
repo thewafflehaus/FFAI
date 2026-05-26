@@ -19,9 +19,10 @@
 
 import Foundation
 import Metal
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("OpsMath — element-wise + reductions")
 struct OpsMathTests {
@@ -190,7 +191,9 @@ struct OpsMathTests {
         autoreleasepool {
             let x = Tensor.empty(shape: [4], dtype: .f32)
             x.copyIn(from: [Float(1.4), 1.6, -1.4, -1.6])
-            var f: Tensor!, c: Tensor!, r: Tensor!
+            var f: Tensor!
+            var c: Tensor!
+            var r: Tensor!
             runAndWait { cb in
                 f = Ops.floor(x, on: cb)
                 c = Ops.ceil(x, on: cb)
@@ -252,15 +255,15 @@ struct OpsMathTests {
         autoreleasepool {
             let x = Tensor.empty(shape: [2, 4], dtype: .f32)
             x.copyIn(from: [
-                Float(0), 0, 0, 10,   // peak at idx 3
-                Float(10), 0, 0, 0,   // peak at idx 0
+                Float(0), 0, 0, 10,  // peak at idx 3
+                Float(10), 0, 0, 0,  // peak at idx 0
             ])
             var out: Tensor!
             runAndWait { cb in out = Ops.softmax(x, on: cb) }
             let r = out.toArray(as: Float.self)
             // each row sums to 1, peak at the +10 entry
-            #expect(abs(r[0..<4].reduce(0, +) - 1) < 1e-4)
-            #expect(abs(r[4..<8].reduce(0, +) - 1) < 1e-4)
+            #expect(abs(r[0 ..< 4].reduce(0, +) - 1) < 1e-4)
+            #expect(abs(r[4 ..< 8].reduce(0, +) - 1) < 1e-4)
             #expect(r[3] > 0.99)
             #expect(r[4] > 0.99)
         }
@@ -271,8 +274,8 @@ struct OpsMathTests {
         autoreleasepool {
             let x = Tensor.empty(shape: [2, 3], dtype: .f32)
             x.copyIn(from: [
-                Float(0), 0, 0,   // expect log(3)
-                Float(1), 2, 3,   // expect log(e+e²+e³)
+                Float(0), 0, 0,  // expect log(3)
+                Float(1), 2, 3,  // expect log(e+e²+e³)
             ])
             var out: Tensor!
             runAndWait { cb in out = Ops.logsumexp(x, on: cb) }
@@ -305,7 +308,10 @@ struct OpsMathTests {
             let b = Tensor.empty(shape: [4], dtype: .f16)
             a.copyIn(from: [Float16(3), 5, 9, -1])
             b.copyIn(from: [Float16(1), 2, -1, 4])
-            var s: Tensor!, d: Tensor!, n: Tensor!, ab: Tensor!
+            var s: Tensor!
+            var d: Tensor!
+            var n: Tensor!
+            var ab: Tensor!
             runAndWait { cb in
                 s = Ops.sub(a, b, on: cb)
                 d = Ops.div(a, b, on: cb)
@@ -327,7 +333,11 @@ struct OpsMathTests {
             // bf16(1.0) = 0x3F80, bf16(2.0) = 0x4000, bf16(4.0) = 0x4080.
             let x = Tensor.empty(shape: [4], dtype: .bf16)
             x.copyIn(from: [UInt16(0x3F80), UInt16(0x4000), UInt16(0x4080), UInt16(0x3F80)])
-            var e: Tensor!, l: Tensor!, sq: Tensor!, sqr: Tensor!, r: Tensor!
+            var e: Tensor!
+            var l: Tensor!
+            var sq: Tensor!
+            var sqr: Tensor!
+            var r: Tensor!
             runAndWait { cb in
                 e = Ops.exp(x, on: cb)
                 l = Ops.log(x, on: cb)
@@ -350,7 +360,9 @@ struct OpsMathTests {
             let b16 = Tensor.empty(shape: [4], dtype: .f16)
             a16.copyIn(from: [Float16(1), 5, 3, -1])
             b16.copyIn(from: [Float16(2), 3, 7, 0])
-            var maxF16: Tensor!, minF16: Tensor!, powF16: Tensor!
+            var maxF16: Tensor!
+            var minF16: Tensor!
+            var powF16: Tensor!
             runAndWait { cb in
                 maxF16 = Ops.maxElem(a16, b16, on: cb)
                 minF16 = Ops.minElem(a16, b16, on: cb)
@@ -379,7 +391,9 @@ struct OpsMathTests {
         autoreleasepool {
             let x = Tensor.empty(shape: [4], dtype: .f16)
             x.copyIn(from: [Float16(1.4), 1.6, -1.4, -1.6])
-            var f: Tensor!, c: Tensor!, r: Tensor!
+            var f: Tensor!
+            var c: Tensor!
+            var r: Tensor!
             let dst = Tensor.empty(shape: [4], dtype: .f16)
             dst.zero()
             runAndWait { cb in
@@ -401,7 +415,8 @@ struct OpsMathTests {
             // softmax + logsumexp on f16 single row
             let x16 = Tensor.empty(shape: [4], dtype: .f16)
             x16.copyIn(from: [Float16(0), 1, 2, 3])
-            var s16: Tensor!, l16: Tensor!
+            var s16: Tensor!
+            var l16: Tensor!
             let arg16 = Tensor.empty(shape: [1], dtype: .u32)
             runAndWait { cb in
                 s16 = Ops.softmax(x16, on: cb)
@@ -415,7 +430,8 @@ struct OpsMathTests {
             // bf16
             let xBF = Tensor.empty(shape: [4], dtype: .bf16)
             xBF.copyIn(from: [UInt16(0), UInt16(0x3F80), UInt16(0x4000), UInt16(0x4040)])
-            var sBF: Tensor!, lBF: Tensor!
+            var sBF: Tensor!
+            var lBF: Tensor!
             let argBF = Tensor.empty(shape: [1], dtype: .u32)
             runAndWait { cb in
                 sBF = Ops.softmax(xBF, on: cb)

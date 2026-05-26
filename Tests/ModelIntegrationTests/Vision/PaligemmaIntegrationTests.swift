@@ -32,9 +32,10 @@
 // This test is NOT run automatically (see CLAUDE.md → make test-integration).
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Paligemma Vision Integration", .serialized)
 struct PaligemmaIntegrationTests {
@@ -58,8 +59,9 @@ struct PaligemmaIntegrationTests {
         #expect(m.engine.headDim == 256)
         #expect(m.engine.vocab == 257216)
 
-        let pg = try #require(m.engine as? PaligemmaModel,
-                              "Expected a PaligemmaModel engine")
+        let pg = try #require(
+            m.engine as? PaligemmaModel,
+            "Expected a PaligemmaModel engine")
 
         // Load + preprocess the dog fixture at PaliGemma's 448 resolution
         // with SigLIP normalization (mean 0.5 / std 0.5 per channel).
@@ -84,14 +86,15 @@ struct PaligemmaIntegrationTests {
         //     we use the canonical "caption en" task prefix.
         //   • Trailing newline (id 108) terminates the prompt and is
         //     the model's signal to start generating the answer.
-        let imageTokenId   = pg.imageTokenIndex
+        let imageTokenId = pg.imageTokenIndex
         let numImageTokens = pg.numImageTokens
         let bosId = 2
         // tokenizer.encode does NOT auto-prepend BOS on its own here —
         // we splice it in explicitly so the prompt structure is right
         // regardless of how the tokenizer is configured.
         let textTokens = m.tokenizer.encode(text: "caption en\n")
-        let promptTokens = Array(repeating: imageTokenId, count: numImageTokens)
+        let promptTokens =
+            Array(repeating: imageTokenId, count: numImageTokens)
             + [bosId] + textTokens.filter { $0 != bosId }
 
         // Greedy decode up to 200 tokens — the shared VLM integration
@@ -102,16 +105,17 @@ struct PaligemmaIntegrationTests {
         var generated: [Int] = []
         var nextToken = 0
         for (pos, tok) in promptTokens.enumerated() {
-            let logits = m.engine.forward(tokenId: tok, position: pos,
-                                          caches: caches,
-                                          device: Device.shared)
+            let logits = m.engine.forward(
+                tokenId: tok, position: pos,
+                caches: caches,
+                device: Device.shared)
             if pos == promptTokens.count - 1 {
                 nextToken = argmaxOnHost(logits)
             }
         }
         let stopSet: Set<Int> = Set(m.config.eosTokenIds)
         var pos = promptTokens.count
-        for _ in 0..<200 {
+        for _ in 0 ..< 200 {
             if stopSet.contains(nextToken) { break }
             generated.append(nextToken)
             nextToken = m.engine.forwardSample(
@@ -135,7 +139,8 @@ private func argmaxOnHost(_ logits: Tensor) -> Int {
     var bestIdx = 0
     var bestVal: Float = -.infinity
     for (i, v) in arr.enumerated() where v > bestVal {
-        bestIdx = i; bestVal = v
+        bestIdx = i
+        bestVal = v
     }
     return bestIdx
 }

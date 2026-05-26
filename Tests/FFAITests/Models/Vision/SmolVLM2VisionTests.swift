@@ -25,6 +25,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("SmolVLM2 Vision")
@@ -72,34 +73,34 @@ struct SmolVLM2VisionConfigTests {
     @Test("VisionConfig: parses required fields")
     func visionConfigRequired() throws {
         let vc = try SmolVLM2VisionConfig(from: Self.minimalVisionRaw)
-        #expect(vc.hiddenSize          == 768)
-        #expect(vc.patchSize           == 16)
-        #expect(vc.imageSize           == 512)
-        #expect(vc.numHiddenLayers     == 12)
-        #expect(vc.numAttentionHeads   == 12)
+        #expect(vc.hiddenSize == 768)
+        #expect(vc.patchSize == 16)
+        #expect(vc.imageSize == 512)
+        #expect(vc.numHiddenLayers == 12)
+        #expect(vc.numAttentionHeads == 12)
     }
 
     @Test("VisionConfig: default values for optional fields")
     func visionConfigDefaults() throws {
         let vc = try SmolVLM2VisionConfig(from: Self.minimalVisionRaw)
         // Defaults: intermediateSize=3072, numChannels=3, layerNormEps=1e-6
-        #expect(vc.intermediateSize    == 3072)
-        #expect(vc.numChannels         == 3)
-        #expect(vc.layerNormEps        == 1e-6)
+        #expect(vc.intermediateSize == 3072)
+        #expect(vc.numChannels == 3)
+        #expect(vc.layerNormEps == 1e-6)
         // headDim derived: 768 / 12 = 64
-        #expect(vc.headDim             == 64)
+        #expect(vc.headDim == 64)
     }
 
     @Test("VisionConfig: custom optional fields are respected")
     func visionConfigCustomOptionals() throws {
         var raw = Self.minimalVisionRaw
-        raw["intermediate_size"]  = 4096
-        raw["num_channels"]       = 1
-        raw["layer_norm_eps"]     = 1e-5
+        raw["intermediate_size"] = 4096
+        raw["num_channels"] = 1
+        raw["layer_norm_eps"] = 1e-5
         let vc = try SmolVLM2VisionConfig(from: raw)
         #expect(vc.intermediateSize == 4096)
-        #expect(vc.numChannels      == 1)
-        #expect(vc.layerNormEps     == 1e-5)
+        #expect(vc.numChannels == 1)
+        #expect(vc.layerNormEps == 1e-5)
     }
 
     @Test("VisionConfig: missing hidden_size throws SmolVLM2Error")
@@ -139,23 +140,23 @@ struct SmolVLM2VisionConfigTests {
     @Test("TextConfig: parses required fields")
     func textConfigRequired() throws {
         let tc = try SmolVLM2TextConfig(from: Self.minimalTextRaw)
-        #expect(tc.hiddenSize        == 960)
-        #expect(tc.vocabSize         == 49280)
-        #expect(tc.numHiddenLayers   == 32)
+        #expect(tc.hiddenSize == 960)
+        #expect(tc.vocabSize == 49280)
+        #expect(tc.numHiddenLayers == 32)
         #expect(tc.numAttentionHeads == 15)
-        #expect(tc.numKeyValueHeads  == 5)
-        #expect(tc.intermediateSize  == 2560)
+        #expect(tc.numKeyValueHeads == 5)
+        #expect(tc.intermediateSize == 2560)
     }
 
     @Test("TextConfig: default values for optional fields")
     func textConfigDefaults() throws {
         let tc = try SmolVLM2TextConfig(from: Self.minimalTextRaw)
         // headDim default: hiddenSize / numAttentionHeads = 960 / 15 = 64
-        #expect(tc.headDim              == 64)
+        #expect(tc.headDim == 64)
         #expect(tc.maxPositionEmbeddings == 8192)
-        #expect(tc.rmsNormEps           == 1e-5)
-        #expect(tc.ropeTheta            == 100_000)
-        #expect(tc.tieWordEmbeddings    == false)
+        #expect(tc.rmsNormEps == 1e-5)
+        #expect(tc.ropeTheta == 100_000)
+        #expect(tc.tieWordEmbeddings == false)
     }
 
     @Test("TextConfig: explicit head_dim overrides derived value")
@@ -187,11 +188,11 @@ struct SmolVLM2VisionConfigTests {
     @Test("SmolVLM2Config: parses all top-level fields")
     func topLevelConfig() throws {
         let cfg = try SmolVLM2Config(from: Self.minimalTopRaw)
-        #expect(cfg.scaleFactor    == 4)
-        #expect(cfg.imageTokenId   == 49190)
-        #expect(cfg.vocabSize      == 49280)
+        #expect(cfg.scaleFactor == 4)
+        #expect(cfg.imageTokenId == 49190)
+        #expect(cfg.vocabSize == 49280)
         #expect(cfg.visionConfig.hiddenSize == 768)
-        #expect(cfg.textConfig.hiddenSize   == 960)
+        #expect(cfg.textConfig.hiddenSize == 960)
     }
 
     @Test("SmolVLM2Config: default scaleFactor and imageTokenId")
@@ -200,7 +201,7 @@ struct SmolVLM2VisionConfigTests {
         raw.removeValue(forKey: "scale_factor")
         raw.removeValue(forKey: "image_token_id")
         let cfg = try SmolVLM2Config(from: raw)
-        #expect(cfg.scaleFactor  == 4)
+        #expect(cfg.scaleFactor == 4)
         #expect(cfg.imageTokenId == 49190)
     }
 
@@ -273,25 +274,26 @@ struct SmolVLM2VisionConfigTests {
 
         // Write a config.json that matches SmolVLM2's architecture string
         let cfgJSON = """
-        {
-          "architectures": ["SmolVLMForConditionalGeneration"],
-          "model_type": "smolvlm",
-          "scale_factor": 4,
-          "image_token_id": 49190,
-          "vocab_size": 49280,
-          "vision_config": {
-            "hidden_size": 768, "patch_size": 16, "image_size": 512,
-            "num_hidden_layers": 12, "num_attention_heads": 12
-          },
-          "text_config": {
-            "hidden_size": 960, "vocab_size": 49280,
-            "num_hidden_layers": 2, "num_attention_heads": 15,
-            "num_key_value_heads": 5, "intermediate_size": 2560
-          }
-        }
-        """
-        try cfgJSON.write(to: dir.appendingPathComponent("config.json"),
-                          atomically: true, encoding: .utf8)
+            {
+              "architectures": ["SmolVLMForConditionalGeneration"],
+              "model_type": "smolvlm",
+              "scale_factor": 4,
+              "image_token_id": 49190,
+              "vocab_size": 49280,
+              "vision_config": {
+                "hidden_size": 768, "patch_size": 16, "image_size": 512,
+                "num_hidden_layers": 12, "num_attention_heads": 12
+              },
+              "text_config": {
+                "hidden_size": 960, "vocab_size": 49280,
+                "num_hidden_layers": 2, "num_attention_heads": 15,
+                "num_key_value_heads": 5, "intermediate_size": 2560
+              }
+            }
+            """
+        try cfgJSON.write(
+            to: dir.appendingPathComponent("config.json"),
+            atomically: true, encoding: .utf8)
 
         let cfg = try ModelConfig.load(from: dir)
         // Verify the architecture is recognized by SmolVLM2
@@ -312,25 +314,26 @@ struct SmolVLM2VisionConfigTests {
         try Self.writeMinimalBundle(in: dir)
 
         let cfgJSON = """
-        {
-          "architectures": ["SmolVLMForConditionalGeneration"],
-          "model_type": "smolvlm",
-          "scale_factor": 4,
-          "image_token_id": 49190,
-          "vocab_size": 49280,
-          "vision_config": {
-            "hidden_size": 768, "patch_size": 16, "image_size": 512,
-            "num_hidden_layers": 1, "num_attention_heads": 12
-          },
-          "text_config": {
-            "hidden_size": 960, "vocab_size": 49280,
-            "num_hidden_layers": 1, "num_attention_heads": 15,
-            "num_key_value_heads": 5, "intermediate_size": 2560
-          }
-        }
-        """
-        try cfgJSON.write(to: dir.appendingPathComponent("config.json"),
-                          atomically: true, encoding: .utf8)
+            {
+              "architectures": ["SmolVLMForConditionalGeneration"],
+              "model_type": "smolvlm",
+              "scale_factor": 4,
+              "image_token_id": 49190,
+              "vocab_size": 49280,
+              "vision_config": {
+                "hidden_size": 768, "patch_size": 16, "image_size": 512,
+                "num_hidden_layers": 1, "num_attention_heads": 12
+              },
+              "text_config": {
+                "hidden_size": 960, "vocab_size": 49280,
+                "num_hidden_layers": 1, "num_attention_heads": 15,
+                "num_key_value_heads": 5, "intermediate_size": 2560
+              }
+            }
+            """
+        try cfgJSON.write(
+            to: dir.appendingPathComponent("config.json"),
+            atomically: true, encoding: .utf8)
 
         let cfg = try ModelConfig.load(from: dir)
         let bundle = try SafeTensorsBundle(directory: dir)

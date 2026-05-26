@@ -13,6 +13,7 @@
 // limitations under the License.
 //
 import Testing
+
 @testable import FFAI
 
 @Suite("FFAI")
@@ -28,7 +29,8 @@ struct FFAITests {
         // The regex anchors on the leading MAJOR.MINOR.PATCH triple;
         // any non-empty suffix that starts with `-` is fine.
         let pattern = #/^\d+\.\d+\.\d+(-[A-Za-z0-9.-]+)?$/#
-        #expect(v.wholeMatch(of: pattern) != nil,
-                "FFAI.version (\(v)) doesn't look like semver")
+        #expect(
+            v.wholeMatch(of: pattern) != nil,
+            "FFAI.version (\(v)) doesn't look like semver")
     }
 }

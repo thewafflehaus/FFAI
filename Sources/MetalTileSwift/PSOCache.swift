@@ -49,8 +49,8 @@ public final class PSOCache: @unchecked Sendable {
     public static let shared = PSOCache(library: MetalTileLibrary.shared)
 
     private let library: MetalTileLibrary
-    private let lock = NSLock()              // protects `cache` reads + writes
-    private let compileLock = NSLock()       // single-flight PSO compilation
+    private let lock = NSLock()  // protects `cache` reads + writes
+    private let compileLock = NSLock()  // single-flight PSO compilation
     private var cache: [String: MTLComputePipelineState] = [:]
 
     public init(library: MetalTileLibrary) {
@@ -146,7 +146,7 @@ public final class PSOCache: @unchecked Sendable {
         // Opt-out via env var, just in case a future kernel name accidentally
         // matches `_mpp_` (e.g. an `_mppow_` variant). Default on.
         if let raw = ProcessInfo.processInfo.environment["FFAI_PSO_LIVE_COMPILE_MPP"],
-           raw == "0" || raw.lowercased() == "false"
+            raw == "0" || raw.lowercased() == "false"
         {
             return false
         }

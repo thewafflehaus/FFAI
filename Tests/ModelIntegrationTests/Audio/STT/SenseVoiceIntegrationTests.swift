@@ -24,9 +24,10 @@
 // into a transcript.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("SenseVoice Integration", .serialized)
 struct SenseVoiceIntegrationTests {
@@ -54,7 +55,7 @@ struct SenseVoiceIntegrationTests {
         let sr = 16_000
         let n = Int(Double(sr) * seconds)
         var wave = [Float](repeating: 0, count: n)
-        for i in 0..<n {
+        for i in 0 ..< n {
             let f = 200.0 + 600.0 * Float(i) / Float(n)
             wave[i] = 0.3 * sin(2.0 * Float.pi * f * Float(i) / Float(sr))
         }
@@ -96,9 +97,10 @@ struct SenseVoiceIntegrationTests {
         // exp domain) close to 1.
         #expect(vals.allSatisfy { $0 <= 1e-3 })
         let V = model.config.vocab
-        let rowExpSum = (0..<V).map { exp(vals[$0]) }.reduce(0, +)
-        #expect(abs(rowExpSum - 1.0) < 1e-2,
-                "CTC row is not a valid probability distribution")
+        let rowExpSum = (0 ..< V).map { exp(vals[$0]) }.reduce(0, +)
+        #expect(
+            abs(rowExpSum - 1.0) < 1e-2,
+            "CTC row is not a valid probability distribution")
     }
 
     @Test("transcribe — real speech decodes to a non-degenerate token stream")
@@ -111,19 +113,23 @@ struct SenseVoiceIntegrationTests {
         let tokens = model.transcribeTokens(waveform: wave)
         // The greedy CTC collapse must yield a non-empty, in-vocab,
         // blank-free token stream for a real utterance.
-        #expect(!tokens.isEmpty,
-                "SenseVoice produced no tokens for real speech")
-        #expect(tokens.allSatisfy {
-            $0 >= 0 && $0 < model.config.vocab
-                && $0 != SenseVoiceModel.blankToken
-        })
+        #expect(
+            !tokens.isEmpty,
+            "SenseVoice produced no tokens for real speech")
+        #expect(
+            tokens.allSatisfy {
+                $0 >= 0 && $0 < model.config.vocab
+                    && $0 != SenseVoiceModel.blankToken
+            })
         // Non-degenerate: a genuine CTC decode visits several distinct
         // ids, not one repeated token.
         let distinct = Set(tokens).count
-        #expect(distinct > 1,
-                "SenseVoice transcript is a single repeated token (degenerate CTC decode)")
-        print("SenseVoice transcribed real speech into \(tokens.count) "
-              + "tokens (\(distinct) distinct): \(tokens.prefix(16))")
+        #expect(
+            distinct > 1,
+            "SenseVoice transcript is a single repeated token (degenerate CTC decode)")
+        print(
+            "SenseVoice transcribed real speech into \(tokens.count) "
+                + "tokens (\(distinct) distinct): \(tokens.prefix(16))")
     }
 
     @Test("registry — SenseVoice routes through the audio registry")

@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // Unit tests for the Gemma 4 VL family (the bespoke Gemma 4
@@ -57,8 +58,9 @@ struct Gemma4VisionConfigTests {
             "vision_config": visionConfig,
             "text_config": textConfig,
         ]
-        return ModelConfig(architecture: "Gemma4ForConditionalGeneration",
-                           modelType: "gemma4", raw: raw)
+        return ModelConfig(
+            architecture: "Gemma4ForConditionalGeneration",
+            modelType: "gemma4", raw: raw)
     }
 
     @Test("routes as a vision-language checkpoint by vision_config presence")
@@ -68,16 +70,19 @@ struct Gemma4VisionConfigTests {
         // architecture string (the arch is shared with text-only Gemma 4
         // and is deliberately absent from `architectures`).
         #expect(VisionLanguageArchitectures.isVisionLanguage(cfg))
-        #expect(!VisionLanguageArchitectures.architectures
-            .contains("Gemma4ForConditionalGeneration"))
+        #expect(
+            !VisionLanguageArchitectures.architectures
+                .contains("Gemma4ForConditionalGeneration"))
         #expect(Gemma4VL.defaultImageTokenId == 262_144)
 
         // A text-only Gemma 4 config (no vision_config) does NOT route VL.
         let textOnly = ModelConfig(
             architecture: "Gemma4ForConditionalGeneration",
             modelType: "gemma4",
-            raw: ["architectures": ["Gemma4ForConditionalGeneration"],
-                  "model_type": "gemma4", "hidden_size": 2048])
+            raw: [
+                "architectures": ["Gemma4ForConditionalGeneration"],
+                "model_type": "gemma4", "hidden_size": 2048,
+            ])
         #expect(!VisionLanguageArchitectures.isVisionLanguage(textOnly))
     }
 
@@ -103,20 +108,22 @@ struct Gemma4VisionConfigTests {
     @Test("vision_config decode falls back to documented defaults")
     func visionConfigDefaults() throws {
         // Minimal config — only the required fields.
-        let minimal = ModelConfig(architecture: nil, modelType: nil, raw: [
-            "num_hidden_layers": 12,
-            "hidden_size": 768,
-            "num_attention_heads": 12,
-            "patch_size": 14,
-        ])
+        let minimal = ModelConfig(
+            architecture: nil, modelType: nil,
+            raw: [
+                "num_hidden_layers": 12,
+                "hidden_size": 768,
+                "num_attention_heads": 12,
+                "patch_size": 14,
+            ])
         let parsed = try Gemma4VLVisionConfig.decode(minimal)
-        #expect(parsed.numKVHeads == 12)        // num_heads fallback
-        #expect(parsed.headDim == 64)           // hidden / num_heads
-        #expect(parsed.intermediate == 768 * 4) // hidden * 4 fallback
+        #expect(parsed.numKVHeads == 12)  // num_heads fallback
+        #expect(parsed.headDim == 64)  // hidden / num_heads
+        #expect(parsed.intermediate == 768 * 4)  // hidden * 4 fallback
         #expect(parsed.defaultOutputLength == 280)
         #expect(parsed.positionEmbeddingSize == 10_240)
         #expect(parsed.poolingKernelSize == 3)
         #expect(parsed.standardize == false)
-        #expect(parsed.ropeTheta == 100.0)      // documented default
+        #expect(parsed.ropeTheta == 100.0)  // documented default
     }
 }

@@ -23,6 +23,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Qwen2 Text Family Routing")
@@ -40,8 +41,9 @@ struct Qwen2TextTests {
 
     @Test("Qwen2.variant(for:) returns LlamaDense for any qwen2 config")
     func routesThroughLlamaDense() throws {
-        let cfg = ModelConfig(architecture: "Qwen2ForCausalLM",
-                              modelType: "qwen2", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "Qwen2ForCausalLM",
+            modelType: "qwen2", raw: [:])
         let v = try Qwen2.variant(for: cfg)
         #expect(String(describing: v) == String(describing: LlamaDense.self))
     }

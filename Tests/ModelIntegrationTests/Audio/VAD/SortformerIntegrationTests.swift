@@ -34,9 +34,10 @@
 // DO NOT RUN locally without a GPU — run via `make test-integration`.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Sortformer Integration", .serialized)
 struct SortformerIntegrationTests {
@@ -76,7 +77,8 @@ struct SortformerIntegrationTests {
         #expect(model.config.tfEncoder.numHeads == 8)
 
         // Each output frame covers hop × subsamplingFactor samples.
-        let expectedStride = model.config.processor.hopLength
+        let expectedStride =
+            model.config.processor.hopLength
             * model.config.modules.subsamplingFactor
         #expect(model.frameStride == expectedStride)
 
@@ -87,12 +89,14 @@ struct SortformerIntegrationTests {
         let output = model.detect(audio: audio, sampleRate: 16_000)
 
         // Probability stream must be finite with values in [0, 1].
-        #expect(output.isWellFormed,
-                "speaker probabilities must all be finite and in [0, 1]")
+        #expect(
+            output.isWellFormed,
+            "speaker probabilities must all be finite and in [0, 1]")
 
         // At least one frame must have been produced.
-        #expect(!output.speakerProbabilities.isEmpty,
-                "expected at least one output frame for a ~1.85 s clip")
+        #expect(
+            !output.speakerProbabilities.isEmpty,
+            "expected at least one output frame for a ~1.85 s clip")
 
         // Frame count should be consistent with the clip length.
         // Each frame covers `frameStride` samples; the count should be
@@ -100,16 +104,18 @@ struct SortformerIntegrationTests {
         let approxFrames = audio.count / model.frameStride
         let frameCount = output.speakerProbabilities.count
         let minExpectedFrames = max(1, approxFrames / 2)
-        #expect(frameCount >= minExpectedFrames,
-                "frame count unexpectedly low for the clip length")
+        #expect(
+            frameCount >= minExpectedFrames,
+            "frame count unexpectedly low for the clip length")
 
         // Every frame row must have exactly `numSpeakers` values.
         #expect(output.numSpeakers == model.config.numSpeakers)
         let badRows = output.speakerProbabilities.filter {
             $0.count != model.config.numSpeakers
         }
-        #expect(badRows.isEmpty,
-                "expected each frame to have numSpeakers probability values")
+        #expect(
+            badRows.isEmpty,
+            "expected each frame to have numSpeakers probability values")
 
         // The stride and sample rate round-trip correctly.
         #expect(output.frameStrideSamples == model.frameStride)
@@ -119,11 +125,13 @@ struct SortformerIntegrationTests {
         // peak probability somewhere (generous threshold of 0.1 — the model
         // may output low probabilities on unseen voices, but should not
         // output near-zero for all speakers on a speech clip).
-        let maxProb = output.speakerProbabilities
+        let maxProb =
+            output.speakerProbabilities
             .flatMap { $0 }
             .max() ?? 0
-        #expect(maxProb > 0.05,
-                "all speaker probabilities near zero on a speech clip — broken forward pass")
+        #expect(
+            maxProb > 0.05,
+            "all speaker probabilities near zero on a speech clip — broken forward pass")
     }
 
     @Test("empty audio clip produces an empty, well-formed result")
@@ -145,12 +153,15 @@ struct SortformerIntegrationTests {
         // Every segment must reference a valid speaker index and have
         // a positive duration.
         for seg in output.segments {
-            #expect(seg.speaker >= 0 && seg.speaker < model.config.numSpeakers,
-                    "segment speaker \(seg.speaker) out of range")
-            #expect(seg.durationSeconds > 0,
-                    "segment [\(seg.startSeconds), \(seg.endSeconds)] has zero duration")
-            #expect(seg.startSeconds < seg.endSeconds,
-                    "segment start must precede end")
+            #expect(
+                seg.speaker >= 0 && seg.speaker < model.config.numSpeakers,
+                "segment speaker \(seg.speaker) out of range")
+            #expect(
+                seg.durationSeconds > 0,
+                "segment [\(seg.startSeconds), \(seg.endSeconds)] has zero duration")
+            #expect(
+                seg.startSeconds < seg.endSeconds,
+                "segment start must precede end")
         }
     }
 }

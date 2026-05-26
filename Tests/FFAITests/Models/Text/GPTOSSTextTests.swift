@@ -28,6 +28,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("GPTOSSMoE Variant Surface")
@@ -45,7 +46,7 @@ struct GPTOSSTextVariantTests {
     func reasoningLevels() {
         let lv = GPTOSSMoEVariant.supportedReasoningLevels
         #expect(lv == [.low, .medium, .high])
-        #expect(!lv.contains(.none))   // .none is implicit "disable"
+        #expect(!lv.contains(.none))  // .none is implicit "disable"
         #expect(!lv.contains(.max))
     }
 

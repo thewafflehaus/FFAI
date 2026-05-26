@@ -246,58 +246,60 @@ public struct VoxtralRealtimeConfig: Sendable {
             (dict)?[key] as? Bool
         }
 
-        let encRaw   = mc.nested("encoder_args")
-        let decRaw   = mc.nested("decoder")
+        let encRaw = mc.nested("encoder_args")
+        let decRaw = mc.nested("decoder")
         // audio_encoding_args is nested inside encoder_args in the checkpoint.
-        let audioRaw = encRaw.flatMap { $0["audio_encoding_args"] as? [String: Any] }
+        let audioRaw =
+            encRaw.flatMap { $0["audio_encoding_args"] as? [String: Any] }
             ?? mc.nested("audio_encoding_args")
 
         let audioConfig = VoxtralRealtimeAudioConfig(
-            samplingRate:   ni(audioRaw, "sampling_rate") ?? 16_000,
-            frameRate:      nf(audioRaw, "frame_rate")    ?? 12.5,
-            numMelBins:     ni(audioRaw, "num_mel_bins")  ?? 128,
-            hopLength:      ni(audioRaw, "hop_length")    ?? 160,
-            windowSize:     ni(audioRaw, "window_size")   ?? 400,
+            samplingRate: ni(audioRaw, "sampling_rate") ?? 16_000,
+            frameRate: nf(audioRaw, "frame_rate") ?? 12.5,
+            numMelBins: ni(audioRaw, "num_mel_bins") ?? 128,
+            hopLength: ni(audioRaw, "hop_length") ?? 160,
+            windowSize: ni(audioRaw, "window_size") ?? 400,
             globalLogMelMax: nf(audioRaw, "global_log_mel_max") ?? 1.5
         )
 
         let encoderConfig = VoxtralRealtimeEncoderConfig(
-            dim:             ni(encRaw, "dim")             ?? 1280,
-            nLayers:         ni(encRaw, "n_layers")        ?? 32,
-            nHeads:          ni(encRaw, "n_heads")         ?? 32,
-            headDim:         ni(encRaw, "head_dim")        ?? 64,
-            hiddenDim:       ni(encRaw, "hidden_dim")      ?? 5120,
-            nKVHeads:        ni(encRaw, "n_kv_heads")      ?? 32,
-            normEps:         nf(encRaw, "norm_eps")        ?? 1e-5,
-            ropeTheta:       nf(encRaw, "rope_theta")      ?? 1_000_000,
-            slidingWindow:   ni(encRaw, "sliding_window")  ?? 750,
-            causal:          nb(encRaw, "causal")          ?? true,
-            useBiases:       nb(encRaw, "use_biases")      ?? true,
+            dim: ni(encRaw, "dim") ?? 1280,
+            nLayers: ni(encRaw, "n_layers") ?? 32,
+            nHeads: ni(encRaw, "n_heads") ?? 32,
+            headDim: ni(encRaw, "head_dim") ?? 64,
+            hiddenDim: ni(encRaw, "hidden_dim") ?? 5120,
+            nKVHeads: ni(encRaw, "n_kv_heads") ?? 32,
+            normEps: nf(encRaw, "norm_eps") ?? 1e-5,
+            ropeTheta: nf(encRaw, "rope_theta") ?? 1_000_000,
+            slidingWindow: ni(encRaw, "sliding_window") ?? 750,
+            causal: nb(encRaw, "causal") ?? true,
+            useBiases: nb(encRaw, "use_biases") ?? true,
             downsampleFactor: ni(encRaw, "downsample_factor") ?? 4
         )
 
         let decoderConfig = VoxtralRealtimeDecoderConfig(
-            dim:             ni(decRaw, "dim")             ?? 3072,
-            nLayers:         ni(decRaw, "n_layers")        ?? 26,
-            nHeads:          ni(decRaw, "n_heads")         ?? 32,
-            nKVHeads:        ni(decRaw, "n_kv_heads")      ?? 8,
-            headDim:         ni(decRaw, "head_dim")        ?? 128,
-            hiddenDim:       ni(decRaw, "hidden_dim")      ?? 9216,
-            vocabSize:       ni(decRaw, "vocab_size")      ?? 131072,
-            normEps:         nf(decRaw, "norm_eps")        ?? 1e-5,
-            ropeTheta:       nf(decRaw, "rope_theta")      ?? 1_000_000,
-            slidingWindow:   ni(decRaw, "sliding_window")  ?? 8192,
-            tiedEmbeddings:  nb(decRaw, "tied_embeddings") ?? true,
+            dim: ni(decRaw, "dim") ?? 3072,
+            nLayers: ni(decRaw, "n_layers") ?? 26,
+            nHeads: ni(decRaw, "n_heads") ?? 32,
+            nKVHeads: ni(decRaw, "n_kv_heads") ?? 8,
+            headDim: ni(decRaw, "head_dim") ?? 128,
+            hiddenDim: ni(decRaw, "hidden_dim") ?? 9216,
+            vocabSize: ni(decRaw, "vocab_size") ?? 131072,
+            normEps: nf(decRaw, "norm_eps") ?? 1e-5,
+            ropeTheta: nf(decRaw, "rope_theta") ?? 1_000_000,
+            slidingWindow: ni(decRaw, "sliding_window") ?? 8192,
+            tiedEmbeddings: nb(decRaw, "tied_embeddings") ?? true,
             adaRmsNormTCond: nb(decRaw, "ada_rms_norm_t_cond") ?? true,
             adaRmsNormTCondDim: ni(decRaw, "ada_rms_norm_t_cond_dim") ?? 32
         )
 
-        let delayMs = (mc.raw["transcription_delay_ms"] as? Int)
+        let delayMs =
+            (mc.raw["transcription_delay_ms"] as? Int)
             ?? (mc.raw["transcription_delay_ms"] as? Double).map(Int.init) ?? 480
-        let bosId   = (mc.raw["bos_token_id"]           as? Int) ?? 1
-        let eosId   = (mc.raw["eos_token_id"]           as? Int) ?? 2
-        let padId   = (mc.raw["streaming_pad_token_id"] as? Int) ?? 32
-        let nLeft   = (mc.raw["n_left_pad_tokens"]      as? Int) ?? 32
+        let bosId = (mc.raw["bos_token_id"] as? Int) ?? 1
+        let eosId = (mc.raw["eos_token_id"] as? Int) ?? 2
+        let padId = (mc.raw["streaming_pad_token_id"] as? Int) ?? 32
+        let nLeft = (mc.raw["n_left_pad_tokens"] as? Int) ?? 32
 
         return VoxtralRealtimeConfig(
             audioConfig: audioConfig,
@@ -518,8 +520,8 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
     ) -> [Float] {
         let ac = config.audioConfig
         let nMels = ac.numMelBins
-        let nFFT  = ac.windowSize
-        let hop   = ac.hopLength
+        let nFFT = ac.windowSize
+        let hop = ac.hopLength
 
         // ── Reflect-pad by windowSize/2 on both sides ──
         let pad = nFFT / 2
@@ -528,7 +530,7 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         // ── Periodic Hann window (n denominator, not n-1) ──
         var window = [Float](repeating: 0, count: nFFT)
         let twoPi = 2.0 * Double.pi
-        for i in 0..<nFFT {
+        for i in 0 ..< nFFT {
             window[i] = Float(0.5 * (1.0 - cos(twoPi * Double(i) / Double(nFFT))))
         }
 
@@ -562,10 +564,11 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
             audio: audioT, window: winT, melWeight: melT,
             nFFT: nFFT, nMels: nMels, hopLength: hop,
             nFrames: nFrames, on: cmdMel)
-        cmdMel.commit(); cmdMel.waitUntilCompleted()
+        cmdMel.commit()
+        cmdMel.waitUntilCompleted()
 
         // rawMel is [nFrames, nMels] in natural log; we need [nMels, nFrames].
-        let rawVals = rawMel.toFloatArray() // [nFrames * nMels]
+        let rawVals = rawMel.toFloatArray()  // [nFrames * nMels]
 
         // Convert natural log → log10, apply Voxtral normalization, transpose.
         let invLn10: Float = 1.0 / 2.302_585_092_994_046
@@ -573,8 +576,8 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         let floor = globalMax - 8.0
         var melFreqMajor = [Float](repeating: 0, count: nMels * nFramesUsed)
 
-        for f in 0..<nFramesUsed {
-            for m in 0..<nMels {
+        for f in 0 ..< nFramesUsed {
+            for m in 0 ..< nMels {
                 var v = rawVals[f * nMels + m] * invLn10
                 if v < floor { v = floor }
                 // Voxtral normalization: (x + 4) / 4 — same affine as Whisper.
@@ -607,8 +610,8 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
 
         // Prepare padded input: zeros left-pad.
         var padded0 = [Float](repeating: 0, count: nMels * inLen0)
-        for m in 0..<nMels {
-            for t in 0..<nFrames {
+        for m in 0 ..< nMels {
+            for t in 0 ..< nFrames {
                 padded0[m * inLen0 + pad0 + t] = mel[m * nFrames + t]
             }
         }
@@ -627,7 +630,8 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         // Apply GELU on the conv output.
         let gelu0 = Ops.gelu(
             out0T.reshaped(to: [ec.dim * outLen0]), on: cmd0)
-        cmd0.commit(); cmd0.waitUntilCompleted()
+        cmd0.commit()
+        cmd0.waitUntilCompleted()
         let x0 = gelu0.toFloatArray()
 
         // ── Layer 1: [1, dim, nFrames] → [1, dim, ceil(nFrames/2)] (stride 2) ──
@@ -639,8 +643,8 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         // x0 is [dim * outLen0] (NCL flattened); re-pad for causal conv.
         // x0 layout: [dim, nFrames] (outCh-major = NCL without batch).
         var padded1 = [Float](repeating: 0, count: ec.dim * inLen1)
-        for c in 0..<ec.dim {
-            for t in 0..<outLen0 {
+        for c in 0 ..< ec.dim {
+            for t in 0 ..< outLen0 {
                 padded1[c * inLen1 + pad1 + t] = x0[c * outLen0 + t]
             }
         }
@@ -661,7 +665,8 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
 
         let gelu1 = Ops.gelu(
             out1T.reshaped(to: [ec.dim * rawLen]), on: cmd1)
-        cmd1.commit(); cmd1.waitUntilCompleted()
+        cmd1.commit()
+        cmd1.waitUntilCompleted()
         let x1flat = gelu1.toFloatArray()  // [dim * rawLen]
 
         // Convert from NCL [dim, rawLen] → time-major [trimLen, dim].
@@ -669,8 +674,8 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         // NCL flattened: x1flat[c * rawLen + t] for c in dim, t in rawLen.
         // We skip the first (rawLen % ds) frames and output [trimLen, dim].
         let skip = rawLen - trimLen
-        for t in 0..<trimLen {
-            for c in 0..<ec.dim {
+        for t in 0 ..< trimLen {
+            for c in 0 ..< ec.dim {
                 timeMajor[t * ec.dim + c] = x1flat[c * rawLen + skip + t]
             }
         }
@@ -700,8 +705,8 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         // The approach here mirrors the reference: process all frames but
         // use per-layer KV caches that trim to the sliding window.
         // For simplicity we use the same chunk-and-concatenate approach.
-        var caches: [[(keys: [Float], values: [Float])?]]
-            = Array(repeating: Array(repeating: nil, count: ec.nLayers), count: 1)
+        var caches: [[(keys: [Float], values: [Float])?]] = Array(
+            repeating: Array(repeating: nil, count: ec.nLayers), count: 1)
         var allOutputs = [Float]()
         allOutputs.reserveCapacity(seqLen * ec.dim)
 
@@ -729,9 +734,11 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
     ) -> [Float] {
         var h = seqVals
         for layer in encoderLayers {
-            h = runEncoderLayer(
-                layer, seq: h, seqLen: seqLen,
-                startPos: startPos, device: device).0
+            h =
+                runEncoderLayer(
+                    layer, seq: h, seqLen: seqLen,
+                    startPos: startPos, device: device
+                ).0
         }
         return h
     }
@@ -792,7 +799,8 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         let q = Ops.gemm(weight: layer.attn.wqWeight, input: normed, nRows: seqLen, on: cmd)
         let k = Ops.gemm(weight: layer.attn.wkWeight, input: normed, nRows: seqLen, on: cmd)
         let v = Ops.gemm(weight: layer.attn.wvWeight, input: normed, nRows: seqLen, on: cmd)
-        cmd.commit(); cmd.waitUntilCompleted()
+        cmd.commit()
+        cmd.waitUntilCompleted()
 
         // ── Add biases if present ──
         let qVals = addRowBiasIfPresent(
@@ -845,15 +853,16 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         let cmd2 = device.makeCommandBuffer()
         let outProjT = Tensor.empty(shape: [seqLen, H], dtype: dtype, device: device)
         AudioPreprocessing.copyFloats(attnCtx, into: outProjT)
-        let outProj = Ops.gemm(weight: layer.attn.woWeight, input: outProjT,
-                               nRows: seqLen, on: cmd2)
+        let outProj = Ops.gemm(
+            weight: layer.attn.woWeight, input: outProjT,
+            nRows: seqLen, on: cmd2)
         let attnPlusBias = addRowBiasIfPresent(
             outProj.toFloatArray(), bias: layer.attn.woBias?.toFloatArray(),
             nRows: seqLen, rowSize: H)
 
         // Residual: h = x + attn_out.
         var hVals = seqVals
-        for i in 0..<(seqLen * H) { hVals[i] += attnPlusBias[i] }
+        for i in 0 ..< (seqLen * H) { hVals[i] += attnPlusBias[i] }
 
         // ── RMSNorm + SwiGLU FFN ──
         let hT2 = Tensor.empty(shape: [seqLen, H], dtype: dtype, device: device)
@@ -861,18 +870,21 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         let normed2 = Ops.rmsNormRows(
             hT2, weight: layer.ffnNorm.weight, eps: layer.ffnNorm.eps,
             nRows: seqLen, rowSize: H, on: cmd2)
-        let ff1 = Ops.gemm(weight: layer.w1Weight.weight,
-                           input: normed2, nRows: seqLen, on: cmd2)
-        let ff3 = Ops.gemm(weight: layer.w3Weight.weight,
-                           input: normed2, nRows: seqLen, on: cmd2)
-        cmd2.commit(); cmd2.waitUntilCompleted()
+        let ff1 = Ops.gemm(
+            weight: layer.w1Weight.weight,
+            input: normed2, nRows: seqLen, on: cmd2)
+        let ff3 = Ops.gemm(
+            weight: layer.w3Weight.weight,
+            input: normed2, nRows: seqLen, on: cmd2)
+        cmd2.commit()
+        cmd2.waitUntilCompleted()
 
         // SwiGLU: gate * up (SiLU on gate, element-wise multiply with up).
         let ff1Vals = ff1.toFloatArray()
         let ff3Vals = ff3.toFloatArray()
         let hidDim = ec.hiddenDim
         var gatedVals = [Float](repeating: 0, count: seqLen * hidDim)
-        for i in 0..<gatedVals.count {
+        for i in 0 ..< gatedVals.count {
             let g = ff1Vals[i]
             // SiLU: g * sigmoid(g).
             let silu = g * (1.0 / (1.0 + exp(-g)))
@@ -888,11 +900,12 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         let ff2Vals = addRowBiasIfPresent(
             ff2Out.toFloatArray(), bias: layer.w2Weight.bias?.toFloatArray(),
             nRows: seqLen, rowSize: H)
-        cmd3.commit(); cmd3.waitUntilCompleted()
+        cmd3.commit()
+        cmd3.waitUntilCompleted()
 
         // Residual: out = h + ffn_out.
         var outVals = hVals
-        for i in 0..<(seqLen * H) { outVals[i] += ff2Vals[i] }
+        for i in 0 ..< (seqLen * H) { outVals[i] += ff2Vals[i] }
 
         return (outVals, newCache)
     }
@@ -918,53 +931,62 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         out.withUnsafeMutableBufferPointer { outBuf in
             let outPtr = outBuf.baseAddress!
             q.withUnsafeBufferPointer { qBuf in
-            k.withUnsafeBufferPointer { kBuf in
-            v.withUnsafeBufferPointer { vBuf in
-                let qb = qBuf.baseAddress!
-                let kb = kBuf.baseAddress!
-                let vb = vBuf.baseAddress!
-                DispatchQueue.concurrentPerform(iterations: nQHeads * seqLen) { work in
-                    let qHead = work / seqLen
-                    let qRow  = work % seqLen
-                    let kvHead = qHead / groupSize
-                    let qOff  = qRow * qHeadDim + qHead * headDim
-                    let qPos  = startPos + qRow
+                k.withUnsafeBufferPointer { kBuf in
+                    v.withUnsafeBufferPointer { vBuf in
+                        let qb = qBuf.baseAddress!
+                        let kb = kBuf.baseAddress!
+                        let vb = vBuf.baseAddress!
+                        DispatchQueue.concurrentPerform(iterations: nQHeads * seqLen) { work in
+                            let qHead = work / seqLen
+                            let qRow = work % seqLen
+                            let kvHead = qHead / groupSize
+                            let qOff = qRow * qHeadDim + qHead * headDim
+                            let qPos = startPos + qRow
 
-                    // Compute attention scores over all KV positions.
-                    var scores = [Float](repeating: 0, count: kvLen)
-                    var maxScore = -Float.greatestFiniteMagnitude
-                    for j in 0..<kvLen {
-                        let kvPos = kvOffset + j
-                        // Causal mask: only attend to kvPos <= qPos.
-                        if causal && kvPos > qPos { continue }
-                        // Sliding window mask.
-                        if causal && qPos - kvPos >= slidingWindow { continue }
-                        let kOff = j * kHeadDim + kvHead * headDim
-                        var dot: Float = 0
-                        for d in 0..<headDim { dot += qb[qOff + d] * kb[kOff + d] }
-                        let s = dot * scale
-                        scores[j] = s
-                        if s > maxScore { maxScore = s }
-                    }
-                    // Softmax.
-                    var sumExp: Float = 0
-                    for j in 0..<kvLen {
-                        let kvPos = kvOffset + j
-                        if causal && kvPos > qPos { scores[j] = -Float.greatestFiniteMagnitude; continue }
-                        if causal && qPos - kvPos >= slidingWindow { scores[j] = -Float.greatestFiniteMagnitude; continue }
-                        let e = exp(scores[j] - maxScore)
-                        scores[j] = e; sumExp += e
-                    }
-                    let inv = sumExp > 0 ? 1.0 / sumExp : 0
-                    let oOff = qRow * qHeadDim + qHead * headDim
-                    for j in 0..<kvLen {
-                        let w = scores[j] * inv
-                        if w == 0 { continue }
-                        let vOff = j * kHeadDim + kvHead * headDim
-                        for d in 0..<headDim { outPtr[oOff + d] += w * vb[vOff + d] }
+                            // Compute attention scores over all KV positions.
+                            var scores = [Float](repeating: 0, count: kvLen)
+                            var maxScore = -Float.greatestFiniteMagnitude
+                            for j in 0 ..< kvLen {
+                                let kvPos = kvOffset + j
+                                // Causal mask: only attend to kvPos <= qPos.
+                                if causal && kvPos > qPos { continue }
+                                // Sliding window mask.
+                                if causal && qPos - kvPos >= slidingWindow { continue }
+                                let kOff = j * kHeadDim + kvHead * headDim
+                                var dot: Float = 0
+                                for d in 0 ..< headDim { dot += qb[qOff + d] * kb[kOff + d] }
+                                let s = dot * scale
+                                scores[j] = s
+                                if s > maxScore { maxScore = s }
+                            }
+                            // Softmax.
+                            var sumExp: Float = 0
+                            for j in 0 ..< kvLen {
+                                let kvPos = kvOffset + j
+                                if causal && kvPos > qPos {
+                                    scores[j] = -Float.greatestFiniteMagnitude
+                                    continue
+                                }
+                                if causal && qPos - kvPos >= slidingWindow {
+                                    scores[j] = -Float.greatestFiniteMagnitude
+                                    continue
+                                }
+                                let e = exp(scores[j] - maxScore)
+                                scores[j] = e
+                                sumExp += e
+                            }
+                            let inv = sumExp > 0 ? 1.0 / sumExp : 0
+                            let oOff = qRow * qHeadDim + qHead * headDim
+                            for j in 0 ..< kvLen {
+                                let w = scores[j] * inv
+                                if w == 0 { continue }
+                                let vOff = j * kHeadDim + kvHead * headDim
+                                for d in 0 ..< headDim { outPtr[oOff + d] += w * vb[vOff + d] }
+                            }
+                        }
                     }
                 }
-            }}}
+            }
         }
         let result = Tensor.empty(shape: [seqLen, qHeadDim], dtype: dtype, device: device)
         AudioPreprocessing.copyFloats(out, into: result)
@@ -990,10 +1012,10 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         // Reshape [seqLen, dim] → [dsLen, dim*ds] (row-major flatten).
         let flatDim = ec.dim * ds
         var reshaped = [Float](repeating: 0, count: dsLen * flatDim)
-        for i in 0..<dsLen {
-            for j in 0..<ds {
+        for i in 0 ..< dsLen {
+            for j in 0 ..< ds {
                 let srcRow = i * ds + j
-                for c in 0..<ec.dim {
+                for c in 0 ..< ec.dim {
                     reshaped[i * flatDim + j * ec.dim + c] = seqVals[srcRow * ec.dim + c]
                 }
             }
@@ -1005,16 +1027,18 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         // audioProj0.weight is [decoderDim, dim*downsampleFactor]; use Ops.gemm
         // for multi-row input (dsLen rows).
         let cmd = device.makeCommandBuffer()
-        let proj0Out = Ops.gemm(weight: audioProj0.weight,
-                                input: reshapedT, nRows: dsLen, on: cmd)
-        cmd.commit(); cmd.waitUntilCompleted()
+        let proj0Out = Ops.gemm(
+            weight: audioProj0.weight,
+            input: reshapedT, nRows: dsLen, on: cmd)
+        cmd.commit()
+        cmd.waitUntilCompleted()
 
         let p0Vals = proj0Out.toFloatArray()  // [dsLen * decoderDim]
         var p0Act = [Float](repeating: 0, count: dsLen * decoderDim)
         // GELU approximation: 0.5·x·(1 + tanh(√(2/π)·(x + 0.044715·x³))).
         let gk: Float = 0.7978845608
         let gc: Float = 0.044715
-        for i in 0..<p0Act.count {
+        for i in 0 ..< p0Act.count {
             let x = p0Vals[i]
             let ginner = gk * (x + gc * x * x * x)
             p0Act[i] = 0.5 * x * (1 + tanh(ginner))
@@ -1025,9 +1049,11 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
 
         // Projection 2.
         let cmd2 = device.makeCommandBuffer()
-        let proj2Out = Ops.gemm(weight: audioProj2.weight,
-                                input: p0T, nRows: dsLen, on: cmd2)
-        cmd2.commit(); cmd2.waitUntilCompleted()
+        let proj2Out = Ops.gemm(
+            weight: audioProj2.weight,
+            input: p0T, nRows: dsLen, on: cmd2)
+        cmd2.commit()
+        cmd2.waitUntilCompleted()
 
         return (proj2Out.toFloatArray(), dsLen)
     }
@@ -1047,8 +1073,9 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
 
         guard nFrames > 0 else {
             // Return empty [0, decoderDim] tensor for zero-length audio.
-            return Tensor.empty(shape: [0, config.decoderConfig.dim],
-                                dtype: dtype, device: device)
+            return Tensor.empty(
+                shape: [0, config.decoderConfig.dim],
+                dtype: dtype, device: device)
         }
 
         // ── Step 2: Causal Conv1d stem ──
@@ -1071,8 +1098,9 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
             seqVals: encoderOut, seqLen: convSeqLen, device: device)
 
         guard nAudioTokens > 0 else {
-            return Tensor.empty(shape: [0, config.decoderConfig.dim],
-                                dtype: dtype, device: device)
+            return Tensor.empty(
+                shape: [0, config.decoderConfig.dim],
+                dtype: dtype, device: device)
         }
 
         let result = Tensor.empty(
@@ -1109,7 +1137,7 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         // ── 2. Compute delay and padding ──
         let resolvedDelayMs = delayMs ?? config.transcriptionDelayMs
         let nDelay = numDelayTokens(delayMs: resolvedDelayMs, sampleRate: ac.samplingRate)
-        let nLeft  = config.nLeftPadTokens
+        let nLeft = config.nLeftPadTokens
         let promptLength = 1 + nLeft + nDelay  // BOS + pad×nLeft + pad×nDelay
 
         // ── 3. Precompute AdaRMSNorm scales ──
@@ -1117,9 +1145,11 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
 
         // ── 4. Build prompt embeddings and add adapter output ──
         // Prompt token ids: [BOS, pad×(nLeft + nDelay)].
-        let promptIds = [config.bosTokenId]
-            + [Int](repeating: config.streamingPadTokenId,
-                    count: nLeft + nDelay)
+        let promptIds =
+            [config.bosTokenId]
+            + [Int](
+                repeating: config.streamingPadTokenId,
+                count: nLeft + nDelay)
         let maxSeq = promptLength + max(nAudioTotal - promptLength, 0) + maxTokens + 16
 
         // Embed prompt tokens.
@@ -1127,40 +1157,43 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         idsTensor.copyIn(from: promptIds.map { UInt32($0) })
         let cmd = device.makeCommandBuffer()
         let promptEmbeds = tokEmbeddings(idsTensor, on: cmd)
-        cmd.commit(); cmd.waitUntilCompleted()
+        cmd.commit()
+        cmd.waitUntilCompleted()
 
         // Add adapter output to prompt embeddings (element-wise).
         // adapterOut[i] + tokEmbed[i] for i in 0..<promptLength.
         let adapterVals = adapterOut.toFloatArray()
-        let embedVals   = promptEmbeds.toFloatArray()
+        let embedVals = promptEmbeds.toFloatArray()
         let hidden = dc.dim
         var prefixVals = [Float](repeating: 0, count: promptLength * hidden)
         let usableAdapter = min(promptLength, nAudioTotal)
-        for i in 0..<usableAdapter {
-            for c in 0..<hidden {
-                prefixVals[i * hidden + c] = adapterVals[i * hidden + c]
+        for i in 0 ..< usableAdapter {
+            for c in 0 ..< hidden {
+                prefixVals[i * hidden + c] =
+                    adapterVals[i * hidden + c]
                     + embedVals[i * hidden + c]
             }
         }
-        for i in usableAdapter..<promptLength {
-            for c in 0..<hidden {
+        for i in usableAdapter ..< promptLength {
+            for c in 0 ..< hidden {
                 prefixVals[i * hidden + c] = embedVals[i * hidden + c]
             }
         }
 
         // ── 5. Prefill decoder ──
-        let nLayers   = dc.nLayers
-        let nKVHeads  = dc.nKVHeads
-        let hd        = dc.headDim
+        let nLayers = dc.nLayers
+        let nKVHeads = dc.nKVHeads
+        let hd = dc.headDim
 
-        var caches = (0..<nLayers).map { _ in
-            KVCache(nKVHeads: nKVHeads, headDim: hd, maxSeq: maxSeq,
-                    dtype: dtype, device: device)
+        var caches = (0 ..< nLayers).map { _ in
+            KVCache(
+                nKVHeads: nKVHeads, headDim: hd, maxSeq: maxSeq,
+                dtype: dtype, device: device)
         }
 
         // Feed prompt one token at a time.
         var lastLogits: Tensor? = nil
-        for pos in 0..<promptLength {
+        for pos in 0 ..< promptLength {
             let rowEmbed = Tensor.empty(shape: [hidden], dtype: dtype, device: device)
             AudioPreprocessing.copyFloats(
                 Array(prefixVals[pos * hidden ..< (pos + 1) * hidden]), into: rowEmbed)
@@ -1174,13 +1207,14 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         var generated: [Int] = []
         let eos = config.eosTokenId
 
-        for pos in promptLength..<(nAudioTotal + maxTokens) {
+        for pos in promptLength ..< (nAudioTotal + maxTokens) {
             // Greedy sample.
             let logitVals = logits.toFloatArray()
             var best = 0
             var bestVal = -Float.greatestFiniteMagnitude
             for (i, v) in logitVals.enumerated() where v > bestVal {
-                bestVal = v; best = i
+                bestVal = v
+                best = i
             }
             if best == eos { break }
             if generated.count >= maxTokens { break }
@@ -1194,14 +1228,15 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
             nextIdT.copyIn(from: [UInt32(best)])
             let cmdEmb = device.makeCommandBuffer()
             let tokenEmbed = tokEmbeddings(nextIdT, on: cmdEmb)
-            cmdEmb.commit(); cmdEmb.waitUntilCompleted()
+            cmdEmb.commit()
+            cmdEmb.waitUntilCompleted()
             let tokenEmbVals = tokenEmbed.toFloatArray()  // [hidden]
 
             // Combine token embed with adapter output (if in audio span).
             let inputVals: [Float]
             if pos < nAudioTotal {
                 var combined = [Float](repeating: 0, count: hidden)
-                for c in 0..<hidden {
+                for c in 0 ..< hidden {
                     combined[c] = adapterVals[pos * hidden + c] + tokenEmbVals[c]
                 }
                 inputVals = combined
@@ -1243,10 +1278,12 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
 
         // Post-decoder RMSNorm → lm_head.
         let cmd = device.makeCommandBuffer()
-        let normed = Ops.rmsNorm(h, weight: decoderNorm.weight,
-                                 eps: decoderNorm.eps, on: cmd)
+        let normed = Ops.rmsNorm(
+            h, weight: decoderNorm.weight,
+            eps: decoderNorm.eps, on: cmd)
         let logits = lmHead(normed, on: cmd)
-        cmd.commit(); cmd.waitUntilCompleted()
+        cmd.commit()
+        cmd.waitUntilCompleted()
         return logits
     }
 
@@ -1261,7 +1298,7 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         device: Device
     ) -> Tensor {
         let dc = config.decoderConfig
-        let H  = dc.dim
+        let H = dc.dim
         let nH = dc.nHeads
         let nKVH = dc.nKVHeads
         let hd = dc.headDim
@@ -1270,12 +1307,14 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
 
         // ── Pre-norm + QKV projections (gemv, seqLen=1) ──
         let cmd1 = device.makeCommandBuffer()
-        let normed = Ops.rmsNorm(hIn, weight: layer.attnNorm.weight,
-                                 eps: layer.attnNorm.eps, on: cmd1)
-        let q = layer.wqWeight(normed, on: cmd1)   // [nH * hd]
-        let k = layer.wkWeight(normed, on: cmd1)   // [nKVH * hd]
-        let v = layer.wvWeight(normed, on: cmd1)   // [nKVH * hd]
-        cmd1.commit(); cmd1.waitUntilCompleted()
+        let normed = Ops.rmsNorm(
+            hIn, weight: layer.attnNorm.weight,
+            eps: layer.attnNorm.eps, on: cmd1)
+        let q = layer.wqWeight(normed, on: cmd1)  // [nH * hd]
+        let k = layer.wkWeight(normed, on: cmd1)  // [nKVH * hd]
+        let v = layer.wvWeight(normed, on: cmd1)  // [nKVH * hd]
+        cmd1.commit()
+        cmd1.waitUntilCompleted()
 
         // ── Interleaved RoPE (single position) ──
         let qVals = voxtralInterleavedRoPEStep(
@@ -1307,34 +1346,38 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         let postAttn = Ops.add(hIn, oOut, on: cmd2)
 
         // ── FFN with AdaRMSNorm time conditioning ──
-        var ffnIn = Ops.rmsNorm(postAttn, weight: layer.ffnNorm.weight,
-                                eps: layer.ffnNorm.eps, on: cmd2)
+        var ffnIn = Ops.rmsNorm(
+            postAttn, weight: layer.ffnNorm.weight,
+            eps: layer.ffnNorm.eps, on: cmd2)
 
         // AdaRMSNorm scale (if present): ffnIn = ffnIn * (1 + adaScale).
         if let scale = adaScale, layer.adaRmsNorm != nil {
-            cmd2.commit(); cmd2.waitUntilCompleted()
+            cmd2.commit()
+            cmd2.waitUntilCompleted()
             let scaleVals = ffnIn.toFloatArray()
             var scaled = [Float](repeating: 0, count: H)
-            for i in 0..<H { scaled[i] = scaleVals[i] * (1.0 + scale[i]) }
+            for i in 0 ..< H { scaled[i] = scaleVals[i] * (1.0 + scale[i]) }
             let scaledT = Tensor.empty(shape: [H], dtype: dtype, device: device)
             AudioPreprocessing.copyFloats(scaled, into: scaledT)
             ffnIn = scaledT
             let cmd3 = device.makeCommandBuffer()
-            let gate  = layer.w1Weight(ffnIn, on: cmd3)
-            let up    = layer.w3Weight(ffnIn, on: cmd3)
+            let gate = layer.w1Weight(ffnIn, on: cmd3)
+            let up = layer.w3Weight(ffnIn, on: cmd3)
             let gated = Ops.mul(Ops.silu(gate, on: cmd3), up, on: cmd3)
-            let down  = layer.w2Weight(gated, on: cmd3)
+            let down = layer.w2Weight(gated, on: cmd3)
             let result = Ops.add(postAttn, down, on: cmd3)
-            cmd3.commit(); cmd3.waitUntilCompleted()
+            cmd3.commit()
+            cmd3.waitUntilCompleted()
             return result.reshaped(to: [H])
         }
 
-        let gate  = layer.w1Weight(ffnIn, on: cmd2)
-        let up    = layer.w3Weight(ffnIn, on: cmd2)
+        let gate = layer.w1Weight(ffnIn, on: cmd2)
+        let up = layer.w3Weight(ffnIn, on: cmd2)
         let gated = Ops.mul(Ops.silu(gate, on: cmd2), up, on: cmd2)
-        let down  = layer.w2Weight(gated, on: cmd2)
+        let down = layer.w2Weight(gated, on: cmd2)
         let result = Ops.add(postAttn, down, on: cmd2)
-        cmd2.commit(); cmd2.waitUntilCompleted()
+        cmd2.commit()
+        cmd2.waitUntilCompleted()
         return result.reshaped(to: [H])
     }
 
@@ -1345,18 +1388,18 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
     private func ensureAdaScales(delayTokens: Int) {
         guard delayTokens != cachedDelayTokens else { return }
         let dc = config.decoderConfig
-        let H  = dc.dim
+        let H = dc.dim
 
         // Time embedding: [H] = concat(cos, sin) of half-dim frequencies.
         let halfDim = H / 2
         let theta: Float = 10000.0
         var tEmbed = [Float](repeating: 0, count: H)
         let t = Float(delayTokens)
-        for i in 0..<halfDim {
+        for i in 0 ..< halfDim {
             let invFreq = exp(-log(theta) * Float(i) / Float(halfDim))
             let angle = t * invFreq
-            tEmbed[i]            = cos(angle)
-            tEmbed[halfDim + i]  = sin(angle)
+            tEmbed[i] = cos(angle)
+            tEmbed[halfDim + i] = sin(angle)
         }
 
         // Compute per-layer AdaRMSNorm scales.
@@ -1374,7 +1417,8 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
             let down = ada.adaDown(tT, on: cmd)
             let geluOut = Ops.gelu(down, on: cmd)
             let scaleOut = ada.adaUp(geluOut, on: cmd)
-            cmd.commit(); cmd.waitUntilCompleted()
+            cmd.commit()
+            cmd.waitUntilCompleted()
             scales.append(scaleOut.toFloatArray())
         }
         cachedAdaScales = scales
@@ -1406,8 +1450,8 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
     ) -> [Float] {
         guard let b = bias else { return vals }
         var out = vals
-        for r in 0..<nRows {
-            for c in 0..<rowSize { out[r * rowSize + c] += b[c] }
+        for r in 0 ..< nRows {
+            for c in 0 ..< rowSize { out[r * rowSize + c] += b[c] }
         }
         return out
     }
@@ -1421,9 +1465,11 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         let t = Tensor.empty(shape: [nRows, rowSize], dtype: dtype, device: device)
         AudioPreprocessing.copyFloats(vals, into: t)
         let cmd = device.makeCommandBuffer()
-        let normed = Ops.rmsNormRows(t, weight: weight, eps: eps,
-                                     nRows: nRows, rowSize: rowSize, on: cmd)
-        cmd.commit(); cmd.waitUntilCompleted()
+        let normed = Ops.rmsNormRows(
+            t, weight: weight, eps: eps,
+            nRows: nRows, rowSize: rowSize, on: cmd)
+        cmd.commit()
+        cmd.waitUntilCompleted()
         return normed.toFloatArray()
     }
 }
@@ -1447,21 +1493,21 @@ private func voxtralInterleavedRoPE(
 
     // Precompute inverse frequencies for adjacent-pair rotation.
     var invFreqs = [Float](repeating: 0, count: halfDim)
-    for i in 0..<halfDim {
+    for i in 0 ..< halfDim {
         invFreqs[i] = exp(-log(theta) * Float(2 * i) / Float(headDim))
     }
 
-    for row in 0..<seqLen {
+    for row in 0 ..< seqLen {
         let pos = Float(startPos + row)
-        for h in 0..<nHeads {
+        for h in 0 ..< nHeads {
             let base = row * H + h * headDim
-            for i in 0..<halfDim {
+            for i in 0 ..< halfDim {
                 let angle = pos * invFreqs[i]
                 let c = cos(angle)
                 let s = sin(angle)
                 let x1 = vals[base + 2 * i]
                 let x2 = vals[base + 2 * i + 1]
-                out[base + 2 * i]     = x1 * c - x2 * s
+                out[base + 2 * i] = x1 * c - x2 * s
                 out[base + 2 * i + 1] = x2 * c + x1 * s
             }
         }
@@ -1509,9 +1555,10 @@ extension VoxtralRealtimeModel {
         }
 
         // Precompute AdaRMSNorm scales for the default delay.
-        model.ensureAdaScales(delayTokens: model.numDelayTokens(
-            delayMs: vc.transcriptionDelayMs,
-            sampleRate: vc.audioConfig.samplingRate))
+        model.ensureAdaScales(
+            delayTokens: model.numDelayTokens(
+                delayMs: vc.transcriptionDelayMs,
+                sampleRate: vc.audioConfig.samplingRate))
 
         return model
     }
@@ -1538,34 +1585,35 @@ extension VoxtralRealtimeModel {
             let raw = try bundle.tensor(named: key)
             // raw shape: [outCh, kernelSize, inCh] (from MLX safetensors).
             let outCh = raw.shape[0]
-            let kSz   = raw.shape[1]
-            let inCh  = raw.shape[2]
+            let kSz = raw.shape[1]
+            let inCh = raw.shape[2]
             let rawVals = raw.toFloatArray()
             var transposed = [Float](repeating: 0, count: outCh * inCh * kSz)
-            for o in 0..<outCh {
-                for k in 0..<kSz {
-                    for i in 0..<inCh {
+            for o in 0 ..< outCh {
+                for k in 0 ..< kSz {
+                    for i in 0 ..< inCh {
                         let src = o * kSz * inCh + k * inCh + i
                         let dst = o * inCh * kSz + i * kSz + k
                         transposed[dst] = rawVals[src]
                     }
                 }
             }
-            let t = Tensor.empty(shape: [outCh, inCh, kSz], dtype: dtype,
-                                 device: .shared)
+            let t = Tensor.empty(
+                shape: [outCh, inCh, kSz], dtype: dtype,
+                device: .shared)
             AudioPreprocessing.copyFloats(transposed, into: t)
             return t
         }
 
         let conv0Weight = try loadConv1dWeight("encoder.conv_layers_0_conv.conv.weight")
-        let conv0Bias   = try bundle.tensor(named: "encoder.conv_layers_0_conv.conv.bias")
+        let conv0Bias = try bundle.tensor(named: "encoder.conv_layers_0_conv.conv.bias")
         let conv1Weight = try loadConv1dWeight("encoder.conv_layers_1_conv.conv.weight")
-        let conv1Bias   = try bundle.tensor(named: "encoder.conv_layers_1_conv.conv.bias")
+        let conv1Bias = try bundle.tensor(named: "encoder.conv_layers_1_conv.conv.bias")
 
         // ── Encoder transformer layers ──
         var encLayers: [VoxtralEncoderLayerWeights] = []
         encLayers.reserveCapacity(ec.nLayers)
-        for i in 0..<ec.nLayers {
+        for i in 0 ..< ec.nLayers {
             let p = "encoder.transformer_layers.\(i)"
 
             let attnNorm = RMSNorm(
@@ -1579,14 +1627,17 @@ extension VoxtralRealtimeModel {
             // In published mlx-community Voxtral checkpoints the encoder weights
             // are stored as plain fp16 (not quantized), so we load tensors directly.
             let wqW = try bundle.tensor(named: "\(p).attention.wq.weight")
-            let wqB: Tensor? = bundle.has("\(p).attention.wq.bias")
+            let wqB: Tensor? =
+                bundle.has("\(p).attention.wq.bias")
                 ? try bundle.tensor(named: "\(p).attention.wq.bias") : nil
             let wkW = try bundle.tensor(named: "\(p).attention.wk.weight")
             let wvW = try bundle.tensor(named: "\(p).attention.wv.weight")
-            let wvB: Tensor? = bundle.has("\(p).attention.wv.bias")
+            let wvB: Tensor? =
+                bundle.has("\(p).attention.wv.bias")
                 ? try bundle.tensor(named: "\(p).attention.wv.bias") : nil
             let woW = try bundle.tensor(named: "\(p).attention.wo.weight")
-            let woB: Tensor? = bundle.has("\(p).attention.wo.bias")
+            let woB: Tensor? =
+                bundle.has("\(p).attention.wo.bias")
                 ? try bundle.tensor(named: "\(p).attention.wo.bias") : nil
 
             let attn = VoxtralEncoderAttentionWeights(
@@ -1600,18 +1651,22 @@ extension VoxtralRealtimeModel {
             let w1W = try bundle.tensor(named: "\(p).feed_forward_w1.weight")
             let w2W = try bundle.tensor(named: "\(p).feed_forward_w2.weight")
             let w3W = try bundle.tensor(named: "\(p).feed_forward_w3.weight")
-            let w1B: Tensor? = bundle.has("\(p).feed_forward_w1.bias")
+            let w1B: Tensor? =
+                bundle.has("\(p).feed_forward_w1.bias")
                 ? try bundle.tensor(named: "\(p).feed_forward_w1.bias") : nil
-            let w2B: Tensor? = bundle.has("\(p).feed_forward_w2.bias")
+            let w2B: Tensor? =
+                bundle.has("\(p).feed_forward_w2.bias")
                 ? try bundle.tensor(named: "\(p).feed_forward_w2.bias") : nil
-            let w3B: Tensor? = bundle.has("\(p).feed_forward_w3.bias")
+            let w3B: Tensor? =
+                bundle.has("\(p).feed_forward_w3.bias")
                 ? try bundle.tensor(named: "\(p).feed_forward_w3.bias") : nil
 
-            encLayers.append(VoxtralEncoderLayerWeights(
-                attnNorm: attnNorm, attn: attn, ffnNorm: ffnNorm,
-                w1Weight: Linear(weight: w1W, bias: w1B),
-                w2Weight: Linear(weight: w2W, bias: w2B),
-                w3Weight: Linear(weight: w3W, bias: w3B)))
+            encLayers.append(
+                VoxtralEncoderLayerWeights(
+                    attnNorm: attnNorm, attn: attn, ffnNorm: ffnNorm,
+                    w1Weight: Linear(weight: w1W, bias: w1B),
+                    w2Weight: Linear(weight: w2W, bias: w2B),
+                    w3Weight: Linear(weight: w3W, bias: w3B)))
         }
 
         let encoderNorm = RMSNorm(
@@ -1632,7 +1687,7 @@ extension VoxtralRealtimeModel {
         // ── Decoder layers ──
         var decLayers: [VoxtralDecoderLayerWeights] = []
         decLayers.reserveCapacity(dc.nLayers)
-        for i in 0..<dc.nLayers {
+        for i in 0 ..< dc.nLayers {
             let p = "decoder.layers.\(i)"
 
             let attnNorm = RMSNorm(
@@ -1653,7 +1708,8 @@ extension VoxtralRealtimeModel {
             // AdaRMSNorm (ada_down/ada_up) — never quantized.
             let adaRmsNorm: VoxtralAdaRMSNormWeights?
             if dc.adaRmsNormTCond,
-               bundle.has("\(p).ada_rms_norm_t_cond.ada_down.weight") {
+                bundle.has("\(p).ada_rms_norm_t_cond.ada_down.weight")
+            {
                 let adaDown = try loadLinear(
                     base: "\(p).ada_rms_norm_t_cond.ada_down", in: bundle,
                     quantization: nil)
@@ -1665,11 +1721,12 @@ extension VoxtralRealtimeModel {
                 adaRmsNorm = nil
             }
 
-            decLayers.append(VoxtralDecoderLayerWeights(
-                attnNorm: attnNorm, wqWeight: wq, wkWeight: wk,
-                wvWeight: wv, woWeight: wo, ffnNorm: ffnNorm,
-                adaRmsNorm: adaRmsNorm,
-                w1Weight: w1, w2Weight: w2, w3Weight: w3))
+            decLayers.append(
+                VoxtralDecoderLayerWeights(
+                    attnNorm: attnNorm, wqWeight: wq, wkWeight: wk,
+                    wvWeight: wv, woWeight: wo, ffnNorm: ffnNorm,
+                    adaRmsNorm: adaRmsNorm,
+                    w1Weight: w1, w2Weight: w2, w3Weight: w3))
         }
 
         let decoderNorm = RMSNorm(
@@ -1679,17 +1736,19 @@ extension VoxtralRealtimeModel {
         // lm_head — tied to tok_embeddings in Mini-4B (tiedEmbeddings == true).
         let lmHead: AnyLinear
         if !dc.tiedEmbeddings, bundle.has("decoder.lm_head.weight") {
-            lmHead = try loadLinear(base: "decoder.lm_head", in: bundle,
-                                    quantization: quant)
+            lmHead = try loadLinear(
+                base: "decoder.lm_head", in: bundle,
+                quantization: quant)
         } else if let q = quant, bundle.isQuantized("decoder.tok_embeddings") {
             let t = try bundle.quantizedTriplet("decoder.tok_embeddings")
             let bits = deriveAffineQuantBits(
                 weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
                 scaleCols: t.scales.shape[t.scales.shape.count - 1],
                 groupSize: q.groupSize)
-            lmHead = AnyLinear(QuantizedLinear(
-                weight: t.weight, scales: t.scales, biases: t.biases,
-                bits: bits, groupSize: q.groupSize))
+            lmHead = AnyLinear(
+                QuantizedLinear(
+                    weight: t.weight, scales: t.scales, biases: t.biases,
+                    bits: bits, groupSize: q.groupSize))
         } else {
             lmHead = AnyLinear(Linear(weight: tokEmbeddings.weight))
         }
