@@ -4,7 +4,7 @@
 
 A minimal, dependency-light LLM inference library for Apple Silicon, built on pre-compiled Metal kernels generated from the [metaltile](https://github.com/thewafflehaus/metaltile) DSL. No Python. No MLX. No C compilation. No JIT. No four-repo dependency chain.
 
-**Just really f*cking fast AI!** 🚀
+**Just really f*cking fast AI on your Mac!** 🚀
 
 ## Status
 
@@ -32,7 +32,7 @@ Early bootstrap — the dense-text, hybrid, vision-language, and audio model wav
 | **Quantized KV cache** | Squeeze long contexts into a fraction of the memory. Affine 4/8-bit + AURA compressed. | ✅ |
 | **Hybrid models (GDN + SSM)** | Qwen 3.5, Mamba 2, NemotronH, Jamba, GraniteMoeHybrid, FalconH1 — attention mixed with recurrence. | ✅ |
 | **Mixture-of-experts** | GPT-OSS-20B, Qwen 3.5 MoE, Gemma 4 MoE — sparse top-K expert routing. | ✅ |
-| **Vision (multi-modal)** | Drop in an image, get text back. Gemma 3/4-VL, Qwen 2.5/3-VL, Qwen3-VL-MoE, Nemotron-VLM. | ✅ |
+| **Vision (multi-modal)** | Drop in an image or video, get text back. Gemma 3/4-VL, Qwen 2.5/3-VL, Qwen3-VL-MoE, Nemotron-VLM. | ✅ |
 | **Audio in / out** | Whisper-style speech-to-text, text-to-speech, omni audio, VAD — plus 7 neural audio codecs. | ✅ |
 | **Speculative decoding** | Faster generation via n-gram lookup + draft models. | 🚧 Phase 8 |
 | **Autotuner** | Per-shape kernel tuning so you never leave perf on the table. | 🚧 Phase 9 |

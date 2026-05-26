@@ -47,10 +47,8 @@ let package = Package(
             name: "MetalTileSwift",
             path: "Sources/MetalTileSwift",
             resources: [
-                .copy("Resources"),
+                .copy("Resources")
             ]
-            // TODO: add MetalTileEmitPlugin once SPM build plugin lands
-            // (Phase 0 deliverable — see planning/plan.md).
         ),
 
         // Main inference library: Tensor, Module system, model families,
