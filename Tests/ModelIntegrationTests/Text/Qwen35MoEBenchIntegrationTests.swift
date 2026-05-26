@@ -84,6 +84,54 @@ struct Qwen35MoEBenchIntegrationTests {
         )
     }
 
+    @Test("Qwen3.5-35B-A3B forwardMany T=8 smoke")
+    func forwardManyT8Smoke() async throws {
+        guard FileManager.default.fileExists(atPath: qwen35MoELocalPath) else {
+            print("forwardManyT8Smoke skipped: \(qwen35MoELocalPath) not found")
+            return
+        }
+        let m = try await loadModel()
+        let qwen = try #require(m.qwen35, "expected Qwen35Model engine")
+        let seed = "The quick brown fox"
+        var encoded = m.tokenizer.encode(text: seed)
+        while encoded.count < 8 { encoded.append(0) }
+        encoded = Array(encoded.prefix(8))
+        let caches = qwen.makeLayerCaches()
+        let cmd = Device.shared.makeCommandBuffer()
+        let t0 = Date()
+        _ = qwen.forwardMany(
+            tokenIds: encoded, startPosition: 0,
+            caches: caches, on: cmd, device: Device.shared)
+        cmd.commit()
+        await cmd.completed()
+        let dt = Date().timeIntervalSince(t0)
+        print("Qwen3.5-35B-A3B forwardMany T=8: \(String(format: "%.3f", dt))s")
+    }
+
+    @Test("Qwen3.5-35B-A3B per-token forward T=128 (no batched)")
+    func perTokenT128() async throws {
+        guard FileManager.default.fileExists(atPath: qwen35MoELocalPath) else {
+            print("perTokenT128 skipped: \(qwen35MoELocalPath) not found")
+            return
+        }
+        let m = try await loadModel()
+        let qwen = try #require(m.qwen35, "expected Qwen35Model engine")
+        let seed = "The quick brown fox jumps over the lazy dog. "
+        let seedEncoded = m.tokenizer.encode(text: seed)
+        var encoded = seedEncoded
+        while encoded.count < 128 { encoded.append(contentsOf: seedEncoded) }
+        encoded = Array(encoded.prefix(128))
+        let caches = qwen.makeLayerCaches()
+        let t0 = Date()
+        for (i, tok) in encoded.enumerated() {
+            _ = qwen.forward(tokenId: tok, position: i, caches: caches)
+        }
+        let dt = Date().timeIntervalSince(t0)
+        print(
+            "Qwen3.5-35B-A3B per-token T=128: \(String(format: "%.3f", dt))s → "
+                + "\(String(format: "%.1f", 128.0 / dt)) tps")
+    }
+
     @Test("Qwen3.5-35B-A3B forwardManyBench T=128")
     func forwardManyT128() async throws {
         try await runForwardManyBench(targetT: 128)
@@ -92,6 +140,69 @@ struct Qwen35MoEBenchIntegrationTests {
     @Test("Qwen3.5-35B-A3B forwardManyBench T=512")
     func forwardManyT512() async throws {
         try await runForwardManyBench(targetT: 512)
+    }
+
+    @Test("Qwen3.5-35B-A3B forwardManyBench T=2048 (long-context)")
+    func forwardManyT2K() async throws {
+        try await runForwardManyBench(targetT: 2048)
+    }
+
+    @Test("Qwen3.5-35B-A3B decode after T=1024 prefill — long-KV decode tps")
+    func decodeAfterLongPrefill() async throws {
+        guard FileManager.default.fileExists(atPath: qwen35MoELocalPath) else {
+            print("decodeAfterLongPrefill skipped: \(qwen35MoELocalPath) not found")
+            return
+        }
+        let m = try await loadModel()
+        let qwen = try #require(m.qwen35, "expected Qwen35Model engine")
+        let seed =
+            "The history of the printing press began when European craftsmen of the 15th century combined movable metal type with oil based ink screw presses paper to mass produce printed books pamphlets and broadsheets revolutionising communication"
+        let seedEncoded = m.tokenizer.encode(text: seed)
+        var encoded = seedEncoded
+        while encoded.count < 1024 { encoded.append(contentsOf: seedEncoded) }
+        encoded = Array(encoded.prefix(1024))
+
+        // Warm.
+        for _ in 0 ..< 2 {
+            let warmCaches = qwen.makeLayerCaches()
+            let warmCmd = Device.shared.makeCommandBuffer()
+            _ = qwen.forwardMany(
+                tokenIds: encoded, startPosition: 0,
+                caches: warmCaches, on: warmCmd, device: Device.shared)
+            warmCmd.commit()
+            await warmCmd.completed()
+        }
+
+        // Prefill 1024 via forwardMany, then decode 32 steps and
+        // measure decode-only tps. Verifies the wirings (sdpaDecode +
+        // sdpaDecode2Pass routing, KV cache residency, etc.) hold up
+        // at non-trivial KV.
+        let nSteps = 32
+        var runs: [Double] = []
+        for _ in 0 ..< 5 {
+            let caches = qwen.makeLayerCaches()
+            let cmd = Device.shared.makeCommandBuffer()
+            _ = qwen.forwardMany(
+                tokenIds: encoded, startPosition: 0,
+                caches: caches, on: cmd, device: Device.shared)
+            cmd.commit()
+            await cmd.completed()
+
+            let t0 = Date()
+            for j in 0 ..< nSteps {
+                _ = qwen.forward(
+                    tokenId: 0, position: 1024 + j, caches: caches)
+            }
+            runs.append(Date().timeIntervalSince(t0))
+        }
+        runs.sort()
+        let median = runs[runs.count / 2]
+        let tps = Double(nSteps) / median
+        print(
+            "Qwen3.5-35B-A3B decode T=1 after T=1024 prefill: "
+                + "runs=\(runs.map { String(format: "%.3f", $0) })s "
+                + "median=\(String(format: "%.3f", median))s → "
+                + "\(String(format: "%.2f", tps)) tps")
     }
 
     private func loadModel() async throws -> Model {
