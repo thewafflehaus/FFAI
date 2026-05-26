@@ -869,4 +869,98 @@ struct QuantizedOpsTests {
             }
         }
     }
+
+    @Test("dequantGemvInt4ExpertIndexed: matches standalone dequantGemvInt4 for the picked expert")
+    func dequantGemvInt4ExpertIndexedCorrectness() {
+        autoreleasepool {
+            let nExperts = 4
+            let outDim = 4
+            let inDim = 128
+            let gs = 64
+            let input: [Float] = (0 ..< inDim).map { Float($0) * 0.05 - 3.2 }
+            // Build per-expert weight tensors AND a stacked weight tensor
+            // that concatenates each expert's slab.
+            var experts: [(weight: Tensor, scales: Tensor, biases: Tensor, expected: [Float])] = []
+            for e in 0 ..< nExperts {
+                let p = Self.makeInt4Projection(
+                    outDim: outDim, inDim: inDim, gs: gs,
+                    rowSeed: 7 + e * 5, scaleStep: 0.01 + Float(e) * 0.005,
+                    biasStep: -0.005 + Float(e) * 0.002, input: input)
+                experts.append(p)
+            }
+            // Stack: [nExperts, outDim, inDim/8]
+            let packedPerRow = inDim / 8
+            let nGroups = inDim / gs
+            let weightsStacked = Tensor.empty(
+                shape: [nExperts, outDim, packedPerRow], dtype: .u32)
+            let scalesStacked = Tensor.empty(
+                shape: [nExperts, outDim, nGroups], dtype: .f32)
+            let biasesStacked = Tensor.empty(
+                shape: [nExperts, outDim, nGroups], dtype: .f32)
+            // Repack by copying each expert's data into the stacked tensor.
+            var packedAll: [UInt32] = []
+            var scalesAll: [Float] = []
+            var biasesAll: [Float] = []
+            for e in 0 ..< nExperts {
+                packedAll.append(contentsOf: experts[e].weight.toArray(as: UInt32.self))
+                scalesAll.append(contentsOf: experts[e].scales.toArray(as: Float.self))
+                biasesAll.append(contentsOf: experts[e].biases.toArray(as: Float.self))
+            }
+            weightsStacked.copyIn(from: packedAll)
+            scalesStacked.copyIn(from: scalesAll)
+            biasesStacked.copyIn(from: biasesAll)
+
+            let inputT = Tensor.empty(shape: [inDim], dtype: .f32)
+            inputT.copyIn(from: input)
+
+            // Pick expert 2.
+            let pick: UInt32 = 2
+            let pickT = Tensor.empty(shape: [1], dtype: .u32)
+            pickT.copyIn(from: [pick])
+            let out = Tensor.empty(shape: [outDim], dtype: .f32)
+            runAndWait { cb in
+                Ops.dequantGemvInt4ExpertIndexed(
+                    weightsStacked: weightsStacked,
+                    scalesStacked: scalesStacked,
+                    biasesStacked: biasesStacked,
+                    input: inputT, expertIndex: pickT,
+                    groupSize: gs, on: cb, into: out)
+            }
+            let got = out.toArray(as: Float.self)
+            let want = experts[Int(pick)].expected
+            for i in 0 ..< outDim {
+                #expect(abs(got[i] - want[i]) < 1e-2, "row \(i)")
+            }
+        }
+    }
+
+    @Test("moeRouterTopK f32 — top-K of (1, 5, 3, 4) at k=2 picks indices [1, 3]")
+    func moeRouterTopKDeterministic() {
+        autoreleasepool {
+            // norm_topk_prob = true → weights are softmax over the two
+            // selected logits and renormalise to 1.0. With logits
+            // (1, 5, 3, 4), the top-2 are indices 1 and 3 (values 5, 4).
+            // softmax([5, 4]) = (e^5, e^4) / (e^5 + e^4) ≈ (0.731, 0.269).
+            let nExperts = 4
+            let k = 2
+            let logits = Tensor.empty(shape: [nExperts], dtype: .f32)
+            logits.copyIn(from: [Float(1), 5, 3, 4])
+            let indicesOut = Tensor.empty(shape: [k], dtype: .u32)
+            let weightsOut = Tensor.empty(shape: [k], dtype: .f32)
+            runAndWait { cb in
+                Ops.moeRouterTopK(
+                    logits: logits,
+                    indicesOut: indicesOut, weightsOut: weightsOut,
+                    nExperts: nExperts, k: k, normTopkProb: true, on: cb)
+            }
+            let idx = indicesOut.toArray(as: UInt32.self)
+            let wts = weightsOut.toArray(as: Float.self)
+            #expect(Set(idx) == Set([UInt32(1), 3]))
+            // Sum should be ~1.0 (norm_topk_prob).
+            #expect(abs(wts[0] + wts[1] - 1.0) < 1e-3)
+            // Index 1 has the larger logit so its weight should dominate.
+            let weightOf1 = idx[0] == 1 ? wts[0] : wts[1]
+            #expect(weightOf1 > 0.7)
+        }
+    }
 }

@@ -1679,6 +1679,233 @@ public enum Ops {
         enc.endEncoding()
     }
 
+    /// Per-expert indexed int4 dequant-GEMV. The caller stacks every
+    /// expert's weight slab into one `[nExperts, outDim, inDim/8]`
+    /// u32-packed tensor (and matching scales / biases stacks); the
+    /// kernel reads `expertIndex[0]` to pick the slab to dequantize on
+    /// this call. Paired with `Ops.moeRouterTopK`, the top-K indices
+    /// stay GPU-resident and the host-side `route → dispatch expert
+    /// gemv` sync at every MoE layer collapses to one
+    /// `expertIndex.buffer + offset = slot · 4` view per slot.
+    public static func dequantGemvInt4ExpertIndexed(
+        weightsStacked: Tensor, scalesStacked: Tensor, biasesStacked: Tensor,
+        input: Tensor, expertIndex: Tensor,
+        groupSize: Int = 64,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor
+    ) {
+        precondition(
+            weightsStacked.shape.count == 3,
+            "Ops.dequantGemvInt4ExpertIndexed: weightsStacked must be [nExperts, outDim, inDim/8]")
+        precondition(
+            weightsStacked.dtype == .u32,
+            "Ops.dequantGemvInt4ExpertIndexed: weightsStacked must be u32 (packed)")
+        precondition(
+            expertIndex.dtype == .u32 && expertIndex.elementCount == 1,
+            "Ops.dequantGemvInt4ExpertIndexed: expertIndex must be [1] u32")
+        precondition(
+            scalesStacked.dtype == input.dtype && biasesStacked.dtype == input.dtype,
+            "Ops.dequantGemvInt4ExpertIndexed: scales / biases dtype must match input")
+        precondition(
+            out.dtype == input.dtype,
+            "Ops.dequantGemvInt4ExpertIndexed: out dtype must match input")
+        let outDim = weightsStacked.shape[1]
+        let packedPerRow = weightsStacked.shape[2]
+        let inDim = packedPerRow * 8  // int4 packs 8 weights per u32 word
+        precondition(
+            input.elementCount == inDim,
+            "Ops.dequantGemvInt4ExpertIndexed: input \(input.elementCount) ≠ inDim \(inDim)")
+        precondition(
+            out.elementCount == outDim,
+            "Ops.dequantGemvInt4ExpertIndexed: out \(out.elementCount) ≠ outDim \(outDim)")
+        // Kernel runs in Reduction mode with tpg=32 (one simdgroup per
+        // output row). `dispatchThreads` counts THREADS not threadgroups
+        // — total threads = outDim · 32 gives outDim threadgroups, one
+        // per output row.
+        let tg = MTLSize(width: 32, height: 1, depth: 1)
+        let grid = MTLSize(width: outDim * 32, height: 1, depth: 1)
+        let inDimU = UInt32(inDim)
+        let outDimU = UInt32(outDim)
+        let groupSizeU = UInt32(groupSize)
+        switch input.dtype {
+        case .f32:
+            MetalTileKernels.dequant_gemv_int4_expert_indexed_f32(
+                weights_stacked: weightsStacked.buffer, weights_stackedOffset: weightsStacked.offset,
+                scales_stacked: scalesStacked.buffer, scales_stackedOffset: scalesStacked.offset,
+                biases_stacked: biasesStacked.buffer, biases_stackedOffset: biasesStacked.offset,
+                input: input.buffer, inputOffset: input.offset,
+                expert_index: expertIndex.buffer, expert_indexOffset: expertIndex.offset,
+                output: out.buffer, outputOffset: out.offset,
+                in_dim: inDimU, out_dim: outDimU, group_size: groupSizeU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.dequant_gemv_int4_expert_indexed_f16(
+                weights_stacked: weightsStacked.buffer, weights_stackedOffset: weightsStacked.offset,
+                scales_stacked: scalesStacked.buffer, scales_stackedOffset: scalesStacked.offset,
+                biases_stacked: biasesStacked.buffer, biases_stackedOffset: biasesStacked.offset,
+                input: input.buffer, inputOffset: input.offset,
+                expert_index: expertIndex.buffer, expert_indexOffset: expertIndex.offset,
+                output: out.buffer, outputOffset: out.offset,
+                in_dim: inDimU, out_dim: outDimU, group_size: groupSizeU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.dequant_gemv_int4_expert_indexed_bf16(
+                weights_stacked: weightsStacked.buffer, weights_stackedOffset: weightsStacked.offset,
+                scales_stacked: scalesStacked.buffer, scales_stackedOffset: scalesStacked.offset,
+                biases_stacked: biasesStacked.buffer, biases_stackedOffset: biasesStacked.offset,
+                input: input.buffer, inputOffset: input.offset,
+                expert_index: expertIndex.buffer, expert_indexOffset: expertIndex.offset,
+                output: out.buffer, outputOffset: out.offset,
+                in_dim: inDimU, out_dim: outDimU, group_size: groupSizeU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError(
+                "Ops.dequantGemvInt4ExpertIndexed: unsupported input dtype \(input.dtype)")
+        }
+    }
+
+    /// Encoder-batched form of `dequantGemvInt4ExpertIndexed`. All N
+    /// calls must share `(inDim, outDim, groupSize, dtype)` so they
+    /// reuse the same PSO + constexpr binding; only the per-call
+    /// `(weights, scales, biases, input, expertIndex, output)` rotate
+    /// per dispatch. Saves N-1 encoder begin/end pairs versus N
+    /// independent calls. At Qwen3.6-A3B's topK=8 the gate+up phase
+    /// becomes 16 calls on one encoder and the down phase 8 calls on
+    /// a second encoder per MoE layer.
+    public static func dequantGemvInt4ExpertIndexedMany(
+        weightsStacked: [Tensor], scalesStacked: [Tensor], biasesStacked: [Tensor],
+        inputs: [Tensor], expertIndices: [Tensor], outputs: [Tensor],
+        groupSize: Int = 64,
+        on cmd: MTLCommandBuffer
+    ) {
+        let n = weightsStacked.count
+        precondition(
+            scalesStacked.count == n && biasesStacked.count == n
+                && inputs.count == n && expertIndices.count == n
+                && outputs.count == n,
+            "Ops.dequantGemvInt4ExpertIndexedMany: count mismatch")
+        guard n > 0 else { return }
+        let dtype = inputs[0].dtype
+        let psoName: String
+        switch dtype {
+        case .f32: psoName = "dequant_gemv_int4_expert_indexed_f32"
+        case .f16: psoName = "dequant_gemv_int4_expert_indexed_f16"
+        case .bf16: psoName = "dequant_gemv_int4_expert_indexed_bf16"
+        default:
+            fatalError(
+                "Ops.dequantGemvInt4ExpertIndexedMany: unsupported dtype \(dtype)")
+        }
+        let outDim = weightsStacked[0].shape[1]
+        let packedPerRow = weightsStacked[0].shape[2]
+        let inDim = packedPerRow * 8
+        var inDimV = UInt32(inDim)
+        var outDimV = UInt32(outDim)
+        var groupSizeV = UInt32(groupSize)
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        // Shared constexprs (kernel buffer indices 6, 7, 8) set once.
+        enc.setBytes(&inDimV, length: 4, index: 6)
+        enc.setBytes(&outDimV, length: 4, index: 7)
+        enc.setBytes(&groupSizeV, length: 4, index: 8)
+        let tg = MTLSize(width: 32, height: 1, depth: 1)
+        let grid = MTLSize(width: outDim * 32, height: 1, depth: 1)
+        for i in 0 ..< n {
+            precondition(
+                weightsStacked[i].shape[1] == outDim
+                    && weightsStacked[i].shape[2] == packedPerRow,
+                "Ops.dequantGemvInt4ExpertIndexedMany: weight shape varies at \(i)")
+            precondition(
+                inputs[i].dtype == dtype && outputs[i].dtype == dtype,
+                "Ops.dequantGemvInt4ExpertIndexedMany: dtype varies at \(i)")
+            precondition(
+                expertIndices[i].dtype == .u32 && expertIndices[i].elementCount == 1,
+                "Ops.dequantGemvInt4ExpertIndexedMany: expertIndices[\(i)] must be [1] u32")
+            enc.setBuffer(weightsStacked[i].buffer, offset: weightsStacked[i].offset, index: 0)
+            enc.setBuffer(scalesStacked[i].buffer, offset: scalesStacked[i].offset, index: 1)
+            enc.setBuffer(biasesStacked[i].buffer, offset: biasesStacked[i].offset, index: 2)
+            enc.setBuffer(inputs[i].buffer, offset: inputs[i].offset, index: 3)
+            enc.setBuffer(expertIndices[i].buffer, offset: expertIndices[i].offset, index: 4)
+            enc.setBuffer(outputs[i].buffer, offset: outputs[i].offset, index: 5)
+            enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        }
+        enc.endEncoding()
+    }
+
+    /// MoE top-K router. Reads `[nExperts]` raw logits and writes
+    /// `[k]` u32 expert indices + `[k]` weights of the same dtype.
+    /// `normTopkProb` matches Qwen3-MoE convention when `true`
+    /// (softmax restricted to the chosen k, weights renormalise to
+    /// sum-to-1); `false` matches the Qwen3-Next style (softmax over
+    /// all experts, then pick top-k without renormalisation).
+    ///
+    /// Single-row form — `logits: [nExperts]`. Internally calls the
+    /// T-batched variant with `t = 1`.
+    public static func moeRouterTopK(
+        logits: Tensor, indicesOut: Tensor, weightsOut: Tensor,
+        nExperts: Int, k: Int, normTopkProb: Bool,
+        on cmd: MTLCommandBuffer
+    ) {
+        moeRouterTopKMany(
+            logits: logits, indicesOut: indicesOut, weightsOut: weightsOut,
+            t: 1, nExperts: nExperts, k: k, normTopkProb: normTopkProb,
+            on: cmd)
+    }
+
+    /// T-batched MoE top-K router. `logits: [T, nExperts]`,
+    /// `indicesOut: [T, k]` u32, `weightsOut: [T, k]` (matching logits
+    /// dtype). The kernel iterates `T` rows along `program_id<0>()`
+    /// (one threadgroup per row), so a single dispatch covers all
+    /// prefill rows without the host commit + wait + CPU
+    /// `MoERouter.route` round-trip that the per-row form forced.
+    public static func moeRouterTopKMany(
+        logits: Tensor, indicesOut: Tensor, weightsOut: Tensor,
+        t: Int, nExperts: Int, k: Int, normTopkProb: Bool,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(t > 0, "Ops.moeRouterTopKMany: t must be positive")
+        precondition(
+            logits.elementCount == t * nExperts,
+            "Ops.moeRouterTopKMany: logits must be [T·nExperts]")
+        precondition(
+            indicesOut.elementCount == t * k && indicesOut.dtype == .u32,
+            "Ops.moeRouterTopKMany: indicesOut must be [T·k] u32")
+        precondition(
+            weightsOut.elementCount == t * k && weightsOut.dtype == logits.dtype,
+            "Ops.moeRouterTopKMany: weightsOut must be [T·k] matching logits dtype")
+        // Kernel pins tpg = 32 (one simdgroup per token row, Reduction
+        // mode). Grid total threads = T · 32 → T threadgroups.
+        let tg = MTLSize(width: 32, height: 1, depth: 1)
+        let grid = MTLSize(width: t * 32, height: 1, depth: 1)
+        let normFlag: UInt32 = normTopkProb ? 1 : 0
+        switch logits.dtype {
+        case .f32:
+            MetalTileKernels.mt_moe_router_topk_f32(
+                router_logits: logits.buffer, router_logitsOffset: logits.offset,
+                indices_out: indicesOut.buffer, indices_outOffset: indicesOut.offset,
+                weights_out: weightsOut.buffer, weights_outOffset: weightsOut.offset,
+                n_experts: UInt32(nExperts), k: UInt32(k), norm_topk_prob: normFlag,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_moe_router_topk_f16(
+                router_logits: logits.buffer, router_logitsOffset: logits.offset,
+                indices_out: indicesOut.buffer, indices_outOffset: indicesOut.offset,
+                weights_out: weightsOut.buffer, weights_outOffset: weightsOut.offset,
+                n_experts: UInt32(nExperts), k: UInt32(k), norm_topk_prob: normFlag,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_moe_router_topk_bf16(
+                router_logits: logits.buffer, router_logitsOffset: logits.offset,
+                indices_out: indicesOut.buffer, indices_outOffset: indicesOut.offset,
+                weights_out: weightsOut.buffer, weights_outOffset: weightsOut.offset,
+                n_experts: UInt32(nExperts), k: UInt32(k), norm_topk_prob: normFlag,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError(
+                "Ops.moeRouterTopKMany: unsupported logits dtype \(logits.dtype)")
+        }
+    }
+
     /// GPU argmax over a 1D logits tensor. Caller supplies a 1-element
     /// u32 output buffer. Uses the cooperative 256-thread Reduction
     /// kernel — one threadgroup, ~80-300 KB / vocab logits in registers.
