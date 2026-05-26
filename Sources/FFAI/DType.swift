@@ -48,8 +48,8 @@ public enum DType: String, Sendable, Hashable, Codable {
         case "U32": return .u32
         case "I64": return .i64
         case "U64": return .u64
-        case "I8":  return .i8
-        case "U8":  return .u8
+        case "I8": return .i8
+        case "U8": return .u8
         default: return nil
         }
     }

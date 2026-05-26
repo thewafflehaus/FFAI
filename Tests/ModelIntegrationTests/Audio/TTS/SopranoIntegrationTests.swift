@@ -32,6 +32,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Soprano Integration", .serialized)
@@ -60,14 +61,15 @@ struct SopranoIntegrationTests {
     private func resolveSoprano80MCheckpoint() async throws -> URL {
         let root = Self.hfCacheRoot
         let candidates = [
-            "models--mlx-community--Soprano-80M-bf16",
+            "models--mlx-community--Soprano-80M-bf16"
         ]
         let fm = FileManager.default
         for slug in candidates {
             let snapshots = root.appendingPathComponent(slug)
                 .appendingPathComponent("snapshots")
-            guard let subs = try? fm.contentsOfDirectory(
-                at: snapshots, includingPropertiesForKeys: nil)
+            guard
+                let subs = try? fm.contentsOfDirectory(
+                    at: snapshots, includingPropertiesForKeys: nil)
             else { continue }
             if let dir = subs.first(where: { Self.isCompleteSnapshot($0) }) {
                 return dir
@@ -81,14 +83,15 @@ struct SopranoIntegrationTests {
     private func resolveSoprano11Checkpoint() async throws -> URL {
         let root = Self.hfCacheRoot
         let candidates = [
-            "models--mlx-community--Soprano-1.1-80M-bf16",
+            "models--mlx-community--Soprano-1.1-80M-bf16"
         ]
         let fm = FileManager.default
         for slug in candidates {
             let snapshots = root.appendingPathComponent(slug)
                 .appendingPathComponent("snapshots")
-            guard let subs = try? fm.contentsOfDirectory(
-                at: snapshots, includingPropertiesForKeys: nil)
+            guard
+                let subs = try? fm.contentsOfDirectory(
+                    at: snapshots, includingPropertiesForKeys: nil)
             else { continue }
             if let dir = subs.first(where: { Self.isCompleteSnapshot($0) }) {
                 return dir
@@ -121,12 +124,13 @@ struct SopranoIntegrationTests {
         #expect(model.config.headDim > 0)
         #expect(model.config.vocabSize > 0)
         #expect(model.config.intermediateSize > 0)
-        print("[Soprano-80M] Loaded: hiddenSize=\(model.config.hiddenSize), "
-              + "numLayers=\(model.config.numHiddenLayers), "
-              + "heads=\(model.config.numAttentionHeads), "
-              + "kvHeads=\(model.config.numKeyValueHeads), "
-              + "headDim=\(model.config.headDim), "
-              + "vocab=\(model.config.vocabSize)")
+        print(
+            "[Soprano-80M] Loaded: hiddenSize=\(model.config.hiddenSize), "
+                + "numLayers=\(model.config.numHiddenLayers), "
+                + "heads=\(model.config.numAttentionHeads), "
+                + "kvHeads=\(model.config.numKeyValueHeads), "
+                + "headDim=\(model.config.headDim), "
+                + "vocab=\(model.config.vocabSize)")
     }
 
     @Test("load — Soprano-80M config decodes decoder hyper-parameters")
@@ -139,11 +143,12 @@ struct SopranoIntegrationTests {
         #expect((model.config.nFft ?? 0) > 0)
         #expect((model.config.upscale ?? 0) > 0)
         #expect(model.decoder != nil)
-        print("[Soprano-80M] Decoder: dim=\(model.config.decoderDim ?? -1), "
-              + "layers=\(model.config.decoderNumLayers ?? -1), "
-              + "hopLength=\(model.config.hopLength ?? -1), "
-              + "nFFT=\(model.config.nFft ?? -1), "
-              + "upscale=\(model.config.upscale ?? -1)")
+        print(
+            "[Soprano-80M] Decoder: dim=\(model.config.decoderDim ?? -1), "
+                + "layers=\(model.config.decoderNumLayers ?? -1), "
+                + "hopLength=\(model.config.hopLength ?? -1), "
+                + "nFFT=\(model.config.nFft ?? -1), "
+                + "upscale=\(model.config.upscale ?? -1)")
     }
 
     @Test("load — Soprano-80M sample rate is 32 000 Hz")
@@ -169,27 +174,31 @@ struct SopranoIntegrationTests {
         let model = try await loadSoprano80M()
         let samples = try model.synthesize(
             text: "Hello world.",
-            parameters: AudioGenerationParameters(maxTokens: 256,
-                                                  temperature: 0.7,
-                                                  topP: 0.7))
+            parameters: AudioGenerationParameters(
+                maxTokens: 256,
+                temperature: 0.7,
+                topP: 0.7))
 
         // Basic sanity — non-empty output.
-        #expect(!samples.isEmpty,
-                "synthesize returned an empty waveform for 'Hello world.'")
+        #expect(
+            !samples.isEmpty,
+            "synthesize returned an empty waveform for 'Hello world.'")
 
         // Minimum duration: expect at least ~0.1 s of audio at 32 kHz.
         let minSamples = model.sampleRate / 10
-        #expect(samples.count >= minSamples,
-                "waveform too short: \(samples.count) samples (expected ≥ \(minSamples))")
+        #expect(
+            samples.count >= minSamples,
+            "waveform too short: \(samples.count) samples (expected ≥ \(minSamples))")
 
         // RMS sanity — audio should not be silence (RMS > 1e-4) and not clipped (RMS < 0.9).
         let rms = sqrt(samples.map { $0 * $0 }.reduce(0, +) / Float(samples.count))
         #expect(rms > 1e-4, "waveform RMS (\(rms)) too low — possible silence")
-        #expect(rms < 0.9,  "waveform RMS (\(rms)) too high — possible clipping")
+        #expect(rms < 0.9, "waveform RMS (\(rms)) too high — possible clipping")
 
-        print("[Soprano-80M] synthesize: samples=\(samples.count), "
-              + "duration=\(String(format: "%.2f", Double(samples.count) / Double(model.sampleRate)))s, "
-              + "rms=\(String(format: "%.4f", rms))")
+        print(
+            "[Soprano-80M] synthesize: samples=\(samples.count), "
+                + "duration=\(String(format: "%.2f", Double(samples.count) / Double(model.sampleRate)))s, "
+                + "rms=\(String(format: "%.4f", rms))")
     }
 
     @Test("load — Soprano-1.1 loads without error (LLM-only checkpoint)")
@@ -201,9 +210,10 @@ struct SopranoIntegrationTests {
         // Transformer fields must still decode.
         #expect(model.config.hiddenSize > 0)
         #expect(model.config.numHiddenLayers > 0)
-        print("[Soprano-1.1] Loaded: hiddenSize=\(model.config.hiddenSize), "
-              + "numLayers=\(model.config.numHiddenLayers), "
-              + "hasDecoderConfig=\(model.config.hasDecoderConfig)")
+        print(
+            "[Soprano-1.1] Loaded: hiddenSize=\(model.config.hiddenSize), "
+                + "numLayers=\(model.config.numHiddenLayers), "
+                + "hasDecoderConfig=\(model.config.hasDecoderConfig)")
     }
 
     @Test("registry — AudioModelRegistry routes Soprano-1.1 checkpoint to .soprano")

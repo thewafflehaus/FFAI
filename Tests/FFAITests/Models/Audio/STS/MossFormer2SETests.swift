@@ -25,6 +25,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("MossFormer2SE")
@@ -236,9 +237,10 @@ struct MossFormer2SETests {
         let slug = "models--starkdmi--MossFormer2-SE-fp16"
         let snapshots = hfRoot.appendingPathComponent(slug)
             .appendingPathComponent("snapshots")
-        guard let subs = try? FileManager.default.contentsOfDirectory(
-            at: snapshots, includingPropertiesForKeys: nil),
-              let snap = subs.first
+        guard
+            let subs = try? FileManager.default.contentsOfDirectory(
+                at: snapshots, includingPropertiesForKeys: nil),
+            let snap = subs.first
         else {
             // No checkpoint on disk — skip.
             print("MossFormer2SETests: cached checkpoint not found, skipping")
@@ -254,8 +256,9 @@ struct MossFormer2SETests {
         #expect(se.outChannels == 512)
         #expect(se.outChannelsFinal == 961)
         #expect(MossFormer2SEModel.handles(modelConfig))
-        print("[MossFormer2SE] Cached config decoded: sr=\(se.sampleRate), "
-              + "inC=\(se.inChannels), outC=\(se.outChannels), "
-              + "outCF=\(se.outChannelsFinal), nBlocks=\(se.numBlocks)")
+        print(
+            "[MossFormer2SE] Cached config decoded: sr=\(se.sampleRate), "
+                + "inC=\(se.inChannels), outC=\(se.outChannels), "
+                + "outCF=\(se.outChannelsFinal), nBlocks=\(se.numBlocks)")
     }
 }

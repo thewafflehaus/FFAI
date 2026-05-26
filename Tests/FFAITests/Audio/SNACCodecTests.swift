@@ -23,6 +23,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("SNAC codec — audio primitives + round-trip")
@@ -70,13 +71,13 @@ struct SNACCodecTests {
     @Test("conv1d groups (depthwise) keeps channels independent")
     func conv1dGroups() {
         // 2 channels, depthwise (groups=2), k=1 weight = [10, 100].
-        let x: [Float] = [1, 2, 3,   4, 5, 6]   // [1,2,3] then [4,5,6]
-        let w: [Float] = [10, 100]              // [2,1,1]
+        let x: [Float] = [1, 2, 3, 4, 5, 6]  // [1,2,3] then [4,5,6]
+        let w: [Float] = [10, 100]  // [2,1,1]
         let (out, shape) = AudioMath.conv1d(
             x: x, xShape: [1, 2, 3], weight: w, wShape: [2, 1, 1],
             bias: nil, stride: 1, padding: 0, dilation: 1, groups: 2)
         #expect(shape == [1, 2, 3])
-        #expect(out == [10, 20, 30,  400, 500, 600])
+        #expect(out == [10, 20, 30, 400, 500, 600])
     }
 
     @Test("conv1d adds bias per output channel")
@@ -151,8 +152,9 @@ struct SNACCodecTests {
     @Test("layerNorm yields zero mean / unit variance per row")
     func layerNormStats() {
         let x: [Float] = [1, 2, 3, 4]
-        let out = AudioMath.layerNorm(x, rows: 1, dim: 4,
-                                      weight: nil, bias: nil)
+        let out = AudioMath.layerNorm(
+            x, rows: 1, dim: 4,
+            weight: nil, bias: nil)
         let mean = out.reduce(0, +) / 4
         #expect(abs(mean) < 1e-5)
         var v: Float = 0
@@ -162,7 +164,7 @@ struct SNACCodecTests {
 
     @Test("l2NormalizeRows produces unit-norm rows")
     func l2Normalize() {
-        let x: [Float] = [3, 4,   0, 0]   // row0 norm 5, row1 norm 0
+        let x: [Float] = [3, 4, 0, 0]  // row0 norm 5, row1 norm 0
         let out = AudioMath.l2NormalizeRows(x, rows: 2, dim: 2)
         #expect(abs(out[0] - 0.6) < 1e-5)
         #expect(abs(out[1] - 0.8) < 1e-5)
@@ -175,8 +177,8 @@ struct SNACCodecTests {
     @Test("matmul matches a hand-computed product")
     func matmulReference() {
         // [2x3] · [3x2]
-        let a: [Float] = [1, 2, 3,  4, 5, 6]
-        let b: [Float] = [7, 8,  9, 10,  11, 12]
+        let a: [Float] = [1, 2, 3, 4, 5, 6]
+        let b: [Float] = [7, 8, 9, 10, 11, 12]
         let out = AudioMath.matmul(a, b, m: 2, k: 3, n: 2)
         // row0: [1*7+2*9+3*11, 1*8+2*10+3*12] = [58, 64]
         // row1: [4*7+5*9+6*11, 4*8+5*10+6*12] = [139, 154]
@@ -187,9 +189,10 @@ struct SNACCodecTests {
     func linearReference() {
         // x [1x2], weight [3x2] (PyTorch layout), bias [3].
         let x: [Float] = [1, 2]
-        let w: [Float] = [1, 0,  0, 1,  1, 1]
-        let out = AudioMath.linear(x, rows: 1, inDim: 2,
-                                   weight: w, outDim: 3, bias: [10, 20, 30])
+        let w: [Float] = [1, 0, 0, 1, 1, 1]
+        let out = AudioMath.linear(
+            x, rows: 1, inDim: 2,
+            weight: w, outDim: 3, bias: [10, 20, 30])
         // out = [1, 2, 3] + bias
         #expect(out == [11, 22, 33])
     }
@@ -199,10 +202,10 @@ struct SNACCodecTests {
     @Test("transpose12 swaps the last two dims")
     func transpose12() {
         // [1,2,3]
-        let x: [Float] = [1, 2, 3,  4, 5, 6]
+        let x: [Float] = [1, 2, 3, 4, 5, 6]
         let out = AudioMath.transpose12(x, shape: [1, 2, 3])
         // -> [1,3,2] : columns become rows.
-        #expect(out == [1, 4,  2, 5,  3, 6])
+        #expect(out == [1, 4, 2, 5, 3, 6])
     }
 
     @Test("reflectionPad1d mirrors edge samples")
@@ -229,10 +232,11 @@ struct SNACCodecTests {
     @Test("WeightNorm reconstructs g·v/||v|| per output slice")
     func weightNormReconstruct() {
         // v: [2,1,2] two output slices; g one magnitude per slice.
-        let v: [Float] = [3, 4,   1, 0]   // slice0 norm 5, slice1 norm 1
-        let g: [Float] = [10, 7]          // target magnitudes
-        let out = WeightNorm.effectiveWeight(g: g, v: v,
-                                             shape: [2, 1, 2], exceptDim: 0)
+        let v: [Float] = [3, 4, 1, 0]  // slice0 norm 5, slice1 norm 1
+        let g: [Float] = [10, 7]  // target magnitudes
+        let out = WeightNorm.effectiveWeight(
+            g: g, v: v,
+            shape: [2, 1, 2], exceptDim: 0)
         // slice0 scaled to magnitude ~10 : [3,4]*(10/5) = [6,8]
         #expect(abs(out[0] - 6) < 1e-3)
         #expect(abs(out[1] - 8) < 1e-3)
@@ -246,24 +250,24 @@ struct SNACCodecTests {
     @Test("SNACConfig decodes a representative config.json")
     func configDecode() throws {
         let json = """
-        {
-          "sampling_rate": 24000,
-          "encoder_dim": 48,
-          "encoder_rates": [2, 4, 8, 8],
-          "decoder_dim": 1024,
-          "decoder_rates": [8, 8, 4, 2],
-          "attn_window_size": null,
-          "codebook_size": 4096,
-          "codebook_dim": 8,
-          "vq_strides": [4, 2, 1],
-          "noise": true,
-          "depthwise": true
-        }
-        """
+            {
+              "sampling_rate": 24000,
+              "encoder_dim": 48,
+              "encoder_rates": [2, 4, 8, 8],
+              "decoder_dim": 1024,
+              "decoder_rates": [8, 8, 4, 2],
+              "attn_window_size": null,
+              "codebook_size": 4096,
+              "codebook_dim": 8,
+              "vq_strides": [4, 2, 1],
+              "noise": true,
+              "depthwise": true
+            }
+            """
         let config = try JSONDecoder().decode(
             SNACConfig.self, from: Data(json.utf8))
         #expect(config.samplingRate == 24000)
-        #expect(config.hopLength == 2 * 4 * 8 * 8)   // product of rates
+        #expect(config.hopLength == 2 * 4 * 8 * 8)  // product of rates
         #expect(config.vqStrides.count == 3)
         #expect(config.attnWindowSize == nil)
     }
@@ -301,7 +305,7 @@ struct SNACCodecTests {
         // A short 0.25s sine sweep at the codec sample rate.
         let n = snac.sampleRate / 4
         var samples = [Float](repeating: 0, count: n)
-        for i in 0..<n {
+        for i in 0 ..< n {
             let t = Float(i) / Float(snac.sampleRate)
             samples[i] = 0.5 * sin(2.0 * .pi * 220.0 * t)
         }
@@ -317,8 +321,10 @@ struct SNACCodecTests {
 
         // Codecs are lossy; assert correlation rather than equality.
         let len = min(samples.count, reconFloats.count)
-        var dotXY: Float = 0, dotXX: Float = 0, dotYY: Float = 0
-        for i in 0..<len {
+        var dotXY: Float = 0
+        var dotXX: Float = 0
+        var dotYY: Float = 0
+        for i in 0 ..< len {
             dotXY += samples[i] * reconFloats[i]
             dotXX += samples[i] * samples[i]
             dotYY += reconFloats[i] * reconFloats[i]

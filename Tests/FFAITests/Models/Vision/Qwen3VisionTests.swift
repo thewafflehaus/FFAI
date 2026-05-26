@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // Unit tests for the Qwen 3-VL family (the full-attention
@@ -52,16 +53,18 @@ struct Qwen3VisionConfigTests {
             "vision_config": visionConfig,
             "text_config": textConfig,
         ]
-        return ModelConfig(architecture: "Qwen3VLForConditionalGeneration",
-                           modelType: "qwen3_vl", raw: raw)
+        return ModelConfig(
+            architecture: "Qwen3VLForConditionalGeneration",
+            modelType: "qwen3_vl", raw: raw)
     }
 
     @Test("routes as a vision-language checkpoint")
     func routesAsVisionLanguage() {
         let cfg = makeConfig()
         #expect(VisionLanguageArchitectures.isVisionLanguage(cfg))
-        #expect(VisionLanguageArchitectures.architectures
-            .contains("Qwen3VLForConditionalGeneration"))
+        #expect(
+            VisionLanguageArchitectures.architectures
+                .contains("Qwen3VLForConditionalGeneration"))
         #expect(Qwen3VL.defaultImageTokenId == 151_655)
     }
 
@@ -78,23 +81,25 @@ struct Qwen3VisionConfigTests {
         #expect(parsed.spatialMergeSize == 2)
         #expect(parsed.numPositionEmbeddings == 1024)
         // Derived geometry.
-        #expect(parsed.headDim == 72)           // 1152 / 16
-        #expect(parsed.mergeUnit == 4)          // 2 × 2 patches per token
+        #expect(parsed.headDim == 72)  // 1152 / 16
+        #expect(parsed.mergeUnit == 4)  // 2 × 2 patches per token
     }
 
     @Test("vision_config decode falls back to documented defaults")
     func visionConfigDefaults() throws {
-        let minimal = ModelConfig(architecture: nil, modelType: nil, raw: [
-            "depth": 12,
-            "hidden_size": 768,
-            "num_heads": 12,
-            "patch_size": 16,
-            "spatial_merge_size": 2,
-        ])
+        let minimal = ModelConfig(
+            architecture: nil, modelType: nil,
+            raw: [
+                "depth": 12,
+                "hidden_size": 768,
+                "num_heads": 12,
+                "patch_size": 16,
+                "spatial_merge_size": 2,
+            ])
         let parsed = try Qwen3VLVisionConfig.decode(minimal)
-        #expect(parsed.intermediate == 768 * 4)         // hidden * 4 fallback
-        #expect(parsed.outHidden == 768)                // hidden fallback
-        #expect(parsed.numPositionEmbeddings == 32 * 32) // default 32×32 grid
+        #expect(parsed.intermediate == 768 * 4)  // hidden * 4 fallback
+        #expect(parsed.outHidden == 768)  // hidden fallback
+        #expect(parsed.numPositionEmbeddings == 32 * 32)  // default 32×32 grid
         #expect(parsed.temporalPatchSize == 2)
         #expect(parsed.inChannels == 3)
     }

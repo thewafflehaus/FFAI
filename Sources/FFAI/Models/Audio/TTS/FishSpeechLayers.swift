@@ -32,7 +32,7 @@ import Metal
 /// Using CPU-side tables avoids a separate GPU init pass and is negligible
 /// overhead (~2 MB for maxSeq=32768, headDim=128).
 final class FishSpeechRoPECache: @unchecked Sendable {
-    let cosTable: [Float]   // [maxSeq * headDim/2]
+    let cosTable: [Float]  // [maxSeq * headDim/2]
     let sinTable: [Float]
     let headDim: Int
     let maxSeq: Int
@@ -43,10 +43,10 @@ final class FishSpeechRoPECache: @unchecked Sendable {
         let half = headDim / 2
         var cos = [Float](repeating: 0, count: maxSeq * half)
         var sin = [Float](repeating: 0, count: maxSeq * half)
-        for i in 0..<half {
+        for i in 0 ..< half {
             // θ_i = 1 / (ropeBase ^ (2i / headDim))
             let theta = 1.0 / pow(ropeBase, Float(2 * i) / Float(headDim))
-            for pos in 0..<maxSeq {
+            for pos in 0 ..< maxSeq {
                 let angle = Float(pos) * theta
                 cos[pos * half + i] = Foundation.cos(angle)
                 sin[pos * half + i] = Foundation.sin(angle)
@@ -120,8 +120,12 @@ final class FishSpeechAttentionLayer: Module {
         var out: [(String, Tensor)] = []
         for (k, v) in wqkv.parameters() { out.append(("attention.wqkv.\(k)", v)) }
         for (k, v) in wo.parameters() { out.append(("attention.wo.\(k)", v)) }
-        if let q = qNorm { for (k, v) in q.parameters() { out.append(("attention.q_norm.\(k)", v)) } }
-        if let k = kNorm { for (kk, v) in k.parameters() { out.append(("attention.k_norm.\(kk)", v)) } }
+        if let q = qNorm {
+            for (k, v) in q.parameters() { out.append(("attention.q_norm.\(k)", v)) }
+        }
+        if let k = kNorm {
+            for (kk, v) in k.parameters() { out.append(("attention.k_norm.\(kk)", v)) }
+        }
         return out
     }
 
@@ -162,12 +166,14 @@ final class FishSpeechAttentionLayer: Module {
             q = applyPerHeadNorm(q, norm: qn, nHeads: nHeads, headDim: headDim, device: device)
         }
         if let kn = kNorm {
-            kTensor = applyPerHeadNorm(kTensor, norm: kn, nHeads: nKVHeads, headDim: headDim, device: device)
+            kTensor = applyPerHeadNorm(
+                kTensor, norm: kn, nHeads: nKVHeads, headDim: headDim, device: device)
         }
 
         // ③ CPU RoPE.
         q = applyRoPE(q, rope: rope, position: position, nHeads: nHeads, device: device)
-        kTensor = applyRoPE(kTensor, rope: rope, position: position, nHeads: nKVHeads, device: device)
+        kTensor = applyRoPE(
+            kTensor, rope: rope, position: position, nHeads: nKVHeads, device: device)
 
         // ④ KV-cache append + SDPA (GPU).
         let sdpaCmd = device.makeCommandBuffer()
@@ -219,14 +225,14 @@ final class FishSpeechAttentionLayer: Module {
         var data = qk.toArray(as: Float.self)  // already f32
         let half = headDim / 2
         let base = position * half
-        for h in 0..<nHeads {
+        for h in 0 ..< nHeads {
             let hBase = h * headDim
-            for i in 0..<half {
+            for i in 0 ..< half {
                 let c = rope.cosTable[base + i]
                 let s = rope.sinTable[base + i]
                 let x0 = data[hBase + i]
                 let x1 = data[hBase + i + half]
-                data[hBase + i]        = x0 * c - x1 * s
+                data[hBase + i] = x0 * c - x1 * s
                 data[hBase + i + half] = x0 * s + x1 * c
             }
         }
@@ -246,7 +252,7 @@ final class FishSpeechAttentionLayer: Module {
         device: Device
     ) -> Tensor {
         let result = Tensor.empty(shape: [nHeads, headDim], dtype: qk.dtype, device: device)
-        for h in 0..<nHeads {
+        for h in 0 ..< nHeads {
             let slice = qk.slicedRows(start: h, count: 1).reshaped(to: [headDim])
             let headCmd = device.makeCommandBuffer()
             let normSlice = norm(slice, on: headCmd)
@@ -301,8 +307,8 @@ final class FishSpeechFFN: Module {
 
     func forward(_ x: Tensor, cmd: MTLCommandBuffer) -> Tensor {
         let gate = w1(x, on: cmd)
-        let up   = w3(x, on: cmd)
-        let act  = Ops.silu(gate, on: cmd)
+        let up = w3(x, on: cmd)
+        let act = Ops.silu(gate, on: cmd)
         let inner = Ops.mul(act, up, on: cmd)
         return w2(inner, on: cmd)
     }
@@ -333,7 +339,7 @@ final class FishSpeechBlock: Module {
         out += attn.parameters()
         out += ffn.parameters()
         for (k, v) in attnNorm.parameters() { out.append(("attention_norm.\(k)", v)) }
-        for (k, v) in ffnNorm.parameters()  { out.append(("ffn_norm.\(k)", v)) }
+        for (k, v) in ffnNorm.parameters() { out.append(("ffn_norm.\(k)", v)) }
         return out
     }
 
@@ -353,8 +359,9 @@ final class FishSpeechBlock: Module {
         cmdAN.waitUntilCompleted()
 
         // Attention forward (manages its own cmdbufs internally).
-        let attnOut = attn.forward(normedAttn, position: position,
-                                   cache: cache, device: device)
+        let attnOut = attn.forward(
+            normedAttn, position: position,
+            cache: cache, device: device)
 
         // Residual + FFN pre-norm
         let cmdR1 = device.makeCommandBuffer()

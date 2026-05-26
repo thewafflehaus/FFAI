@@ -33,10 +33,10 @@ public enum BenchMethod: String, Sendable, CaseIterable {
     case summarization
     case wikitext2
     case niah
-    case multiTurn         = "multi-turn"
-    case toolCalling       = "tool-calling"
-    case ngramSpot         = "ngram-spot"
-    case ngramSweep        = "ngram-sweep"
+    case multiTurn = "multi-turn"
+    case toolCalling = "tool-calling"
+    case ngramSpot = "ngram-spot"
+    case ngramSweep = "ngram-sweep"
     case ngramSweepSummary = "ngram-sweep-summary"
     case vision
 
@@ -48,7 +48,7 @@ public enum BenchMethod: String, Sendable, CaseIterable {
         case .simple, .summarization, .wikitext2:
             return true
         case .niah, .multiTurn, .toolCalling,
-             .ngramSpot, .ngramSweep, .ngramSweepSummary, .vision:
+            .ngramSpot, .ngramSweep, .ngramSweepSummary, .vision:
             return false
         }
     }
@@ -56,16 +56,16 @@ public enum BenchMethod: String, Sendable, CaseIterable {
     /// Short blurb for the CLI's `--help` wall.
     public var description: String {
         switch self {
-        case .simple:             return "single-prompt generation, throughput + memory"
-        case .summarization:      return "fixed-size prompts across configurable contexts"
-        case .wikitext2:          return "perplexity over the WikiText-2 corpus (forced decode)"
-        case .niah:               return "needle-in-a-haystack retrieval at multiple depths"
-        case .multiTurn:          return "multi-turn conversation, replies fed back iteratively"
-        case .toolCalling:        return "tool call generation + validation"
-        case .ngramSpot:          return "single prompt across N candidate ngram-config cells"
-        case .ngramSweep:         return "18 prompts × 32 cells, full raw rows"
-        case .ngramSweepSummary:  return "ngram-sweep matrix plus per-category roll-up"
-        case .vision:             return "VLM smoke test: image + prompt → text"
+        case .simple: return "single-prompt generation, throughput + memory"
+        case .summarization: return "fixed-size prompts across configurable contexts"
+        case .wikitext2: return "perplexity over the WikiText-2 corpus (forced decode)"
+        case .niah: return "needle-in-a-haystack retrieval at multiple depths"
+        case .multiTurn: return "multi-turn conversation, replies fed back iteratively"
+        case .toolCalling: return "tool call generation + validation"
+        case .ngramSpot: return "single prompt across N candidate ngram-config cells"
+        case .ngramSweep: return "18 prompts × 32 cells, full raw rows"
+        case .ngramSweepSummary: return "ngram-sweep matrix plus per-category roll-up"
+        case .vision: return "VLM smoke test: image + prompt → text"
         }
     }
 

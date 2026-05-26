@@ -24,6 +24,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Encodec codec — structure + round-trip")
@@ -34,34 +35,34 @@ struct EncodecCodecTests {
     @Test("EncodecConfig decodes a representative config.json")
     func configDecode() throws {
         let json = """
-        {
-          "audio_channels": 1,
-          "num_filters": 32,
-          "kernel_size": 7,
-          "num_residual_layers": 1,
-          "dilation_growth_rate": 2,
-          "codebook_size": 1024,
-          "codebook_dim": 128,
-          "hidden_size": 128,
-          "num_lstm_layers": 2,
-          "residual_kernel_size": 3,
-          "use_causal_conv": true,
-          "normalize": false,
-          "pad_mode": "reflect",
-          "norm_type": "weight_norm",
-          "last_kernel_size": 7,
-          "trim_right_ratio": 1.0,
-          "compress": 2,
-          "upsampling_ratios": [8, 5, 4, 2],
-          "target_bandwidths": [1.5, 3.0, 6.0, 12.0, 24.0],
-          "sampling_rate": 24000
-        }
-        """
+            {
+              "audio_channels": 1,
+              "num_filters": 32,
+              "kernel_size": 7,
+              "num_residual_layers": 1,
+              "dilation_growth_rate": 2,
+              "codebook_size": 1024,
+              "codebook_dim": 128,
+              "hidden_size": 128,
+              "num_lstm_layers": 2,
+              "residual_kernel_size": 3,
+              "use_causal_conv": true,
+              "normalize": false,
+              "pad_mode": "reflect",
+              "norm_type": "weight_norm",
+              "last_kernel_size": 7,
+              "trim_right_ratio": 1.0,
+              "compress": 2,
+              "upsampling_ratios": [8, 5, 4, 2],
+              "target_bandwidths": [1.5, 3.0, 6.0, 12.0, 24.0],
+              "sampling_rate": 24000
+            }
+            """
         let config = try JSONDecoder().decode(
             EncodecConfig.self, from: Data(json.utf8))
         #expect(config.samplingRate == 24000)
-        #expect(config.hopLength == 8 * 5 * 4 * 2)   // 320
-        #expect(config.frameRate == 75)              // ceil(24000/320)
+        #expect(config.hopLength == 8 * 5 * 4 * 2)  // 320
+        #expect(config.frameRate == 75)  // ceil(24000/320)
         #expect(config.chunkLengthS == nil)
     }
 
@@ -80,15 +81,15 @@ struct EncodecCodecTests {
     @Test("Euclidean codebook picks the nearest entry")
     func codebookNearest() {
         // 3 entries of dim 2; query rows land on entry 1 then entry 2.
-        let embed: [Float] = [0, 0,   10, 0,   0, 10]
+        let embed: [Float] = [0, 0, 10, 0, 0, 10]
         let cb = EncodecVQCodebook.testInstance(
             embed: embed, codebookSize: 3, codebookDim: 2)
-        let queries: [Float] = [9, 1,   0.5, 11]   // -> idx 1, idx 2
+        let queries: [Float] = [9, 1, 0.5, 11]  // -> idx 1, idx 2
         let idx = cb.encode(queries, rows: 2)
         #expect(idx == [1, 2])
         // decode round-trips the picked rows.
         let decoded = cb.decode(codes: idx)
-        #expect(decoded == [10, 0,  0, 10])
+        #expect(decoded == [10, 0, 0, 10])
     }
 
     // MARK: - residual VQ codebook count
@@ -130,7 +131,7 @@ struct EncodecCodecTests {
         // A short 0.25s sine tone at the codec sample rate.
         let n = codec.sampleRate / 4
         var samples = [Float](repeating: 0, count: n)
-        for i in 0..<n {
+        for i in 0 ..< n {
             let t = Float(i) / Float(codec.sampleRate)
             samples[i] = 0.5 * sin(2.0 * .pi * 220.0 * t)
         }
@@ -146,8 +147,10 @@ struct EncodecCodecTests {
 
         // Codecs are lossy; assert correlation rather than equality.
         let len = min(samples.count, reconFloats.count)
-        var dotXY: Float = 0, dotXX: Float = 0, dotYY: Float = 0
-        for i in 0..<len {
+        var dotXY: Float = 0
+        var dotXX: Float = 0
+        var dotYY: Float = 0
+        for i in 0 ..< len {
             dotXY += samples[i] * reconFloats[i]
             dotXX += samples[i] * samples[i]
             dotYY += reconFloats[i] * reconFloats[i]
@@ -163,23 +166,29 @@ struct EncodecCodecTests {
 extension EncodecVQCodebook {
     /// Build a codebook directly from an in-memory embedding table —
     /// used by unit tests that have no checkpoint.
-    static func testInstance(embed: [Float], codebookSize: Int,
-                             codebookDim: Int) -> EncodecVQCodebook {
-        EncodecVQCodebook(embed: embed,
-                          codebookSize: codebookSize,
-                          codebookDim: codebookDim)
+    static func testInstance(
+        embed: [Float], codebookSize: Int,
+        codebookDim: Int
+    ) -> EncodecVQCodebook {
+        EncodecVQCodebook(
+            embed: embed,
+            codebookSize: codebookSize,
+            codebookDim: codebookDim)
     }
 }
 
 extension EncodecResidualVQ {
     /// Pure-function view of `numCodebooks(forBandwidth:)` for testing
     /// without a loaded model.
-    static func codebookCount(bandwidth: Float, codebookSize: Int,
-                              frameRate: Int, available: Int) -> Int {
+    static func codebookCount(
+        bandwidth: Float, codebookSize: Int,
+        frameRate: Int, available: Int
+    ) -> Int {
         let bwPerQ = log2(Double(codebookSize)) * Double(frameRate)
         if bandwidth > 0 {
-            return min(available,
-                       max(1, Int(floor(Double(bandwidth) * 1000.0 / bwPerQ))))
+            return min(
+                available,
+                max(1, Int(floor(Double(bandwidth) * 1000.0 / bwPerQ))))
         }
         return available
     }

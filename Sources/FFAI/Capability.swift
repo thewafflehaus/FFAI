@@ -79,11 +79,11 @@ public enum ReasoningLevel: String, Sendable, Hashable, CaseIterable, Codable {
     case max
 }
 
-public extension ReasoningLevel {
+extension ReasoningLevel {
     /// Canonical "more reasoning" ordering. Used by `clamped(to:)` to
     /// pick the nearest native level by index distance.
-    static let canonicalOrder: [ReasoningLevel] = [
-        .none, .low, .medium, .high, .extraHigh, .max
+    public static let canonicalOrder: [ReasoningLevel] = [
+        .none, .low, .medium, .high, .extraHigh, .max,
     ]
 
     /// Map this user-requested level to the nearest value the model
@@ -101,7 +101,7 @@ public extension ReasoningLevel {
     ///   - `.none` → `.none`              (explicit disable)
     ///   - `.low / .medium / .high`        unchanged
     ///   - `.extraHigh / .max`            → `.high` (clamped)
-    func clamped(to supported: Set<ReasoningLevel>) -> ReasoningLevel {
+    public func clamped(to supported: Set<ReasoningLevel>) -> ReasoningLevel {
         if self == .none { return .none }
         if supported.contains(self) { return self }
         let order = ReasoningLevel.canonicalOrder

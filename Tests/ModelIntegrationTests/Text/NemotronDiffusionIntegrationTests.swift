@@ -21,9 +21,10 @@
 // the checkpoint isn't available (offline CI).
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("NemotronDiffusion Integration", .serialized)
 struct NemotronDiffusionIntegrationTests {
@@ -84,19 +85,23 @@ struct NemotronDiffusionIntegrationTests {
         // Mode 2 — block-wise diffusion decoding.
         let diff = m.generateDiffusion(
             prompt: prompt,
-            parameters: DiffusionParameters(maxNewTokens: 64, blockLength: 32,
-                                            confidenceThreshold: 0.9))
+            parameters: DiffusionParameters(
+                maxNewTokens: 64, blockLength: 32,
+                confidenceThreshold: 0.9))
         #expect(diff.forwardPasses > 0)
-        expectCoherentOutput(diff.generatedTokens,
-                             label: "Nemotron-Labs-Diffusion 3B diffusion")
+        expectCoherentOutput(
+            diff.generatedTokens,
+            label: "Nemotron-Labs-Diffusion 3B diffusion")
 
         // Mode 3 — linear self-speculation (diffusion draft + AR verify).
         let ss = m.generateSelfSpeculative(
             prompt: prompt,
-            parameters: DiffusionParameters(maxNewTokens: 64, blockLength: 32,
-                                            confidenceThreshold: nil))
+            parameters: DiffusionParameters(
+                maxNewTokens: 64, blockLength: 32,
+                confidenceThreshold: nil))
         #expect(ss.forwardPasses > 0)
-        expectCoherentOutput(ss.generatedTokens,
-                             label: "Nemotron-Labs-Diffusion 3B self-spec")
+        expectCoherentOutput(
+            ss.generatedTokens,
+            label: "Nemotron-Labs-Diffusion 3B self-spec")
     }
 }

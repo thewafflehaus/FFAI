@@ -33,13 +33,15 @@ import Foundation
 /// true)`.
 enum MimiRoPE {
     /// Rotate `x` `[T, headDim]` in place-style and return the result.
-    static func apply(_ x: [Float], t: Int, headDim: Int,
-                      base: Float) -> [Float] {
+    static func apply(
+        _ x: [Float], t: Int, headDim: Int,
+        base: Float
+    ) -> [Float] {
         let half = headDim / 2
         var out = x
-        for pos in 0..<t {
+        for pos in 0 ..< t {
             let rowBase = pos * headDim
-            for i in 0..<half {
+            for i in 0 ..< half {
                 // Traditional layout pairs dims (2i, 2i+1).
                 let freq = powf(base, -2.0 * Float(i) / Float(headDim))
                 let theta = Float(pos) * freq
@@ -60,8 +62,8 @@ enum MimiRoPE {
 /// projection (output dim `3 * dModel`); attention is causal with a
 /// bounded context window.
 struct MimiAttention {
-    let inProjW: [Float]     // [3*dModel, dModel]
-    let outProjW: [Float]    // [dModel, dModel]
+    let inProjW: [Float]  // [3*dModel, dModel]
+    let outProjW: [Float]  // [dModel, dModel]
     let numHeads: Int
     let headDim: Int
     let dModel: Int
@@ -83,21 +85,22 @@ struct MimiAttention {
     /// each query attends to at most `context` past keys.
     func callAsFunction(_ x: [Float], t: Int) -> [Float] {
         // Fused QKV: [T, 3*dModel].
-        let qkv = AudioMath.linear(x, rows: t, inDim: dModel,
-                                   weight: inProjW, outDim: 3 * dModel,
-                                   bias: nil)
+        let qkv = AudioMath.linear(
+            x, rows: t, inDim: dModel,
+            weight: inProjW, outDim: 3 * dModel,
+            bias: nil)
         // Split + per-head RoPE. Keep q/k/v as [head][T, headDim].
         var q = [[Float]](repeating: [], count: numHeads)
         var k = [[Float]](repeating: [], count: numHeads)
         var v = [[Float]](repeating: [], count: numHeads)
-        for h in 0..<numHeads {
+        for h in 0 ..< numHeads {
             var qh = [Float](repeating: 0, count: t * headDim)
             var kh = [Float](repeating: 0, count: t * headDim)
             var vh = [Float](repeating: 0, count: t * headDim)
-            for pos in 0..<t {
+            for pos in 0 ..< t {
                 let rowBase = pos * 3 * dModel
                 let hOff = h * headDim
-                for d in 0..<headDim {
+                for d in 0 ..< headDim {
                     qh[pos * headDim + d] = qkv[rowBase + hOff + d]
                     kh[pos * headDim + d] = qkv[rowBase + dModel + hOff + d]
                     vh[pos * headDim + d] = qkv[rowBase + 2 * dModel + hOff + d]
@@ -110,16 +113,18 @@ struct MimiAttention {
         // Scaled dot-product attention per head, causal + windowed.
         let scale = 1.0 / sqrtf(Float(headDim))
         var attnOut = [Float](repeating: 0, count: t * dModel)
-        for h in 0..<numHeads {
-            let qh = q[h], kh = k[h], vh = v[h]
-            for i in 0..<t {
+        for h in 0 ..< numHeads {
+            let qh = q[h]
+            let kh = k[h]
+            let vh = v[h]
+            for i in 0 ..< t {
                 // Key window: [max(0, i-context+1), i].
                 let lo = max(0, i - context + 1)
                 var scores = [Float](repeating: 0, count: i - lo + 1)
                 var mx = -Float.greatestFiniteMagnitude
-                for j in lo...i {
+                for j in lo ... i {
                     var dot: Float = 0
-                    for d in 0..<headDim {
+                    for d in 0 ..< headDim {
                         dot += qh[i * headDim + d] * kh[j * headDim + d]
                     }
                     let s = dot * scale
@@ -127,24 +132,25 @@ struct MimiAttention {
                     if s > mx { mx = s }
                 }
                 var sum: Float = 0
-                for n in 0..<scores.count {
+                for n in 0 ..< scores.count {
                     let e = expf(scores[n] - mx)
                     scores[n] = e
                     sum += e
                 }
                 let invSum = 1.0 / sum
                 let outBase = i * dModel + h * headDim
-                for j in lo...i {
+                for j in lo ... i {
                     let wgt = scores[j - lo] * invSum
-                    for d in 0..<headDim {
+                    for d in 0 ..< headDim {
                         attnOut[outBase + d] += wgt * vh[j * headDim + d]
                     }
                 }
             }
         }
         // Output projection.
-        return AudioMath.linear(attnOut, rows: t, inDim: dModel,
-                                weight: outProjW, outDim: dModel, bias: nil)
+        return AudioMath.linear(
+            attnOut, rows: t, inDim: dModel,
+            weight: outProjW, outDim: dModel, bias: nil)
     }
 }
 
@@ -165,10 +171,12 @@ struct MimiTransformerLayer {
         self.dModel = c.dModel
         self.dimFF = c.dimFeedforward
         self.norm1W = try w.floats("\(prefix).norm1.weight")
-        self.norm1B = w.has("\(prefix).norm1.bias")
+        self.norm1B =
+            w.has("\(prefix).norm1.bias")
             ? try w.floats("\(prefix).norm1.bias") : nil
         self.norm2W = try w.floats("\(prefix).norm2.weight")
-        self.norm2B = w.has("\(prefix).norm2.bias")
+        self.norm2B =
+            w.has("\(prefix).norm2.bias")
             ? try w.floats("\(prefix).norm2.bias") : nil
         self.attn = try MimiAttention(
             weights: w, prefix: "\(prefix).self_attn", config: c)
@@ -182,24 +190,28 @@ struct MimiTransformerLayer {
     func callAsFunction(_ x: [Float], t: Int) -> [Float] {
         var out = x
         // ── Attention sub-block ──
-        let n1 = AudioMath.layerNorm(out, rows: t, dim: dModel,
-                                     weight: norm1W, bias: norm1B)
+        let n1 = AudioMath.layerNorm(
+            out, rows: t, dim: dModel,
+            weight: norm1W, bias: norm1B)
         let a = attn(n1, t: t)
-        for pos in 0..<t {
-            for d in 0..<dModel {
+        for pos in 0 ..< t {
+            for d in 0 ..< dModel {
                 out[pos * dModel + d] += a[pos * dModel + d] * scale1[d]
             }
         }
         // ── MLP sub-block ──
-        let n2 = AudioMath.layerNorm(out, rows: t, dim: dModel,
-                                     weight: norm2W, bias: norm2B)
-        let h1 = AudioMath.linear(n2, rows: t, inDim: dModel,
-                                  weight: mlpW1, outDim: dimFF, bias: nil)
+        let n2 = AudioMath.layerNorm(
+            out, rows: t, dim: dModel,
+            weight: norm2W, bias: norm2B)
+        let h1 = AudioMath.linear(
+            n2, rows: t, inDim: dModel,
+            weight: mlpW1, outDim: dimFF, bias: nil)
         let act = AudioMath.gelu(h1)
-        let h2 = AudioMath.linear(act, rows: t, inDim: dimFF,
-                                  weight: mlpW2, outDim: dModel, bias: nil)
-        for pos in 0..<t {
-            for d in 0..<dModel {
+        let h2 = AudioMath.linear(
+            act, rows: t, inDim: dimFF,
+            weight: mlpW2, outDim: dModel, bias: nil)
+        for pos in 0 ..< t {
+            for d in 0 ..< dModel {
                 out[pos * dModel + d] += h2[pos * dModel + d] * scale2[d]
             }
         }
@@ -220,10 +232,11 @@ struct MimiProjectedTransformer {
     init(weights w: MimiWeights, config c: MimiConfig, prefix: String) throws {
         self.dModel = c.dModel
         var ls: [MimiTransformerLayer] = []
-        for l in 0..<c.numLayers {
-            ls.append(try MimiTransformerLayer(
-                weights: w,
-                prefix: "\(prefix).transformer.layers.\(l)", config: c))
+        for l in 0 ..< c.numLayers {
+            ls.append(
+                try MimiTransformerLayer(
+                    weights: w,
+                    prefix: "\(prefix).transformer.layers.\(l)", config: c))
         }
         self.layers = ls
     }
@@ -232,18 +245,19 @@ struct MimiProjectedTransformer {
     /// the same NCL layout so it slots between the conv stages.
     func forward(_ x: [Float], shape: [Int]) -> (data: [Float], shape: [Int]) {
         let (n, c, t) = (shape[0], shape[1], shape[2])
-        precondition(n == 1 && c == dModel,
-                     "MimiProjectedTransformer: expected [1, dModel, T]")
+        precondition(
+            n == 1 && c == dModel,
+            "MimiProjectedTransformer: expected [1, dModel, T]")
         // NCL -> [T, dModel] sequence.
         var seq = [Float](repeating: 0, count: t * dModel)
-        for ch in 0..<dModel {
-            for pos in 0..<t { seq[pos * dModel + ch] = x[ch * t + pos] }
+        for ch in 0 ..< dModel {
+            for pos in 0 ..< t { seq[pos * dModel + ch] = x[ch * t + pos] }
         }
         for layer in layers { seq = layer(seq, t: t) }
         // [T, dModel] -> NCL.
         var out = [Float](repeating: 0, count: x.count)
-        for ch in 0..<dModel {
-            for pos in 0..<t { out[ch * t + pos] = seq[pos * dModel + ch] }
+        for ch in 0 ..< dModel {
+            for pos in 0 ..< t { out[ch * t + pos] = seq[pos * dModel + ch] }
         }
         return (out, shape)
     }
@@ -255,8 +269,8 @@ struct MimiProjectedTransformer {
 /// `embedding_sum` + `cluster_usage`; the effective embedding is
 /// `embedding_sum / max(cluster_usage, eps)`.
 struct MimiCodebook {
-    let embedding: [Float]   // [codebookSize, dim]
-    let c2: [Float]          // ½‖embedding‖² per entry
+    let embedding: [Float]  // [codebookSize, dim]
+    let c2: [Float]  // ½‖embedding‖² per entry
     let codebookSize: Int
     let dim: Int
 
@@ -275,10 +289,10 @@ struct MimiCodebook {
         let size = usage.count
         var emb = [Float](repeating: 0, count: embSum.count)
         var c2v = [Float](repeating: 0, count: size)
-        for c in 0..<size {
+        for c in 0 ..< size {
             let denom = max(usage[c], Self.epsilon)
             var ss: Float = 0
-            for d in 0..<dim {
+            for d in 0 ..< dim {
                 let v = embSum[c * dim + d] / denom
                 emb[c * dim + d] = v
                 ss += v * v
@@ -296,16 +310,19 @@ struct MimiCodebook {
     /// across entries so it drops out.
     func encode(_ x: [Float], rows t: Int) -> [Int32] {
         var indices = [Int32](repeating: 0, count: t)
-        for i in 0..<t {
+        for i in 0 ..< t {
             let xBase = i * dim
             var best: Float = .greatestFiniteMagnitude
             var bestIdx = 0
-            for c in 0..<codebookSize {
+            for c in 0 ..< codebookSize {
                 let cBase = c * dim
                 var dot: Float = 0
-                for d in 0..<dim { dot += x[xBase + d] * embedding[cBase + d] }
+                for d in 0 ..< dim { dot += x[xBase + d] * embedding[cBase + d] }
                 let dist = c2[c] - dot
-                if dist < best { best = dist; bestIdx = c }
+                if dist < best {
+                    best = dist
+                    bestIdx = c
+                }
             }
             indices[i] = Int32(bestIdx)
         }
@@ -317,7 +334,7 @@ struct MimiCodebook {
         var out = [Float](repeating: 0, count: codes.count * dim)
         for (i, code) in codes.enumerated() {
             let cBase = Int(code) * dim
-            for d in 0..<dim { out[i * dim + d] = embedding[cBase + d] }
+            for d in 0 ..< dim { out[i * dim + d] = embedding[cBase + d] }
         }
         return out
     }
@@ -328,13 +345,15 @@ struct MimiCodebook {
 /// so the projections are always present.
 struct MimiVQ {
     let codebook: MimiCodebook
-    let projInW: [Float]?    // [codebookDim, dim]
+    let projInW: [Float]?  // [codebookDim, dim]
     let projInDim: (in: Int, out: Int)?
-    let projOutW: [Float]?   // [dim, codebookDim]
+    let projOutW: [Float]?  // [dim, codebookDim]
     let projOutDim: (in: Int, out: Int)?
 
-    init(weights w: MimiWeights, prefix: String,
-         dim: Int, codebookDim: Int) throws {
+    init(
+        weights w: MimiWeights, prefix: String,
+        dim: Int, codebookDim: Int
+    ) throws {
         self.codebook = try MimiCodebook(
             weights: w, prefix: "\(prefix).codebook", dim: codebookDim)
         if dim != codebookDim, w.has("\(prefix).project_in.weight") {
@@ -354,8 +373,9 @@ struct MimiVQ {
     func encode(_ x: [Float], rows t: Int) -> [Int32] {
         var feat = x
         if let pw = projInW, let pd = projInDim {
-            feat = AudioMath.linear(x, rows: t, inDim: pd.in,
-                                    weight: pw, outDim: pd.out, bias: nil)
+            feat = AudioMath.linear(
+                x, rows: t, inDim: pd.in,
+                weight: pw, outDim: pd.out, bias: nil)
         }
         return codebook.encode(feat, rows: t)
     }
@@ -364,8 +384,9 @@ struct MimiVQ {
     func decode(codes: [Int32]) -> [Float] {
         let q = codebook.decode(codes: codes)
         if let pw = projOutW, let pd = projOutDim {
-            return AudioMath.linear(q, rows: codes.count, inDim: pd.in,
-                                    weight: pw, outDim: pd.out, bias: nil)
+            return AudioMath.linear(
+                q, rows: codes.count, inDim: pd.in,
+                weight: pw, outDim: pd.out, bias: nil)
         }
         return q
     }
@@ -376,18 +397,21 @@ struct MimiVQ {
 /// convs.
 struct MimiResidualVQ {
     let layers: [MimiVQ]
-    let inputProjW: [Float]?     // [dim, inputDim, 1] -> flat [dim*inputDim]
+    let inputProjW: [Float]?  // [dim, inputDim, 1] -> flat [dim*inputDim]
     let inputProjDims: (inDim: Int, outDim: Int)?
     let outputProjW: [Float]?
     let outputProjDims: (inDim: Int, outDim: Int)?
 
-    init(weights w: MimiWeights, prefix: String, config c: MimiConfig,
-         nq: Int) throws {
+    init(
+        weights w: MimiWeights, prefix: String, config c: MimiConfig,
+        nq: Int
+    ) throws {
         var ls: [MimiVQ] = []
-        for q in 0..<nq {
-            ls.append(try MimiVQ(
-                weights: w, prefix: "\(prefix).vq.layers.\(q)",
-                dim: c.seanetDim, codebookDim: c.quantizerDim))
+        for q in 0 ..< nq {
+            ls.append(
+                try MimiVQ(
+                    weights: w, prefix: "\(prefix).vq.layers.\(q)",
+                    dim: c.seanetDim, codebookDim: c.quantizerDim))
         }
         self.layers = ls
         // input_proj / output_proj are 1×1 convs (bias-free). Their
@@ -417,8 +441,9 @@ struct MimiResidualVQ {
     /// Cin]` linear weight.
     private static func conv1x1ToLinear(_ w: [Float], shape: [Int]) -> [Float] {
         // K is 1, so [Cout, 1, Cin] is already [Cout, Cin] in row order.
-        precondition(shape.count == 3 && shape[1] == 1,
-                     "MimiResidualVQ: expected a 1×1 conv weight")
+        precondition(
+            shape.count == 3 && shape[1] == 1,
+            "MimiResidualVQ: expected a 1×1 conv weight")
         return w
     }
 
@@ -427,15 +452,16 @@ struct MimiResidualVQ {
         // Apply the 1×1 input projection (if any).
         var feat = x
         if let pw = inputProjW, let pd = inputProjDims {
-            feat = AudioMath.linear(x, rows: t, inDim: pd.inDim,
-                                    weight: pw, outDim: pd.outDim, bias: nil)
+            feat = AudioMath.linear(
+                x, rows: t, inDim: pd.inDim,
+                weight: pw, outDim: pd.outDim, bias: nil)
         }
         var residual = feat
         var codes: [[Int32]] = []
         for layer in layers {
             let idx = layer.encode(residual, rows: t)
             let q = layer.decode(codes: idx)
-            for i in 0..<residual.count { residual[i] -= q[i] }
+            for i in 0 ..< residual.count { residual[i] -= q[i] }
             codes.append(idx)
         }
         return codes
@@ -446,13 +472,14 @@ struct MimiResidualVQ {
         guard let first = codes.first else { return [] }
         let t = first.count
         var acc = layers[0].decode(codes: first)
-        for q in 1..<codes.count {
+        for q in 1 ..< codes.count {
             let d = layers[q].decode(codes: codes[q])
-            for i in 0..<acc.count { acc[i] += d[i] }
+            for i in 0 ..< acc.count { acc[i] += d[i] }
         }
         if let pw = outputProjW, let pd = outputProjDims {
-            return AudioMath.linear(acc, rows: t, inDim: pd.inDim,
-                                    weight: pw, outDim: pd.outDim, bias: nil)
+            return AudioMath.linear(
+                acc, rows: t, inDim: pd.inDim,
+                weight: pw, outDim: pd.outDim, bias: nil)
         }
         return acc
     }
@@ -480,12 +507,13 @@ struct MimiSplitRVQ {
     /// Encode an NCL latent `[1, dim, T]` into `nq` code streams.
     func encode(_ z: [Float], shape: [Int]) throws -> [[Int32]] {
         let (n, c, t) = (shape[0], shape[1], shape[2])
-        precondition(n == 1 && c == dim,
-                     "MimiSplitRVQ.encode: expected [1, dim, T]")
+        precondition(
+            n == 1 && c == dim,
+            "MimiSplitRVQ.encode: expected [1, dim, T]")
         // NCL -> [T, dim].
         var seq = [Float](repeating: 0, count: t * dim)
-        for ch in 0..<dim {
-            for pos in 0..<t { seq[pos * dim + ch] = z[ch * t + pos] }
+        for ch in 0 ..< dim {
+            for pos in 0 ..< t { seq[pos * dim + ch] = z[ch * t + pos] }
         }
         var codes = rvqFirst.encode(seq, rows: t)
         if nq > 1 {
@@ -500,15 +528,15 @@ struct MimiSplitRVQ {
             throw MimiError.shapeMismatch("empty code list")
         }
         let t = first.count
-        var acc = rvqFirst.decode(codes: Array(codes.prefix(1)))   // [T, dim]
+        var acc = rvqFirst.decode(codes: Array(codes.prefix(1)))  // [T, dim]
         if nq > 1 && codes.count > 1 {
             let rest = rvqRest.decode(codes: Array(codes.dropFirst()))
-            for i in 0..<acc.count { acc[i] += rest[i] }
+            for i in 0 ..< acc.count { acc[i] += rest[i] }
         }
         // [T, dim] -> NCL.
         var out = [Float](repeating: 0, count: dim * t)
-        for pos in 0..<t {
-            for ch in 0..<dim { out[ch * t + pos] = acc[pos * dim + ch] }
+        for pos in 0 ..< t {
+            for ch in 0 ..< dim { out[ch * t + pos] = acc[pos * dim + ch] }
         }
         return (out, [1, dim, t])
     }

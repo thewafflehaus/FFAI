@@ -29,9 +29,10 @@
 // available the test skips gracefully.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Sliding Window KV Cache Integration", .serialized)
 struct SlidingWindowIntegrationTests {
@@ -62,8 +63,10 @@ struct SlidingWindowIntegrationTests {
         let caches = m.engine.makeLayerCaches()
         for c in caches {
             guard let kv = c as? any KVCacheProtocol else { continue }
-            #expect(kv.effectiveMaxSize == windowSize,
-                    "cache effectiveMaxSize \(kv.effectiveMaxSize) should match window size \(windowSize)")
+            #expect(
+                kv.effectiveMaxSize == windowSize,
+                "cache effectiveMaxSize \(kv.effectiveMaxSize) should match window size \(windowSize)"
+            )
             switch kv.eviction {
             case .window(let m, let k):
                 #expect(m == windowSize)
@@ -82,6 +85,7 @@ struct SlidingWindowIntegrationTests {
             parameters: GenerationParameters(maxTokens: maxTokens, temperature: 0)
         )
         #expect(result.tokensPerSecond > 0)
-        expectCoherentOutput(result.generatedTokens, label: "Llama 3.2 1B sliding-window(64, keep=4)")
+        expectCoherentOutput(
+            result.generatedTokens, label: "Llama 3.2 1B sliding-window(64, keep=4)")
     }
 }

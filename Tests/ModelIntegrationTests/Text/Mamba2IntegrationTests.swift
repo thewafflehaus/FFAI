@@ -22,16 +22,19 @@
 // once we want a perf test.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Mamba2 Integration", .serialized)
 struct Mamba2IntegrationTests {
 
     @Test("load + greedy generate produces non-degenerate text")
     func loadAndGenerate() async throws {
-        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load("mlx-community/mamba2-130m") }
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load("mlx-community/mamba2-130m")
+        }
 
         // Engine should be Mamba 2 (not Llama / Qwen3).
         #expect(m.mamba2 != nil)

@@ -73,7 +73,7 @@ public struct FastVLMVisionConfig {
         var h = imageSize / 4
         var w = imageSize / 4
         var resolutions: [(Int, Int)] = []
-        for i in 0..<nStages {
+        for i in 0 ..< nStages {
             resolutions.append((h, w))
             // After this stage, apply PatchEmbed downsampling if needed.
             if i < nStages - 1 && downSamples[i] {
@@ -88,14 +88,14 @@ public struct FastVLMVisionConfig {
 
     static func decode(_ c: ModelConfig) throws -> FastVLMVisionConfig {
         guard let embedDims = c.intArray("embed_dims"),
-              let layers = c.intArray("layers"),
-              let tokenMixers = c.raw["token_mixers"] as? [String],
-              let downSamples = c.raw["downsamples"] as? [Bool],
-              let mlpRatios = c.intArray("mlp_ratios"),
-              let imageSize = c.int("image_size"),
-              let patchSize = c.int("patch_size"),
-              let downPatchSize = c.int("down_patch_size"),
-              let downStride = c.int("down_stride")
+            let layers = c.intArray("layers"),
+            let tokenMixers = c.raw["token_mixers"] as? [String],
+            let downSamples = c.raw["downsamples"] as? [Bool],
+            let mlpRatios = c.intArray("mlp_ratios"),
+            let imageSize = c.int("image_size"),
+            let patchSize = c.int("patch_size"),
+            let downPatchSize = c.int("down_patch_size"),
+            let downStride = c.int("down_stride")
         else { throw FastVLMError.missingConfig }
 
         // pos_embs_shapes is [[Int]?] — array of optional int arrays.
@@ -144,14 +144,16 @@ public struct FastVLMVisionConfig {
 /// The folded (scale, bias) are applied per-channel after the convolution.
 struct FoldedBN {
     let scale: [Float]  // [C]
-    let bias: [Float]   // [C]
+    let bias: [Float]  // [C]
 
-    init(weight: [Float], bias bnBias: [Float],
-         runningMean: [Float], runningVar: [Float], eps: Float = 1e-5) {
+    init(
+        weight: [Float], bias bnBias: [Float],
+        runningMean: [Float], runningVar: [Float], eps: Float = 1e-5
+    ) {
         let n = weight.count
         var s = [Float](repeating: 0, count: n)
         var b = [Float](repeating: 0, count: n)
-        for i in 0..<n {
+        for i in 0 ..< n {
             s[i] = weight[i] / sqrtf(runningVar[i] + eps)
             b[i] = bnBias[i] - runningMean[i] * s[i]
         }
@@ -181,35 +183,36 @@ private func depthwiseConvNHWC(
     output.withUnsafeMutableBufferPointer { outBuf in
         let outPtr = outBuf.baseAddress!
         input.withUnsafeBufferPointer { inBuf in
-        w.withUnsafeBufferPointer { wBuf in
-            let inPtr = inBuf.baseAddress!
-            let wPtr = wBuf.baseAddress!
-            DispatchQueue.concurrentPerform(iterations: totalWork) { work in
-                let b = work / C
-                let c = work % C
-                for oh in 0..<outH {
-                    for ow in 0..<outW {
-                        var acc: Float = 0
-                        let ih0 = oh * stride - padding
-                        let iw0 = ow * stride - padding
-                        for ky in 0..<kH {
-                            let ih = ih0 + ky
-                            if ih < 0 || ih >= H { continue }
-                            for kx in 0..<kW {
-                                let iw = iw0 + kx
-                                if iw < 0 || iw >= W { continue }
-                                let inIdx = ((b * H + ih) * W + iw) * C + c
-                                // Weight is OHWI depthwise: [c, ky, kx, 0]
-                                let wIdx = (c * kH + ky) * kW + kx
-                                acc += inPtr[inIdx] * wPtr[wIdx]
+            w.withUnsafeBufferPointer { wBuf in
+                let inPtr = inBuf.baseAddress!
+                let wPtr = wBuf.baseAddress!
+                DispatchQueue.concurrentPerform(iterations: totalWork) { work in
+                    let b = work / C
+                    let c = work % C
+                    for oh in 0 ..< outH {
+                        for ow in 0 ..< outW {
+                            var acc: Float = 0
+                            let ih0 = oh * stride - padding
+                            let iw0 = ow * stride - padding
+                            for ky in 0 ..< kH {
+                                let ih = ih0 + ky
+                                if ih < 0 || ih >= H { continue }
+                                for kx in 0 ..< kW {
+                                    let iw = iw0 + kx
+                                    if iw < 0 || iw >= W { continue }
+                                    let inIdx = ((b * H + ih) * W + iw) * C + c
+                                    // Weight is OHWI depthwise: [c, ky, kx, 0]
+                                    let wIdx = (c * kH + ky) * kW + kx
+                                    acc += inPtr[inIdx] * wPtr[wIdx]
+                                }
                             }
+                            let outIdx = ((b * outH + oh) * outW + ow) * C + c
+                            outPtr[outIdx] = acc + (bias?[c] ?? 0)
                         }
-                        let outIdx = ((b * outH + oh) * outW + ow) * C + c
-                        outPtr[outIdx] = acc + (bias?[c] ?? 0)
                     }
                 }
             }
-        }}
+        }
     }
     return (output, outH, outW)
 }
@@ -219,8 +222,8 @@ private func depthwiseConvNHWC(
 /// Weight is OHWI [outC, 1, 1, inC]; we load it as a 2D matrix [outC, inC].
 /// Flattens spatial to [B*H*W, inC], calls Ops.gemm, then adds bias CPU-side.
 private func pointwiseConvNHWC(
-    _ input: Tensor,    // flat [B*H*W*inC]
-    weight2D: Tensor,   // [outC, inC]
+    _ input: Tensor,  // flat [B*H*W*inC]
+    weight2D: Tensor,  // [outC, inC]
     bias: [Float]?,
     BHW: Int, outC: Int, device: Device
 ) -> [Float] {
@@ -231,8 +234,8 @@ private func pointwiseConvNHWC(
     var result = projected.toFloatArray()
     // Broadcast-add bias across all rows.
     if let b = bias {
-        for row in 0..<BHW {
-            for c in 0..<outC {
+        for row in 0 ..< BHW {
+            for c in 0 ..< outC {
                 result[row * outC + c] += b[c]
             }
         }
@@ -241,8 +244,10 @@ private func pointwiseConvNHWC(
 }
 
 /// Copy a [Float] array into a Tensor with matching shape.
-private func floatToTensor(_ vals: [Float], shape: [Int],
-                           dtype: DType, device: Device) -> Tensor {
+private func floatToTensor(
+    _ vals: [Float], shape: [Int],
+    dtype: DType, device: Device
+) -> Tensor {
     let t = Tensor.empty(shape: shape, dtype: dtype, device: device)
     ImagePreprocessing.copyFloats(vals, into: t)
     return t
@@ -255,9 +260,9 @@ private func floatToTensor(_ vals: [Float], shape: [Int],
 ///   output = x * gate  (channel-wise)
 struct SEGateParams {
     let reduceWeight: [Float]  // [C_r, 1, 1, C] → use as [C_r, C]
-    let reduceBias:  [Float]   // [C_r]
+    let reduceBias: [Float]  // [C_r]
     let expandWeight: [Float]  // [C, 1, 1, C_r] → use as [C, C_r]
-    let expandBias:  [Float]   // [C]
+    let expandBias: [Float]  // [C]
 
     /// Apply SE gate to NHWC input [B, H, W, C], return gated output.
     func apply(_ x: [Float], B: Int, H: Int, W: Int, C: Int) -> [Float] {
@@ -265,40 +270,40 @@ struct SEGateParams {
         // Global average pool: [B, H, W, C] → [B, C]
         var pooled = [Float](repeating: 0, count: B * C)
         let area = Float(H * W)
-        for b in 0..<B {
-            for h in 0..<H {
-                for w in 0..<W {
-                    for c in 0..<C {
+        for b in 0 ..< B {
+            for h in 0 ..< H {
+                for w in 0 ..< W {
+                    for c in 0 ..< C {
                         pooled[b * C + c] += x[((b * H + h) * W + w) * C + c]
                     }
                 }
             }
-            for c in 0..<C { pooled[b * C + c] /= area }
+            for c in 0 ..< C { pooled[b * C + c] /= area }
         }
         // reduce: [B, C] @ [C_r, C]^T → [B, C_r], then ReLU + bias
         var reduced = [Float](repeating: 0, count: B * cR)
-        for b in 0..<B {
-            for r in 0..<cR {
+        for b in 0 ..< B {
+            for r in 0 ..< cR {
                 var acc: Float = 0
-                for c in 0..<C { acc += pooled[b * C + c] * reduceWeight[r * C + c] }
+                for c in 0 ..< C { acc += pooled[b * C + c] * reduceWeight[r * C + c] }
                 reduced[b * cR + r] = max(0, acc + reduceBias[r])
             }
         }
         // expand: [B, C_r] @ [C, C_r]^T → [B, C], then sigmoid
         var gate = [Float](repeating: 0, count: B * C)
-        for b in 0..<B {
-            for c in 0..<C {
+        for b in 0 ..< B {
+            for c in 0 ..< C {
                 var acc: Float = 0
-                for r in 0..<cR { acc += reduced[b * cR + r] * expandWeight[c * cR + r] }
+                for r in 0 ..< cR { acc += reduced[b * cR + r] * expandWeight[c * cR + r] }
                 gate[b * C + c] = 1.0 / (1.0 + expf(-(acc + expandBias[c])))
             }
         }
         // Broadcast gate [B, C] to [B, H, W, C] and multiply.
         var out = x
-        for b in 0..<B {
-            for h in 0..<H {
-                for w in 0..<W {
-                    for c in 0..<C {
+        for b in 0 ..< B {
+            for h in 0 ..< H {
+                for w in 0 ..< W {
+                    for c in 0 ..< C {
                         out[((b * H + h) * W + w) * C + c] *= gate[b * C + c]
                     }
                 }
@@ -317,20 +322,22 @@ struct SEGateParams {
 ///   2. fc1 (pointwise 1×1, inC → intermediateC, GELU)
 ///   3. fc2 (pointwise 1×1, intermediateC → inC)
 struct ConvFFNParams {
-    let dwWeight: [Float]   // [C, kH, kW] (depthwise)
-    let dwBN: FoldedBN      // folded BN for the DW conv
+    let dwWeight: [Float]  // [C, kH, kW] (depthwise)
+    let dwBN: FoldedBN  // folded BN for the DW conv
     let kH: Int
     let kW: Int
-    let fc1Weight: Tensor   // [intermediateC, inC] 2D
-    let fc1Bias: [Float]    // [intermediateC]
-    let fc2Weight: Tensor   // [inC, intermediateC] 2D
-    let fc2Bias: [Float]    // [inC]
+    let fc1Weight: Tensor  // [intermediateC, inC] 2D
+    let fc1Bias: [Float]  // [intermediateC]
+    let fc2Weight: Tensor  // [inC, intermediateC] 2D
+    let fc2Bias: [Float]  // [inC]
     let inC: Int
     let intermediateC: Int
 
     /// Forward NHWC [B, H, W, C] → NHWC [B, H, W, C].
-    func forward(_ x: [Float], B: Int, H: Int, W: Int,
-                 device: Device) -> [Float] {
+    func forward(
+        _ x: [Float], B: Int, H: Int, W: Int,
+        device: Device
+    ) -> [Float] {
         let pad = (kH - 1) / 2
         // 1. DW conv with folded BN.
         var (dw, _, _) = depthwiseConvNHWC(
@@ -338,10 +345,10 @@ struct ConvFFNParams {
             B: B, H: H, W: W, C: inC,
             kH: kH, kW: kW, stride: 1, padding: pad)
         // Apply folded BN (scale + bias per channel).
-        for b in 0..<B {
-            for h in 0..<H {
-                for w2 in 0..<W {
-                    for c in 0..<inC {
+        for b in 0 ..< B {
+            for h in 0 ..< H {
+                for w2 in 0 ..< W {
+                    for c in 0 ..< inC {
                         let idx = ((b * H + h) * W + w2) * inC + c
                         dw[idx] = dw[idx] * dwBN.scale[c] + dwBN.bias[c]
                     }
@@ -349,19 +356,21 @@ struct ConvFFNParams {
             }
         }
         // 2. fc1 (pointwise 1×1) + GELU.
-        let dwT = floatToTensor(dw, shape: [B * H * W, inC],
-                                dtype: fc1Weight.dtype, device: device)
+        let dwT = floatToTensor(
+            dw, shape: [B * H * W, inC],
+            dtype: fc1Weight.dtype, device: device)
         var y = pointwiseConvNHWC(
             dwT, weight2D: fc1Weight, bias: fc1Bias,
             BHW: B * H * W, outC: intermediateC, device: device)
         // GELU: 0.5 * x * (1 + erf(x / sqrt(2)))
-        for i in 0..<y.count {
+        for i in 0 ..< y.count {
             let v = y[i]
             y[i] = 0.5 * v * (1.0 + erff(v * Float(M_SQRT1_2)))
         }
         // 3. fc2 (pointwise 1×1).
-        let yT = floatToTensor(y, shape: [B * H * W, intermediateC],
-                               dtype: fc2Weight.dtype, device: device)
+        let yT = floatToTensor(
+            y, shape: [B * H * W, intermediateC],
+            dtype: fc2Weight.dtype, device: device)
         return pointwiseConvNHWC(
             yT, weight2D: fc2Weight, bias: fc2Bias,
             BHW: B * H * W, outC: inC, device: device)
@@ -374,16 +383,18 @@ struct ConvFFNParams {
 ///   is the fused reparam_conv branch applied as a depthwise conv)
 struct RepMixerBlockParams {
     let mixerWeight: [Float]  // [C, kH, kW] depthwise
-    let mixerBias: [Float]    // [C]
+    let mixerBias: [Float]  // [C]
     let mixerKH: Int
     let mixerKW: Int
     let convFFN: ConvFFNParams
-    let layerScale: [Float]   // [C]
+    let layerScale: [Float]  // [C]
     let inC: Int
 
     /// Forward NHWC [B, H, W, C] → NHWC [B, H, W, C].
-    func forward(_ x: [Float], B: Int, H: Int, W: Int,
-                 device: Device) -> [Float] {
+    func forward(
+        _ x: [Float], B: Int, H: Int, W: Int,
+        device: Device
+    ) -> [Float] {
         let pad = (mixerKH - 1) / 2
         // Token mixer: token_mixer output + residual x.
         let (mixed, _, _) = depthwiseConvNHWC(
@@ -394,10 +405,10 @@ struct RepMixerBlockParams {
         let ffnOut = convFFN.forward(mixed, B: B, H: H, W: W, device: device)
         // Residual + layerScale.
         var out = x
-        for b in 0..<B {
-            for h in 0..<H {
-                for w in 0..<W {
-                    for c in 0..<inC {
+        for b in 0 ..< B {
+            for h in 0 ..< H {
+                for w in 0 ..< W {
+                    for c in 0 ..< inC {
                         let idx = ((b * H + h) * W + w) * inC + c
                         out[idx] += layerScale[c] * ffnOut[idx]
                     }
@@ -415,23 +426,26 @@ struct RepMixerBlockParams {
 ///
 /// Operates on NHWC [B, H, W, C]; flattens to [B, N, C] for attention.
 struct VisionMHSAParams {
-    let qkvWeight: Tensor    // [3*C, C]
-    let projWeight: Tensor   // [C, C]
-    let projBias: [Float]    // [C]
+    let qkvWeight: Tensor  // [3*C, C]
+    let projWeight: Tensor  // [C, C]
+    let projBias: [Float]  // [C]
     let inC: Int
     let numHeads: Int
     static let headDim = 32
 
     /// Forward NHWC [B, H, W, C] → NHWC [B, H, W, C].
-    func forward(_ x: [Float], B: Int, H: Int, W: Int,
-                 device: Device) -> [Float] {
+    func forward(
+        _ x: [Float], B: Int, H: Int, W: Int,
+        device: Device
+    ) -> [Float] {
         let N = H * W
         let headDim = Self.headDim
         let scale = 1.0 / sqrtf(Float(headDim))
 
         // Flatten to [B*N, C] for QKV projection.
-        let xT = floatToTensor(x, shape: [B * N, inC],
-                               dtype: qkvWeight.dtype, device: device)
+        let xT = floatToTensor(
+            x, shape: [B * N, inC],
+            dtype: qkvWeight.dtype, device: device)
         let cmd = device.makeCommandBuffer()
         let qkvOut = Ops.gemm(weight: qkvWeight, input: xT, nRows: B * N, on: cmd)
         cmd.commit()
@@ -450,32 +464,35 @@ struct VisionMHSAParams {
         var attnOut = [Float](repeating: 0, count: B * N * inC)
         let cLocal = inC
         let stride3C = 3 * cLocal
-        for bi in 0..<B {
+        for bi in 0 ..< B {
             var qFlat = [Float](repeating: 0, count: N * cLocal)
             var kFlat = [Float](repeating: 0, count: N * cLocal)
             var vFlat = [Float](repeating: 0, count: N * cLocal)
-            for i in 0..<N {
+            for i in 0 ..< N {
                 let srcRow = (bi * N + i) * stride3C
                 // Q: same [numHeads, headDim] layout per token → flat copy.
-                for d in 0..<cLocal { qFlat[i * cLocal + d] = qkvArr[srcRow + d] }
+                for d in 0 ..< cLocal { qFlat[i * cLocal + d] = qkvArr[srcRow + d] }
                 // K/V: transpose to [numHeads, N, headDim] for the kernel.
-                for h in 0..<numHeads {
+                for h in 0 ..< numHeads {
                     let hOff = h * headDim
                     let kSrc = srcRow + cLocal + hOff
                     let vSrc = srcRow + 2 * cLocal + hOff
                     let dst = (h * N + i) * headDim
-                    for d in 0..<headDim {
+                    for d in 0 ..< headDim {
                         kFlat[dst + d] = qkvArr[kSrc + d]
                         vFlat[dst + d] = qkvArr[vSrc + d]
                     }
                 }
             }
-            let qT = floatToTensor(qFlat, shape: [N, numHeads, headDim],
-                                   dtype: .f32, device: device)
-            let kT = floatToTensor(kFlat, shape: [numHeads, N, headDim],
-                                   dtype: .f32, device: device)
-            let vT = floatToTensor(vFlat, shape: [numHeads, N, headDim],
-                                   dtype: .f32, device: device)
+            let qT = floatToTensor(
+                qFlat, shape: [N, numHeads, headDim],
+                dtype: .f32, device: device)
+            let kT = floatToTensor(
+                kFlat, shape: [numHeads, N, headDim],
+                dtype: .f32, device: device)
+            let vT = floatToTensor(
+                vFlat, shape: [numHeads, N, headDim],
+                dtype: .f32, device: device)
             let attnCmd = device.makeCommandBuffer()
             let outT = Ops.sdpaBidirectional(
                 q: qT, k: kT, v: vT,
@@ -486,12 +503,13 @@ struct VisionMHSAParams {
             attnCmd.waitUntilCompleted()
             let outFlat = outT.toFloatArray()  // [N, numHeads, headDim] = [N, C]
             let dstBase = bi * N * cLocal
-            for i in 0..<(N * cLocal) { attnOut[dstBase + i] = outFlat[i] }
+            for i in 0 ..< (N * cLocal) { attnOut[dstBase + i] = outFlat[i] }
         }
 
         // Output projection: [B*N, C] → [B*N, C] + bias.
-        let attnT = floatToTensor(attnOut, shape: [B * N, inC],
-                                  dtype: projWeight.dtype, device: device)
+        let attnT = floatToTensor(
+            attnOut, shape: [B * N, inC],
+            dtype: projWeight.dtype, device: device)
         return pointwiseConvNHWC(
             attnT, weight2D: projWeight, bias: projBias,
             BHW: B * N, outC: inC, device: device)
@@ -502,24 +520,24 @@ struct VisionMHSAParams {
 /// Applied as: normalize each [C] vector over channel dim.
 struct LayerNormChannelParams {
     let weight: [Float]  // [C]
-    let bias: [Float]    // [C]
+    let bias: [Float]  // [C]
     let eps: Float
 
     func forward(_ x: [Float], N: Int, C: Int) -> [Float] {
         var out = [Float](repeating: 0, count: N * C)
-        for n in 0..<N {
+        for n in 0 ..< N {
             // Compute mean and variance over C channels.
             var mean: Float = 0
-            for c in 0..<C { mean += x[n * C + c] }
+            for c in 0 ..< C { mean += x[n * C + c] }
             mean /= Float(C)
             var variance: Float = 0
-            for c in 0..<C {
+            for c in 0 ..< C {
                 let d = x[n * C + c] - mean
                 variance += d * d
             }
             variance /= Float(C)
             let invStd = 1.0 / sqrtf(variance + eps)
-            for c in 0..<C {
+            for c in 0 ..< C {
                 out[n * C + c] = (x[n * C + c] - mean) * invStd * weight[c] + bias[c]
             }
         }
@@ -538,20 +556,22 @@ struct AttentionBlockParams {
     let layerScale2: [Float]  // [C]
     let inC: Int
 
-    func forward(_ x: [Float], B: Int, H: Int, W: Int,
-                 device: Device) -> [Float] {
+    func forward(
+        _ x: [Float], B: Int, H: Int, W: Int,
+        device: Device
+    ) -> [Float] {
         let N = B * H * W
         // Attention sub-block.
         let normed = norm.forward(x, N: N, C: inC)
         let attnOut = mhsa.forward(normed, B: B, H: H, W: W, device: device)
         var y = x
-        for i in 0..<N * inC {
+        for i in 0 ..< N * inC {
             let c = i % inC
             y[i] += layerScale1[c] * attnOut[i]
         }
         // ConvFFN sub-block.
         let ffnOut = convFFN.forward(y, B: B, H: H, W: W, device: device)
-        for i in 0..<N * inC {
+        for i in 0 ..< N * inC {
             let c = i % inC
             y[i] += layerScale2[c] * ffnOut[i]
         }
@@ -566,8 +586,10 @@ enum FastVLMStageBlock {
     case repMixer(RepMixerBlockParams)
     case attention(AttentionBlockParams)
 
-    func forward(_ x: [Float], B: Int, H: Int, W: Int,
-                 device: Device) -> [Float] {
+    func forward(
+        _ x: [Float], B: Int, H: Int, W: Int,
+        device: Device
+    ) -> [Float] {
         switch self {
         case .repMixer(let p): return p.forward(x, B: B, H: H, W: W, device: device)
         case .attention(let p): return p.forward(x, B: B, H: H, W: W, device: device)
@@ -580,7 +602,7 @@ enum FastVLMStageBlock {
 /// position bias added to the feature map.
 struct RepCPEParams {
     let weight: [Float]  // [C, kH, kW] depthwise
-    let bias: [Float]    // [C]
+    let bias: [Float]  // [C]
     let kH: Int
     let kW: Int
 
@@ -600,26 +622,29 @@ struct RepCPEParams {
 ///   lkb_reparam: depthwise [out_ch, 7, 7, 1] with stride 2
 ///   reparam_conv (1×1): pointwise [out_ch, 1, 1, out_ch] -> channel mix
 struct PatchEmbedParams {
-    let lkbWeight: [Float]   // [outC, kH, kW] depthwise
-    let lkbBias: [Float]     // [outC]
-    let pwWeight: Tensor     // [outC, outC] pointwise
-    let pwBias: [Float]      // [outC]
+    let lkbWeight: [Float]  // [outC, kH, kW] depthwise
+    let lkbBias: [Float]  // [outC]
+    let pwWeight: Tensor  // [outC, outC] pointwise
+    let pwBias: [Float]  // [outC]
     let kH: Int
     let kW: Int
     let stride: Int
     let inC: Int
     let outC: Int
 
-    func forward(_ x: [Float], B: Int, H: Int, W: Int,
-                 device: Device) -> ([Float], Int, Int) {
+    func forward(
+        _ x: [Float], B: Int, H: Int, W: Int,
+        device: Device
+    ) -> ([Float], Int, Int) {
         let pad = (kH - 1) / 2
         let (dw, outH, outW) = depthwiseConvNHWC(
             x, w: lkbWeight, bias: lkbBias,
             B: B, H: H, W: W, C: inC,
             kH: kH, kW: kW, stride: stride, padding: pad)
         // Pointwise 1×1 over the downsampled map.
-        let dwT = floatToTensor(dw, shape: [B * outH * outW, inC],
-                                dtype: pwWeight.dtype, device: device)
+        let dwT = floatToTensor(
+            dw, shape: [B * outH * outW, inC],
+            dtype: pwWeight.dtype, device: device)
         let pw = pointwiseConvNHWC(
             dwT, weight2D: pwWeight, bias: pwBias,
             BHW: B * outH * outW, outC: outC, device: device)
@@ -633,34 +658,36 @@ struct PatchEmbedParams {
 ///   block 2: pointwise [96, 1, 1, 96] stride-1
 /// After the stem, spatial resolution is image_size / 4.
 struct ConvStemParams {
-    let block0Weight: [Float]   // [C, 3, 3, 3] regular conv -> [C, 3, 3, 3] OIHW
+    let block0Weight: [Float]  // [C, 3, 3, 3] regular conv -> [C, 3, 3, 3] OIHW
     let block0Bias: [Float]
-    let block1Weight: [Float]   // [C, 3, 3] depthwise
+    let block1Weight: [Float]  // [C, 3, 3] depthwise
     let block1Bias: [Float]
-    let block2Weight: Tensor    // [C, C] pointwise
+    let block2Weight: Tensor  // [C, C] pointwise
     let block2Bias: [Float]
-    let outC: Int               // = embedDims[0]
+    let outC: Int  // = embedDims[0]
 
     func forward(_ x: [Float], H: Int, W: Int) -> ([Float], Int, Int, Int) {
         // block 0: regular 3×3 stride-2 conv [outC, inC=3, 3, 3] OIHW.
         // Input is NHWC [1, H, W, 3]; we need to handle the regular conv
         // (not depthwise). Use explicit nested loop for the 3-channel case.
         let B = 1
-        let kH = 3, kW = 3
-        let stride0 = 2, pad0 = 1
+        let kH = 3
+        let kW = 3
+        let stride0 = 2
+        let pad0 = 1
         let inC0 = 3
         let outH0 = (H + 2 * pad0 - kH) / stride0 + 1
         let outW0 = (W + 2 * pad0 - kW) / stride0 + 1
         var y0 = [Float](repeating: 0, count: B * outH0 * outW0 * outC)
-        for oc in 0..<outC {
-            for oh in 0..<outH0 {
-                for ow in 0..<outW0 {
+        for oc in 0 ..< outC {
+            for oh in 0 ..< outH0 {
+                for ow in 0 ..< outW0 {
                     var acc: Float = 0
-                    for ic in 0..<inC0 {
-                        for ky in 0..<kH {
+                    for ic in 0 ..< inC0 {
+                        for ky in 0 ..< kH {
                             let ih = oh * stride0 - pad0 + ky
                             if ih < 0 || ih >= H { continue }
-                            for kx in 0..<kW {
+                            for kx in 0 ..< kW {
                                 let iw = ow * stride0 - pad0 + kx
                                 if iw < 0 || iw >= W { continue }
                                 // Weight is OIHW: [oc, ic, ky, kx]
@@ -682,8 +709,9 @@ struct ConvStemParams {
             B: B, H: outH0, W: outW0, C: outC,
             kH: kH, kW: kW, stride: 2, padding: pad1)
         // block 2: pointwise 1×1.
-        let y1T = floatToTensor(y1, shape: [B * outH1 * outW1, outC],
-                                dtype: block2Weight.dtype, device: .shared)
+        let y1T = floatToTensor(
+            y1, shape: [B * outH1 * outW1, outC],
+            dtype: block2Weight.dtype, device: .shared)
         let y2 = pointwiseConvNHWC(
             y1T, weight2D: block2Weight, bias: block2Bias,
             BHW: B * outH1 * outW1, outC: outC, device: .shared)
@@ -695,8 +723,8 @@ struct ConvStemParams {
 /// Forward: DW conv (stride=1) → SE gate → output.
 /// No BN: the reparam_conv weight already folds BN at save time.
 struct ConvExpParams {
-    let dwWeight: [Float]   // [outC, kH, kW] depthwise
-    let dwBias: [Float]     // [outC]
+    let dwWeight: [Float]  // [outC, kH, kW] depthwise
+    let dwBias: [Float]  // [outC]
     let se: SEGateParams
     let kH: Int
     let kW: Int
@@ -723,21 +751,23 @@ struct ConvExpParams {
 final class FastVLMVisionTower {
     let cfg: FastVLMVisionConfig
     let stem: ConvStemParams
-    let stages: [[FastVLMStageBlock]]   // [nStages][nBlocks]
-    let patchEmbeds: [PatchEmbedParams] // between stages, len = nStages-1
-    let cpes: [RepCPEParams?]           // one per stage, nil if no CPE
+    let stages: [[FastVLMStageBlock]]  // [nStages][nBlocks]
+    let patchEmbeds: [PatchEmbedParams]  // between stages, len = nStages-1
+    let cpes: [RepCPEParams?]  // one per stage, nil if no CPE
     let convExp: ConvExpParams
     let patchH: Int  // spatial H after all downsampling
     let patchW: Int  // spatial W after all downsampling
     let dtype: DType
 
-    init(cfg: FastVLMVisionConfig,
-         stem: ConvStemParams,
-         stages: [[FastVLMStageBlock]],
-         patchEmbeds: [PatchEmbedParams],
-         cpes: [RepCPEParams?],
-         convExp: ConvExpParams,
-         patchH: Int, patchW: Int, dtype: DType) {
+    init(
+        cfg: FastVLMVisionConfig,
+        stem: ConvStemParams,
+        stages: [[FastVLMStageBlock]],
+        patchEmbeds: [PatchEmbedParams],
+        cpes: [RepCPEParams?],
+        convExp: ConvExpParams,
+        patchH: Int, patchW: Int, dtype: DType
+    ) {
         self.cfg = cfg
         self.stem = stem
         self.stages = stages
@@ -757,11 +787,12 @@ final class FastVLMVisionTower {
     func encode(image: Tensor, device: Device) -> Tensor {
         // image: NCHW [1, 3, H, W] → NHWC [1, H, W, 3].
         let imgArr = image.toFloatArray()
-        let H = image.shape[2], W = image.shape[3]
+        let H = image.shape[2]
+        let W = image.shape[3]
         var nhwc = [Float](repeating: 0, count: H * W * 3)
-        for c in 0..<3 {
-            for h in 0..<H {
-                for w in 0..<W {
+        for c in 0 ..< 3 {
+            for h in 0 ..< H {
+                for w in 0 ..< W {
                     nhwc[(h * W + w) * 3 + c] = imgArr[c * H * W + h * W + w]
                 }
             }
@@ -771,7 +802,7 @@ final class FastVLMVisionTower {
         var (act, curH, curW, curC) = stem.forward(nhwc, H: H, W: W)
         let B = 1
 
-        for i in 0..<cfg.nStages {
+        for i in 0 ..< cfg.nStages {
             // Optional CPE before this stage.
             if let cpe = cpes[i] {
                 act = cpe.forward(act, B: B, H: curH, W: curW, C: curC)
@@ -786,7 +817,8 @@ final class FastVLMVisionTower {
                 var newH: Int
                 var newW: Int
                 (act, newH, newW) = pe.forward(act, B: B, H: curH, W: curW, device: device)
-                curH = newH; curW = newW
+                curH = newH
+                curW = newW
                 curC = pe.outC
             }
         }
@@ -831,7 +863,8 @@ final class FastVLMVisionTower {
                 return t
             }
             // Shape [outC, 1, 1, inC] — strip spatial dims to [outC, inC].
-            let outC = t.shape[0], inC = t.shape[3]
+            let outC = t.shape[0]
+            let inC = t.shape[3]
             let flat = t.toFloatArray()
             let result = Tensor.empty(shape: [outC, inC], dtype: t.dtype, device: device)
             ImagePreprocessing.copyFloats(flat, into: result)
@@ -849,11 +882,12 @@ final class FastVLMVisionTower {
             let kH = try weights.tensor(named: "\(p).convffn.conv.conv.weight").shape[1]
             let kW = try weights.tensor(named: "\(p).convffn.conv.conv.weight").shape[2]
             let bnWeight = try loadBias("\(p).convffn.conv.bn.weight")
-            let bnBias   = try loadBias("\(p).convffn.conv.bn.bias")
-            let bnMean   = try loadBias("\(p).convffn.conv.bn.running_mean")
-            let bnVar    = try loadBias("\(p).convffn.conv.bn.running_var")
-            let bn = FoldedBN(weight: bnWeight, bias: bnBias,
-                              runningMean: bnMean, runningVar: bnVar)
+            let bnBias = try loadBias("\(p).convffn.conv.bn.bias")
+            let bnMean = try loadBias("\(p).convffn.conv.bn.running_mean")
+            let bnVar = try loadBias("\(p).convffn.conv.bn.running_var")
+            let bn = FoldedBN(
+                weight: bnWeight, bias: bnBias,
+                runningMean: bnMean, runningVar: bnVar)
             let fc1W = try loadPW2D("\(p).convffn.fc1.weight")
             let fc1B = try loadBias("\(p).convffn.fc1.bias")
             let fc2W = try loadPW2D("\(p).convffn.fc2.weight")
@@ -904,7 +938,7 @@ final class FastVLMVisionTower {
         var cpes: [RepCPEParams?] = []
         var flatIdx = 0
 
-        for si in 0..<cfg.nStages {
+        for si in 0 ..< cfg.nStages {
             let dim = cfg.embedDims[si]
             let mlpIntermediate = dim * cfg.mlpRatios[si]
             let mixerType = cfg.tokenMixers[si]
@@ -916,8 +950,10 @@ final class FastVLMVisionTower {
                 let cpeKH = try weights.tensor(named: "\(cpePrefix).reparam_conv.weight").shape[1]
                 let cpeKW = try weights.tensor(named: "\(cpePrefix).reparam_conv.weight").shape[2]
                 let cpeBias = try loadBias("\(cpePrefix).reparam_conv.bias")
-                cpes.append(RepCPEParams(weight: cpeW, bias: cpeBias,
-                                         kH: cpeKH, kW: cpeKW))
+                cpes.append(
+                    RepCPEParams(
+                        weight: cpeW, bias: cpeBias,
+                        kH: cpeKH, kW: cpeKW))
                 flatIdx += 1
             } else {
                 cpes.append(nil)
@@ -927,7 +963,7 @@ final class FastVLMVisionTower {
             let stageBase = flatIdx
             var stageBlocks: [FastVLMStageBlock] = []
             stageBlocks.reserveCapacity(cfg.layers[si])
-            for bi in 0..<cfg.layers[si] {
+            for bi in 0 ..< cfg.layers[si] {
                 let p = "network.\(stageBase).\(bi)"
                 let ffn = try loadConvFFN(p, inC: dim, intermediateC: mlpIntermediate)
                 if mixerType == "attention" {
@@ -952,8 +988,10 @@ final class FastVLMVisionTower {
                 } else {
                     // repMixer
                     let mixW = try loadDWOHWI("\(p).token_mixer.reparam_conv.weight")
-                    let mixKH = try weights.tensor(named: "\(p).token_mixer.reparam_conv.weight").shape[1]
-                    let mixKW = try weights.tensor(named: "\(p).token_mixer.reparam_conv.weight").shape[2]
+                    let mixKH = try weights.tensor(named: "\(p).token_mixer.reparam_conv.weight")
+                        .shape[1]
+                    let mixKW = try weights.tensor(named: "\(p).token_mixer.reparam_conv.weight")
+                        .shape[2]
                     let mixBias = try loadBias("\(p).token_mixer.reparam_conv.bias")
                     let ls = try loadBias("\(p).layer_scale")
                     let mixer = RepMixerBlockParams(
@@ -970,18 +1008,20 @@ final class FastVLMVisionTower {
             if si < cfg.nStages - 1 {
                 let pePrefix = "network.\(flatIdx).proj"
                 let lkbRaw = try weights.tensor(named: "\(pePrefix).0.lkb_reparam.weight")
-                let lkbKH = lkbRaw.shape[1], lkbKW = lkbRaw.shape[2]
+                let lkbKH = lkbRaw.shape[1]
+                let lkbKW = lkbRaw.shape[2]
                 let lkbW = lkbRaw.toFloatArray()
                 let lkbBias = try loadBias("\(pePrefix).0.lkb_reparam.bias")
                 let outC = cfg.embedDims[si + 1]
                 let pwW = try loadPW2D("\(pePrefix).1.reparam_conv.weight")
                 let pwBias = try loadBias("\(pePrefix).1.reparam_conv.bias")
-                patchEmbeds.append(PatchEmbedParams(
-                    lkbWeight: lkbW, lkbBias: lkbBias,
-                    pwWeight: pwW, pwBias: pwBias,
-                    kH: lkbKH, kW: lkbKW,
-                    stride: cfg.downStride,
-                    inC: cfg.embedDims[si], outC: outC))
+                patchEmbeds.append(
+                    PatchEmbedParams(
+                        lkbWeight: lkbW, lkbBias: lkbBias,
+                        pwWeight: pwW, pwBias: pwBias,
+                        kH: lkbKH, kW: lkbKW,
+                        stride: cfg.downStride,
+                        inC: cfg.embedDims[si], outC: outC))
                 flatIdx += 1
             }
         }
@@ -1034,15 +1074,17 @@ final class FastVLMVisionTower {
 /// The projector runs on the GPU (Ops.gemm for each Linear).
 final class FastVLMProjector {
     let linear1Weight: Tensor  // [textHidden, mmHidden]
-    let linear1Bias: [Float]   // [textHidden]
+    let linear1Bias: [Float]  // [textHidden]
     let linear2Weight: Tensor  // [textHidden, textHidden]
-    let linear2Bias: [Float]   // [textHidden]
+    let linear2Bias: [Float]  // [textHidden]
     let mmHidden: Int
     let textHidden: Int
 
-    init(linear1Weight: Tensor, linear1Bias: [Float],
-         linear2Weight: Tensor, linear2Bias: [Float],
-         mmHidden: Int, textHidden: Int) {
+    init(
+        linear1Weight: Tensor, linear1Bias: [Float],
+        linear2Weight: Tensor, linear2Bias: [Float],
+        mmHidden: Int, textHidden: Int
+    ) {
         self.linear1Weight = linear1Weight
         self.linear1Bias = linear1Bias
         self.linear2Weight = linear2Weight
@@ -1069,30 +1111,34 @@ final class FastVLMProjector {
     func project(tokens: Tensor, nTokens: Int, device: Device) -> Tensor {
         // linear1 + GELU.
         let cmd1 = device.makeCommandBuffer()
-        var h = Ops.gemm(weight: linear1Weight, input: tokens,
-                         nRows: nTokens, on: cmd1)
+        var h = Ops.gemm(
+            weight: linear1Weight, input: tokens,
+            nRows: nTokens, on: cmd1)
         h = Ops.gelu(h, on: cmd1)
         cmd1.commit()
         cmd1.waitUntilCompleted()
         // Add bias for linear1.
         var hArr = h.toFloatArray()
-        for row in 0..<nTokens {
-            for c in 0..<textHidden { hArr[row * textHidden + c] += linear1Bias[c] }
+        for row in 0 ..< nTokens {
+            for c in 0 ..< textHidden { hArr[row * textHidden + c] += linear1Bias[c] }
         }
-        let hBiased = floatToTensor(hArr, shape: [nTokens, textHidden],
-                                    dtype: linear1Weight.dtype, device: device)
+        let hBiased = floatToTensor(
+            hArr, shape: [nTokens, textHidden],
+            dtype: linear1Weight.dtype, device: device)
         // linear2.
         let cmd2 = device.makeCommandBuffer()
-        let out = Ops.gemm(weight: linear2Weight, input: hBiased,
-                           nRows: nTokens, on: cmd2)
+        let out = Ops.gemm(
+            weight: linear2Weight, input: hBiased,
+            nRows: nTokens, on: cmd2)
         cmd2.commit()
         cmd2.waitUntilCompleted()
         var outArr = out.toFloatArray()
-        for row in 0..<nTokens {
-            for c in 0..<textHidden { outArr[row * textHidden + c] += linear2Bias[c] }
+        for row in 0 ..< nTokens {
+            for c in 0 ..< textHidden { outArr[row * textHidden + c] += linear2Bias[c] }
         }
-        let result = floatToTensor(outArr, shape: [nTokens, textHidden],
-                                   dtype: linear2Weight.dtype, device: device)
+        let result = floatToTensor(
+            outArr, shape: [nTokens, textHidden],
+            dtype: linear2Weight.dtype, device: device)
         return result
     }
 }
@@ -1109,8 +1155,10 @@ final class FastVLMComposedTower {
     let textHidden: Int
     let dtype: DType
 
-    init(tower: FastVLMVisionTower, projector: FastVLMProjector,
-         imageTokenCount: Int, textHidden: Int, dtype: DType) {
+    init(
+        tower: FastVLMVisionTower, projector: FastVLMProjector,
+        imageTokenCount: Int, textHidden: Int, dtype: DType
+    ) {
         self.tower = tower
         self.projector = projector
         self.imageTokenCount = imageTokenCount
@@ -1152,7 +1200,7 @@ final class FastVLMComposedEncoder: VisionEncoder {
             shape: [tower.imageTokenCount, tower.textHidden], dtype: tower.dtype)
         let placeholderLN = LayerNorm(
             weight: Tensor.empty(shape: [tower.textHidden], dtype: tower.dtype),
-            bias:   Tensor.empty(shape: [tower.textHidden], dtype: tower.dtype),
+            bias: Tensor.empty(shape: [tower.textHidden], dtype: tower.dtype),
             eps: 1e-6)
         super.init(
             config: facadeConfig,

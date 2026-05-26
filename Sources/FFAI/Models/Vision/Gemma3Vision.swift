@@ -35,11 +35,11 @@ func gemma3vlLoadVisionEncoder(
     weights: SafeTensorsBundle, device: Device
 ) throws -> VisionEncoder {
     guard let hidden = config.int("hidden_size"),
-          let imageSize = config.int("image_size"),
-          let patchSize = config.int("patch_size"),
-          let intermediate = config.int("intermediate_size"),
-          let nLayers = config.int("num_hidden_layers"),
-          let nHeads = config.int("num_attention_heads")
+        let imageSize = config.int("image_size"),
+        let patchSize = config.int("patch_size"),
+        let intermediate = config.int("intermediate_size"),
+        let nLayers = config.int("num_hidden_layers"),
+        let nHeads = config.int("num_attention_heads")
     else {
         throw Gemma3Error.missingConfig
     }
@@ -54,7 +54,8 @@ func gemma3vlLoadVisionEncoder(
     // `Ops.conv2d` expects PyTorch OIHW `[out_ch, in_ch, kH, kW]`.
     // Transpose if the trailing dim is the channel count (3).
     let patchWRaw = try weights.tensor(named: "embeddings.patch_embedding.weight")
-    let patchW = patchWRaw.shape.count == 4 && patchWRaw.shape[3] == 3
+    let patchW =
+        patchWRaw.shape.count == 4 && patchWRaw.shape[3] == 3
         ? transposeOHWItoOIHW(patchWRaw)
         : patchWRaw
     let patchB = try weights.tensor(named: "embeddings.patch_embedding.bias")
@@ -62,7 +63,7 @@ func gemma3vlLoadVisionEncoder(
 
     var layers: [VisionEncoderLayer] = []
     layers.reserveCapacity(nLayers)
-    for i in 0..<nLayers {
+    for i in 0 ..< nLayers {
         let p = "encoder.layers.\(i)"
         let ln1 = LayerNorm(
             weight: try weights.tensor(named: "\(p).layer_norm1.weight"),
@@ -71,18 +72,20 @@ func gemma3vlLoadVisionEncoder(
             weight: try weights.tensor(named: "\(p).layer_norm2.weight"),
             bias: try weights.tensor(named: "\(p).layer_norm2.bias"), eps: eps)
         func lin(_ name: String) throws -> Linear {
-            Linear(weight: try weights.tensor(named: "\(p).\(name).weight"),
-                   bias: try weights.tensor(named: "\(p).\(name).bias"))
+            Linear(
+                weight: try weights.tensor(named: "\(p).\(name).weight"),
+                bias: try weights.tensor(named: "\(p).\(name).bias"))
         }
-        layers.append(VisionEncoderLayer(
-            layerNorm1: ln1,
-            qProj: try lin("self_attn.q_proj"),
-            kProj: try lin("self_attn.k_proj"),
-            vProj: try lin("self_attn.v_proj"),
-            oProj: try lin("self_attn.out_proj"),
-            layerNorm2: ln2,
-            fc1: try lin("mlp.fc1"), fc2: try lin("mlp.fc2"),
-            hidden: hidden, nHeads: nHeads, intermediate: intermediate))
+        layers.append(
+            VisionEncoderLayer(
+                layerNorm1: ln1,
+                qProj: try lin("self_attn.q_proj"),
+                kProj: try lin("self_attn.k_proj"),
+                vProj: try lin("self_attn.v_proj"),
+                oProj: try lin("self_attn.out_proj"),
+                layerNorm2: ln2,
+                fc1: try lin("mlp.fc1"), fc2: try lin("mlp.fc2"),
+                hidden: hidden, nHeads: nHeads, intermediate: intermediate))
     }
     let postLN = LayerNorm(
         weight: try weights.tensor(named: "post_layernorm.weight"),
@@ -146,9 +149,11 @@ public final class Gemma3VLProjector: @unchecked Sendable {
     /// Average-pool kernel / stride (`patchesPerSide / tokensPerSide`).
     let kernelSize: Int
 
-    init(projectionWeight: Tensor, softEmbNorm: RMSNorm,
-         visionHidden: Int, textHidden: Int,
-         patchesPerSide: Int, tokensPerSide: Int) {
+    init(
+        projectionWeight: Tensor, softEmbNorm: RMSNorm,
+        visionHidden: Int, textHidden: Int,
+        patchesPerSide: Int, tokensPerSide: Int
+    ) {
         self.projectionWeight = projectionWeight
         self.softEmbNorm = softEmbNorm
         self.visionHidden = visionHidden
@@ -163,8 +168,8 @@ public final class Gemma3VLProjector: @unchecked Sendable {
         weights: SafeTensorsBundle, device: Device
     ) throws -> Gemma3VLProjector {
         guard let visionHidden = visionConfig.int("hidden_size"),
-              let imageSize = visionConfig.int("image_size"),
-              let patchSize = visionConfig.int("patch_size")
+            let imageSize = visionConfig.int("image_size"),
+            let patchSize = visionConfig.int("patch_size")
         else {
             throw Gemma3Error.missingConfig
         }
@@ -201,13 +206,13 @@ public final class Gemma3VLProjector: @unchecked Sendable {
         // ── Average-pool the pps×pps grid → tps×tps ──
         var pooled = [Float](repeating: 0, count: tps * tps * vh)
         let kArea = Float(k * k)
-        for ty in 0..<tps {
-            for tx in 0..<tps {
+        for ty in 0 ..< tps {
+            for tx in 0 ..< tps {
                 let outBase = (ty * tps + tx) * vh
-                for c in 0..<vh {
+                for c in 0 ..< vh {
                     var acc: Float = 0
-                    for dy in 0..<k {
-                        for dx in 0..<k {
+                    for dy in 0 ..< k {
+                        for dx in 0 ..< k {
                             let py = ty * k + dy
                             let px = tx * k + dx
                             acc += src[(py * pps + px) * vh + c]
@@ -218,8 +223,9 @@ public final class Gemma3VLProjector: @unchecked Sendable {
             }
         }
         let numTokens = tps * tps
-        let pooledT = Tensor.empty(shape: [numTokens, vh], dtype: encoderTokens.dtype,
-                                   device: device)
+        let pooledT = Tensor.empty(
+            shape: [numTokens, vh], dtype: encoderTokens.dtype,
+            device: device)
         ImagePreprocessing.copyFloats(pooled, into: pooledT)
 
         // ── GemmaRMSNorm each pooled token, then project ──
@@ -237,8 +243,9 @@ public final class Gemma3VLProjector: @unchecked Sendable {
         // [textHidden, visionHidden] so the gemm yields [textHidden].
         let projT = transpose2D(projectionWeight, device: device)
         let cmd2 = device.makeCommandBuffer()
-        let projected = Ops.gemm(weight: projT, input: normed,
-                                 nRows: numTokens, on: cmd2)
+        let projected = Ops.gemm(
+            weight: projT, input: normed,
+            nRows: numTokens, on: cmd2)
         cmd2.commit()
         cmd2.waitUntilCompleted()
         return projected
@@ -246,11 +253,12 @@ public final class Gemma3VLProjector: @unchecked Sendable {
 
     /// CPU transpose of a 2D `[r, c]` tensor → `[c, r]`.
     private func transpose2D(_ t: Tensor, device: Device) -> Tensor {
-        let r = t.shape[0], c = t.shape[1]
+        let r = t.shape[0]
+        let c = t.shape[1]
         let src = t.toFloatArray()
         var dst = [Float](repeating: 0, count: r * c)
-        for i in 0..<r {
-            for j in 0..<c { dst[j * r + i] = src[i * c + j] }
+        for i in 0 ..< r {
+            for j in 0 ..< c { dst[j * r + i] = src[i * c + j] }
         }
         let out = Tensor.empty(shape: [c, r], dtype: t.dtype, device: device)
         ImagePreprocessing.copyFloats(dst, into: out)
@@ -271,8 +279,10 @@ final class Gemma3VLVisionTower {
     let textHidden: Int
     let dtype: DType
 
-    init(encoder: VisionEncoder, projector: Gemma3VLProjector,
-         tokensPerImage: Int, textHidden: Int, dtype: DType) {
+    init(
+        encoder: VisionEncoder, projector: Gemma3VLProjector,
+        tokensPerImage: Int, textHidden: Int, dtype: DType
+    ) {
         self.encoder = encoder
         self.projector = projector
         self.tokensPerImage = tokensPerImage
@@ -327,15 +337,19 @@ final class Gemma3VLComposedEncoder: VisionEncoder {
 /// `[out_ch, in_ch, kH, kW]`. mlx-converted vision checkpoints ship
 /// the OHWI layout; FFAI's conv kernel is OIHW-native.
 func transposeOHWItoOIHW(_ w: Tensor) -> Tensor {
-    precondition(w.shape.count == 4,
-                 "transposeOHWItoOIHW: weight must be 4D, got \(w.shape)")
-    let oc = w.shape[0], kh = w.shape[1], kw = w.shape[2], ic = w.shape[3]
+    precondition(
+        w.shape.count == 4,
+        "transposeOHWItoOIHW: weight must be 4D, got \(w.shape)")
+    let oc = w.shape[0]
+    let kh = w.shape[1]
+    let kw = w.shape[2]
+    let ic = w.shape[3]
     let src = w.toFloatArray()
     var dst = [Float](repeating: 0, count: oc * ic * kh * kw)
-    for o in 0..<oc {
-        for y in 0..<kh {
-            for x in 0..<kw {
-                for c in 0..<ic {
+    for o in 0 ..< oc {
+        for y in 0 ..< kh {
+            for x in 0 ..< kw {
+                for c in 0 ..< ic {
                     let srcIdx = ((o * kh + y) * kw + x) * ic + c
                     let dstIdx = ((o * ic + c) * kh + y) * kw + x
                     dst[dstIdx] = src[srcIdx]
@@ -353,8 +367,9 @@ func transposeOHWItoOIHW(_ w: Tensor) -> Tensor {
 /// `loadGemmaRMSNorm` is `private` to that file. Returns a fresh f32 /
 /// f16 / bf16 tensor.
 func foldGemmaRMSNormWeight(_ raw: Tensor) -> Tensor {
-    precondition(raw.shape.count == 1,
-                 "foldGemmaRMSNormWeight: weight must be 1D, got \(raw.shape)")
+    precondition(
+        raw.shape.count == 1,
+        "foldGemmaRMSNormWeight: weight must be 1D, got \(raw.shape)")
     let n = raw.elementCount
     let foldedBuf = Device.shared.makeBuffer(length: raw.byteCount)
     let folded = Tensor(buffer: foldedBuf, offset: 0, shape: raw.shape, dtype: raw.dtype)
@@ -364,15 +379,15 @@ func foldGemmaRMSNormWeight(_ raw: Tensor) -> Tensor {
     case .f32:
         let s = src.bindMemory(to: Float.self, capacity: n)
         let d = dst.bindMemory(to: Float.self, capacity: n)
-        for i in 0..<n { d[i] = s[i] + 1.0 }
+        for i in 0 ..< n { d[i] = s[i] + 1.0 }
     case .f16:
         let s = src.bindMemory(to: Float16.self, capacity: n)
         let d = dst.bindMemory(to: Float16.self, capacity: n)
-        for i in 0..<n { d[i] = Float16(Float(s[i]) + 1.0) }
+        for i in 0 ..< n { d[i] = Float16(Float(s[i]) + 1.0) }
     case .bf16:
         let s = src.bindMemory(to: UInt16.self, capacity: n)
         let d = dst.bindMemory(to: UInt16.self, capacity: n)
-        for i in 0..<n {
+        for i in 0 ..< n {
             let f = Float(bitPattern: UInt32(s[i]) << 16) + 1.0
             let bits = f.bitPattern
             let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
@@ -418,7 +433,7 @@ public enum Gemma3VL {
         options: LoadOptions, device: Device
     ) throws -> VisionModel {
         guard let visionConfig = config.subConfig("vision_config"),
-              let textConfigRaw = config.nested("text_config")
+            let textConfigRaw = config.nested("text_config")
         else {
             throw Gemma3Error.missingConfig
         }
@@ -432,8 +447,9 @@ public enum Gemma3VL {
         let textConfig = ModelConfig(
             architecture: "Gemma3TextForCausalLM",
             modelType: "gemma3_text",
-            raw: gemma3TextConfigWithDefaults(textConfigRaw,
-                                              vocabFallback: config.int("vocab_size")))
+            raw: gemma3TextConfigWithDefaults(
+                textConfigRaw,
+                vocabFallback: config.int("vocab_size")))
         let textWeights = weights.prefixed("language_model.")
         let textEngine = try Gemma3Dense.loadModel(
             config: textConfig, weights: textWeights,

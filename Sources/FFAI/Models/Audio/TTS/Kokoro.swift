@@ -82,9 +82,11 @@ public struct KokoroConfig: Sendable {
     /// iSTFT hop length.
     public let istftHop: Int
 
-    public init(nToken: Int, hidden: Int, nMels: Int,
-                sampleRate: Int = 24_000, istftNFFT: Int = 20,
-                istftHop: Int = 5) {
+    public init(
+        nToken: Int, hidden: Int, nMels: Int,
+        sampleRate: Int = 24_000, istftNFFT: Int = 20,
+        istftHop: Int = 5
+    ) {
         self.nToken = nToken
         self.hidden = hidden
         self.nMels = nMels
@@ -97,17 +99,20 @@ public struct KokoroConfig: Sendable {
     /// config nests the iSTFTNet block under `istftnet`.
     public static func from(_ config: ModelConfig) -> KokoroConfig? {
         guard let nToken = config.int("n_token"),
-              let hidden = config.int("hidden_dim") else { return nil }
+            let hidden = config.int("hidden_dim")
+        else { return nil }
         let nMels = config.int("n_mels") ?? 80
         let sampleRate = config.int("sample_rate") ?? 24_000
-        var nFFT = 20, hop = 5
+        var nFFT = 20
+        var hop = 5
         if let istft = config.nested("istftnet") {
             if let f = istft["gen_istft_n_fft"] as? Int { nFFT = f }
             if let h = istft["gen_istft_hop_size"] as? Int { hop = h }
         }
-        return KokoroConfig(nToken: nToken, hidden: hidden, nMels: nMels,
-                            sampleRate: sampleRate, istftNFFT: nFFT,
-                            istftHop: hop)
+        return KokoroConfig(
+            nToken: nToken, hidden: hidden, nMels: nMels,
+            sampleRate: sampleRate, istftNFFT: nFFT,
+            istftHop: hop)
     }
 }
 
@@ -125,8 +130,10 @@ public final class KokoroVocoder: @unchecked Sendable {
     /// Synthesis window `[nFFT]` (Hann). Built once at init.
     public let window: Tensor
 
-    public init(nFFT: Int, hopLength: Int, dtype: DType = .f32,
-                device: Device = .shared) {
+    public init(
+        nFFT: Int, hopLength: Int, dtype: DType = .f32,
+        device: Device = .shared
+    ) {
         self.nFFT = nFFT
         self.hopLength = hopLength
         let win = AudioPreprocessing.hannWindow(nFFT)
@@ -139,11 +146,14 @@ public final class KokoroVocoder: @unchecked Sendable {
     /// are `[nFrames, nFreq]` real / imaginary planes
     /// (`nFreq = nFFT/2 + 1`). Returns the `[outLen]` waveform with
     /// `outLen = (nFrames - 1) * hopLength + nFFT`.
-    public func synthesize(specRe: Tensor, specIm: Tensor,
-                           device: Device = .shared) -> Tensor {
+    public func synthesize(
+        specRe: Tensor, specIm: Tensor,
+        device: Device = .shared
+    ) -> Tensor {
         let nFreq = nFFT / 2 + 1
-        precondition(specRe.shape.count == 2 && specRe.shape[1] == nFreq,
-                     "KokoroVocoder.synthesize: specRe must be [nFrames, nFreq]")
+        precondition(
+            specRe.shape.count == 2 && specRe.shape[1] == nFreq,
+            "KokoroVocoder.synthesize: specRe must be [nFrames, nFreq]")
         let nFrames = specRe.shape[0]
         let cmd = device.makeCommandBuffer()
         let waveform = Ops.vocoderISTFT(
@@ -188,8 +198,10 @@ public final class KokoroModel: @unchecked Sendable {
     /// Defaults to `Kokoro.defaultVoice` at init.
     public private(set) var currentVoice: String
 
-    public init(config: KokoroConfig, vocoder: KokoroVocoder,
-                phonemeVocab: [String: Int], dtype: DType) {
+    public init(
+        config: KokoroConfig, vocoder: KokoroVocoder,
+        phonemeVocab: [String: Int], dtype: DType
+    ) {
         self.config = config
         self.vocoder = vocoder
         self.phonemeVocab = phonemeVocab
@@ -270,8 +282,10 @@ public final class KokoroModel: @unchecked Sendable {
     /// Full text→waveform synthesis. Requires the acoustic front-end;
     /// throws `KokoroError.acousticFrontEndUnavailable` when it is not
     /// wired (see the scope note at the top of this file).
-    public func synthesize(phonemeIds: [Int],
-                           device: Device = .shared) throws -> Tensor {
+    public func synthesize(
+        phonemeIds: [Int],
+        device: Device = .shared
+    ) throws -> Tensor {
         _ = phonemeIds
         _ = device
         throw KokoroError.acousticFrontEndUnavailable
@@ -293,7 +307,8 @@ extension KokoroModel {
     /// vocoder tail is always constructed; the acoustic stack is wired
     /// when present (see scope note).
     public static func load(directory: URL, device: Device = .shared)
-        throws -> KokoroModel {
+        throws -> KokoroModel
+    {
         let config = try ModelConfig.load(from: directory)
         guard let kc = KokoroConfig.from(config) else {
             throw ModelError.unsupportedModelType(
@@ -306,13 +321,17 @@ extension KokoroModel {
 
     /// Assemble a `KokoroModel` from a decoded config. Factored out so
     /// tests can drive the vocoder path without a checkpoint.
-    public static func build(config kc: KokoroConfig,
-                             phonemeVocab: [String: Int] = [:],
-                             dtype: DType = .f32,
-                             device: Device = .shared) -> KokoroModel {
-        let vocoder = KokoroVocoder(nFFT: kc.istftNFFT, hopLength: kc.istftHop,
-                                    dtype: dtype, device: device)
-        return KokoroModel(config: kc, vocoder: vocoder,
-                           phonemeVocab: phonemeVocab, dtype: dtype)
+    public static func build(
+        config kc: KokoroConfig,
+        phonemeVocab: [String: Int] = [:],
+        dtype: DType = .f32,
+        device: Device = .shared
+    ) -> KokoroModel {
+        let vocoder = KokoroVocoder(
+            nFFT: kc.istftNFFT, hopLength: kc.istftHop,
+            dtype: dtype, device: device)
+        return KokoroModel(
+            config: kc, vocoder: vocoder,
+            phonemeVocab: phonemeVocab, dtype: dtype)
     }
 }

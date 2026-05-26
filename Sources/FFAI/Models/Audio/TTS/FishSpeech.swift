@@ -74,13 +74,13 @@ public final class FishSpeechModel: Module, AudioModel {
     public let sampleRate: Int
 
     // ── Slow backbone ──────────────────────────────────────────────────
-    let embeddings: AnyEmbedding           // text + semantic token embedding table
-    let codebookEmbeddings: AnyEmbedding   // VQ codebook embedding table
+    let embeddings: AnyEmbedding  // text + semantic token embedding table
+    let codebookEmbeddings: AnyEmbedding  // VQ codebook embedding table
     let slowLayers: [FishSpeechBlock]
     let slowNorm: RMSNorm
 
     // ── Fast decoder ───────────────────────────────────────────────────
-    let fastProjectIn: AnyLinear?          // nil when textDim == audioDim
+    let fastProjectIn: AnyLinear?  // nil when textDim == audioDim
     let fastEmbeddings: AnyEmbedding
     let fastLayers: [FishSpeechBlock]
     let fastNorm: RMSNorm
@@ -121,21 +121,23 @@ public final class FishSpeechModel: Module, AudioModel {
 
     public func parameters() -> [(String, Tensor)] {
         var out: [(String, Tensor)] = []
-        for (k, v) in embeddings.parameters()          { out.append(("model.embeddings.\(k)", v)) }
-        for (k, v) in codebookEmbeddings.parameters()  { out.append(("model.codebook_embeddings.\(k)", v)) }
+        for (k, v) in embeddings.parameters() { out.append(("model.embeddings.\(k)", v)) }
+        for (k, v) in codebookEmbeddings.parameters() {
+            out.append(("model.codebook_embeddings.\(k)", v))
+        }
         for (i, layer) in slowLayers.enumerated() {
             for (k, v) in layer.parameters() { out.append(("model.layers.\(i).\(k)", v)) }
         }
-        for (k, v) in slowNorm.parameters()             { out.append(("model.norm.\(k)", v)) }
+        for (k, v) in slowNorm.parameters() { out.append(("model.norm.\(k)", v)) }
         if let fp = fastProjectIn {
-            for (k, v) in fp.parameters()               { out.append(("model.fast_project_in.\(k)", v)) }
+            for (k, v) in fp.parameters() { out.append(("model.fast_project_in.\(k)", v)) }
         }
-        for (k, v) in fastEmbeddings.parameters()       { out.append(("model.fast_embeddings.\(k)", v)) }
+        for (k, v) in fastEmbeddings.parameters() { out.append(("model.fast_embeddings.\(k)", v)) }
         for (i, layer) in fastLayers.enumerated() {
             for (k, v) in layer.parameters() { out.append(("model.fast_layers.\(i).\(k)", v)) }
         }
-        for (k, v) in fastNorm.parameters()             { out.append(("model.fast_norm.\(k)", v)) }
-        for (k, v) in fastOutput.parameters()           { out.append(("model.fast_output.\(k)", v)) }
+        for (k, v) in fastNorm.parameters() { out.append(("model.fast_norm.\(k)", v)) }
+        for (k, v) in fastOutput.parameters() { out.append(("model.fast_output.\(k)", v)) }
         return out
     }
 
@@ -168,9 +170,9 @@ public final class FishSpeechModel: Module, AudioModel {
         // Stage-2: decode codes → waveform via FishS1DAC.
         guard let codec = fishS1DAC else {
             throw AudioGenerationError.codecNotAvailable(
-                "FishS1DAC codec weights not loaded. " +
-                "Ensure the snapshot directory contains codec.safetensors " +
-                "or a codec/ sub-folder with model.safetensors.")
+                "FishS1DAC codec weights not loaded. "
+                    + "Ensure the snapshot directory contains codec.safetensors "
+                    + "or a codec/ sub-folder with model.safetensors.")
         }
 
         let waveformTensor = try codec.decode(codes: codes)
@@ -221,7 +223,7 @@ public final class FishSpeechModel: Module, AudioModel {
         var generatedSteps: [[Int32]] = []
         generatedSteps.reserveCapacity(semanticBudget)
 
-        for _ in 0..<semanticBudget {
+        for _ in 0 ..< semanticBudget {
             // Sample next semantic token with RAS.
             let semanticToken = sampleSemanticToken(
                 logits: lastLogits,
@@ -244,8 +246,10 @@ public final class FishSpeechModel: Module, AudioModel {
             }
 
             // Clamp to VQ codebook range.
-            let semanticCode = max(0,
-                min(semanticToken - Int32(cfg.semanticStartTokenID),
+            let semanticCode = max(
+                0,
+                min(
+                    semanticToken - Int32(cfg.semanticStartTokenID),
                     Int32(audioCfg.vocabSize - 1)))
 
             // Fast AR: generate residual codebook tokens.
@@ -257,7 +261,7 @@ public final class FishSpeechModel: Module, AudioModel {
             var codebooksForStep: [Int32] = [semanticCode]
             var fastEmb = lookupFastEmbedding(semanticCode, device: device)
 
-            for _ in 0..<(numCodebooks - 1) {
+            for _ in 0 ..< (numCodebooks - 1) {
                 let residualLogits = fastForward(fastEmb, caches: fastCaches, device: device)
                 let residualToken = sampleToken(
                     logits: residualLogits,
@@ -299,7 +303,7 @@ public final class FishSpeechModel: Module, AudioModel {
 
     /// Make KV caches sized for a given sub-config.
     private func makeKVCaches(config: FishSpeechSubConfig, device: Device) -> [KVCache] {
-        (0..<config.nLayer).map { _ in
+        (0 ..< config.nLayer).map { _ in
             KVCache(
                 nKVHeads: config.nKVHeads,
                 headDim: config.headDim,
@@ -333,7 +337,8 @@ public final class FishSpeechModel: Module, AudioModel {
 
         for (pos, tokenID) in tokenIDs.enumerated() {
             (lastHidden, lastLogits) = slowStep(
-                frame: makeTextOnlyFrame(tokenID: tokenID, numCodebooks: numCodebooks, device: device),
+                frame: makeTextOnlyFrame(
+                    tokenID: tokenID, numCodebooks: numCodebooks, device: device),
                 position: pos,
                 caches: caches,
                 device: device
@@ -372,9 +377,10 @@ public final class FishSpeechModel: Module, AudioModel {
 
         // Run slow transformer layers.
         for (i, layer) in slowLayers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as any KVCacheProtocol,
-                              device: device)
+            h = layer.forward(
+                h, position: position,
+                cache: caches[i] as any KVCacheProtocol,
+                device: device)
         }
 
         // Final norm.
@@ -400,7 +406,7 @@ public final class FishSpeechModel: Module, AudioModel {
         // For quantized embeddings the weight is packed uint32; we'd need a
         // dequant+gemv. For the fast-path we use a CPU matrix-vector product.
         // This is sufficient for Stage-1 correctness testing.
-        let w = embedding.weight           // [vocab, dim] or quantized
+        let w = embedding.weight  // [vocab, dim] or quantized
         let vocab = w.shape[0]
         let dim = w.shape[1]
         let hf = h.toArray(as: Float.self)
@@ -408,26 +414,26 @@ public final class FishSpeechModel: Module, AudioModel {
 
         if w.dtype == .f32 {
             let wf = w.toArray(as: Float.self)
-            for v in 0..<vocab {
+            for v in 0 ..< vocab {
                 var dot: Float = 0
                 let base = v * dim
-                for d in 0..<dim { dot += wf[base + d] * hf[d] }
+                for d in 0 ..< dim { dot += wf[base + d] * hf[d] }
                 logits[v] = dot
             }
         } else if w.dtype == .bf16 {
             let wu16 = w.toArray(as: UInt16.self)
-            for v in 0..<vocab {
+            for v in 0 ..< vocab {
                 var dot: Float = 0
                 let base = v * dim
-                for d in 0..<dim { dot += bfloat16ToFloat(wu16[base + d]) * hf[d] }
+                for d in 0 ..< dim { dot += bfloat16ToFloat(wu16[base + d]) * hf[d] }
                 logits[v] = dot
             }
         } else if w.dtype == .f16 {
             let wf16 = w.toArray(as: Float16.self)
-            for v in 0..<vocab {
+            for v in 0 ..< vocab {
                 var dot: Float = 0
                 let base = v * dim
-                for d in 0..<dim { dot += Float(wf16[base + d]) * hf[d] }
+                for d in 0 ..< dim { dot += Float(wf16[base + d]) * hf[d] }
                 logits[v] = dot
             }
         }
@@ -527,11 +533,11 @@ public final class FishSpeechModel: Module, AudioModel {
         // Apply semantic logit bias: only semantic + im_end tokens are allowed.
         var logitData = logits.toArray(as: Float.self)
         let start = config.semanticStartTokenID
-        let end   = config.semanticEndTokenID
+        let end = config.semanticEndTokenID
         let imEnd = config.eosTokenID
-        let vocab  = logitData.count
+        let vocab = logitData.count
         let mask: Float = -1e9
-        for i in 0..<vocab {
+        for i in 0 ..< vocab {
             let allowed = (i >= start && i <= end) || i == imEnd
             if !allowed { logitData[i] = mask }
         }
@@ -539,9 +545,11 @@ public final class FishSpeechModel: Module, AudioModel {
         let maskedTensor = Tensor.empty(shape: [vocab], dtype: .f32, device: device)
         maskedTensor.copyIn(from: logitData)
 
-        let normal = sampleToken(logits: maskedTensor, temperature: temperature, topP: topP, topK: topK)
-        let high   = sampleToken(logits: maskedTensor, temperature: fishSpeechRASHighTemperature,
-                                 topP: fishSpeechRASHighTopP, topK: topK)
+        let normal = sampleToken(
+            logits: maskedTensor, temperature: temperature, topP: topP, topK: topK)
+        let high = sampleToken(
+            logits: maskedTensor, temperature: fishSpeechRASHighTemperature,
+            topP: fishSpeechRASHighTopP, topK: topK)
 
         let v = Int(normal)
         let isRepeat = previousTokens.contains(v) && v >= start && v <= end
@@ -561,20 +569,20 @@ public final class FishSpeechModel: Module, AudioModel {
 
         // Temperature scaling.
         let invT = 1.0 / max(temperature, 1e-5)
-        for i in 0..<vocab { data[i] *= invT }
+        for i in 0 ..< vocab { data[i] *= invT }
 
         // Top-K: zero out all but the K largest.
         if topK > 0 && topK < vocab {
             var indexed = data.enumerated().map { ($0.offset, $0.element) }
             indexed.sort { $0.1 > $1.1 }
-            for i in topK..<vocab { data[indexed[i].0] = -Float.infinity }
+            for i in topK ..< vocab { data[indexed[i].0] = -Float.infinity }
         }
 
         // Softmax.
         let maxV = data.max() ?? 0
         var expData = data.map { Foundation.exp($0 - maxV) }
         let sumExp = expData.reduce(0, +)
-        for i in 0..<vocab { expData[i] /= sumExp }
+        for i in 0 ..< vocab { expData[i] /= sumExp }
 
         // Top-P: drop tokens outside nucleus.
         var cumulative: Float = 0
@@ -587,9 +595,9 @@ public final class FishSpeechModel: Module, AudioModel {
         // Re-normalise and sample.
         let sum2 = expData.reduce(0, +)
         guard sum2 > 0 else { return Int32(sortedIdx.first ?? 0) }
-        for i in 0..<vocab { expData[i] /= sum2 }
+        for i in 0 ..< vocab { expData[i] /= sum2 }
 
-        var r = Float.random(in: 0..<1)
+        var r = Float.random(in: 0 ..< 1)
         for (i, p) in expData.enumerated() {
             r -= p
             if r <= 0 { return Int32(i) }
@@ -600,7 +608,7 @@ public final class FishSpeechModel: Module, AudioModel {
     /// Transpose [[time, codebook]] → [[codebook, time]].
     private func transposeCodeSteps(_ steps: [[Int32]], numCodebooks: Int) -> [[Int32]] {
         var result = [[Int32]](repeating: [], count: numCodebooks)
-        for cb in 0..<numCodebooks {
+        for cb in 0 ..< numCodebooks {
             result[cb] = steps.map { step in step.count > cb ? step[cb] : 0 }
         }
         return result
@@ -635,9 +643,9 @@ public final class FishSpeechModel: Module, AudioModel {
         weights: SafeTensorsBundle,
         device: Device
     ) throws -> FishSpeechModel {
-        let textCfg  = cfg.textConfig
+        let textCfg = cfg.textConfig
         let audioCfg = cfg.audioDecoderConfig
-        let quant    = cfg.quantization
+        let quant = cfg.quantization
 
         // ── Slow backbone embeddings ──────────────────────────────────
         let embeddings = try loadEmbedding(
@@ -735,11 +743,11 @@ public final class FishSpeechModel: Module, AudioModel {
         var layers: [FishSpeechBlock] = []
         layers.reserveCapacity(count)
 
-        for i in 0..<count {
+        for i in 0 ..< count {
             let p = "\(prefix).\(i)"
 
             let wqkv = try loadLinear(base: "\(p).attention.wqkv", in: weights, quantization: quant)
-            let wo   = try loadLinear(base: "\(p).attention.wo",   in: weights, quantization: quant)
+            let wo = try loadLinear(base: "\(p).attention.wo", in: weights, quantization: quant)
 
             let qNorm: RMSNorm?
             let kNorm: RMSNorm?
@@ -758,16 +766,16 @@ public final class FishSpeechModel: Module, AudioModel {
             }
 
             let attn = FishSpeechAttentionLayer(
-                nHeads:    config.nHead,
-                nKVHeads:  config.nKVHeads,
-                dim:       config.dim,
-                headDim:   config.headDim,
-                ropeBase:  config.ropeBase,
-                maxSeq:    config.maxSeqLen,
-                qkvBias:   config.attentionQKVBias,
-                oBias:     config.attentionOBias,
-                qkNorm:    config.attentionQKNorm,
-                normEps:   config.normEps,
+                nHeads: config.nHead,
+                nKVHeads: config.nKVHeads,
+                dim: config.dim,
+                headDim: config.headDim,
+                ropeBase: config.ropeBase,
+                maxSeq: config.maxSeqLen,
+                qkvBias: config.attentionQKVBias,
+                oBias: config.attentionOBias,
+                qkNorm: config.attentionQKNorm,
+                normEps: config.normEps,
                 wqkv: wqkv, wo: wo,
                 qNorm: qNorm, kNorm: kNorm
             )
@@ -786,10 +794,11 @@ public final class FishSpeechModel: Module, AudioModel {
                 eps: config.normEps
             )
 
-            layers.append(FishSpeechBlock(
-                attn: attn, ffn: ffn,
-                attnNorm: attnNorm, ffnNorm: ffnNorm
-            ))
+            layers.append(
+                FishSpeechBlock(
+                    attn: attn, ffn: ffn,
+                    attnNorm: attnNorm, ffnNorm: ffnNorm
+                ))
         }
         return layers
     }

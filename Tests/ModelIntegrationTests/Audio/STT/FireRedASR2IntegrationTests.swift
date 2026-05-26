@@ -30,9 +30,10 @@
 // Run via `make test-integration`.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("FireRedASR2 Integration", .serialized)
 struct FireRedASR2IntegrationTests {
@@ -64,8 +65,8 @@ struct FireRedASR2IntegrationTests {
     /// stack to process without hitting edge cases.
     private func syntheticTone(hz: Float = 440, seconds: Double = 1.0) -> [Float] {
         let sr = 16_000
-        let n  = Int(Double(sr) * seconds)
-        return (0..<n).map { 0.3 * sin(2 * Float.pi * hz * Float($0) / Float(sr)) }
+        let n = Int(Double(sr) * seconds)
+        return (0 ..< n).map { 0.3 * sin(2 * Float.pi * hz * Float($0) / Float(sr)) }
     }
 
     // ─── Tests ───────────────────────────────────────────────────────────
@@ -77,21 +78,21 @@ struct FireRedASR2IntegrationTests {
         let dec = model.config.decoder
 
         // Encoder hyper-parameters for FireRedASR2-AED-Large.
-        #expect(enc.nLayers    == 16)
-        #expect(enc.nHead      == 20)
-        #expect(enc.dModel     == 1280)
+        #expect(enc.nLayers == 16)
+        #expect(enc.nHead == 20)
+        #expect(enc.dModel == 1280)
         #expect(enc.kernelSize == 33)
 
         // Decoder hyper-parameters.
         #expect(dec.nLayers == 16)
-        #expect(dec.nHead   == 20)
-        #expect(dec.dModel  == 1280)
+        #expect(dec.nHead == 20)
+        #expect(dec.dModel == 1280)
 
         // Token ids.
-        #expect(model.config.sosID   == 3)
-        #expect(model.config.eosID   == 4)
-        #expect(model.config.idim    == 80)
-        #expect(model.config.odim    == 8667)
+        #expect(model.config.sosID == 3)
+        #expect(model.config.eosID == 4)
+        #expect(model.config.idim == 80)
+        #expect(model.config.odim == 8667)
 
         // Block counts must match config.
         #expect(model.encoderBlocks.count == enc.nLayers)
@@ -106,24 +107,26 @@ struct FireRedASR2IntegrationTests {
         #expect(model.relPosLen == expectedRelLen)
         #expect(model.relPosTable.count == expectedRelLen * enc.dModel)
 
-        print("[FireRedASR2 integration] config enc=\(enc.nLayers)L "
-              + "dec=\(dec.nLayers)L odim=\(model.config.odim) "
-              + "dtype=\(model.dtype)")
+        print(
+            "[FireRedASR2 integration] config enc=\(enc.nLayers)L "
+                + "dec=\(dec.nLayers)L odim=\(model.config.odim) "
+                + "dtype=\(model.dtype)")
     }
 
     @Test("kaldiFbank — features are finite and correctly shaped")
     func kaldiFbankFiniteShape() async throws {
         let model = try await loadModel()
-        let wave  = syntheticTone(seconds: 1.0)
-        let idim  = model.config.idim
+        let wave = syntheticTone(seconds: 1.0)
+        let idim = model.config.idim
 
         let feats = FireRedASR2Model.kaldiFbank(waveform: wave, idim: idim)
         let nFrames = feats.count / idim
 
         #expect(nFrames > 0, "kaldiFbank produced zero frames")
         #expect(feats.count == nFrames * idim)
-        #expect(feats.allSatisfy { $0.isFinite },
-                "Kaldi fbank features contain NaN or Inf")
+        #expect(
+            feats.allSatisfy { $0.isFinite },
+            "Kaldi fbank features contain NaN or Inf")
 
         // Variance check: features should not be near-zero.
         let variance = feats.map { $0 * $0 }.reduce(0, +) / Float(feats.count)
@@ -134,20 +137,23 @@ struct FireRedASR2IntegrationTests {
     @Test("encodeAudio — encoder produces finite, non-degenerate features")
     func encodeAudioFiniteFeatures() async throws {
         let model = try await loadModel()
-        let wave  = syntheticTone(seconds: 1.0)
+        let wave = syntheticTone(seconds: 1.0)
 
         let encoded = model.encodeAudio(waveform: wave)
 
         // Shape: [nEncoderFrames, dModel].
-        #expect(encoded.shape.count == 2,
-                "encoder output has unexpected rank \(encoded.shape.count)")
-        #expect(encoded.shape[1] == model.config.encoder.dModel,
-                "encoder feature dim mismatch")
+        #expect(
+            encoded.shape.count == 2,
+            "encoder output has unexpected rank \(encoded.shape.count)")
+        #expect(
+            encoded.shape[1] == model.config.encoder.dModel,
+            "encoder feature dim mismatch")
         #expect(encoded.shape[0] > 0, "encoder produced zero frames")
 
         let vals = encoded.toFloatArray()
-        #expect(vals.allSatisfy { $0.isFinite },
-                "encoder output contains NaN or Inf")
+        #expect(
+            vals.allSatisfy { $0.isFinite },
+            "encoder output contains NaN or Inf")
 
         let variance = vals.map { $0 * $0 }.reduce(0, +) / Float(vals.count)
         #expect(variance > 1e-6, "encoder output is degenerate (near-zero)")
@@ -181,14 +187,15 @@ struct FireRedASR2IntegrationTests {
 
         // Non-degenerate: a genuine decode visits several distinct words.
         let words = transcript.split(separator: " ")
-        #expect(words.count >= 2,
-                "FireRedASR2 transcript is degenerate: \(transcript.debugDescription)")
+        #expect(
+            words.count >= 2,
+            "FireRedASR2 transcript is degenerate: \(transcript.debugDescription)")
     }
 
     @Test("transcribe — synthetic tone does not crash or produce NaN")
     func transcribeSyntheticTone() async throws {
         let model = try await loadModel()
-        let wave  = syntheticTone(seconds: 1.0)
+        let wave = syntheticTone(seconds: 1.0)
 
         // Transcribing a pure tone should not crash.
         // Output may be empty (no recognised speech) — that is valid.

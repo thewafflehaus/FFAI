@@ -54,8 +54,8 @@ public enum VisionLanguageArchitectures {
         "GlmOcrForConditionalGeneration",
         "Idefics3ForConditionalGeneration",
         "Lfm2VlForConditionalGeneration",
-        "LlavaForConditionalGeneration",     // Pixtral-12B
-        "LlavaQwen2ForCausalLM",             // FastVLM (Apple FastViTHD + Qwen2)
+        "LlavaForConditionalGeneration",  // Pixtral-12B
+        "LlavaQwen2ForCausalLM",  // FastVLM (Apple FastViTHD + Qwen2)
         "MiniCPMV4_6ForConditionalGeneration",
         "Mistral3ForConditionalGeneration",  // Mistral Small 3.1
         "PaliGemmaForConditionalGeneration",
@@ -98,7 +98,7 @@ public enum VisionLanguageArchitectures {
 /// string, so the text backbone's `model_type` is the reliable signal.
 func isNemotronVisionLanguage(_ config: ModelConfig) -> Bool {
     guard config.nested("vision_config") != nil,
-          let tc = config.nested("text_config")
+        let tc = config.nested("text_config")
     else { return false }
     let textModelType = (tc["model_type"] as? String) ?? ""
     if NemotronH.modelTypes.contains(textModelType) { return true }
@@ -115,9 +115,15 @@ func isNemotronVisionLanguage(_ config: ModelConfig) -> Bool {
 func isNemotronDiffusionVisionLanguage(_ config: ModelConfig) -> Bool {
     guard config.nested("vision_config") != nil else { return false }
     if let mt = config.modelType,
-       NemotronDiffusionVL.modelTypes.contains(mt) { return true }
+        NemotronDiffusionVL.modelTypes.contains(mt)
+    {
+        return true
+    }
     if let arch = config.architecture,
-       NemotronDiffusionVL.architectures.contains(arch) { return true }
+        NemotronDiffusionVL.architectures.contains(arch)
+    {
+        return true
+    }
     return false
 }
 
@@ -140,10 +146,12 @@ public enum ModelRegistry {
         /// regardless; `vlModel` adds the cross-modal image path.
         public let vlModel: VisionModel?
 
-        public init(engine: any LanguageModel,
-                    defaultGenerationParameters: GenerationParameters,
-                    availableCapabilities: Set<Capability> = Capability.textOnly,
-                    vlModel: VisionModel? = nil) {
+        public init(
+            engine: any LanguageModel,
+            defaultGenerationParameters: GenerationParameters,
+            availableCapabilities: Set<Capability> = Capability.textOnly,
+            vlModel: VisionModel? = nil
+        ) {
             self.engine = engine
             self.defaultGenerationParameters = defaultGenerationParameters
             self.availableCapabilities = availableCapabilities
@@ -419,8 +427,9 @@ public enum ModelRegistry {
             // helper. Kept Tom's version — same functional outcome,
             // uses the family-set abstraction.)
             if let arch = config.architecture, Qwen35.architectures.contains(arch) {
-                return try loadQwen35(config: config, weights: weights,
-                                      options: options, device: device)
+                return try loadQwen35(
+                    config: config, weights: weights,
+                    options: options, device: device)
             }
             // SmolVLM2 — handles image+text internally via the
             // `prefillWithImage` API on its `LanguageModel` engine
@@ -455,24 +464,28 @@ public enum ModelRegistry {
                 config.architecture ?? config.modelType ?? "<unknown>")
         }
         if let arch = config.architecture, Llama.architectures.contains(arch) {
-            return try loadLlama(config: config, weights: weights,
-                                 options: options, device: device)
+            return try loadLlama(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let mt = config.modelType, Llama.modelTypes.contains(mt) {
-            return try loadLlama(config: config, weights: weights,
-                                 options: options, device: device)
+            return try loadLlama(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         // Mistral and Llama share the same weight layout + forward shape.
         // The Mistral family enum routes through the Llama loader so
         // every Mistral 7B / Nemo / Small checkpoint Just Works without
         // a separate dense engine.
         if let arch = config.architecture, Mistral.architectures.contains(arch) {
-            return try loadLlama(config: config, weights: weights,
-                                 options: options, device: device)
+            return try loadLlama(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let mt = config.modelType, Mistral.modelTypes.contains(mt) {
-            return try loadLlama(config: config, weights: weights,
-                                 options: options, device: device)
+            return try loadLlama(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         // Llama-compatible families: SmolLM 1/2/3, OLMo 1/2, Granite 3,
         // Yi, InternLM 2, Starcoder 2. Same weight layout + forward
@@ -496,31 +509,37 @@ public enum ModelRegistry {
             .union(InternLM2.modelTypes)
             .union(Starcoder2.modelTypes)
         if let arch = config.architecture, llamaCompatibleArchs.contains(arch) {
-            return try loadLlama(config: config, weights: weights,
-                                 options: options, device: device)
+            return try loadLlama(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let mt = config.modelType, llamaCompatibleTypes.contains(mt) {
-            return try loadLlama(config: config, weights: weights,
-                                 options: options, device: device)
+            return try loadLlama(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let arch = config.architecture, Phi.architectures.contains(arch) {
-            return try loadPhi(config: config, weights: weights,
-                               options: options, device: device)
+            return try loadPhi(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let mt = config.modelType, Phi.modelTypes.contains(mt) {
-            return try loadPhi(config: config, weights: weights,
-                               options: options, device: device)
+            return try loadPhi(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         // Qwen 2 / 2.5 — Llama-shaped arch with QKV biases. The
         // bias-aware Linear in Layers.swift handles the layout
         // transparently; just route the dispatch.
         if let arch = config.architecture, Qwen2.architectures.contains(arch) {
-            return try loadLlama(config: config, weights: weights,
-                                 options: options, device: device)
+            return try loadLlama(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let mt = config.modelType, Qwen2.modelTypes.contains(mt) {
-            return try loadLlama(config: config, weights: weights,
-                                 options: options, device: device)
+            return try loadLlama(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         // Gemma 2 — 2B / 9B / 27B text decoder. Ships under model_type
         // `gemma2`; the family file is the only variant. Checked before
@@ -528,91 +547,109 @@ public enum ModelRegistry {
         // `gemma3` / `gemma3_text`) — order matters only when the
         // architecture string disambiguates.
         if let arch = config.architecture, Gemma2.architectures.contains(arch) {
-            return try loadGemma2(config: config, weights: weights,
-                                  options: options, device: device)
+            return try loadGemma2(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let mt = config.modelType, Gemma2.modelTypes.contains(mt) {
-            return try loadGemma2(config: config, weights: weights,
-                                  options: options, device: device)
+            return try loadGemma2(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let arch = config.architecture, Gemma3.architectures.contains(arch) {
-            return try loadGemma3(config: config, weights: weights,
-                                  options: options, device: device)
+            return try loadGemma3(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let mt = config.modelType, Gemma3.modelTypes.contains(mt) {
-            return try loadGemma3(config: config, weights: weights,
-                                  options: options, device: device)
+            return try loadGemma3(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         // Gemma 4 — dense / PLE (E2B, E4B) / MoE (26B-A4B). All three
         // ship under the `gemma4` model_type; the family file picks the
         // variant from config. Checked before Qwen3 so the `gemma4`
         // model_type isn't shadowed.
         if let arch = config.architecture, Gemma4.architectures.contains(arch) {
-            return try loadGemma4(config: config, weights: weights,
-                                  options: options, device: device)
+            return try loadGemma4(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let mt = config.modelType, Gemma4.modelTypes.contains(mt) {
-            return try loadGemma4(config: config, weights: weights,
-                                  options: options, device: device)
+            return try loadGemma4(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let arch = config.architecture, Qwen3.architectures.contains(arch) {
-            return try loadQwen3(config: config, weights: weights,
-                                 options: options, device: device)
+            return try loadQwen3(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let mt = config.modelType, Qwen3.modelTypes.contains(mt) {
-            return try loadQwen3(config: config, weights: weights,
-                                 options: options, device: device)
+            return try loadQwen3(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let arch = config.architecture, Mamba2.architectures.contains(arch) {
-            return try loadMamba2(config: config, weights: weights,
-                                  options: options, device: device)
+            return try loadMamba2(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let mt = config.modelType, Mamba2.modelTypes.contains(mt) {
-            return try loadMamba2(config: config, weights: weights,
-                                  options: options, device: device)
+            return try loadMamba2(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         // FalconH1 — the first hybrid (Mamba 2 + attention in
         // every layer). Routes through its own family file + engine.
         if let arch = config.architecture, FalconH1.architectures.contains(arch) {
-            return try loadFalconH1(config: config, weights: weights,
-                                    options: options, device: device)
+            return try loadFalconH1(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let mt = config.modelType, FalconH1.modelTypes.contains(mt) {
-            return try loadFalconH1(config: config, weights: weights,
-                                    options: options, device: device)
+            return try loadFalconH1(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         // NemotronH — a stack-interleaved hybrid (Mamba 2 /
         // attention / dense-MLP layers selected per-layer by a
         // hybrid_override_pattern). Routes through its own family file.
         if let arch = config.architecture, NemotronH.architectures.contains(arch) {
-            return try loadNemotronH(config: config, weights: weights,
-                                     options: options, device: device)
+            return try loadNemotronH(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let mt = config.modelType, NemotronH.modelTypes.contains(mt) {
-            return try loadNemotronH(config: config, weights: weights,
-                                     options: options, device: device)
+            return try loadNemotronH(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         // Granite4 — a stack-interleaved hybrid (Mamba 2
         // / attention layers selected by `layer_types`) with an MoE +
         // shared-expert feed-forward. Routes through its own family file.
         if let arch = config.architecture, Granite4.architectures.contains(arch) {
-            return try loadGranite4(config: config, weights: weights,
-                                            options: options, device: device)
+            return try loadGranite4(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let mt = config.modelType, Granite4.modelTypes.contains(mt) {
-            return try loadGranite4(config: config, weights: weights,
-                                            options: options, device: device)
+            return try loadGranite4(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         // Jamba — a stack-interleaved hybrid (Mamba 1 / attention
         // layers selected by `layers_block_type`) with a dense SwiGLU or
         // MoE feed-forward. Routes through its own family file.
         if let arch = config.architecture, Jamba.architectures.contains(arch) {
-            return try loadJamba(config: config, weights: weights,
-                                 options: options, device: device)
+            return try loadJamba(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let mt = config.modelType, Jamba.modelTypes.contains(mt) {
-            return try loadJamba(config: config, weights: weights,
-                                 options: options, device: device)
+            return try loadJamba(
+                config: config, weights: weights,
+                options: options, device: device)
         }
 
         // Qwen3.5 — a stack-interleaved hybrid (Gated Delta Net /
@@ -620,12 +657,14 @@ public enum ModelRegistry {
         // with a dense SwiGLU or MoE feed-forward. Routes through its own
         // family file.
         if let arch = config.architecture, Qwen35.architectures.contains(arch) {
-            return try loadQwen35(config: config, weights: weights,
-                                  options: options, device: device)
+            return try loadQwen35(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let mt = config.modelType, Qwen35.modelTypes.contains(mt) {
-            return try loadQwen35(config: config, weights: weights,
-                                  options: options, device: device)
+            return try loadQwen35(
+                config: config, weights: weights,
+                options: options, device: device)
         }
 
         // GPT-OSS — a mixture-of-experts transformer with an alternating
@@ -633,12 +672,14 @@ public enum ModelRegistry {
         // sinks, and bias-corrected projections. Routes through its own
         // family file.
         if let arch = config.architecture, GPTOSS.architectures.contains(arch) {
-            return try loadGPTOSS(config: config, weights: weights,
-                                  options: options, device: device)
+            return try loadGPTOSS(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let mt = config.modelType, GPTOSS.modelTypes.contains(mt) {
-            return try loadGPTOSS(config: config, weights: weights,
-                                  options: options, device: device)
+            return try loadGPTOSS(
+                config: config, weights: weights,
+                options: options, device: device)
         }
 
         // LFM2 — LiquidAI's stack-interleaved hybrid (short-conv /
@@ -647,24 +688,28 @@ public enum ModelRegistry {
         // LFM2.5 collection (architecturally identical — same `lfm2`
         // model_type).
         if let arch = config.architecture, LFM2.architectures.contains(arch) {
-            return try loadLFM2(config: config, weights: weights,
-                                options: options, device: device)
+            return try loadLFM2(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let mt = config.modelType, LFM2.modelTypes.contains(mt) {
-            return try loadLFM2(config: config, weights: weights,
-                                options: options, device: device)
+            return try loadLFM2(
+                config: config, weights: weights,
+                options: options, device: device)
         }
 
         // Nemotron-Labs-Diffusion — tri-mode (AR / diffusion /
         // self-speculation) dense transformer. Distinct from the
         // NemotronH stack-interleaved hybrid family above.
         if let arch = config.architecture, NemotronDiffusion.architectures.contains(arch) {
-            return try loadNemotronDiffusion(config: config, weights: weights,
-                                                 options: options, device: device)
+            return try loadNemotronDiffusion(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         if let mt = config.modelType, NemotronDiffusion.modelTypes.contains(mt) {
-            return try loadNemotronDiffusion(config: config, weights: weights,
-                                                 options: options, device: device)
+            return try loadNemotronDiffusion(
+                config: config, weights: weights,
+                options: options, device: device)
         }
         throw ModelError.unsupportedArchitecture(
             config.architecture ?? config.modelType ?? "<unknown>"
@@ -680,8 +725,9 @@ public enum ModelRegistry {
             config: config, weights: weights,
             options: options, device: device
         )
-        return Loaded(engine: engine,
-                      defaultGenerationParameters: variant.defaultGenerationParameters)
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
     public static func loadQwen3(
@@ -693,8 +739,9 @@ public enum ModelRegistry {
             config: config, weights: weights,
             options: options, device: device
         )
-        return Loaded(engine: engine,
-                      defaultGenerationParameters: variant.defaultGenerationParameters)
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
     public static func loadPhi(
@@ -706,8 +753,9 @@ public enum ModelRegistry {
             config: config, weights: weights,
             options: options, device: device
         )
-        return Loaded(engine: engine,
-                      defaultGenerationParameters: variant.defaultGenerationParameters)
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
     public static func loadGemma3(
@@ -719,8 +767,9 @@ public enum ModelRegistry {
             config: config, weights: weights,
             options: options, device: device
         )
-        return Loaded(engine: engine,
-                      defaultGenerationParameters: variant.defaultGenerationParameters)
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
     public static func loadGemma2(
@@ -732,8 +781,9 @@ public enum ModelRegistry {
             config: config, weights: weights,
             options: options, device: device
         )
-        return Loaded(engine: engine,
-                      defaultGenerationParameters: variant.defaultGenerationParameters)
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
     public static func loadGemma4(
@@ -745,8 +795,9 @@ public enum ModelRegistry {
             config: config, weights: weights,
             options: options, device: device
         )
-        return Loaded(engine: engine,
-                      defaultGenerationParameters: variant.defaultGenerationParameters)
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
     public static func loadMamba2(
@@ -758,8 +809,9 @@ public enum ModelRegistry {
             config: config, weights: weights,
             options: options, device: device
         )
-        return Loaded(engine: engine,
-                      defaultGenerationParameters: variant.defaultGenerationParameters)
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
     public static func loadFalconH1(
@@ -771,8 +823,9 @@ public enum ModelRegistry {
             config: config, weights: weights,
             options: options, device: device
         )
-        return Loaded(engine: engine,
-                      defaultGenerationParameters: variant.defaultGenerationParameters)
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
     public static func loadNemotronH(
@@ -784,8 +837,9 @@ public enum ModelRegistry {
             config: config, weights: weights,
             options: options, device: device
         )
-        return Loaded(engine: engine,
-                      defaultGenerationParameters: variant.defaultGenerationParameters)
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
     public static func loadGranite4(
@@ -797,8 +851,9 @@ public enum ModelRegistry {
             config: config, weights: weights,
             options: options, device: device
         )
-        return Loaded(engine: engine,
-                      defaultGenerationParameters: variant.defaultGenerationParameters)
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
     public static func loadJamba(
@@ -810,8 +865,9 @@ public enum ModelRegistry {
             config: config, weights: weights,
             options: options, device: device
         )
-        return Loaded(engine: engine,
-                      defaultGenerationParameters: variant.defaultGenerationParameters)
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
     public static func loadQwen35(
@@ -823,8 +879,9 @@ public enum ModelRegistry {
             config: config, weights: weights,
             options: options, device: device
         )
-        return Loaded(engine: engine,
-                      defaultGenerationParameters: variant.defaultGenerationParameters)
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
     public static func loadGPTOSS(
@@ -836,8 +893,9 @@ public enum ModelRegistry {
             config: config, weights: weights,
             options: options, device: device
         )
-        return Loaded(engine: engine,
-                      defaultGenerationParameters: variant.defaultGenerationParameters)
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
     public static func loadLFM2(
@@ -849,8 +907,9 @@ public enum ModelRegistry {
             config: config, weights: weights,
             options: options, device: device
         )
-        return Loaded(engine: engine,
-                      defaultGenerationParameters: variant.defaultGenerationParameters)
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 
     public static func loadNemotronDiffusion(
@@ -862,8 +921,9 @@ public enum ModelRegistry {
             config: config, weights: weights,
             options: options, device: device
         )
-        return Loaded(engine: engine,
-                      defaultGenerationParameters: variant.defaultGenerationParameters)
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: variant.defaultGenerationParameters)
     }
 }
 
@@ -891,7 +951,8 @@ public final class Model: @unchecked Sendable {
 
     /// Snapshot of the enabled-capability set.
     public var enabledCapabilities: Set<Capability> {
-        capabilityLock.lock(); defer { capabilityLock.unlock() }
+        capabilityLock.lock()
+        defer { capabilityLock.unlock() }
         return _enabledCapabilities
     }
     /// Default generation parameters declared by the model's family
@@ -947,7 +1008,8 @@ public final class Model: @unchecked Sendable {
     private var _currentState: ModelLifecycleState = .ready
 
     public var currentState: ModelLifecycleState {
-        stateLock.lock(); defer { stateLock.unlock() }
+        stateLock.lock()
+        defer { stateLock.unlock() }
         return _currentState
     }
 
@@ -964,12 +1026,14 @@ public final class Model: @unchecked Sendable {
     public let events: AsyncStream<ModelLifecycleEvent>
     private let eventsContinuation: AsyncStream<ModelLifecycleEvent>.Continuation
 
-    init(engine: any LanguageModel, tokenizer: any Tokenizer, config: ModelConfig,
-         modelDirectory: URL,
-         availableCapabilities: Set<Capability>,
-         enabledCapabilities: Set<Capability>,
-         defaultGenerationParameters: GenerationParameters,
-         vlModel: VisionModel? = nil) {
+    init(
+        engine: any LanguageModel, tokenizer: any Tokenizer, config: ModelConfig,
+        modelDirectory: URL,
+        availableCapabilities: Set<Capability>,
+        enabledCapabilities: Set<Capability>,
+        defaultGenerationParameters: GenerationParameters,
+        vlModel: VisionModel? = nil
+    ) {
         self.engine = engine
         self.tokenizer = tokenizer
         self.config = config
@@ -979,7 +1043,8 @@ public final class Model: @unchecked Sendable {
         // textIn / textOut are universal — always enabled. Other
         // requested capabilities are honored only if the model declares
         // them available.
-        self._enabledCapabilities = enabledCapabilities
+        self._enabledCapabilities =
+            enabledCapabilities
             .union(Capability.textOnly)
             .intersection(availableCapabilities.union(Capability.textOnly))
         self.defaultGenerationParameters = defaultGenerationParameters
@@ -1021,8 +1086,10 @@ public final class Model: @unchecked Sendable {
     /// `enable` / `disable` on them is a harmless no-op.
     @discardableResult
     public func enable(_ capability: Capability) -> Bool {
-        guard availableCapabilities.contains(capability)
-            || Capability.textOnly.contains(capability) else { return false }
+        guard
+            availableCapabilities.contains(capability)
+                || Capability.textOnly.contains(capability)
+        else { return false }
         capabilityLock.lock()
         let changed = !_enabledCapabilities.contains(capability)
         _enabledCapabilities.insert(capability)
@@ -1063,11 +1130,15 @@ public final class Model: @unchecked Sendable {
         Debug.log(.load, "Model.load id-or-path=\(idOrPath)")
         let model = try await Profile.timeAsync("model_load") {
             try await Profile.signpostAsync("model_load") {
-                let locator = ModelLocator(downloader: ModelDownloader(cacheDirectory: options.cacheDirectory))
+                let locator = ModelLocator(
+                    downloader: ModelDownloader(cacheDirectory: options.cacheDirectory))
                 let dir = try await locator.resolve(idOrPath: idOrPath, revision: options.revision)
                 Debug.log(.loader, "resolved snapshot dir: \(dir.path)")
                 let config = try ModelConfig.load(from: dir)
-                Debug.log(.load, "config: arch=\(config.architecture ?? "?") model_type=\(config.modelType ?? "?") hidden=\(config.hiddenSize ?? 0) layers=\(config.numLayers ?? 0)")
+                Debug.log(
+                    .load,
+                    "config: arch=\(config.architecture ?? "?") model_type=\(config.modelType ?? "?") hidden=\(config.hiddenSize ?? 0) layers=\(config.numLayers ?? 0)"
+                )
                 let bundle = try SafeTensorsBundle(directory: dir, device: device)
                 let loaded = try ModelRegistry.dispatchAndLoad(
                     config: config, weights: bundle, options: options, device: device
@@ -1117,11 +1188,11 @@ public final class Model: @unchecked Sendable {
 
 // ─── Hot LoRA adapter management ─────────────────────────────────────
 
-public extension Model {
+extension Model {
     /// Whether a LoRA adapter is currently attached. Always `false` for
     /// families that don't support adapters (only Nemotron-Labs-
     /// Diffusion does today).
-    var hasLoRA: Bool { nemotronLabsDiffusion?.hasLoRA ?? false }
+    public var hasLoRA: Bool { nemotronLabsDiffusion?.hasLoRA ?? false }
 
     /// Hot-load a LoRA adapter at runtime. `directory` may be the model
     /// directory (the adapter is resolved under `linear_spec_lora/`) or
@@ -1129,12 +1200,12 @@ public extension Model {
     /// same call swaps in the bundled adapter or an external one. Any
     /// currently-attached adapter is replaced. No-op on families that
     /// don't support adapters. Do not call during an active generate.
-    func loadLoRA(from directory: URL, device: Device = .shared) {
+    public func loadLoRA(from directory: URL, device: Device = .shared) {
         guard let nd = nemotronLabsDiffusion else { return }
         nd.detachLoRA()
         nd.attachLoRA(from: directory, device: device)
     }
 
     /// Hot-unload the current LoRA adapter. No-op when none is attached.
-    func unloadLoRA() { nemotronLabsDiffusion?.detachLoRA() }
+    public func unloadLoRA() { nemotronLabsDiffusion?.detachLoRA() }
 }

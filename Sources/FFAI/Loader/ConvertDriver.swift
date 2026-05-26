@@ -134,8 +134,10 @@ public enum ConvertDriver {
         for key in allKeys {
             let entry = try bundle.tensor(named: key)
 
-            if shouldQuantize(key: key, tensor: entry,
-                              options: options, packFactor: pf) {
+            if shouldQuantize(
+                key: key, tensor: entry,
+                options: options, packFactor: pf)
+            {
                 // ─── Quantize this weight ────────────────────────────
                 progress?("quantizing \(key) \(entry.shape)")
                 let (packedBytes, scalesBytes, biasesBytes) = try quantizeTensor(
@@ -152,18 +154,22 @@ public enum ConvertDriver {
                 let weightShape = packedShape(original: entry.shape, packFactor: pf)
                 let groupShape = scalesShape(original: entry.shape, groupSize: options.groupSize)
 
-                try writer.append(name: "\(base).weight", dtype: .u32,
-                                  shape: weightShape, bytes: packedBytes)
-                try writer.append(name: "\(base).scales", dtype: entry.dtype,
-                                  shape: groupShape, bytes: scalesBytes)
-                try writer.append(name: "\(base).biases", dtype: entry.dtype,
-                                  shape: groupShape, bytes: biasesBytes)
+                try writer.append(
+                    name: "\(base).weight", dtype: .u32,
+                    shape: weightShape, bytes: packedBytes)
+                try writer.append(
+                    name: "\(base).scales", dtype: entry.dtype,
+                    shape: groupShape, bytes: scalesBytes)
+                try writer.append(
+                    name: "\(base).biases", dtype: entry.dtype,
+                    shape: groupShape, bytes: biasesBytes)
             } else {
                 // ─── Pass through unchanged ──────────────────────────
                 progress?("copying   \(key) \(entry.shape)")
                 let bytes = rawBytes(from: entry)
-                try writer.append(name: key, dtype: entry.dtype,
-                                  shape: entry.shape, bytes: bytes)
+                try writer.append(
+                    name: key, dtype: entry.dtype,
+                    shape: entry.shape, bytes: bytes)
             }
         }
 
@@ -195,7 +201,8 @@ public enum ConvertDriver {
         // Inner dim must be divisible by group_size (hard kernel constraint)
         // and by pack_factor (packing constraint).
         guard inDim.isMultiple(of: options.groupSize),
-              inDim.isMultiple(of: packFactor) else { return false }
+            inDim.isMultiple(of: packFactor)
+        else { return false }
 
         // Norm layers: never quantize (tiny + numerically critical).
         // Match both `layernorm.weight` and `norm.weight` suffixes used
@@ -420,7 +427,8 @@ public enum ConvertDriver {
         // safetensors-adjacent (e.g. generation_config.json).
         let copyExtensions: Set<String> = ["txt", "json"]
         if let contents = try? fm.contentsOfDirectory(
-            at: sourceDir, includingPropertiesForKeys: nil) {
+            at: sourceDir, includingPropertiesForKeys: nil)
+        {
             for file in contents where copyExtensions.contains(file.pathExtension.lowercased()) {
                 let name = file.lastPathComponent
                 // Skip files we already handled above, and config.json

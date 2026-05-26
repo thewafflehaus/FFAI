@@ -19,9 +19,10 @@
 // smaller weights. Skipped automatically if checkpoint isn't available.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Qwen3 Text Integration", .serialized)
 struct Qwen3TextIntegrationTests {

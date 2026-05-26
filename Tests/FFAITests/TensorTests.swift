@@ -13,6 +13,7 @@
 // limitations under the License.
 //
 import Testing
+
 @testable import FFAI
 
 @Suite("Tensor")
@@ -57,7 +58,7 @@ struct TensorTests {
     @Test("slicedRows updates offset and shape, shares buffer")
     func slicedRows() {
         let t = Tensor.empty(shape: [4, 3], dtype: .f32)
-        let values: [Float] = (0..<12).map { Float($0) }
+        let values: [Float] = (0 ..< 12).map { Float($0) }
         t.copyIn(from: values)
 
         let slice = t.slicedRows(start: 1, count: 2)
@@ -79,8 +80,11 @@ struct TensorTests {
 
         // bf16: top 16 bits of an f32 — 1.5 / -2.25 / 3 are exact.
         let bf16 = Tensor.empty(shape: [3], dtype: .bf16)
-        bf16.copyIn(from: [Float(1.5).bitPattern, Float(-2.25).bitPattern,
-                           Float(3).bitPattern].map { UInt16($0 >> 16) })
+        bf16.copyIn(
+            from: [
+                Float(1.5).bitPattern, Float(-2.25).bitPattern,
+                Float(3).bitPattern,
+            ].map { UInt16($0 >> 16) })
         #expect(bf16.toFloatArray() == [1.5, -2.25, 3])
     }
 

@@ -26,17 +26,18 @@
 
 import Foundation
 import Metal
-import Testing
-@testable import FFAI
-import TestHelpers
 import MetalTileSwift
+import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("MoE bm64_mpp wrapper correctness")
 struct MoEBgemmBm64MppTests {
     static func pack8(_ nibbles: [UInt32]) -> UInt32 {
         precondition(nibbles.count == 8)
         var word: UInt32 = 0
-        for i in 0..<8 {
+        for i in 0 ..< 8 {
             word |= (nibbles[i] & 0xF) << (UInt32(i) * 4)
         }
         return word
@@ -47,7 +48,7 @@ struct MoEBgemmBm64MppTests {
         var out: [UInt32] = []
         out.reserveCapacity(row.count / 8)
         for i in stride(from: 0, to: row.count, by: 8) {
-            out.append(pack8(Array(row[i..<i+8])))
+            out.append(pack8(Array(row[i ..< i + 8])))
         }
         return out
     }
@@ -74,12 +75,12 @@ struct MoEBgemmBm64MppTests {
         var out = [Float](repeating: 0, count: tRows * nOut)
         let packsPerRow = kIn / 8
         let groupsPerRow = kIn / groupSize
-        for r in 0..<tRows {
+        for r in 0 ..< tRows {
             let e = Int(indices[r])
             precondition(e < nExperts, "m1Oracle: indices[\(r)]=\(e) >= nExperts=\(nExperts)")
             let wExpertBase = e * nOut * packsPerRow
             let sbExpertBase = e * nOut * groupsPerRow
-            for n in 0..<nOut {
+            for n in 0 ..< nOut {
                 var acc: Float = 0
                 for k in stride(from: 0, to: kIn, by: 8) {
                     let packDev = wExpertBase + n * packsPerRow + (k / 8)
@@ -88,7 +89,7 @@ struct MoEBgemmBm64MppTests {
                     let sbOff = sbExpertBase + n * groupsPerRow + g
                     let s = scales[sbOff]
                     let b = biases[sbOff]
-                    for nibble in 0..<8 {
+                    for nibble in 0 ..< 8 {
                         let q = Float((packed >> (UInt32(nibble) * 4)) & 0xF)
                         let w = s * q + b
                         acc += w * x[r * kIn + k + nibble]
@@ -109,14 +110,17 @@ struct MoEBgemmBm64MppTests {
         xAmp: Double, xFreq: Double,
         groupsTotal: Int, xCount: Int
     ) -> (scales: [Float], biases: [Float], x: [Float]) {
-        var scales = [Float](); scales.reserveCapacity(groupsTotal)
-        var biases = [Float](); biases.reserveCapacity(groupsTotal)
-        for i in 0..<groupsTotal {
+        var scales = [Float]()
+        scales.reserveCapacity(groupsTotal)
+        var biases = [Float]()
+        biases.reserveCapacity(groupsTotal)
+        for i in 0 ..< groupsTotal {
             scales.append(Float(scaleOff + scaleAmp * Foundation.sin(Double(i) * scaleFreq)))
             biases.append(Float(biasOff + biasAmp * Foundation.cos(Double(i) * biasFreq)))
         }
-        var x = [Float](); x.reserveCapacity(xCount)
-        for i in 0..<xCount {
+        var x = [Float]()
+        x.reserveCapacity(xCount)
+        for i in 0 ..< xCount {
             x.append(Float(xAmp * Foundation.sin(Double(i) * xFreq)))
         }
         return (scales, biases, x)
@@ -127,7 +131,7 @@ struct MoEBgemmBm64MppTests {
         var dot: Double = 0
         var na: Double = 0
         var nb: Double = 0
-        for i in 0..<a.count {
+        for i in 0 ..< a.count {
             let x = Double(a[i])
             let y = Double(b[i])
             dot += x * y
@@ -151,12 +155,12 @@ struct MoEBgemmBm64MppTests {
         if sparseIndices {
             // Production-like: tRows < nExperts. Each row picks a different
             // expert id, sorted ascending. Skips most experts.
-            for r in 0..<tRows {
+            for r in 0 ..< tRows {
                 indicesHost.append(UInt32((r * (nExperts / max(tRows, 1))) % nExperts))
             }
             indicesHost.sort()
         } else {
-            for r in 0..<tRows {
+            for r in 0 ..< tRows {
                 indicesHost.append(UInt32(r / (tRows / nExperts)))
             }
         }
@@ -164,26 +168,29 @@ struct MoEBgemmBm64MppTests {
         let totalWeights = nExperts * nOut * kIn
         var weightUnpacked = [UInt32]()
         weightUnpacked.reserveCapacity(totalWeights)
-        for i in 0..<totalWeights {
+        for i in 0 ..< totalWeights {
             weightUnpacked.append(UInt32((i * seedW + 3) & 0xF))
         }
         var weightPacked: [UInt32] = []
         weightPacked.reserveCapacity(totalWeights / 8)
         for r in stride(from: 0, to: totalWeights, by: kIn) {
-            weightPacked.append(contentsOf: packRow(Array(weightUnpacked[r..<r+kIn])))
+            weightPacked.append(contentsOf: packRow(Array(weightUnpacked[r ..< r + kIn])))
         }
 
         let groupsTotal = nExperts * nOut * (kIn / groupSize)
-        var scales = [Float](); scales.reserveCapacity(groupsTotal)
-        var biases = [Float](); biases.reserveCapacity(groupsTotal)
-        for i in 0..<groupsTotal {
+        var scales = [Float]()
+        scales.reserveCapacity(groupsTotal)
+        var biases = [Float]()
+        biases.reserveCapacity(groupsTotal)
+        for i in 0 ..< groupsTotal {
             let s: Float = 0.005 + 0.001 * Float((i * seedS) % 137) / 137.0
             let b: Float = -0.02 + 0.005 * Float((i * seedB) % 149) / 149.0
             scales.append(s)
             biases.append(b)
         }
-        var x = [Float](); x.reserveCapacity(tRows * kIn)
-        for i in 0..<(tRows * kIn) {
+        var x = [Float]()
+        x.reserveCapacity(tRows * kIn)
+        for i in 0 ..< (tRows * kIn) {
             let v: Float = 0.05 * Float((i * seedX) % 223) / 223.0 - 0.025
             x.append(v)
         }
@@ -225,8 +232,8 @@ struct MoEBgemmBm64MppTests {
 
         // Build expertOffsets for m1 oracle.
         var expertOffsets = [UInt32](repeating: UInt32(tRows), count: nExperts + 1)
-        for e in 0...nExperts {
-            for r in 0..<tRows where Int(indicesHost[r]) >= e {
+        for e in 0 ... nExperts {
+            for r in 0 ..< tRows where Int(indicesHost[r]) >= e {
                 expertOffsets[e] = UInt32(r)
                 break
             }
@@ -241,9 +248,10 @@ struct MoEBgemmBm64MppTests {
         let cosBm64VsBm16 = cosine(bm64F32, bm16F32)
         let cosBm64VsM1 = cosine(bm64F32, yM1)
         let cosBm16VsM1 = cosine(bm16F32, yM1)
-        print("[\(label)] cos: bm64_mpp vs bm16 = \(String(format: "%.6f", cosBm64VsBm16)), "
-            + "bm64_mpp vs m1 = \(String(format: "%.6f", cosBm64VsM1)), "
-            + "bm16 vs m1 = \(String(format: "%.6f", cosBm16VsM1))")
+        print(
+            "[\(label)] cos: bm64_mpp vs bm16 = \(String(format: "%.6f", cosBm64VsBm16)), "
+                + "bm64_mpp vs m1 = \(String(format: "%.6f", cosBm64VsM1)), "
+                + "bm16 vs m1 = \(String(format: "%.6f", cosBm16VsM1))")
         print("  m1    out[0..8] = \(Array(yM1.prefix(8)))")
         print("  bm16  out[0..8] = \(Array(bm16F32.prefix(8)))")
         print("  bm64m out[0..8] = \(Array(bm64F32.prefix(8)))")
@@ -257,8 +265,9 @@ struct MoEBgemmBm64MppTests {
             nExperts: 4, tRows: 64, nOut: 64, kIn: 64, groupSize: 32,
             seedW: 7, seedS: 19, seedB: 29, seedX: 37,
             label: "clean_tile")
-        #expect(cosVal >= 0.99,
-                "bm64_mpp bf16 wrapper vs bm16 cos = \(cosVal) (want ≥ 0.99) clean_tile")
+        #expect(
+            cosVal >= 0.99,
+            "bm64_mpp bf16 wrapper vs bm16 cos = \(cosVal) (want ≥ 0.99) clean_tile")
     }
 
     /// Multi-n-tile + multi-K-block + group_size=64 — matches the bf16
@@ -269,8 +278,9 @@ struct MoEBgemmBm64MppTests {
             nExperts: 8, tRows: 128, nOut: 128, kIn: 128, groupSize: 64,
             seedW: 11, seedS: 23, seedB: 31, seedX: 41,
             label: "multi_tile")
-        #expect(cosVal >= 0.99,
-                "bm64_mpp bf16 wrapper vs bm16 cos = \(cosVal) (want ≥ 0.99) multi_tile")
+        #expect(
+            cosVal >= 0.99,
+            "bm64_mpp bf16 wrapper vs bm16 cos = \(cosVal) (want ≥ 0.99) multi_tile")
     }
 
     /// Qwen3.6-A3B gate/up shape: nExperts=128, mTotal=64 (1 m-tile),
@@ -285,8 +295,9 @@ struct MoEBgemmBm64MppTests {
             seedW: 13, seedS: 19, seedB: 23, seedX: 29,
             sparseIndices: true,
             label: "qwen36_gate_up")
-        #expect(cosVal >= 0.99,
-                "bm64_mpp bf16 wrapper vs bm16 cos = \(cosVal) (want ≥ 0.99) qwen36_gate_up")
+        #expect(
+            cosVal >= 0.99,
+            "bm64_mpp bf16 wrapper vs bm16 cos = \(cosVal) (want ≥ 0.99) qwen36_gate_up")
     }
 
     /// Qwen3.6-A3B down shape: same nExperts, mTotal, but nOut=2048
@@ -299,8 +310,9 @@ struct MoEBgemmBm64MppTests {
             seedW: 17, seedS: 31, seedB: 37, seedX: 43,
             sparseIndices: true,
             label: "qwen36_down")
-        #expect(cosVal >= 0.99,
-                "bm64_mpp bf16 wrapper vs bm16 cos = \(cosVal) (want ≥ 0.99) qwen36_down")
+        #expect(
+            cosVal >= 0.99,
+            "bm64_mpp bf16 wrapper vs bm16 cos = \(cosVal) (want ≥ 0.99) qwen36_down")
     }
 
     /// Live-compiles the MSL source at runtime via `makeLibrary(source:)`
@@ -317,14 +329,16 @@ struct MoEBgemmBm64MppTests {
         let groupSize = 64
         let tRows = 64
         var indicesHost = [UInt32]()
-        for r in 0..<tRows { indicesHost.append(UInt32((r * 2) % nExperts)) }
+        for r in 0 ..< tRows { indicesHost.append(UInt32((r * 2) % nExperts)) }
 
         let totalWeights = nExperts * nOut * kIn
-        var weightUnpacked = [UInt32](); weightUnpacked.reserveCapacity(totalWeights)
-        for i in 0..<totalWeights { weightUnpacked.append(UInt32((i * 17 + 11) & 0xF)) }
-        var weightPacked: [UInt32] = []; weightPacked.reserveCapacity(totalWeights / 8)
+        var weightUnpacked = [UInt32]()
+        weightUnpacked.reserveCapacity(totalWeights)
+        for i in 0 ..< totalWeights { weightUnpacked.append(UInt32((i * 17 + 11) & 0xF)) }
+        var weightPacked: [UInt32] = []
+        weightPacked.reserveCapacity(totalWeights / 8)
         for r in stride(from: 0, to: totalWeights, by: kIn) {
-            weightPacked.append(contentsOf: Self.packRow(Array(weightUnpacked[r..<r+kIn])))
+            weightPacked.append(contentsOf: Self.packRow(Array(weightUnpacked[r ..< r + kIn])))
         }
         let groupsTotal = nExperts * nOut * (kIn / groupSize)
         let (scales, biases, x) = Self.sinInputs(
@@ -339,7 +353,8 @@ struct MoEBgemmBm64MppTests {
         let mtlDevice = MTLCreateSystemDefaultDevice()!
         func mkBuf<T>(_ data: [T]) -> MTLBuffer {
             let bytes = data.withUnsafeBytes { Data($0) }
-            return mtlDevice.makeBuffer(bytes: (bytes as NSData).bytes, length: bytes.count, options: .storageModeShared)!
+            return mtlDevice.makeBuffer(
+                bytes: (bytes as NSData).bytes, length: bytes.count, options: .storageModeShared)!
         }
         let xBuf = mkBuf(xBits)
         let wBuf = mkBuf(weightPacked)
@@ -359,7 +374,8 @@ struct MoEBgemmBm64MppTests {
             .deletingLastPathComponent()  // Tests/
             .deletingLastPathComponent()  // <repo>/
         let metalURL = repoRoot.appendingPathComponent(
-            "Sources/MetalTileSwift/Resources/kernels/mt_moe_gather_qmm_mma_int4_bm64_mpp_bf16.metal")
+            "Sources/MetalTileSwift/Resources/kernels/mt_moe_gather_qmm_mma_int4_bm64_mpp_bf16.metal"
+        )
         let source = try String(contentsOf: metalURL, encoding: .utf8)
         let opts = MTLCompileOptions()
         let lib = try mtlDevice.makeLibrary(source: source, options: opts)
@@ -376,10 +392,14 @@ struct MoEBgemmBm64MppTests {
         enc.setBuffer(bBuf, offset: 0, index: 3)
         enc.setBuffer(iBuf, offset: 0, index: 4)
         enc.setBuffer(outBuf, offset: 0, index: 5)
-        var mT = UInt32(tRows); enc.setBytes(&mT, length: 4, index: 6)
-        var nO = UInt32(nOut);  enc.setBytes(&nO, length: 4, index: 7)
-        var kI = UInt32(kIn);   enc.setBytes(&kI, length: 4, index: 8)
-        var gS = UInt32(groupSize); enc.setBytes(&gS, length: 4, index: 9)
+        var mT = UInt32(tRows)
+        enc.setBytes(&mT, length: 4, index: 6)
+        var nO = UInt32(nOut)
+        enc.setBytes(&nO, length: 4, index: 7)
+        var kI = UInt32(kIn)
+        enc.setBytes(&kI, length: 4, index: 8)
+        var gS = UInt32(groupSize)
+        enc.setBytes(&gS, length: 4, index: 9)
         enc.dispatchThreadgroups(
             MTLSize(width: (nOut + 63) / 64, height: (tRows + 63) / 64, depth: 1),
             threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
@@ -388,11 +408,14 @@ struct MoEBgemmBm64MppTests {
         cb.waitUntilCompleted()
 
         let outRaw = outBuf.contents().bindMemory(to: UInt16.self, capacity: tRows * nOut)
-        let bm64F32 = (0..<(tRows * nOut)).map { Self.bf16ToF32(outRaw[$0]) }
+        let bm64F32 = (0 ..< (tRows * nOut)).map { Self.bf16ToF32(outRaw[$0]) }
 
         var expertOffsets = [UInt32](repeating: UInt32(tRows), count: nExperts + 1)
-        for e in 0...nExperts {
-            for r in 0..<tRows where Int(indicesHost[r]) >= e { expertOffsets[e] = UInt32(r); break }
+        for e in 0 ... nExperts {
+            for r in 0 ..< tRows where Int(indicesHost[r]) >= e {
+                expertOffsets[e] = UInt32(r)
+                break
+            }
         }
         expertOffsets[nExperts] = UInt32(tRows)
         let yM1 = Self.m1Oracle(
@@ -404,8 +427,9 @@ struct MoEBgemmBm64MppTests {
         print("[live_compile] cos: bm64 vs m1 = \(String(format: "%.6f", cosBm64VsM1))")
         print("  m1    out[0..8] = \(Array(yM1.prefix(8)))")
         print("  bm64m out[0..8] = \(Array(bm64F32.prefix(8)))")
-        #expect(cosBm64VsM1 >= 0.99,
-                "live-compile bm64 vs m1 cos = \(cosBm64VsM1) (want ≥ 0.99)")
+        #expect(
+            cosBm64VsM1 >= 0.99,
+            "live-compile bm64 vs m1 cos = \(cosBm64VsM1) (want ≥ 0.99)")
     }
 
     /// Bypasses the wrapper entirely — builds a fresh encoder and uses
@@ -423,14 +447,16 @@ struct MoEBgemmBm64MppTests {
         let groupSize = 64
         let tRows = 64
         var indicesHost = [UInt32]()
-        for r in 0..<tRows { indicesHost.append(UInt32((r * 2) % nExperts)) }
+        for r in 0 ..< tRows { indicesHost.append(UInt32((r * 2) % nExperts)) }
 
         let totalWeights = nExperts * nOut * kIn
-        var weightUnpacked = [UInt32](); weightUnpacked.reserveCapacity(totalWeights)
-        for i in 0..<totalWeights { weightUnpacked.append(UInt32((i * 17 + 11) & 0xF)) }
-        var weightPacked: [UInt32] = []; weightPacked.reserveCapacity(totalWeights / 8)
+        var weightUnpacked = [UInt32]()
+        weightUnpacked.reserveCapacity(totalWeights)
+        for i in 0 ..< totalWeights { weightUnpacked.append(UInt32((i * 17 + 11) & 0xF)) }
+        var weightPacked: [UInt32] = []
+        weightPacked.reserveCapacity(totalWeights / 8)
         for r in stride(from: 0, to: totalWeights, by: kIn) {
-            weightPacked.append(contentsOf: Self.packRow(Array(weightUnpacked[r..<r+kIn])))
+            weightPacked.append(contentsOf: Self.packRow(Array(weightUnpacked[r ..< r + kIn])))
         }
         let groupsTotal = nExperts * nOut * (kIn / groupSize)
         let (scales, biases, x) = Self.sinInputs(
@@ -446,7 +472,8 @@ struct MoEBgemmBm64MppTests {
         let mtlDevice = MTLCreateSystemDefaultDevice()!
         func mkBuf<T>(_ data: [T]) -> MTLBuffer {
             let bytes = data.withUnsafeBytes { Data($0) }
-            return mtlDevice.makeBuffer(bytes: (bytes as NSData).bytes, length: bytes.count, options: .storageModeShared)!
+            return mtlDevice.makeBuffer(
+                bytes: (bytes as NSData).bytes, length: bytes.count, options: .storageModeShared)!
         }
         let xBuf = mkBuf(xBits)
         let wBuf = mkBuf(weightPacked)
@@ -493,11 +520,14 @@ struct MoEBgemmBm64MppTests {
         cb.waitUntilCompleted()
 
         let outRaw = outBuf.contents().bindMemory(to: UInt16.self, capacity: tRows * nOut)
-        let bm64F32 = (0..<(tRows * nOut)).map { Self.bf16ToF32(outRaw[$0]) }
+        let bm64F32 = (0 ..< (tRows * nOut)).map { Self.bf16ToF32(outRaw[$0]) }
 
         var expertOffsets = [UInt32](repeating: UInt32(tRows), count: nExperts + 1)
-        for e in 0...nExperts {
-            for r in 0..<tRows where Int(indicesHost[r]) >= e { expertOffsets[e] = UInt32(r); break }
+        for e in 0 ... nExperts {
+            for r in 0 ..< tRows where Int(indicesHost[r]) >= e {
+                expertOffsets[e] = UInt32(r)
+                break
+            }
         }
         expertOffsets[nExperts] = UInt32(tRows)
         let yM1 = Self.m1Oracle(
@@ -509,14 +539,16 @@ struct MoEBgemmBm64MppTests {
         print("[raw_dispatchThreadgroups] cos: bm64 vs m1 = \(String(format: "%.6f", cosBm64VsM1))")
         // Per-row cosine — pinpoint which rows are correct vs broken.
         for rowIdx in [0, 1, 2, 31, 32, 33, 62, 63] {
-            let m1Row = Array(yM1[rowIdx * nOut..<(rowIdx + 1) * nOut])
-            let bm64Row = Array(bm64F32[rowIdx * nOut..<(rowIdx + 1) * nOut])
+            let m1Row = Array(yM1[rowIdx * nOut ..< (rowIdx + 1) * nOut])
+            let bm64Row = Array(bm64F32[rowIdx * nOut ..< (rowIdx + 1) * nOut])
             let rc = Self.cosine(m1Row, bm64Row)
-            print("  row \(rowIdx) cos = \(String(format: "%.6f", rc)) | "
-                + "m1[0..4]=\(Array(m1Row.prefix(4))) bm64m[0..4]=\(Array(bm64Row.prefix(4)))")
+            print(
+                "  row \(rowIdx) cos = \(String(format: "%.6f", rc)) | "
+                    + "m1[0..4]=\(Array(m1Row.prefix(4))) bm64m[0..4]=\(Array(bm64Row.prefix(4)))")
         }
-        #expect(cosBm64VsM1 >= 0.99,
-                "raw dispatchThreadgroups bm64 vs m1 cos = \(cosBm64VsM1) (want ≥ 0.99)")
+        #expect(
+            cosBm64VsM1 >= 0.99,
+            "raw dispatchThreadgroups bm64 vs m1 cos = \(cosBm64VsM1) (want ≥ 0.99)")
     }
 
     /// Down shape with the SAME sin/cos inputs the upstream Rust test
@@ -533,19 +565,20 @@ struct MoEBgemmBm64MppTests {
         let tRows = 64
         var indicesHost = [UInt32]()
         indicesHost.reserveCapacity(tRows)
-        for r in 0..<tRows {
+        for r in 0 ..< tRows {
             indicesHost.append(UInt32((r * 2) % nExperts))
         }
 
         let totalWeights = nExperts * nOut * kIn
-        var weightUnpacked = [UInt32](); weightUnpacked.reserveCapacity(totalWeights)
-        for i in 0..<totalWeights {
+        var weightUnpacked = [UInt32]()
+        weightUnpacked.reserveCapacity(totalWeights)
+        for i in 0 ..< totalWeights {
             weightUnpacked.append(UInt32((i * 17 + 11) & 0xF))
         }
         var weightPacked: [UInt32] = []
         weightPacked.reserveCapacity(totalWeights / 8)
         for r in stride(from: 0, to: totalWeights, by: kIn) {
-            weightPacked.append(contentsOf: Self.packRow(Array(weightUnpacked[r..<r+kIn])))
+            weightPacked.append(contentsOf: Self.packRow(Array(weightUnpacked[r ..< r + kIn])))
         }
         let groupsTotal = nExperts * nOut * (kIn / groupSize)
         let (scales, biases, x) = Self.sinInputs(
@@ -558,11 +591,16 @@ struct MoEBgemmBm64MppTests {
         let scalesBits = scales.map { Self.f32ToBf16($0) }
         let biasesBits = biases.map { Self.f32ToBf16($0) }
 
-        let xT = Tensor.empty(shape: [tRows, kIn], dtype: .bf16); xT.copyIn(from: xBits)
-        let wT = Tensor.empty(shape: [nExperts, nOut, kIn / 8], dtype: .u32); wT.copyIn(from: weightPacked)
-        let scalesT = Tensor.empty(shape: [nExperts, nOut, kIn / groupSize], dtype: .bf16); scalesT.copyIn(from: scalesBits)
-        let biasesT = Tensor.empty(shape: [nExperts, nOut, kIn / groupSize], dtype: .bf16); biasesT.copyIn(from: biasesBits)
-        let indicesT = Tensor.empty(shape: [tRows], dtype: .u32); indicesT.copyIn(from: indicesHost)
+        let xT = Tensor.empty(shape: [tRows, kIn], dtype: .bf16)
+        xT.copyIn(from: xBits)
+        let wT = Tensor.empty(shape: [nExperts, nOut, kIn / 8], dtype: .u32)
+        wT.copyIn(from: weightPacked)
+        let scalesT = Tensor.empty(shape: [nExperts, nOut, kIn / groupSize], dtype: .bf16)
+        scalesT.copyIn(from: scalesBits)
+        let biasesT = Tensor.empty(shape: [nExperts, nOut, kIn / groupSize], dtype: .bf16)
+        biasesT.copyIn(from: biasesBits)
+        let indicesT = Tensor.empty(shape: [tRows], dtype: .u32)
+        indicesT.copyIn(from: indicesHost)
 
         let outBm64 = Tensor.empty(shape: [tRows, nOut], dtype: .bf16)
         runAndWait { cb in
@@ -585,8 +623,8 @@ struct MoEBgemmBm64MppTests {
         let bm16F32 = outBm16.toArray(as: UInt16.self).map { Self.bf16ToF32($0) }
 
         var expertOffsets = [UInt32](repeating: UInt32(tRows), count: nExperts + 1)
-        for e in 0...nExperts {
-            for r in 0..<tRows where Int(indicesHost[r]) >= e {
+        for e in 0 ... nExperts {
+            for r in 0 ..< tRows where Int(indicesHost[r]) >= e {
                 expertOffsets[e] = UInt32(r)
                 break
             }
@@ -601,13 +639,15 @@ struct MoEBgemmBm64MppTests {
         let cosBm64VsM1 = Self.cosine(bm64F32, yM1)
         let cosBm16VsM1 = Self.cosine(bm16F32, yM1)
         let cosBm64VsBm16 = Self.cosine(bm64F32, bm16F32)
-        print("[qwen36_down_sin] cos: bm64 vs m1=\(String(format: "%.6f", cosBm64VsM1)), "
-            + "bm16 vs m1=\(String(format: "%.6f", cosBm16VsM1)), "
-            + "bm64 vs bm16=\(String(format: "%.6f", cosBm64VsBm16))")
+        print(
+            "[qwen36_down_sin] cos: bm64 vs m1=\(String(format: "%.6f", cosBm64VsM1)), "
+                + "bm16 vs m1=\(String(format: "%.6f", cosBm16VsM1)), "
+                + "bm64 vs bm16=\(String(format: "%.6f", cosBm64VsBm16))")
         print("  m1    out[0..8] = \(Array(yM1.prefix(8)))")
         print("  bm16  out[0..8] = \(Array(bm16F32.prefix(8)))")
         print("  bm64m out[0..8] = \(Array(bm64F32.prefix(8)))")
-        #expect(cosBm64VsM1 >= 0.99,
-                "bm64_mpp bf16 vs m1 cos = \(cosBm64VsM1) (want ≥ 0.99) qwen36_down_sin")
+        #expect(
+            cosBm64VsM1 >= 0.99,
+            "bm64_mpp bf16 vs m1 cos = \(cosBm64VsM1) (want ≥ 0.99) qwen36_down_sin")
     }
 }

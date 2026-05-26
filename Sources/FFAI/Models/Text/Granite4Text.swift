@@ -33,8 +33,8 @@ import Metal
 
 /// The two mixer kinds a `layer_types` entry can name.
 enum Granite4LayerKind: Equatable {
-    case mamba       // "mamba"
-    case attention   // "attention"
+    case mamba  // "mamba"
+    case attention  // "attention"
 
     init(from name: String) throws {
         switch name {
@@ -71,8 +71,8 @@ public struct Granite4Hybrid: Granite4Variant {
         device: Device
     ) throws -> Granite4Model {
         guard let hidden = config.hiddenSize,
-              let vocab = config.vocabSize,
-              let nHeads = config.numAttentionHeads
+            let vocab = config.vocabSize,
+            let nHeads = config.numAttentionHeads
         else {
             throw Granite4Error.missingConfig(
                 "hidden / vocab / num_attention_heads")
@@ -84,7 +84,7 @@ public struct Granite4Hybrid: Granite4Variant {
 
         // ── Hybrid layer schedule ─────────────────────────────────────
         guard let layerTypeNames = config.raw["layer_types"] as? [String],
-              !layerTypeNames.isEmpty
+            !layerTypeNames.isEmpty
         else { throw Granite4Error.missingConfig("layer_types") }
         let kinds = try layerTypeNames.map { try Granite4LayerKind(from: $0) }
         let nLayers = kinds.count
@@ -96,8 +96,9 @@ public struct Granite4Hybrid: Granite4Variant {
         let residualMultiplier = Float(config.float("residual_multiplier") ?? 1.0)
         let logitsScaling = Float(config.float("logits_scaling") ?? 1.0)
         // attention_multiplier replaces the usual 1/sqrt(head_dim) scale.
-        let attentionScale = Float(config.float("attention_multiplier")
-            ?? (1.0 / Double(headDim).squareRoot()))
+        let attentionScale = Float(
+            config.float("attention_multiplier")
+                ?? (1.0 / Double(headDim).squareRoot()))
 
         // ── Mamba 2 mixer geometry ────────────────────────────────────
         guard let mambaNHeads = config.int("mamba_n_heads")
@@ -115,7 +116,7 @@ public struct Granite4Hybrid: Granite4Variant {
         guard mambaNHeads % nGroups == 0 else {
             throw Granite4Error.unsupportedConfig(
                 "mamba_n_heads (\(mambaNHeads)) must be a multiple of "
-                + "n_groups (\(nGroups))")
+                    + "n_groups (\(nGroups))")
         }
         // Granite's gated mixer RMSNorm is a single full-width RMSNorm
         // over d_inner (NOT per-group like NemotronH). The metaltile
@@ -124,7 +125,7 @@ public struct Granite4Hybrid: Granite4Variant {
         guard dInner % 128 == 0, dInner <= 4096 else {
             throw Granite4Error.unsupportedConfig(
                 "gated mixer RMSNorm row size d_inner = \(dInner) must be "
-                + "a multiple of 128 and ≤ 4096 (rmsNorm kernel invariant)")
+                    + "a multiple of 128 and ≤ 4096 (rmsNorm kernel invariant)")
         }
         let convDim = dInner + 2 * nGroups * stateDim
 
@@ -157,7 +158,7 @@ public struct Granite4Hybrid: Granite4Variant {
         guard config.quantization == nil else {
             throw Granite4Error.unsupportedConfig(
                 "quantized Granite4 checkpoints not yet supported — "
-                + "load a raw bf16/f16 variant")
+                    + "load a raw bf16/f16 variant")
         }
 
         // Embedding table folds embedding_multiplier (the tied lm_head
@@ -181,43 +182,49 @@ public struct Granite4Hybrid: Granite4Variant {
             let mixer: Granite4Mixer
             switch kind {
             case .mamba:
-                mixer = .mamba(try buildMambaMixer(
-                    prefix: "\(p).mamba", weights: weights,
-                    dInner: dInner, convDim: convDim,
-                    nHeads: mambaNHeads, headDim: mambaHeadDim, stateDim: stateDim,
-                    nGroups: nGroups, convKernel: convKernel,
-                    useConvBias: useConvBias, eps: eps,
-                    tsMin: tsMin, tsMax: tsMax,
-                    residualMultiplier: residualMultiplier,
-                    dtype: activationDtype, device: device))
+                mixer = .mamba(
+                    try buildMambaMixer(
+                        prefix: "\(p).mamba", weights: weights,
+                        dInner: dInner, convDim: convDim,
+                        nHeads: mambaNHeads, headDim: mambaHeadDim, stateDim: stateDim,
+                        nGroups: nGroups, convKernel: convKernel,
+                        useConvBias: useConvBias, eps: eps,
+                        tsMin: tsMin, tsMax: tsMax,
+                        residualMultiplier: residualMultiplier,
+                        dtype: activationDtype, device: device))
             case .attention:
                 // o_proj folds residual_multiplier so the residual add
                 // stays a plain Ops.add.
-                let qProj = AnyLinear(Linear(
-                    weight: try weights.tensor(named: "\(p).self_attn.q_proj.weight")))
-                let kProj = AnyLinear(Linear(
-                    weight: try weights.tensor(named: "\(p).self_attn.k_proj.weight")))
-                let vProj = AnyLinear(Linear(
-                    weight: try weights.tensor(named: "\(p).self_attn.v_proj.weight")))
+                let qProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).self_attn.q_proj.weight")))
+                let kProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).self_attn.k_proj.weight")))
+                let vProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).self_attn.v_proj.weight")))
                 let oW = scaleTensorGMH(
                     try weights.tensor(named: "\(p).self_attn.o_proj.weight"),
                     by: residualMultiplier, device: device)
-                mixer = .attention(Granite4AttentionMixer(
-                    qProj: qProj, kProj: kProj, vProj: vProj,
-                    oProj: AnyLinear(Linear(weight: oW)),
-                    nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-                    scale: attentionScale))
+                mixer = .attention(
+                    Granite4AttentionMixer(
+                        qProj: qProj, kProj: kProj, vProj: vProj,
+                        oProj: AnyLinear(Linear(weight: oW)),
+                        nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
+                        scale: attentionScale))
             }
 
             // ── Feed-forward ──────────────────────────────────────────
             let ffn: Granite4FFN
             if useMoE {
-                ffn = .moe(try buildMoE(
-                    prefix: p, weights: weights,
-                    hidden: hidden, moeIntermediate: intermediate,
-                    sharedIntermediate: sharedIntermediate,
-                    numExperts: numLocalExperts, topK: numExpertsPerToken,
-                    residualMultiplier: residualMultiplier, device: device))
+                ffn = .moe(
+                    try buildMoE(
+                        prefix: p, weights: weights,
+                        hidden: hidden, moeIntermediate: intermediate,
+                        sharedIntermediate: sharedIntermediate,
+                        numExperts: numLocalExperts, topK: numExpertsPerToken,
+                        residualMultiplier: residualMultiplier, device: device))
             } else {
                 // Dense SwiGLU MLP. down_proj folds residual_multiplier.
                 let gateW = try weights.tensor(named: "\(p).mlp.gate_proj.weight")
@@ -225,15 +232,17 @@ public struct Granite4Hybrid: Granite4Variant {
                 let downW = scaleTensorGMH(
                     try weights.tensor(named: "\(p).mlp.down_proj.weight"),
                     by: residualMultiplier, device: device)
-                ffn = .dense(Granite4DenseMLP(
-                    gateProj: AnyLinear(Linear(weight: gateW)),
-                    upProj: AnyLinear(Linear(weight: upW)),
-                    downProj: AnyLinear(Linear(weight: downW))))
+                ffn = .dense(
+                    Granite4DenseMLP(
+                        gateProj: AnyLinear(Linear(weight: gateW)),
+                        upProj: AnyLinear(Linear(weight: upW)),
+                        downProj: AnyLinear(Linear(weight: downW))))
             }
 
-            layers.append(Granite4Layer(
-                inputNorm: inputNorm, postNorm: postNorm,
-                mixer: mixer, ffn: ffn, hidden: hidden))
+            layers.append(
+                Granite4Layer(
+                    inputNorm: inputNorm, postNorm: postNorm,
+                    mixer: mixer, ffn: ffn, hidden: hidden))
         }
 
         let finalNorm = RMSNorm(
@@ -270,8 +279,9 @@ public struct Granite4Hybrid: Granite4Variant {
         tsMin: Float, tsMax: Float, residualMultiplier: Float,
         dtype: DType, device: Device
     ) throws -> Granite4MambaMixer {
-        let inProj = AnyLinear(Linear(
-            weight: try weights.tensor(named: "\(p).in_proj.weight")))
+        let inProj = AnyLinear(
+            Linear(
+                weight: try weights.tensor(named: "\(p).in_proj.weight")))
         // out_proj folds residual_multiplier — the layer-level residual
         // add stays a plain Ops.add.
         let outW = scaleTensorGMH(
@@ -282,8 +292,9 @@ public struct Granite4Hybrid: Granite4Variant {
         // conv1d.weight ships [conv_dim, 1, kernel]; the metaltile kernel
         // wants [kernel, conv_dim].
         let convWSrc = try weights.tensor(named: "\(p).conv1d.weight")
-        precondition(convWSrc.elementCount == convDim * convKernel,
-                     "Granite4: conv1d.weight count mismatch: \(convWSrc.shape)")
+        precondition(
+            convWSrc.elementCount == convDim * convKernel,
+            "Granite4: conv1d.weight count mismatch: \(convWSrc.shape)")
         let convW = transposeConv1dWeightGMH(
             src: convWSrc, kernel: convKernel, channels: convDim,
             dtype: dtype, device: device)
@@ -332,8 +343,9 @@ public struct Granite4Hybrid: Granite4Variant {
         device: Device
     ) throws -> MoELayer {
         // Router: hidden → numExperts logits.
-        let gate = AnyLinear(Linear(
-            weight: try weights.tensor(named: "\(p).block_sparse_moe.router.layer.weight")))
+        let gate = AnyLinear(
+            Linear(
+                weight: try weights.tensor(named: "\(p).block_sparse_moe.router.layer.weight")))
 
         // Per-expert SwiGLU. `input_linear.weight` ships stacked
         // [numExperts, 2*moeIntermediate, hidden] — slice expert e, then
@@ -343,12 +355,14 @@ public struct Granite4Hybrid: Granite4Variant {
             named: "\(p).block_sparse_moe.input_linear.weight")
         let outputLinear = try weights.tensor(
             named: "\(p).block_sparse_moe.output_linear.weight")
-        precondition(inputLinear.shape == [numExperts, 2 * moeIntermediate, hidden],
-                     "Granite4: block_sparse_moe.input_linear shape "
-                     + "\(inputLinear.shape) ≠ [\(numExperts), \(2 * moeIntermediate), \(hidden)]")
-        precondition(outputLinear.shape == [numExperts, hidden, moeIntermediate],
-                     "Granite4: block_sparse_moe.output_linear shape "
-                     + "\(outputLinear.shape) ≠ [\(numExperts), \(hidden), \(moeIntermediate)]")
+        precondition(
+            inputLinear.shape == [numExperts, 2 * moeIntermediate, hidden],
+            "Granite4: block_sparse_moe.input_linear shape "
+                + "\(inputLinear.shape) ≠ [\(numExperts), \(2 * moeIntermediate), \(hidden)]")
+        precondition(
+            outputLinear.shape == [numExperts, hidden, moeIntermediate],
+            "Granite4: block_sparse_moe.output_linear shape "
+                + "\(outputLinear.shape) ≠ [\(numExperts), \(hidden), \(moeIntermediate)]")
 
         var gateProj: [AnyLinear] = []
         var upProj: [AnyLinear] = []
@@ -356,21 +370,28 @@ public struct Granite4Hybrid: Granite4Variant {
         gateProj.reserveCapacity(numExperts)
         upProj.reserveCapacity(numExperts)
         downProj.reserveCapacity(numExperts)
-        for e in 0..<numExperts {
+        for e in 0 ..< numExperts {
             // [1, 2*moeIntermediate, hidden] → [2*moeIntermediate, hidden].
             let stacked = inputLinear.slicedRows(start: e, count: 1)
                 .reshaped(to: [2 * moeIntermediate, hidden])
-            gateProj.append(AnyLinear(Linear(
-                weight: stacked.slicedRows(start: 0, count: moeIntermediate))))
-            upProj.append(AnyLinear(Linear(
-                weight: stacked.slicedRows(start: moeIntermediate, count: moeIntermediate))))
+            gateProj.append(
+                AnyLinear(
+                    Linear(
+                        weight: stacked.slicedRows(start: 0, count: moeIntermediate))))
+            upProj.append(
+                AnyLinear(
+                    Linear(
+                        weight: stacked.slicedRows(start: moeIntermediate, count: moeIntermediate)))
+            )
             // down_proj folds residual_multiplier so the layer residual
             // add stays a plain Ops.add (the routed combine sums all the
             // pre-scaled expert outputs).
             let downRaw = outputLinear.slicedRows(start: e, count: 1)
                 .reshaped(to: [hidden, moeIntermediate])
-            downProj.append(AnyLinear(Linear(
-                weight: scaleTensorGMH(downRaw, by: residualMultiplier, device: device))))
+            downProj.append(
+                AnyLinear(
+                    Linear(
+                        weight: scaleTensorGMH(downRaw, by: residualMultiplier, device: device))))
         }
 
         // Shared expert — a plain SwiGLU. `input_linear.weight` ships
@@ -379,18 +400,24 @@ public struct Granite4Hybrid: Granite4Variant {
             named: "\(p).shared_mlp.input_linear.weight")
         let sharedOutput = try weights.tensor(
             named: "\(p).shared_mlp.output_linear.weight")
-        precondition(sharedInput.shape == [2 * sharedIntermediate, hidden],
-                     "Granite4: shared_mlp.input_linear shape "
-                     + "\(sharedInput.shape) ≠ [\(2 * sharedIntermediate), \(hidden)]")
-        precondition(sharedOutput.shape == [hidden, sharedIntermediate],
-                     "Granite4: shared_mlp.output_linear shape "
-                     + "\(sharedOutput.shape) ≠ [\(hidden), \(sharedIntermediate)]")
-        let sharedGate = AnyLinear(Linear(
-            weight: sharedInput.slicedRows(start: 0, count: sharedIntermediate)))
-        let sharedUp = AnyLinear(Linear(
-            weight: sharedInput.slicedRows(start: sharedIntermediate, count: sharedIntermediate)))
-        let sharedDown = AnyLinear(Linear(
-            weight: scaleTensorGMH(sharedOutput, by: residualMultiplier, device: device)))
+        precondition(
+            sharedInput.shape == [2 * sharedIntermediate, hidden],
+            "Granite4: shared_mlp.input_linear shape "
+                + "\(sharedInput.shape) ≠ [\(2 * sharedIntermediate), \(hidden)]")
+        precondition(
+            sharedOutput.shape == [hidden, sharedIntermediate],
+            "Granite4: shared_mlp.output_linear shape "
+                + "\(sharedOutput.shape) ≠ [\(hidden), \(sharedIntermediate)]")
+        let sharedGate = AnyLinear(
+            Linear(
+                weight: sharedInput.slicedRows(start: 0, count: sharedIntermediate)))
+        let sharedUp = AnyLinear(
+            Linear(
+                weight: sharedInput.slicedRows(start: sharedIntermediate, count: sharedIntermediate)
+            ))
+        let sharedDown = AnyLinear(
+            Linear(
+                weight: scaleTensorGMH(sharedOutput, by: residualMultiplier, device: device)))
 
         // Granite4 routing is top-K of the raw logits, then a
         // softmax over just those K (`.topKThenSoftmax`) — always
@@ -430,31 +457,42 @@ enum Granite4FFN {
 
 public final class Granite4MambaMixer: Module {
     let inProj, outProj: AnyLinear
-    let convW: Tensor        // [kernel, conv_dim]
-    let convB: Tensor        // [conv_dim]
-    let aEff: Tensor         // [n_heads]   = -exp(A_log)
-    let dtBias: Tensor       // [n_heads]
-    let dTiled: Tensor       // [d_inner]   D[h] tiled across head_dim
-    let mixerNorm: RMSNorm   // gated mixer RMSNorm weight [d_inner]
+    let convW: Tensor  // [kernel, conv_dim]
+    let convB: Tensor  // [conv_dim]
+    let aEff: Tensor  // [n_heads]   = -exp(A_log)
+    let dtBias: Tensor  // [n_heads]
+    let dTiled: Tensor  // [d_inner]   D[h] tiled across head_dim
+    let mixerNorm: RMSNorm  // gated mixer RMSNorm weight [d_inner]
     let dInner, convDim, nHeads, headDim, stateDim, nGroups, convKernel: Int
     let dtype: DType
     /// Heads sharing one B/C group.
     let headsPerGroup: Int
 
-    init(inProj: AnyLinear, outProj: AnyLinear,
-         convW: Tensor, convB: Tensor,
-         aEff: Tensor, dtBias: Tensor, dTiled: Tensor,
-         mixerNorm: RMSNorm,
-         dInner: Int, convDim: Int,
-         nHeads: Int, headDim: Int, stateDim: Int, nGroups: Int,
-         convKernel: Int, dtype: DType) {
-        self.inProj = inProj; self.outProj = outProj
-        self.convW = convW; self.convB = convB
-        self.aEff = aEff; self.dtBias = dtBias; self.dTiled = dTiled
+    init(
+        inProj: AnyLinear, outProj: AnyLinear,
+        convW: Tensor, convB: Tensor,
+        aEff: Tensor, dtBias: Tensor, dTiled: Tensor,
+        mixerNorm: RMSNorm,
+        dInner: Int, convDim: Int,
+        nHeads: Int, headDim: Int, stateDim: Int, nGroups: Int,
+        convKernel: Int, dtype: DType
+    ) {
+        self.inProj = inProj
+        self.outProj = outProj
+        self.convW = convW
+        self.convB = convB
+        self.aEff = aEff
+        self.dtBias = dtBias
+        self.dTiled = dTiled
         self.mixerNorm = mixerNorm
-        self.dInner = dInner; self.convDim = convDim
-        self.nHeads = nHeads; self.headDim = headDim; self.stateDim = stateDim
-        self.nGroups = nGroups; self.convKernel = convKernel; self.dtype = dtype
+        self.dInner = dInner
+        self.convDim = convDim
+        self.nHeads = nHeads
+        self.headDim = headDim
+        self.stateDim = stateDim
+        self.nGroups = nGroups
+        self.convKernel = convKernel
+        self.dtype = dtype
         self.headsPerGroup = nHeads / nGroups
     }
 
@@ -469,8 +507,10 @@ public final class Granite4MambaMixer: Module {
     /// Single-token mixer forward. `xNorm` is the already-normalized
     /// layer input. Returns the post-out_proj mixer contribution
     /// (residual add done by the enclosing layer), shape [hidden].
-    func forward(_ xNorm: Tensor, cache: Mamba2LayerCache,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forward(
+        _ xNorm: Tensor, cache: Mamba2LayerCache,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // in_proj → split into z (gate) / xBC / dt_raw.
         // in_proj output layout: [d_inner | conv_dim | n_heads].
         let proj = inProj(xNorm, on: cmd)
@@ -491,9 +531,11 @@ public final class Granite4MambaMixer: Module {
         let x = convAct.slicedRows(start: 0, count: dInner)
         let bAll = convAct.slicedRows(start: dInner, count: nGroups * stateDim)
             .reshaped(to: [nGroups, stateDim])
-        let cAll = convAct.slicedRows(start: dInner + nGroups * stateDim,
-                                      count: nGroups * stateDim)
-            .reshaped(to: [nGroups, stateDim])
+        let cAll = convAct.slicedRows(
+            start: dInner + nGroups * stateDim,
+            count: nGroups * stateDim
+        )
+        .reshaped(to: [nGroups, stateDim])
 
         // dt = softplus(dt_raw + dt_bias).
         let dtSum = Ops.add(dtRaw, dtBias, on: cmd)
@@ -506,8 +548,8 @@ public final class Granite4MambaMixer: Module {
         // checkpoint without a kernel change.
         let y = Tensor.empty(shape: [nHeads, headDim], dtype: dtype, device: device)
         let xHeads = x.reshaped(to: [nHeads, headDim])
-        let stateHeads = cache.ssm.h        // [nHeads, headDim, stateDim]
-        for g in 0..<nGroups {
+        let stateHeads = cache.ssm.h  // [nHeads, headDim, stateDim]
+        for g in 0 ..< nGroups {
             let h0 = g * headsPerGroup
             let xg = xHeads.slicedRows(start: h0, count: headsPerGroup)
                 .reshaped(to: [headsPerGroup * headDim])
@@ -553,10 +595,17 @@ public final class Granite4AttentionMixer: Module {
     let nHeads, nKVHeads, headDim: Int
     let scale: Float
 
-    init(qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
-         nHeads: Int, nKVHeads: Int, headDim: Int, scale: Float) {
-        self.qProj = qProj; self.kProj = kProj; self.vProj = vProj; self.oProj = oProj
-        self.nHeads = nHeads; self.nKVHeads = nKVHeads; self.headDim = headDim
+    init(
+        qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
+        nHeads: Int, nKVHeads: Int, headDim: Int, scale: Float
+    ) {
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
         self.scale = scale
     }
 
@@ -571,16 +620,19 @@ public final class Granite4AttentionMixer: Module {
 
     /// Single-token attention forward. Returns the post-o_proj
     /// contribution (residual add done by the enclosing layer).
-    func forward(_ xNorm: Tensor, cache kv: KVCache,
-                 cmd: MTLCommandBuffer, device _: Device) -> Tensor {
+    func forward(
+        _ xNorm: Tensor, cache kv: KVCache,
+        cmd: MTLCommandBuffer, device _: Device
+    ) -> Tensor {
         let q = qProj(xNorm, on: cmd)
         let k = kProj(xNorm, on: cmd)
         let v = vProj(xNorm, on: cmd)
 
         // No RoPE — Granite "-H" attention attends without positional
         // rotation. K/V go straight into the cache unrotated.
-        kv.appendOnGPU(kFlat: k.reshaped(to: [nKVHeads, headDim]),
-                       vFlat: v.reshaped(to: [nKVHeads, headDim]), on: cmd)
+        kv.appendOnGPU(
+            kFlat: k.reshaped(to: [nKVHeads, headDim]),
+            vFlat: v.reshaped(to: [nKVHeads, headDim]), on: cmd)
 
         let (cacheK, cacheV) = kv.prepareForAttention(on: cmd)
         let attnOut = Ops.sdpaDecode(
@@ -603,7 +655,9 @@ public final class Granite4DenseMLP: Module {
     let gateProj, upProj, downProj: AnyLinear
 
     init(gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear) {
-        self.gateProj = gateProj; self.upProj = upProj; self.downProj = downProj
+        self.gateProj = gateProj
+        self.upProj = upProj
+        self.downProj = downProj
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -647,12 +701,20 @@ public final class Granite4Layer: Module, DecoderLayer {
     /// after any layer for which this is true.
     public let commitsCommandBuffer: Bool
 
-    init(inputNorm: RMSNorm, postNorm: RMSNorm,
-         mixer: Granite4Mixer, ffn: Granite4FFN, hidden: Int) {
-        self.inputNorm = inputNorm; self.postNorm = postNorm
-        self.mixer = mixer; self.ffn = ffn; self.hidden = hidden
-        if case .moe = ffn { self.commitsCommandBuffer = true }
-        else { self.commitsCommandBuffer = false }
+    init(
+        inputNorm: RMSNorm, postNorm: RMSNorm,
+        mixer: Granite4Mixer, ffn: Granite4FFN, hidden: Int
+    ) {
+        self.inputNorm = inputNorm
+        self.postNorm = postNorm
+        self.mixer = mixer
+        self.ffn = ffn
+        self.hidden = hidden
+        if case .moe = ffn {
+            self.commitsCommandBuffer = true
+        } else {
+            self.commitsCommandBuffer = false
+        }
     }
 
     /// The Mamba 2 mixer cache slot is a `Mamba2LayerCache`; the
@@ -694,9 +756,11 @@ public final class Granite4Layer: Module, DecoderLayer {
     /// `cmd` (the router needs the gate logits on the CPU). The host
     /// model checks `commitsCommandBuffer` and refreshes `cmd`
     /// afterwards. See `Granite4Model.forward`.
-    public func decode(_ h: Tensor, position: Int,
-                       cache: any LayerCacheProtocol,
-                       cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func decode(
+        _ h: Tensor, position: Int,
+        cache: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // ── Mixer half — pre-norm + mixer + residual add ──────────────
         let xNorm = inputNorm(h, on: cmd)
         let mixerOut: Tensor
@@ -705,7 +769,7 @@ public final class Granite4Layer: Module, DecoderLayer {
             guard let mc = cache as? Mamba2LayerCache else {
                 fatalError(
                     "Granite4Layer: mamba layer expected "
-                    + "Mamba2LayerCache, got \(type(of: cache))")
+                        + "Mamba2LayerCache, got \(type(of: cache))")
             }
             mixerOut = m.forward(xNorm, cache: mc, cmd: cmd, device: device)
             mc.advance()
@@ -713,7 +777,7 @@ public final class Granite4Layer: Module, DecoderLayer {
             guard let kv = cache as? KVCache else {
                 fatalError(
                     "Granite4Layer: attention layer expected "
-                    + "KVCache, got \(type(of: cache))")
+                        + "KVCache, got \(type(of: cache))")
             }
             mixerOut = a.forward(xNorm, cache: kv, cmd: cmd, device: device)
         }
@@ -725,7 +789,7 @@ public final class Granite4Layer: Module, DecoderLayer {
         let postMix: Tensor
         let ffnNorm: Tensor
         if case .attention = mixer,
-           OpsValidation.validateAddRmsNorm(n: hidden) == nil
+            OpsValidation.validateAddRmsNorm(n: hidden) == nil
         {
             let fused = Ops.addAndRmsNorm(
                 h, mixerOut, weight: postNorm.weight, eps: postNorm.eps,
@@ -746,9 +810,10 @@ public final class Granite4Layer: Module, DecoderLayer {
             // own private buffer; it returns a fully-resident tensor.
             // The FFN includes the always-on shared expert. The host
             // model refreshes `cmd` after this layer (see the header).
-            let ffnOut = moe.decode(ffnNorm, position: position,
-                                    cache: StatelessLayerCache(),
-                                    cmd: cmd, device: device)
+            let ffnOut = moe.decode(
+                ffnNorm, position: position,
+                cache: StatelessLayerCache(),
+                cmd: cmd, device: device)
             // postMix is already resident (cmd was committed by the MoE
             // layer, which waited for completion). The add queues onto a
             // fresh private buffer here so the returned tensor is valid
@@ -801,23 +866,34 @@ public final class Granite4Model: LanguageModel {
     /// discipline regardless of whether any layer commits.
     public let hasMoE: Bool
 
-    init(embedTokens: AnyEmbedding, layers: [any DecoderLayer],
-         finalNorm: RMSNorm, lmHead: AnyLinear,
-         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         mambaNHeads: Int, mambaHeadDim: Int, stateDim: Int,
-         convDim: Int, convKernel: Int, nGroups: Int, dInner: Int,
-         vocab: Int, maxSeq: Int, logitsScaling: Float, dtype: DType) {
+    init(
+        embedTokens: AnyEmbedding, layers: [any DecoderLayer],
+        finalNorm: RMSNorm, lmHead: AnyLinear,
+        hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        mambaNHeads: Int, mambaHeadDim: Int, stateDim: Int,
+        convDim: Int, convKernel: Int, nGroups: Int, dInner: Int,
+        vocab: Int, maxSeq: Int, logitsScaling: Float, dtype: DType
+    ) {
         self.embedTokens = embedTokens
         self.layers = layers
         self.finalNorm = finalNorm
         self.lmHead = lmHead
-        self.hidden = hidden; self.nLayers = nLayers
-        self.nHeads = nHeads; self.nKVHeads = nKVHeads; self.headDim = headDim
-        self.mambaNHeads = mambaNHeads; self.mambaHeadDim = mambaHeadDim
-        self.stateDim = stateDim; self.convDim = convDim
-        self.convKernel = convKernel; self.nGroups = nGroups; self.dInner = dInner
-        self.vocab = vocab; self.maxSeq = maxSeq
-        self.logitsScaling = logitsScaling; self.dtype = dtype
+        self.hidden = hidden
+        self.nLayers = nLayers
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.mambaNHeads = mambaNHeads
+        self.mambaHeadDim = mambaHeadDim
+        self.stateDim = stateDim
+        self.convDim = convDim
+        self.convKernel = convKernel
+        self.nGroups = nGroups
+        self.dInner = dInner
+        self.vocab = vocab
+        self.maxSeq = maxSeq
+        self.logitsScaling = logitsScaling
+        self.dtype = dtype
         self.layerKinds = layers.map { layer in
             (layer as? Granite4Layer)?.kind ?? .mamba
         }
@@ -886,9 +962,11 @@ public final class Granite4Model: LanguageModel {
     /// reads it; MoE stacks (H-Tiny / H-Small) have `workCmd` committed +
     /// refreshed by each MoE layer. Either way the caller's single
     /// commit of `cmd` produces correct final logits.
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let tokenBuf = device.makeBuffer(length: 4)
         var tid = UInt32(tokenId)
         memcpy(tokenBuf.contents(), &tid, 4)
@@ -899,8 +977,9 @@ public final class Granite4Model: LanguageModel {
         var h = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
 
         for (i, layer) in layers.enumerated() {
-            h = layer.decode(h, position: position, cache: caches[i],
-                             cmd: workCmd, device: device)
+            h = layer.decode(
+                h, position: position, cache: caches[i],
+                cmd: workCmd, device: device)
             // If the layer committed `workCmd` (MoE FFN), swap in a
             // fresh buffer for the next layer.
             if let g = layer as? Granite4Layer, g.commitsCommandBuffer {
@@ -913,7 +992,8 @@ public final class Granite4Model: LanguageModel {
         // dense path, or an MoE stack ending on a dense layer) `workCmd`
         // still carries that layer's uncommitted work — commit it so `h`
         // is resident before the caller's `cmd` reads it.
-        let lastCommitted = (layers.last as? Granite4Layer)?
+        let lastCommitted =
+            (layers.last as? Granite4Layer)?
             .commitsCommandBuffer ?? false
         if !lastCommitted {
             workCmd.commit()
@@ -944,15 +1024,19 @@ public final class Granite4Model: LanguageModel {
     /// a per-attention-layer `decodeMulti` override will need to
     /// preserve that commit pattern across the chunk. Today this
     /// override is commit-count-batched only.
-    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                             caches: [any LayerCacheProtocol],
-                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(!tokenIds.isEmpty,
-                     "Granite4Model.forwardMulti: tokenIds must be non-empty")
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "Granite4Model.forwardMulti: tokenIds must be non-empty")
         var logits: Tensor!
         for (i, tok) in tokenIds.enumerated() {
-            logits = forward(tokenId: tok, position: position + i,
-                             caches: caches, on: cmd, device: device)
+            logits = forward(
+                tokenId: tok, position: position + i,
+                caches: caches, on: cmd, device: device)
         }
         return logits
     }
@@ -978,8 +1062,10 @@ private func readFloatsGMH(_ t: Tensor) -> [Float] {
 }
 
 /// Write a `[Float]` into a fresh tensor of the requested dtype.
-private func writeFloatsGMH(_ values: [Float], shape: [Int],
-                            dtype: DType, device: Device) -> Tensor {
+private func writeFloatsGMH(
+    _ values: [Float], shape: [Int],
+    dtype: DType, device: Device
+) -> Tensor {
     let t = Tensor.empty(shape: shape, dtype: dtype, device: device)
     switch dtype {
     case .f32:
@@ -1004,17 +1090,22 @@ private func scaleTensorGMH(_ t: Tensor, by m: Float, device: Device) -> Tensor 
 }
 
 /// A_eff = -exp(A_log), per head, in the activation dtype.
-private func computeAEffGMH(aLog: Tensor, nHeads: Int,
-                            dtype: DType, device: Device) -> Tensor {
+private func computeAEffGMH(
+    aLog: Tensor, nHeads: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     let floats = readFloatsGMH(aLog)
     precondition(floats.count == nHeads, "Granite4: A_log expected [n_heads]")
-    return writeFloatsGMH(floats.map { -Foundation.exp($0) },
-                          shape: [nHeads], dtype: dtype, device: device)
+    return writeFloatsGMH(
+        floats.map { -Foundation.exp($0) },
+        shape: [nHeads], dtype: dtype, device: device)
 }
 
 /// Cast a per-head / per-channel vector to the activation dtype.
-private func castVectorGMH(_ src: Tensor, count: Int,
-                           dtype: DType, device: Device) -> Tensor {
+private func castVectorGMH(
+    _ src: Tensor, count: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     if src.dtype == dtype { return src }
     let floats = readFloatsGMH(src)
     precondition(floats.count == count, "Granite4: vector size mismatch")
@@ -1022,27 +1113,31 @@ private func castVectorGMH(_ src: Tensor, count: Int,
 }
 
 /// Tile `D[h]` across `head_dim` channels → `[n_heads * head_dim]`.
-private func tileDGMH(d: Tensor, nHeads: Int, headDim: Int,
-                      dtype: DType, device: Device) -> Tensor {
+private func tileDGMH(
+    d: Tensor, nHeads: Int, headDim: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     let floats = readFloatsGMH(d)
     precondition(floats.count == nHeads, "Granite4: D expected [n_heads]")
     var tiled: [Float] = []
     tiled.reserveCapacity(nHeads * headDim)
-    for h in 0..<nHeads {
-        for _ in 0..<headDim { tiled.append(floats[h]) }
+    for h in 0 ..< nHeads {
+        for _ in 0 ..< headDim { tiled.append(floats[h]) }
     }
     return writeFloatsGMH(tiled, shape: [nHeads * headDim], dtype: dtype, device: device)
 }
 
 /// Transpose HF conv1d.weight `[C, 1, K]` → `[K, C]` for the metaltile
 /// conv kernel.
-private func transposeConv1dWeightGMH(src: Tensor, kernel K: Int, channels C: Int,
-                                      dtype: DType, device: Device) -> Tensor {
+private func transposeConv1dWeightGMH(
+    src: Tensor, kernel K: Int, channels C: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     let floats = readFloatsGMH(src)
     precondition(floats.count == K * C, "Granite4: conv1d.weight count mismatch")
     var dst = [Float](repeating: 0, count: K * C)
-    for c in 0..<C {
-        for k in 0..<K { dst[k * C + c] = floats[c * K + k] }
+    for c in 0 ..< C {
+        for k in 0 ..< K { dst[k * C + c] = floats[c * K + k] }
     }
     return writeFloatsGMH(dst, shape: [K, C], dtype: dtype, device: device)
 }

@@ -29,9 +29,10 @@
 // transformer forward against a fresh checkpoint family.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("MiniCPM5 Integration", .serialized)
 struct MiniCPM5IntegrationTests {

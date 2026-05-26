@@ -78,14 +78,19 @@ public final class GDNStateCache: LayerCacheProtocol, @unchecked Sendable {
     /// treat GDN layers as unlimited (mirrors `SSMStateCache`).
     public let maxSeq: Int = .max
 
-    public init(numValueHeads: Int, valueHeadDim: Int, keyHeadDim: Int,
-                device: Device = .shared) {
-        precondition(numValueHeads > 0,
-                     "GDNStateCache: numValueHeads must be positive")
-        precondition(valueHeadDim > 0,
-                     "GDNStateCache: valueHeadDim must be positive")
-        precondition(keyHeadDim > 0,
-                     "GDNStateCache: keyHeadDim must be positive")
+    public init(
+        numValueHeads: Int, valueHeadDim: Int, keyHeadDim: Int,
+        device: Device = .shared
+    ) {
+        precondition(
+            numValueHeads > 0,
+            "GDNStateCache: numValueHeads must be positive")
+        precondition(
+            valueHeadDim > 0,
+            "GDNStateCache: valueHeadDim must be positive")
+        precondition(
+            keyHeadDim > 0,
+            "GDNStateCache: keyHeadDim must be positive")
         self.numValueHeads = numValueHeads
         self.valueHeadDim = valueHeadDim
         self.keyHeadDim = keyHeadDim
@@ -126,7 +131,7 @@ public final class GDNStateCache: LayerCacheProtocol, @unchecked Sendable {
     }
 }
 
-public extension Array where Element == GDNStateCache {
+extension Array where Element == GDNStateCache {
     /// Sum of `bytesAllocated` across all per-layer GDN caches.
-    var totalBytesAllocated: Int { reduce(0) { $0 + $1.bytesAllocated } }
+    public var totalBytesAllocated: Int { reduce(0) { $0 + $1.bytesAllocated } }
 }

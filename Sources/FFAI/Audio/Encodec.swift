@@ -114,8 +114,10 @@ public struct EncodecConfig: Codable, Sendable {
         lastKernelSize = try c.decodeIfPresent(Int.self, forKey: .lastKernelSize) ?? 7
         trimRightRatio = try c.decodeIfPresent(Float.self, forKey: .trimRightRatio) ?? 1.0
         compress = try c.decodeIfPresent(Int.self, forKey: .compress) ?? 2
-        upsamplingRatios = try c.decodeIfPresent([Int].self, forKey: .upsamplingRatios) ?? [8, 5, 4, 2]
-        targetBandwidths = try c.decodeIfPresent([Float].self, forKey: .targetBandwidths)
+        upsamplingRatios =
+            try c.decodeIfPresent([Int].self, forKey: .upsamplingRatios) ?? [8, 5, 4, 2]
+        targetBandwidths =
+            try c.decodeIfPresent([Float].self, forKey: .targetBandwidths)
             ?? [1.5, 3.0, 6.0, 12.0, 24.0]
         samplingRate = try c.decodeIfPresent(Int.self, forKey: .samplingRate) ?? 24000
         chunkLengthS = try c.decodeIfPresent(Float.self, forKey: .chunkLengthS)
@@ -187,8 +189,9 @@ public final class Encodec: @unchecked Sendable {
         guard FileManager.default.fileExists(atPath: configURL.path) else {
             throw EncodecError.configNotFound(configURL.path)
         }
-        let config = try JSONDecoder().decode(EncodecConfig.self,
-                                              from: Data(contentsOf: configURL))
+        let config = try JSONDecoder().decode(
+            EncodecConfig.self,
+            from: Data(contentsOf: configURL))
         let bundle = try SafeTensorsBundle(directory: directory)
         return try Encodec(config: config, bundle: bundle)
     }
@@ -200,10 +203,12 @@ public final class Encodec: @unchecked Sendable {
                 "chunked EnCodec (chunk_length_s != nil) not yet supported")
         }
         let w = EncodecWeights(bundle: bundle)
-        self.encoder = try EncodecSEANet(weights: w, config: config,
-                                         prefix: "encoder", isDecoder: false)
-        self.decoder = try EncodecSEANet(weights: w, config: config,
-                                         prefix: "decoder", isDecoder: true)
+        self.encoder = try EncodecSEANet(
+            weights: w, config: config,
+            prefix: "encoder", isDecoder: false)
+        self.decoder = try EncodecSEANet(
+            weights: w, config: config,
+            prefix: "decoder", isDecoder: true)
         self.quantizer = try EncodecResidualVQ(weights: w, config: config)
     }
 
@@ -222,8 +227,10 @@ public final class Encodec: @unchecked Sendable {
     /// - bandwidth: target kbps; defaults to `targetBandwidths.first`.
     /// - Returns: `codes` — one `[Int32]` stream per active codebook —
     ///   and `scale` (nil unless `config.normalize`).
-    public func encode(waveform: Tensor,
-                       bandwidth: Float? = nil) throws -> [[Int32]] {
+    public func encode(
+        waveform: Tensor,
+        bandwidth: Float? = nil
+    ) throws -> [[Int32]] {
         try encodeWithScale(waveform: waveform, bandwidth: bandwidth).codes
     }
 
@@ -242,7 +249,7 @@ public final class Encodec: @unchecked Sendable {
             var ss: Float = 0
             for v in raw { ss += v * v }
             let rms = sqrtf(ss / Float(max(raw.count, 1))) + 1e-8
-            for i in 0..<raw.count { raw[i] /= rms }
+            for i in 0 ..< raw.count { raw[i] /= rms }
             scale = rms
         }
 
@@ -264,7 +271,7 @@ public final class Encodec: @unchecked Sendable {
         var shape = z.shape
         var out = decoder.forward(&data, shape: &shape)
         if let s = scale {
-            for i in 0..<out.data.count { out.data[i] *= s }
+            for i in 0 ..< out.data.count { out.data[i] *= s }
         }
         let t = Tensor.empty(shape: out.shape, dtype: .f32)
         t.copyIn(from: out.data)

@@ -29,9 +29,10 @@
 // ~/.cache/huggingface/hub/models--mlx-community--LFM2-VL-1.6B-4bit/.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("LFM2 Vision Integration", .serialized)
 struct LFM2VisionIntegrationTests {
@@ -48,8 +49,8 @@ struct LFM2VisionIntegrationTests {
         // available, and the text backbone is an LFM2 hybrid engine.
         #expect(m.vlModel != nil)
         #expect(m.availableCapabilities.contains(.imageIn))
-        #expect(m.engine.hidden == 2048)         // LFM2-1.6B text hidden
-        #expect(m.engine.supportsEmbeddingInput) // VLM splice prerequisite
+        #expect(m.engine.hidden == 2048)  // LFM2-1.6B text hidden
+        #expect(m.engine.supportsEmbeddingInput)  // VLM splice prerequisite
 
         let vlm = try #require(m.vlModel)
         // SigLIP2-256-patch-16 → 256 patches, pixel-unshuffle(2) → 64 tokens.
@@ -70,8 +71,10 @@ struct LFM2VisionIntegrationTests {
         let imageTokenId = vlm.imageTokenId
         let questionTokens = m.tokenizer.encode(
             text: "Describe this image.")
-        let promptTokens = Array(repeating: imageTokenId,
-                                 count: vlm.imageTokenCount) + questionTokens
+        let promptTokens =
+            Array(
+                repeating: imageTokenId,
+                count: vlm.imageTokenCount) + questionTokens
 
         // The shared golden-retriever fixture.
         let image = try VisionTestHelpers.dogImage()
@@ -82,8 +85,9 @@ struct LFM2VisionIntegrationTests {
 
         // Coherence first: at least 8 tokens generated, no degenerate
         // repeats — then the content check.
-        expectCoherentOutput(generated, minTokens: 8,
-                             label: "LFM2-VL image+text")
+        expectCoherentOutput(
+            generated, minTokens: 8,
+            label: "LFM2-VL image+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("LFM2-VL generated: \(text)")
         VisionTestHelpers.expectMentionsDog(text, label: "LFM2-VL")

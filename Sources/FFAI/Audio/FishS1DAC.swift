@@ -44,19 +44,24 @@ import Foundation
 /// FishS1 residual unit: Snake → WNConv(k=7, dilated) → Snake → WNConv(k=1),
 /// then add residual (centre-cropped to output length).
 /// Reuses `SNACResidualUnit` so the math path is shared.
-private func fishS1DACResidualUnit(weights w: FishS1DACWeights,
-                                    prefix: String,
-                                    dilation: Int) throws -> SNACResidualUnit {
+private func fishS1DACResidualUnit(
+    weights w: FishS1DACWeights,
+    prefix: String,
+    dilation: Int
+) throws -> SNACResidualUnit {
     // block.0 = Snake, block.1 = WNConv(k=7, dil), block.2 = Snake, block.3 = WNConv(k=1)
     let pad = ((7 - 1) * dilation) / 2
     let alpha1 = try w.floats("\(prefix).block.0.alpha")
-    let conv1  = try w.wnConv1d(prefix: "\(prefix).block.1",
-                                 stride: 1, padding: pad, dilation: dilation, groups: 1)
+    let conv1 = try w.wnConv1d(
+        prefix: "\(prefix).block.1",
+        stride: 1, padding: pad, dilation: dilation, groups: 1)
     let alpha2 = try w.floats("\(prefix).block.2.alpha")
-    let conv2  = try w.wnConv1d(prefix: "\(prefix).block.3",
-                                 stride: 1, padding: 0, dilation: 1, groups: 1)
-    return SNACResidualUnit(alpha1: alpha1, conv1: conv1,
-                            alpha2: alpha2, conv2: conv2)
+    let conv2 = try w.wnConv1d(
+        prefix: "\(prefix).block.3",
+        stride: 1, padding: 0, dilation: 1, groups: 1)
+    return SNACResidualUnit(
+        alpha1: alpha1, conv1: conv1,
+        alpha2: alpha2, conv2: conv2)
 }
 
 /// FishS1 decoder block: Snake → WNConvTranspose1d (upsample by `stride`) →
@@ -76,8 +81,9 @@ private struct FishS1DACDecoderBlock {
         // block.{2,3,4} = ResidualUnit(dilation 1,3,9)
         var res: [SNACResidualUnit] = []
         for (i, dil) in [1, 3, 9].enumerated() {
-            res.append(try fishS1DACResidualUnit(
-                weights: w, prefix: "\(prefix).block.\(i + 2)", dilation: dil))
+            res.append(
+                try fishS1DACResidualUnit(
+                    weights: w, prefix: "\(prefix).block.\(i + 2)", dilation: dil))
         }
         self.residuals = res
     }
@@ -196,8 +202,9 @@ public final class FishS1DAC: @unchecked Sendable {
         var decBlocks: [FishS1DACDecoderBlock] = []
         var decIdx = 1
         for stride in config.decoderRates {
-            decBlocks.append(try FishS1DACDecoderBlock(
-                weights: w, prefix: "decoder.model.\(decIdx)", stride: stride))
+            decBlocks.append(
+                try FishS1DACDecoderBlock(
+                    weights: w, prefix: "decoder.model.\(decIdx)", stride: stride))
             decIdx += 1
         }
         self.decoderBlocks = decBlocks
@@ -252,8 +259,10 @@ public final class FishS1DAC: @unchecked Sendable {
 
     // MARK: - Decoder forward
 
-    private func runDecoder(_ z: [Float],
-                            shape: [Int]) -> (data: [Float], shape: [Int]) {
+    private func runDecoder(
+        _ z: [Float],
+        shape: [Int]
+    ) -> (data: [Float], shape: [Int]) {
         // Input conv: [1, latentDim, T] → [1, decoderDim, T]
         var (d, s) = decoderConvIn(z, shape: shape)
 
@@ -267,4 +276,3 @@ public final class FishS1DAC: @unchecked Sendable {
         return (d, s)
     }
 }
-

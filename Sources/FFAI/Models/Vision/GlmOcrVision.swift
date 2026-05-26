@@ -60,43 +60,56 @@ public final class GlmOcrTextLayer: Module {
     let ropeTheta: Float
     let scale: Float
 
-    init(qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
-         gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
-         inputNorm: RMSNorm, postAttnNorm: RMSNorm,
-         postAttnLN2: RMSNorm, postMlpNorm: RMSNorm,
-         hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         intermediate: Int, ropeTheta: Float) {
-        self.qProj = qProj; self.kProj = kProj
-        self.vProj = vProj; self.oProj = oProj
-        self.gateProj = gateProj; self.upProj = upProj; self.downProj = downProj
-        self.inputNorm = inputNorm; self.postAttnNorm = postAttnNorm
-        self.postAttnLN2 = postAttnLN2; self.postMlpNorm = postMlpNorm
-        self.hidden = hidden; self.nHeads = nHeads; self.nKVHeads = nKVHeads
-        self.headDim = headDim; self.intermediate = intermediate
+    init(
+        qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
+        gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
+        inputNorm: RMSNorm, postAttnNorm: RMSNorm,
+        postAttnLN2: RMSNorm, postMlpNorm: RMSNorm,
+        hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        intermediate: Int, ropeTheta: Float
+    ) {
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
+        self.gateProj = gateProj
+        self.upProj = upProj
+        self.downProj = downProj
+        self.inputNorm = inputNorm
+        self.postAttnNorm = postAttnNorm
+        self.postAttnLN2 = postAttnLN2
+        self.postMlpNorm = postMlpNorm
+        self.hidden = hidden
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.intermediate = intermediate
         self.ropeTheta = ropeTheta
         self.scale = 1.0 / Float(Double(headDim).squareRoot())
     }
 
     public func parameters() -> [(String, Tensor)] {
         var out: [(String, Tensor)] = []
-        for (k, v) in qProj.parameters()      { out.append(("self_attn.q_proj.\(k)", v)) }
-        for (k, v) in kProj.parameters()      { out.append(("self_attn.k_proj.\(k)", v)) }
-        for (k, v) in vProj.parameters()      { out.append(("self_attn.v_proj.\(k)", v)) }
-        for (k, v) in oProj.parameters()      { out.append(("self_attn.o_proj.\(k)", v)) }
-        for (k, v) in gateProj.parameters()   { out.append(("mlp.gate_proj.\(k)", v)) }
-        for (k, v) in upProj.parameters()     { out.append(("mlp.up_proj.\(k)", v)) }
-        for (k, v) in downProj.parameters()   { out.append(("mlp.down_proj.\(k)", v)) }
-        for (k, v) in inputNorm.parameters()  { out.append(("input_layernorm.\(k)", v)) }
+        for (k, v) in qProj.parameters() { out.append(("self_attn.q_proj.\(k)", v)) }
+        for (k, v) in kProj.parameters() { out.append(("self_attn.k_proj.\(k)", v)) }
+        for (k, v) in vProj.parameters() { out.append(("self_attn.v_proj.\(k)", v)) }
+        for (k, v) in oProj.parameters() { out.append(("self_attn.o_proj.\(k)", v)) }
+        for (k, v) in gateProj.parameters() { out.append(("mlp.gate_proj.\(k)", v)) }
+        for (k, v) in upProj.parameters() { out.append(("mlp.up_proj.\(k)", v)) }
+        for (k, v) in downProj.parameters() { out.append(("mlp.down_proj.\(k)", v)) }
+        for (k, v) in inputNorm.parameters() { out.append(("input_layernorm.\(k)", v)) }
         for (k, v) in postAttnNorm.parameters() { out.append(("post_self_attn_layernorm.\(k)", v)) }
-        for (k, v) in postAttnLN2.parameters()  { out.append(("post_attention_layernorm.\(k)", v)) }
-        for (k, v) in postMlpNorm.parameters()  { out.append(("post_mlp_layernorm.\(k)", v)) }
+        for (k, v) in postAttnLN2.parameters() { out.append(("post_attention_layernorm.\(k)", v)) }
+        for (k, v) in postMlpNorm.parameters() { out.append(("post_mlp_layernorm.\(k)", v)) }
         return out
     }
 
     /// Single-token forward. Returns the updated residual stream `[hidden]`.
     /// All GPU work is queued on `cmd`; caller commits once at end-of-token.
-    func forward(_ h: Tensor, position: Int, cache: any KVCacheProtocol,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forward(
+        _ h: Tensor, position: Int, cache: any KVCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // ── Attention sub-block ──
         let xNorm = inputNorm(h, on: cmd)
         let q = qProj(xNorm, on: cmd)
@@ -104,16 +117,19 @@ public final class GlmOcrTextLayer: Module {
         let v = vProj(xNorm, on: cmd)
 
         // RoPE (scalar position approximation for M-RoPE — coherence-first)
-        let qRot = Ops.rope(q.reshaped(to: [nHeads, headDim]),
-                            position: position, headDim: headDim,
-                            thetaBase: ropeTheta, on: cmd)
-        let kRot = Ops.rope(k.reshaped(to: [nKVHeads, headDim]),
-                            position: position, headDim: headDim,
-                            thetaBase: ropeTheta, on: cmd)
+        let qRot = Ops.rope(
+            q.reshaped(to: [nHeads, headDim]),
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, on: cmd)
+        let kRot = Ops.rope(
+            k.reshaped(to: [nKVHeads, headDim]),
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, on: cmd)
 
-        cache.appendOnGPU(kFlat: kRot,
-                          vFlat: v.reshaped(to: [nKVHeads, headDim]),
-                          on: cmd)
+        cache.appendOnGPU(
+            kFlat: kRot,
+            vFlat: v.reshaped(to: [nKVHeads, headDim]),
+            on: cmd)
         let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
         let attnOut = Ops.sdpaDecode(
             q: qRot, k: cacheK, v: cacheV,
@@ -129,7 +145,7 @@ public final class GlmOcrTextLayer: Module {
         // Pre-MLP norm (applied to the updated residual stream).
         let mlpNorm = postAttnLN2(postAttn, on: cmd)
         let gate = gateProj(mlpNorm, on: cmd)
-        let up   = upProj(mlpNorm, on: cmd)
+        let up = upProj(mlpNorm, on: cmd)
         let siluGate = Ops.silu(gate, on: cmd)
         let mlpInner = Ops.mul(siluGate, up, on: cmd)
         let mlpRaw = downProj(mlpInner, on: cmd)
@@ -160,25 +176,32 @@ public final class GlmOcrModel: LanguageModel {
     public let imageTokenId: Int
     public let eosTokenId: Int
 
-    init(embedTokens: AnyEmbedding, layers: [GlmOcrTextLayer],
-         finalNorm: RMSNorm, lmHead: AnyLinear,
-         visionTower: GlmOcrVisionTower,
-         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         vocab: Int, maxSeq: Int, ropeTheta: Float, dtype: DType,
-         imageTokenId: Int, eosTokenId: Int,
-         kvCacheKind: KVCacheKind = .raw) {
-        self.embedTokens  = embedTokens
-        self.layers       = layers
-        self.finalNorm    = finalNorm
-        self.lmHead       = lmHead
-        self.visionTower  = visionTower
-        self.hidden       = hidden; self.nLayers  = nLayers
-        self.nHeads       = nHeads; self.nKVHeads = nKVHeads
-        self.headDim      = headDim; self.vocab    = vocab
-        self.maxSeq       = maxSeq;  self.ropeTheta = ropeTheta
-        self.dtype        = dtype;   self.kvCacheKind = kvCacheKind
+    init(
+        embedTokens: AnyEmbedding, layers: [GlmOcrTextLayer],
+        finalNorm: RMSNorm, lmHead: AnyLinear,
+        visionTower: GlmOcrVisionTower,
+        hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        vocab: Int, maxSeq: Int, ropeTheta: Float, dtype: DType,
+        imageTokenId: Int, eosTokenId: Int,
+        kvCacheKind: KVCacheKind = .raw
+    ) {
+        self.embedTokens = embedTokens
+        self.layers = layers
+        self.finalNorm = finalNorm
+        self.lmHead = lmHead
+        self.visionTower = visionTower
+        self.hidden = hidden
+        self.nLayers = nLayers
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.vocab = vocab
+        self.maxSeq = maxSeq
+        self.ropeTheta = ropeTheta
+        self.dtype = dtype
+        self.kvCacheKind = kvCacheKind
         self.imageTokenId = imageTokenId
-        self.eosTokenId   = eosTokenId
+        self.eosTokenId = eosTokenId
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -204,16 +227,19 @@ public final class GlmOcrModel: LanguageModel {
         let cap = maxSeq ?? self.maxSeq
         switch kvCacheKind {
         case .raw:
-            return (0..<nLayers).map { _ in
-                KVCache(nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
-                        dtype: dtype, device: device)
+            return (0 ..< nLayers).map { _ in
+                KVCache(
+                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    dtype: dtype, device: device)
             }
         case .affineQuantized(let bits, let groupSize):
-            let sharedK = Tensor.empty(shape: [nKVHeads, cap, headDim],
-                                       dtype: dtype, device: device)
-            let sharedV = Tensor.empty(shape: [nKVHeads, cap, headDim],
-                                       dtype: dtype, device: device)
-            return (0..<nLayers).map { _ in
+            let sharedK = Tensor.empty(
+                shape: [nKVHeads, cap, headDim],
+                dtype: dtype, device: device)
+            let sharedV = Tensor.empty(
+                shape: [nKVHeads, cap, headDim],
+                dtype: dtype, device: device)
+            return (0 ..< nLayers).map { _ in
                 AffineQuantizedKVCache(
                     nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
                     dtype: dtype, bits: bits, groupSize: groupSize,
@@ -222,9 +248,10 @@ public final class GlmOcrModel: LanguageModel {
             }
         case .auraQuantized:
             // GLM-OCR doesn't ship AURA conversions yet; fall back to raw.
-            return (0..<nLayers).map { _ in
-                KVCache(nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
-                        dtype: dtype, device: device)
+            return (0 ..< nLayers).map { _ in
+                KVCache(
+                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    dtype: dtype, device: device)
             }
         }
     }
@@ -234,15 +261,20 @@ public final class GlmOcrModel: LanguageModel {
     /// Command-buffer-aware variant — required by `LanguageModel`.
     /// The internal forward constructs its own command buffer; the
     /// caller-supplied `cmd` is currently ignored.
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        forward(tokenId: tokenId, position: position,
-                caches: caches, device: device)
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        forward(
+            tokenId: tokenId, position: position,
+            caches: caches, device: device)
     }
 
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol], device: Device) -> Tensor {
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol], device: Device
+    ) -> Tensor {
         let cmd = device.makeCommandBuffer()
 
         let tokenBuf = device.makeBuffer(length: 4)
@@ -252,13 +284,14 @@ public final class GlmOcrModel: LanguageModel {
         var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
 
         for (i, layer) in layers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              cmd: cmd, device: device)
+            h = layer.forward(
+                h, position: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                cmd: cmd, device: device)
         }
 
-        let normed  = finalNorm(h, on: cmd)
-        let logits  = lmHead(normed, on: cmd)
+        let normed = finalNorm(h, on: cmd)
+        let logits = lmHead(normed, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
         return logits
@@ -272,21 +305,27 @@ public final class GlmOcrModel: LanguageModel {
     /// postMlp → residual) plus dynamic-resolution ViT. A chunked
     /// path would adopt the Llama pattern with the extra norm steps;
     /// today this override is commit-count-batched only.
-    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                             caches: [any LayerCacheProtocol],
-                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(!tokenIds.isEmpty,
-                     "GlmOcrModel.forwardMulti: tokenIds must be non-empty")
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "GlmOcrModel.forwardMulti: tokenIds must be non-empty")
         var logits: Tensor!
         for (i, tok) in tokenIds.enumerated() {
-            logits = forward(tokenId: tok, position: position + i,
-                             caches: caches, on: cmd, device: device)
+            logits = forward(
+                tokenId: tok, position: position + i,
+                caches: caches, on: cmd, device: device)
         }
         return logits
     }
 
-    public func forwardSample(tokenId: Int, position: Int,
-                              caches: [any LayerCacheProtocol], device: Device) -> Int {
+    public func forwardSample(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol], device: Device
+    ) -> Int {
         let cmd = device.makeCommandBuffer()
 
         let tokenBuf = device.makeBuffer(length: 4)
@@ -296,16 +335,17 @@ public final class GlmOcrModel: LanguageModel {
         var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
 
         for (i, layer) in layers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              cmd: cmd, device: device)
+            h = layer.forward(
+                h, position: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                cmd: cmd, device: device)
         }
 
         let normed = finalNorm(h, on: cmd)
         let logits = lmHead(normed, on: cmd)
 
         let outBuf = device.makeBuffer(length: 4)
-        let outT   = Tensor(buffer: outBuf, offset: 0, shape: [1], dtype: .u32)
+        let outT = Tensor(buffer: outBuf, offset: 0, shape: [1], dtype: .u32)
         Ops.argmax(logits, into: outT, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
@@ -325,9 +365,10 @@ public final class GlmOcrModel: LanguageModel {
         var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
 
         for (i, layer) in layers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              cmd: cmd, device: device)
+            h = layer.forward(
+                h, position: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                cmd: cmd, device: device)
         }
 
         let normed = finalNorm(h, on: cmd)
@@ -344,10 +385,11 @@ public final class GlmOcrModel: LanguageModel {
         let uniformT = Tensor(buffer: uBuf, offset: 0, shape: [1], dtype: .f32)
 
         let outBuf = device.makeBuffer(length: 4)
-        let outT   = Tensor(buffer: outBuf, offset: 0, shape: [1], dtype: .u32)
-        Ops.softmaxCategoricalSample(logits, into: outT,
-                                     temperature: temperatureT,
-                                     uniform: uniformT, on: cmd)
+        let outT = Tensor(buffer: outBuf, offset: 0, shape: [1], dtype: .u32)
+        Ops.softmaxCategoricalSample(
+            logits, into: outT,
+            temperature: temperatureT,
+            uniform: uniformT, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
         return Int(outBuf.contents().bindMemory(to: UInt32.self, capacity: 1).pointee)
@@ -367,8 +409,10 @@ public final class GlmOcrModel: LanguageModel {
     /// Returns the generated token ids. The contract is coherence: the
     /// output should be non-degenerate text. Use `forwardSample` for
     /// text-only decode; this entry point is the vision path.
-    public func generate(image: GlmOcrRGBImage?, promptTokens: [Int],
-                         maxTokens: Int, device: Device = .shared) -> [Int] {
+    public func generate(
+        image: GlmOcrRGBImage?, promptTokens: [Int],
+        maxTokens: Int, device: Device = .shared
+    ) -> [Int] {
         let caches = makeLayerCaches(device: device)
 
         // Build the prefill embedding stream.
@@ -382,19 +426,21 @@ public final class GlmOcrModel: LanguageModel {
         // Keep the argmax of the final position as the first decode token.
         var nextToken = 0
         for (pos, embedding) in stream.enumerated() {
-            nextToken = forwardEmbedding(embedding, position: pos,
-                                         caches: caches, device: device)
+            nextToken = forwardEmbedding(
+                embedding, position: pos,
+                caches: caches, device: device)
         }
 
         // Decode: greedy token-id forward from the tail of the prefill.
         var generated: [Int] = []
         var pos = stream.count
-        for _ in 0..<maxTokens {
+        for _ in 0 ..< maxTokens {
             if nextToken == eosTokenId { break }
             generated.append(nextToken)
             let prior = nextToken
-            nextToken = forwardSample(tokenId: prior, position: pos,
-                                       caches: caches, device: device)
+            nextToken = forwardSample(
+                tokenId: prior, position: pos,
+                caches: caches, device: device)
             pos += 1
         }
         return generated
@@ -404,8 +450,10 @@ public final class GlmOcrModel: LanguageModel {
 
     /// Build `[Tensor]` prefill stream: vision embeddings spliced at
     /// `imageTokenId` positions, text embeddings elsewhere.
-    private func buildPrefillStream(image: GlmOcrRGBImage?, promptTokens: [Int],
-                                    device: Device) -> [Tensor] {
+    private func buildPrefillStream(
+        image: GlmOcrRGBImage?, promptTokens: [Int],
+        device: Device
+    ) -> [Tensor] {
         // Encode the image once and get `[numVisionTokens, hidden]`.
         let imageTokens: Tensor?
         if let img = image {
@@ -423,7 +471,8 @@ public final class GlmOcrModel: LanguageModel {
 
         for tok in promptTokens {
             if tok == imageTokenId, let vt = imageTokens,
-               visionCursor < imageTokenCount {
+                visionCursor < imageTokenCount
+            {
                 // Slice row `visionCursor` as a `[hidden]` view.
                 let row = Tensor(
                     buffer: vt.buffer,
@@ -455,20 +504,23 @@ public final class GlmOcrModel: LanguageModel {
     /// Forward a single `[hidden]` embedding (vision or text) through all
     /// decoder layers and return the argmax of the logits. Caller-managed
     /// caches grow with each call.
-    private func forwardEmbedding(_ h: Tensor, position: Int,
-                                   caches: [any LayerCacheProtocol],
-                                   device: Device) -> Int {
+    private func forwardEmbedding(
+        _ h: Tensor, position: Int,
+        caches: [any LayerCacheProtocol],
+        device: Device
+    ) -> Int {
         let cmd = device.makeCommandBuffer()
         var x = h
         for (i, layer) in layers.enumerated() {
-            x = layer.forward(x, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              cmd: cmd, device: device)
+            x = layer.forward(
+                x, position: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                cmd: cmd, device: device)
         }
         let normed = finalNorm(x, on: cmd)
         let logits = lmHead(normed, on: cmd)
         let outBuf = device.makeBuffer(length: 4)
-        let outT   = Tensor(buffer: outBuf, offset: 0, shape: [1], dtype: .u32)
+        let outT = Tensor(buffer: outBuf, offset: 0, shape: [1], dtype: .u32)
         Ops.argmax(logits, into: outT, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
@@ -488,21 +540,26 @@ public struct GlmOcrRGBImage {
     public let width: Int
 
     public init(data: [Float], height: Int, width: Int) {
-        precondition(data.count == height * width * 3,
-                     "GlmOcrRGBImage: data.count \(data.count) ≠ \(height * width * 3)")
+        precondition(
+            data.count == height * width * 3,
+            "GlmOcrRGBImage: data.count \(data.count) ≠ \(height * width * 3)")
         self.data = data
         self.height = height
         self.width = width
     }
 
     /// Convenience: solid-colour image for testing.
-    public static func solid(width: Int, height: Int,
-                             r: Float, g: Float, b: Float) -> GlmOcrRGBImage {
+    public static func solid(
+        width: Int, height: Int,
+        r: Float, g: Float, b: Float
+    ) -> GlmOcrRGBImage {
         let n = height * width * 3
         var data = [Float](repeating: 0, count: n)
         var i = 0
         while i < n {
-            data[i] = r; data[i+1] = g; data[i+2] = b
+            data[i] = r
+            data[i + 1] = g
+            data[i + 2] = b
             i += 3
         }
         return GlmOcrRGBImage(data: data, height: height, width: width)
@@ -512,9 +569,9 @@ public struct GlmOcrRGBImage {
 /// GLM-OCR vision tower configuration, decoded from `vision_config`.
 public struct GlmOcrVisionConfig {
     public let depth: Int
-    public let hidden: Int             // ViT hidden dim
-    public let intermediate: Int       // MLP intermediate dim
-    public let outHidden: Int          // after downsample Conv2d
+    public let hidden: Int  // ViT hidden dim
+    public let intermediate: Int  // MLP intermediate dim
+    public let outHidden: Int  // after downsample Conv2d
     public let numHeads: Int
     public let patchSize: Int
     public let spatialMergeSize: Int
@@ -528,25 +585,25 @@ public struct GlmOcrVisionConfig {
     public var mergeUnit: Int { spatialMergeSize * spatialMergeSize }
 
     static func decode(_ c: ModelConfig) throws -> GlmOcrVisionConfig {
-        guard let depth   = c.int("depth"),
-              let hidden  = c.int("hidden_size"),
-              let numHeads = c.int("num_heads"),
-              let patch   = c.int("patch_size"),
-              let merge   = c.int("spatial_merge_size")
+        guard let depth = c.int("depth"),
+            let hidden = c.int("hidden_size"),
+            let numHeads = c.int("num_heads"),
+            let patch = c.int("patch_size"),
+            let merge = c.int("spatial_merge_size")
         else {
             throw GlmOcrError.missingConfig
         }
         return GlmOcrVisionConfig(
-            depth:              depth,
-            hidden:             hidden,
-            intermediate:       c.int("intermediate_size") ?? hidden * 4,
-            outHidden:          c.int("out_hidden_size")   ?? hidden,
-            numHeads:           numHeads,
-            patchSize:          patch,
-            spatialMergeSize:   merge,
-            temporalPatchSize:  c.int("temporal_patch_size") ?? 2,
-            inChannels:         c.int("in_channels") ?? 3,
-            rmsNormEps:         Float(c.float("rms_norm_eps") ?? 1e-5))
+            depth: depth,
+            hidden: hidden,
+            intermediate: c.int("intermediate_size") ?? hidden * 4,
+            outHidden: c.int("out_hidden_size") ?? hidden,
+            numHeads: numHeads,
+            patchSize: patch,
+            spatialMergeSize: merge,
+            temporalPatchSize: c.int("temporal_patch_size") ?? 2,
+            inChannels: c.int("in_channels") ?? 3,
+            rmsNormEps: Float(c.float("rms_norm_eps") ?? 1e-5))
     }
 }
 
@@ -564,40 +621,42 @@ public final class GlmOcrVisionTower: @unchecked Sendable {
     let downsampleWeight: [Float]
     let downsampleBias: [Float]
     /// Merger weights: proj linear, post-projection LayerNorm, gate/up/down SwiGLU.
-    let mergerProj: [Float]         // [outHidden, outHidden]
-    let mergerNormWeight: [Float]   // [outHidden]
-    let mergerNormBias: [Float]?    // [outHidden]
-    let mergerGate: [Float]         // [contextDim, outHidden]
-    let mergerUp:   [Float]         // [contextDim, outHidden]
-    let mergerDown: [Float]         // [outHidden, contextDim]
-    let contextDim: Int             // = outHidden * inChannels
+    let mergerProj: [Float]  // [outHidden, outHidden]
+    let mergerNormWeight: [Float]  // [outHidden]
+    let mergerNormBias: [Float]?  // [outHidden]
+    let mergerGate: [Float]  // [contextDim, outHidden]
+    let mergerUp: [Float]  // [contextDim, outHidden]
+    let mergerDown: [Float]  // [outHidden, contextDim]
+    let contextDim: Int  // = outHidden * inChannels
     let textHidden: Int
     let dtype: DType
 
-    init(cfg: GlmOcrVisionConfig,
-         patchEmbedWeight: [Float], patchEmbedBias: [Float]?,
-         blocks: [GlmOcrVisionBlock],
-         postLayerNorm: GlmOcrVisionRMSNorm,
-         downsampleWeight: [Float], downsampleBias: [Float],
-         mergerProj: [Float], mergerNormWeight: [Float], mergerNormBias: [Float]?,
-         mergerGate: [Float], mergerUp: [Float], mergerDown: [Float],
-         contextDim: Int, textHidden: Int, dtype: DType) {
+    init(
+        cfg: GlmOcrVisionConfig,
+        patchEmbedWeight: [Float], patchEmbedBias: [Float]?,
+        blocks: [GlmOcrVisionBlock],
+        postLayerNorm: GlmOcrVisionRMSNorm,
+        downsampleWeight: [Float], downsampleBias: [Float],
+        mergerProj: [Float], mergerNormWeight: [Float], mergerNormBias: [Float]?,
+        mergerGate: [Float], mergerUp: [Float], mergerDown: [Float],
+        contextDim: Int, textHidden: Int, dtype: DType
+    ) {
         self.cfg = cfg
         self.patchEmbedWeight = patchEmbedWeight
-        self.patchEmbedBias   = patchEmbedBias
-        self.blocks           = blocks
-        self.postLayerNorm    = postLayerNorm
+        self.patchEmbedBias = patchEmbedBias
+        self.blocks = blocks
+        self.postLayerNorm = postLayerNorm
         self.downsampleWeight = downsampleWeight
-        self.downsampleBias   = downsampleBias
-        self.mergerProj       = mergerProj
+        self.downsampleBias = downsampleBias
+        self.mergerProj = mergerProj
         self.mergerNormWeight = mergerNormWeight
-        self.mergerNormBias   = mergerNormBias
-        self.mergerGate       = mergerGate
-        self.mergerUp         = mergerUp
-        self.mergerDown       = mergerDown
-        self.contextDim       = contextDim
-        self.textHidden       = textHidden
-        self.dtype            = dtype
+        self.mergerNormBias = mergerNormBias
+        self.mergerGate = mergerGate
+        self.mergerUp = mergerUp
+        self.mergerDown = mergerDown
+        self.contextDim = contextDim
+        self.textHidden = textHidden
+        self.dtype = dtype
     }
 
     // MARK: - Load
@@ -621,7 +680,7 @@ public final class GlmOcrVisionTower: @unchecked Sendable {
         // ── Vision blocks ──
         var blocks: [GlmOcrVisionBlock] = []
         blocks.reserveCapacity(cfg.depth)
-        for i in 0..<cfg.depth {
+        for i in 0 ..< cfg.depth {
             let p = "blocks.\(i)"
             func rn(_ key: String) throws -> GlmOcrVisionRMSNorm {
                 let w = try weights.tensor(named: "\(p).\(key)").toFloatArray()
@@ -630,43 +689,45 @@ public final class GlmOcrVisionTower: @unchecked Sendable {
             func fl(_ key: String) throws -> [Float] {
                 try weights.tensor(named: "\(p).\(key)").toFloatArray()
             }
-            blocks.append(GlmOcrVisionBlock(
-                norm1:  try rn("norm1.weight"),
-                norm2:  try rn("norm2.weight"),
-                qkvWeight: try fl("attn.qkv.weight"),
-                qkvBias:   try fl("attn.qkv.bias"),
-                projWeight: try fl("attn.proj.weight"),
-                projBias:   try fl("attn.proj.bias"),
-                qNormWeight: try fl("attn.q_norm.weight"),
-                kNormWeight: try fl("attn.k_norm.weight"),
-                gateWeight: try fl("mlp.gate_proj.weight"),
-                gateBias:   try fl("mlp.gate_proj.bias"),
-                upWeight:   try fl("mlp.up_proj.weight"),
-                upBias:     try fl("mlp.up_proj.bias"),
-                downWeight: try fl("mlp.down_proj.weight"),
-                downBias:   try fl("mlp.down_proj.bias"),
-                cfg: cfg))
+            blocks.append(
+                GlmOcrVisionBlock(
+                    norm1: try rn("norm1.weight"),
+                    norm2: try rn("norm2.weight"),
+                    qkvWeight: try fl("attn.qkv.weight"),
+                    qkvBias: try fl("attn.qkv.bias"),
+                    projWeight: try fl("attn.proj.weight"),
+                    projBias: try fl("attn.proj.bias"),
+                    qNormWeight: try fl("attn.q_norm.weight"),
+                    kNormWeight: try fl("attn.k_norm.weight"),
+                    gateWeight: try fl("mlp.gate_proj.weight"),
+                    gateBias: try fl("mlp.gate_proj.bias"),
+                    upWeight: try fl("mlp.up_proj.weight"),
+                    upBias: try fl("mlp.up_proj.bias"),
+                    downWeight: try fl("mlp.down_proj.weight"),
+                    downBias: try fl("mlp.down_proj.bias"),
+                    cfg: cfg))
         }
 
         // ── Post-layer norm ──
         let postLNW = try weights.tensor(named: "post_layernorm.weight").toFloatArray()
-        let postLN  = GlmOcrVisionRMSNorm(weight: postLNW, eps: cfg.rmsNormEps)
+        let postLN = GlmOcrVisionRMSNorm(weight: postLNW, eps: cfg.rmsNormEps)
 
         // ── Downsample Conv2d ──
         // Stored as `[outHidden, kH, kW, inCh·tP]` MLX OHWI or
         // `[outHidden, inCh·tP, kH, kW]` PyTorch OIHW.
         // We flatten to `[outHidden, mergeUnit·hidden]`.
-        let dsRaw    = try weights.tensor(named: "downsample.weight")
-        let dsBias   = try weights.tensor(named: "downsample.bias").toFloatArray()
+        let dsRaw = try weights.tensor(named: "downsample.weight")
+        let dsBias = try weights.tensor(named: "downsample.bias").toFloatArray()
         let dsWeight = flattenDownsampleWeight(dsRaw, cfg: cfg)
 
         // ── Merger ──
         let mergerProj = try weights.tensor(named: "merger.proj.weight").toFloatArray()
-        let mergerNormW = try weights.tensor(named: "merger.post_projection_norm.weight").toFloatArray()
+        let mergerNormW = try weights.tensor(named: "merger.post_projection_norm.weight")
+            .toFloatArray()
         let mergerNormB = (try? weights.tensor(named: "merger.post_projection_norm.bias"))?
             .toFloatArray()
         let mergerGate = try weights.tensor(named: "merger.gate_proj.weight").toFloatArray()
-        let mergerUp   = try weights.tensor(named: "merger.up_proj.weight").toFloatArray()
+        let mergerUp = try weights.tensor(named: "merger.up_proj.weight").toFloatArray()
         let mergerDown = try weights.tensor(named: "merger.down_proj.weight").toFloatArray()
         let contextDim = cfg.outHidden * cfg.inChannels
 
@@ -686,16 +747,16 @@ public final class GlmOcrVisionTower: @unchecked Sendable {
     /// Encode a `GlmOcrRGBImage` through the vision tower.
     /// Returns `[mergedTokenCount, textHidden]` as a GPU `Tensor` in `dtype`.
     func encode(image: GlmOcrRGBImage, dtype: DType, device: Device) -> Tensor {
-        let p      = cfg.patchSize
-        let tP     = cfg.temporalPatchSize
-        let inCh   = cfg.inChannels
+        let p = cfg.patchSize
+        let tP = cfg.temporalPatchSize
+        let inCh = cfg.inChannels
         let hidden = cfg.hidden
-        let merge  = cfg.spatialMergeSize
+        let merge = cfg.spatialMergeSize
 
         // ── Patch grid ──
         // Round image dimensions down to nearest multiple of patchSize.
         let gridH = image.height / p
-        let gridW = image.width  / p
+        let gridW = image.width / p
         let nPatches = gridH * gridW
 
         // ── Patch embed: unfold + GEMM ──
@@ -703,16 +764,18 @@ public final class GlmOcrVisionTower: @unchecked Sendable {
         // we tile the temporal dimension by repeating the frame.
         let patchDim = tP * inCh * p * p
         var patches = [Float](repeating: 0, count: nPatches * patchDim)
-        unfoldPatches(image: image, patches: &patches,
-                      gridH: gridH, gridW: gridW,
-                      patchSize: p, temporalPatch: tP)
+        unfoldPatches(
+            image: image, patches: &patches,
+            gridH: gridH, gridW: gridW,
+            patchSize: p, temporalPatch: tP)
 
         // GEMM: [nPatches, patchDim] × [hidden, patchDim]ᵀ → [nPatches, hidden]
-        var h = cpuGemm(a: patches, b: patchEmbedWeight,
-                        m: nPatches, n: hidden, k: patchDim)
+        var h = cpuGemm(
+            a: patches, b: patchEmbedWeight,
+            m: nPatches, n: hidden, k: patchDim)
         if let bias = patchEmbedBias {
-            for row in 0..<nPatches {
-                for col in 0..<hidden {
+            for row in 0 ..< nPatches {
+                for col in 0 ..< hidden {
                     h[row * hidden + col] += bias[col]
                 }
             }
@@ -735,14 +798,15 @@ public final class GlmOcrVisionTower: @unchecked Sendable {
         let mergedTokens = mergedH * mergedW
         let mergeUnit = merge * merge
         var grouped = [Float](repeating: 0, count: mergedTokens * mergeUnit * hidden)
-        for mh in 0..<mergedH {
-            for mw in 0..<mergedW {
-                for my in 0..<merge {
-                    for mx in 0..<merge {
+        for mh in 0 ..< mergedH {
+            for mw in 0 ..< mergedW {
+                for my in 0 ..< merge {
+                    for mx in 0 ..< merge {
                         let srcRow = (mh * merge + my) * gridW + (mw * merge + mx)
-                        let dstBase = (mh * mergedW + mw) * (mergeUnit * hidden)
+                        let dstBase =
+                            (mh * mergedW + mw) * (mergeUnit * hidden)
                             + (my * merge + mx) * hidden
-                        for c in 0..<hidden {
+                        for c in 0 ..< hidden {
                             grouped[dstBase + c] = h[srcRow * hidden + c]
                         }
                     }
@@ -751,10 +815,11 @@ public final class GlmOcrVisionTower: @unchecked Sendable {
         }
         // Downsample GEMM: [mergedTokens, mergeUnit·hidden] × [outHidden, mergeUnit·hidden]ᵀ
         let outHidden = cfg.outHidden
-        var ds = cpuGemm(a: grouped, b: downsampleWeight,
-                         m: mergedTokens, n: outHidden, k: mergeUnit * hidden)
-        for r in 0..<mergedTokens {
-            for c in 0..<outHidden {
+        var ds = cpuGemm(
+            a: grouped, b: downsampleWeight,
+            m: mergedTokens, n: outHidden, k: mergeUnit * hidden)
+        for r in 0 ..< mergedTokens {
+            for c in 0 ..< outHidden {
                 ds[r * outHidden + c] += downsampleBias[c]
             }
         }
@@ -762,29 +827,35 @@ public final class GlmOcrVisionTower: @unchecked Sendable {
         // ── Merger ──
         // proj linear, GELU + post-projection LayerNorm, gate-up-down SwiGLU.
         // proj: [mergedTokens, outHidden] × [outHidden, outHidden]ᵀ
-        var proj = cpuGemm(a: ds, b: mergerProj,
-                           m: mergedTokens, n: outHidden, k: outHidden)
+        var proj = cpuGemm(
+            a: ds, b: mergerProj,
+            m: mergedTokens, n: outHidden, k: outHidden)
         // GELU activation then LayerNorm.
         cpuGeluInPlace(&proj)
-        cpuLayerNorm(&proj, nRows: mergedTokens, rowSize: outHidden,
-                     weight: mergerNormWeight, bias: mergerNormBias)
+        cpuLayerNorm(
+            &proj, nRows: mergedTokens, rowSize: outHidden,
+            weight: mergerNormWeight, bias: mergerNormBias)
         // SwiGLU MLP: gate [mergedTokens, outHidden] → [mergedTokens, contextDim]
-        let gate = cpuGemm(a: proj, b: mergerGate,
-                           m: mergedTokens, n: contextDim, k: outHidden)
-        let up   = cpuGemm(a: proj, b: mergerUp,
-                           m: mergedTokens, n: contextDim, k: outHidden)
+        let gate = cpuGemm(
+            a: proj, b: mergerGate,
+            m: mergedTokens, n: contextDim, k: outHidden)
+        let up = cpuGemm(
+            a: proj, b: mergerUp,
+            m: mergedTokens, n: contextDim, k: outHidden)
         var gateUp = [Float](repeating: 0, count: mergedTokens * contextDim)
-        for i in 0..<gateUp.count {
+        for i in 0 ..< gateUp.count {
             let g = gate[i]
-            gateUp[i] = (g / (1 + exp(-g))) * up[i]   // SiLU(gate) * up
+            gateUp[i] = (g / (1 + exp(-g))) * up[i]  // SiLU(gate) * up
         }
         // down projection: [mergedTokens, contextDim] × [textHidden, contextDim]ᵀ
-        let out = cpuGemm(a: gateUp, b: mergerDown,
-                          m: mergedTokens, n: textHidden, k: contextDim)
+        let out = cpuGemm(
+            a: gateUp, b: mergerDown,
+            m: mergedTokens, n: textHidden, k: contextDim)
 
         // Copy into a GPU Tensor in the model's dtype.
-        return makeDTypeTensor(from: out, shape: [mergedTokens, textHidden],
-                               dtype: dtype, device: device)
+        return makeDTypeTensor(
+            from: out, shape: [mergedTokens, textHidden],
+            dtype: dtype, device: device)
     }
 
     // MARK: - Static helpers
@@ -795,9 +866,9 @@ public final class GlmOcrVisionTower: @unchecked Sendable {
     static func flattenPatchEmbedWeight(_ w: Tensor, cfg: GlmOcrVisionConfig) -> [Float] {
         let src = w.toFloatArray()
         let hid = cfg.hidden
-        let tP  = cfg.temporalPatchSize
-        let p   = cfg.patchSize
-        let ch  = cfg.inChannels
+        let tP = cfg.temporalPatchSize
+        let p = cfg.patchSize
+        let ch = cfg.inChannels
         let patchDim = tP * ch * p * p
         var dst = [Float](repeating: 0, count: hid * patchDim)
 
@@ -805,11 +876,11 @@ public final class GlmOcrVisionTower: @unchecked Sendable {
         let mlxLayout = (w.shape.count == 5 && w.shape[4] <= 4)
         if mlxLayout {
             // src: [hid, tP, pY, pX, inCh]
-            for o in 0..<hid {
-                for t in 0..<tP {
-                    for py in 0..<p {
-                        for px in 0..<p {
-                            for c in 0..<ch {
+            for o in 0 ..< hid {
+                for t in 0 ..< tP {
+                    for py in 0 ..< p {
+                        for px in 0 ..< p {
+                            for c in 0 ..< ch {
                                 let si = ((((o * tP + t) * p + py) * p + px) * ch + c)
                                 let col = (((t * ch + c) * p + py) * p + px)
                                 dst[o * patchDim + col] = src[si]
@@ -820,11 +891,11 @@ public final class GlmOcrVisionTower: @unchecked Sendable {
             }
         } else {
             // src: [hid, inCh, tP, pY, pX]
-            for o in 0..<hid {
-                for c in 0..<ch {
-                    for t in 0..<tP {
-                        for py in 0..<p {
-                            for px in 0..<p {
+            for o in 0 ..< hid {
+                for c in 0 ..< ch {
+                    for t in 0 ..< tP {
+                        for py in 0 ..< p {
+                            for px in 0 ..< p {
                                 let si = ((((o * ch + c) * tP + t) * p + py) * p + px)
                                 let col = (((t * ch + c) * p + py) * p + px)
                                 dst[o * patchDim + col] = src[si]
@@ -843,17 +914,17 @@ public final class GlmOcrVisionTower: @unchecked Sendable {
     static func flattenDownsampleWeight(_ w: Tensor, cfg: GlmOcrVisionConfig) -> [Float] {
         let src = w.toFloatArray()
         let outH = cfg.outHidden
-        let k    = cfg.spatialMergeSize
+        let k = cfg.spatialMergeSize
         let inCh = cfg.hidden  // the merger takes vision hidden dim as input channels
-        let kk   = k * k
-        var dst  = [Float](repeating: 0, count: outH * kk * inCh)
+        let kk = k * k
+        var dst = [Float](repeating: 0, count: outH * kk * inCh)
         let mlxLayout = (w.shape.count == 4 && w.shape[3] == inCh)
         if mlxLayout {
             // src: [outH, kH, kW, inCh]
-            for o in 0..<outH {
-                for ky in 0..<k {
-                    for kx in 0..<k {
-                        for c in 0..<inCh {
+            for o in 0 ..< outH {
+                for ky in 0 ..< k {
+                    for kx in 0 ..< k {
+                        for c in 0 ..< inCh {
                             let si = (((o * k + ky) * k + kx) * inCh + c)
                             let col = (ky * k + kx) * inCh + c
                             dst[o * (kk * inCh) + col] = src[si]
@@ -863,10 +934,10 @@ public final class GlmOcrVisionTower: @unchecked Sendable {
             }
         } else {
             // src: [outH, inCh, kH, kW]
-            for o in 0..<outH {
-                for c in 0..<inCh {
-                    for ky in 0..<k {
-                        for kx in 0..<k {
+            for o in 0 ..< outH {
+                for c in 0 ..< inCh {
+                    for ky in 0 ..< k {
+                        for kx in 0 ..< k {
                             let si = (((o * inCh + c) * k + ky) * k + kx)
                             let col = (ky * k + kx) * inCh + c
                             dst[o * (kk * inCh) + col] = src[si]
@@ -891,45 +962,48 @@ public final class GlmOcrVisionTower: @unchecked Sendable {
 final class GlmOcrVisionBlock {
     let norm1: GlmOcrVisionRMSNorm
     let norm2: GlmOcrVisionRMSNorm
-    let qkvWeight: Tensor   // [3·hidden, hidden] f32 GPU
-    let qkvBias:   Tensor   // [3·hidden] f32 GPU
+    let qkvWeight: Tensor  // [3·hidden, hidden] f32 GPU
+    let qkvBias: Tensor  // [3·hidden] f32 GPU
     let projWeight: Tensor  // [hidden, hidden] f32 GPU
-    let projBias:   Tensor  // [hidden] f32 GPU
-    let qNormWeight: [Float] // [headDim] (CPU — applied per token slice)
-    let kNormWeight: [Float] // [headDim] (CPU)
+    let projBias: Tensor  // [hidden] f32 GPU
+    let qNormWeight: [Float]  // [headDim] (CPU — applied per token slice)
+    let kNormWeight: [Float]  // [headDim] (CPU)
     let gateWeight: Tensor  // [intermediate, hidden] f32 GPU
-    let gateBias:   Tensor  // [intermediate] f32 GPU
-    let upWeight:   Tensor  // [intermediate, hidden] f32 GPU
-    let upBias:     Tensor  // [intermediate] f32 GPU
+    let gateBias: Tensor  // [intermediate] f32 GPU
+    let upWeight: Tensor  // [intermediate, hidden] f32 GPU
+    let upBias: Tensor  // [intermediate] f32 GPU
     let downWeight: Tensor  // [hidden, intermediate] f32 GPU
-    let downBias:   Tensor  // [hidden] f32 GPU
+    let downBias: Tensor  // [hidden] f32 GPU
     let cfg: GlmOcrVisionConfig
 
-    init(norm1: GlmOcrVisionRMSNorm, norm2: GlmOcrVisionRMSNorm,
-         qkvWeight: [Float], qkvBias: [Float],
-         projWeight: [Float], projBias: [Float],
-         qNormWeight: [Float], kNormWeight: [Float],
-         gateWeight: [Float], gateBias: [Float],
-         upWeight: [Float], upBias: [Float],
-         downWeight: [Float], downBias: [Float],
-         cfg: GlmOcrVisionConfig) {
-        self.norm1 = norm1; self.norm2 = norm2
+    init(
+        norm1: GlmOcrVisionRMSNorm, norm2: GlmOcrVisionRMSNorm,
+        qkvWeight: [Float], qkvBias: [Float],
+        projWeight: [Float], projBias: [Float],
+        qNormWeight: [Float], kNormWeight: [Float],
+        gateWeight: [Float], gateBias: [Float],
+        upWeight: [Float], upBias: [Float],
+        downWeight: [Float], downBias: [Float],
+        cfg: GlmOcrVisionConfig
+    ) {
+        self.norm1 = norm1
+        self.norm2 = norm2
         let hidden = cfg.hidden
-        let inter  = cfg.intermediate
+        let inter = cfg.intermediate
         // Re-host every weight/bias as an f32 GPU Tensor so `Ops.gemm`
         // / `Ops.add` can consume them on the hot path.
-        self.qkvWeight = glmOcrFloatsToTensor(qkvWeight,  shape: [3 * hidden, hidden])
-        self.qkvBias   = glmOcrFloatsToTensor(qkvBias,    shape: [3 * hidden])
+        self.qkvWeight = glmOcrFloatsToTensor(qkvWeight, shape: [3 * hidden, hidden])
+        self.qkvBias = glmOcrFloatsToTensor(qkvBias, shape: [3 * hidden])
         self.projWeight = glmOcrFloatsToTensor(projWeight, shape: [hidden, hidden])
-        self.projBias   = glmOcrFloatsToTensor(projBias,   shape: [hidden])
+        self.projBias = glmOcrFloatsToTensor(projBias, shape: [hidden])
         self.qNormWeight = qNormWeight
         self.kNormWeight = kNormWeight
         self.gateWeight = glmOcrFloatsToTensor(gateWeight, shape: [inter, hidden])
-        self.gateBias   = glmOcrFloatsToTensor(gateBias,   shape: [inter])
-        self.upWeight   = glmOcrFloatsToTensor(upWeight,   shape: [inter, hidden])
-        self.upBias     = glmOcrFloatsToTensor(upBias,     shape: [inter])
+        self.gateBias = glmOcrFloatsToTensor(gateBias, shape: [inter])
+        self.upWeight = glmOcrFloatsToTensor(upWeight, shape: [inter, hidden])
+        self.upBias = glmOcrFloatsToTensor(upBias, shape: [inter])
         self.downWeight = glmOcrFloatsToTensor(downWeight, shape: [hidden, inter])
-        self.downBias   = glmOcrFloatsToTensor(downBias,   shape: [hidden])
+        self.downBias = glmOcrFloatsToTensor(downBias, shape: [hidden])
         self.cfg = cfg
     }
 
@@ -937,10 +1011,10 @@ final class GlmOcrVisionBlock {
     /// Returns updated `[nPatches, hidden]`.
     func forward(_ h: [Float], nPatches: Int, hidden: Int) -> [Float] {
         let numHeads = cfg.numHeads
-        let headDim  = cfg.headDim
+        let headDim = cfg.headDim
         let intermed = cfg.intermediate
-        let qkvDim   = 3 * hidden
-        let scale    = 1.0 / Float(Double(headDim).squareRoot())
+        let qkvDim = 3 * hidden
+        let scale = 1.0 / Float(Double(headDim).squareRoot())
         let device = Device.shared
 
         // ── Attention ──
@@ -948,12 +1022,14 @@ final class GlmOcrVisionBlock {
         norm1.normalize(&normed, nRows: nPatches, rowSize: hidden)
 
         // QKV projection + bias on the GPU: [nPatches, 3·hidden]
-        let normedT = glmOcrFloatsToTensor(normed, shape: [nPatches, hidden],
-                                            device: device)
+        let normedT = glmOcrFloatsToTensor(
+            normed, shape: [nPatches, hidden],
+            device: device)
         let cmdQKV = device.makeCommandBuffer()
-        let qkvT = glmOcrGemmBiased(input: normedT, weight: qkvWeight, bias: qkvBias,
-                                     nRows: nPatches, outDim: qkvDim,
-                                     device: device, on: cmdQKV)
+        let qkvT = glmOcrGemmBiased(
+            input: normedT, weight: qkvWeight, bias: qkvBias,
+            nRows: nPatches, outDim: qkvDim,
+            device: device, on: cmdQKV)
         cmdQKV.commit()
         cmdQKV.waitUntilCompleted()
         let qkv = qkvT.toFloatArray()
@@ -962,28 +1038,28 @@ final class GlmOcrVisionBlock {
         var Q = [Float](repeating: 0, count: nPatches * hidden)
         var K = [Float](repeating: 0, count: nPatches * hidden)
         var V = [Float](repeating: 0, count: nPatches * hidden)
-        for tok in 0..<nPatches {
+        for tok in 0 ..< nPatches {
             let base = tok * qkvDim
             // Q: [numHeads, headDim] with q_norm
-            for h2 in 0..<numHeads {
-                var slice = Array(qkv[(base + h2*headDim)..<(base + h2*headDim + headDim)])
+            for h2 in 0 ..< numHeads {
+                var slice = Array(qkv[(base + h2 * headDim) ..< (base + h2 * headDim + headDim)])
                 cpuRMSNorm(&slice, weight: qNormWeight, eps: cfg.rmsNormEps)
-                for d in 0..<headDim {
+                for d in 0 ..< headDim {
                     Q[tok * hidden + h2 * headDim + d] = slice[d]
                 }
             }
             // K: [numHeads, headDim] with k_norm
             let kBase = base + hidden
-            for h2 in 0..<numHeads {
-                var slice = Array(qkv[(kBase + h2*headDim)..<(kBase + h2*headDim + headDim)])
+            for h2 in 0 ..< numHeads {
+                var slice = Array(qkv[(kBase + h2 * headDim) ..< (kBase + h2 * headDim + headDim)])
                 cpuRMSNorm(&slice, weight: kNormWeight, eps: cfg.rmsNormEps)
-                for d in 0..<headDim {
+                for d in 0 ..< headDim {
                     K[tok * hidden + h2 * headDim + d] = slice[d]
                 }
             }
             // V: no norm
             let vBase = base + 2 * hidden
-            for d in 0..<hidden { V[tok * hidden + d] = qkv[vBase + d] }
+            for d in 0 ..< hidden { V[tok * hidden + d] = qkv[vBase + d] }
         }
 
         // Bidirectional multi-head attention — now GPU-resident via
@@ -998,22 +1074,25 @@ final class GlmOcrVisionBlock {
         //     [numHeads, nPatches, headDim] for the kernel's KV cache.
         var kFlat = [Float](repeating: 0, count: numHeads * nPatches * headDim)
         var vFlat = [Float](repeating: 0, count: numHeads * nPatches * headDim)
-        for j in 0..<nPatches {
-            for h in 0..<numHeads {
+        for j in 0 ..< nPatches {
+            for h in 0 ..< numHeads {
                 let src = j * hidden + h * headDim
                 let dst = (h * nPatches + j) * headDim
-                for d in 0..<headDim {
+                for d in 0 ..< headDim {
                     kFlat[dst + d] = K[src + d]
                     vFlat[dst + d] = V[src + d]
                 }
             }
         }
-        let qT = Tensor.empty(shape: [nPatches, numHeads, headDim],
-                              dtype: .f32, device: device)
-        let kT = Tensor.empty(shape: [numHeads, nPatches, headDim],
-                              dtype: .f32, device: device)
-        let vT = Tensor.empty(shape: [numHeads, nPatches, headDim],
-                              dtype: .f32, device: device)
+        let qT = Tensor.empty(
+            shape: [nPatches, numHeads, headDim],
+            dtype: .f32, device: device)
+        let kT = Tensor.empty(
+            shape: [numHeads, nPatches, headDim],
+            dtype: .f32, device: device)
+        let vT = Tensor.empty(
+            shape: [numHeads, nPatches, headDim],
+            dtype: .f32, device: device)
         qT.copyIn(from: Q)
         kT.copyIn(from: kFlat)
         vT.copyIn(from: vFlat)
@@ -1028,19 +1107,21 @@ final class GlmOcrVisionBlock {
         let attn = attnSdpaT.toFloatArray()  // [nPatches, numHeads, headDim] = [nPatches, hidden]
 
         // Projection + bias on the GPU: [nPatches, hidden]
-        let attnInT = glmOcrFloatsToTensor(attn, shape: [nPatches, hidden],
-                                            device: device)
+        let attnInT = glmOcrFloatsToTensor(
+            attn, shape: [nPatches, hidden],
+            device: device)
         let cmdProj = device.makeCommandBuffer()
-        let attnOutT = glmOcrGemmBiased(input: attnInT, weight: projWeight, bias: projBias,
-                                         nRows: nPatches, outDim: hidden,
-                                         device: device, on: cmdProj)
+        let attnOutT = glmOcrGemmBiased(
+            input: attnInT, weight: projWeight, bias: projBias,
+            nRows: nPatches, outDim: hidden,
+            device: device, on: cmdProj)
         cmdProj.commit()
         cmdProj.waitUntilCompleted()
         let attnOut = attnOutT.toFloatArray()
 
         // Residual.
         var postAttn = [Float](repeating: 0, count: nPatches * hidden)
-        for i in 0..<postAttn.count { postAttn[i] = h[i] + attnOut[i] }
+        for i in 0 ..< postAttn.count { postAttn[i] = h[i] + attnOut[i] }
 
         // ── MLP ──
         var normed2 = postAttn
@@ -1048,49 +1129,57 @@ final class GlmOcrVisionBlock {
 
         // Gate + Up dispatched on a shared command buffer (both consume
         // the same `normed2` input).
-        let normed2T = glmOcrFloatsToTensor(normed2, shape: [nPatches, hidden],
-                                             device: device)
+        let normed2T = glmOcrFloatsToTensor(
+            normed2, shape: [nPatches, hidden],
+            device: device)
         let cmdGU = device.makeCommandBuffer()
-        let gateT = glmOcrGemmBiased(input: normed2T, weight: gateWeight, bias: gateBias,
-                                      nRows: nPatches, outDim: intermed,
-                                      device: device, on: cmdGU)
-        let upT   = glmOcrGemmBiased(input: normed2T, weight: upWeight, bias: upBias,
-                                      nRows: nPatches, outDim: intermed,
-                                      device: device, on: cmdGU)
+        let gateT = glmOcrGemmBiased(
+            input: normed2T, weight: gateWeight, bias: gateBias,
+            nRows: nPatches, outDim: intermed,
+            device: device, on: cmdGU)
+        let upT = glmOcrGemmBiased(
+            input: normed2T, weight: upWeight, bias: upBias,
+            nRows: nPatches, outDim: intermed,
+            device: device, on: cmdGU)
         cmdGU.commit()
         cmdGU.waitUntilCompleted()
         let gate = gateT.toFloatArray()
-        let up   = upT.toFloatArray()
+        let up = upT.toFloatArray()
 
         var gateUp = [Float](repeating: 0, count: nPatches * intermed)
-        for i in 0..<gateUp.count {
+        for i in 0 ..< gateUp.count {
             let g = gate[i]
             gateUp[i] = (g / (1 + exp(-g))) * up[i]
         }
 
-        let gateUpT = glmOcrFloatsToTensor(gateUp, shape: [nPatches, intermed],
-                                            device: device)
+        let gateUpT = glmOcrFloatsToTensor(
+            gateUp, shape: [nPatches, intermed],
+            device: device)
         let cmdDown = device.makeCommandBuffer()
-        let mlpOutT = glmOcrGemmBiased(input: gateUpT, weight: downWeight, bias: downBias,
-                                        nRows: nPatches, outDim: hidden,
-                                        device: device, on: cmdDown)
+        let mlpOutT = glmOcrGemmBiased(
+            input: gateUpT, weight: downWeight, bias: downBias,
+            nRows: nPatches, outDim: hidden,
+            device: device, on: cmdDown)
         cmdDown.commit()
         cmdDown.waitUntilCompleted()
         let mlpOut = mlpOutT.toFloatArray()
 
         // Residual.
         var out = postAttn
-        for i in 0..<out.count { out[i] += mlpOut[i] }
+        for i in 0 ..< out.count { out[i] += mlpOut[i] }
         return out
     }
 }
 
 /// Upload an f32 `[Float]` array as a fresh f32 GPU `Tensor` of the given shape.
-private func glmOcrFloatsToTensor(_ values: [Float], shape: [Int],
-                                   device: Device = .shared) -> Tensor {
+private func glmOcrFloatsToTensor(
+    _ values: [Float], shape: [Int],
+    device: Device = .shared
+) -> Tensor {
     let n = shape.reduce(1, *)
-    precondition(values.count == n,
-                 "glmOcrFloatsToTensor: count \(values.count) ≠ product(shape)=\(n)")
+    precondition(
+        values.count == n,
+        "glmOcrFloatsToTensor: count \(values.count) ≠ product(shape)=\(n)")
     let t = Tensor.empty(shape: shape, dtype: .f32, device: device)
     t.copyIn(from: values)
     return t
@@ -1100,15 +1189,17 @@ private func glmOcrFloatsToTensor(_ values: [Float], shape: [Int],
 /// `Ops.gemm` + `Ops.add` on the supplied command buffer. Bias tile is
 /// staged CPU-side and uploaded once per call. Caller commits and reads
 /// back.
-private func glmOcrGemmBiased(input: Tensor, weight: Tensor, bias: Tensor,
-                               nRows: Int, outDim: Int, device: Device,
-                               on cmd: MTLCommandBuffer) -> Tensor {
+private func glmOcrGemmBiased(
+    input: Tensor, weight: Tensor, bias: Tensor,
+    nRows: Int, outDim: Int, device: Device,
+    on cmd: MTLCommandBuffer
+) -> Tensor {
     let out = Ops.gemm(weight: weight, input: input, nRows: nRows, on: cmd)
     let biasVals = bias.toFloatArray()
     var tiled = [Float](repeating: 0, count: nRows * outDim)
-    for r in 0..<nRows {
+    for r in 0 ..< nRows {
         let base = r * outDim
-        for c in 0..<outDim { tiled[base + c] = biasVals[c] }
+        for c in 0 ..< outDim { tiled[base + c] = biasVals[c] }
     }
     let tiledT = glmOcrFloatsToTensor(tiled, shape: [nRows, outDim], device: device)
     return Ops.add(out, tiledT, on: cmd)
@@ -1124,18 +1215,18 @@ struct GlmOcrVisionRMSNorm {
 
     init(weight: [Float], eps: Float) {
         self.weight = weight
-        self.eps    = eps
+        self.eps = eps
     }
 
     /// In-place RMSNorm on `x` of shape `[nRows, rowSize]`.
     func normalize(_ x: inout [Float], nRows: Int, rowSize: Int) {
-        for r in 0..<nRows {
+        for r in 0 ..< nRows {
             let base = r * rowSize
             var sq: Float = 0
-            for i in 0..<rowSize { sq += x[base + i] * x[base + i] }
+            for i in 0 ..< rowSize { sq += x[base + i] * x[base + i] }
             let rms = (sq / Float(rowSize) + eps).squareRoot()
             let inv = 1.0 / rms
-            for i in 0..<rowSize {
+            for i in 0 ..< rowSize {
                 x[base + i] = x[base + i] * inv * weight[i]
             }
         }
@@ -1149,13 +1240,13 @@ struct GlmOcrVisionRMSNorm {
 @inline(__always)
 private func cpuGemm(a: [Float], b: [Float], m: Int, n: Int, k: Int) -> [Float] {
     var c = [Float](repeating: 0, count: m * n)
-    for i in 0..<m {
+    for i in 0 ..< m {
         let aBase = i * k
         let cBase = i * n
-        for j in 0..<n {
+        for j in 0 ..< n {
             var acc: Float = 0
             let bBase = j * k
-            for p in 0..<k { acc += a[aBase + p] * b[bBase + p] }
+            for p in 0 ..< k { acc += a[aBase + p] * b[bBase + p] }
             c[cBase + j] = acc
         }
     }
@@ -1164,11 +1255,13 @@ private func cpuGemm(a: [Float], b: [Float], m: Int, n: Int, k: Int) -> [Float] 
 
 /// GEMM + bias add: `[m, k] × [n, k]ᵀ + [n] → [m, n]`.
 @inline(__always)
-private func cpuGemmWithBias(a: [Float], w: [Float], b: [Float],
-                              m: Int, n: Int, k: Int) -> [Float] {
+private func cpuGemmWithBias(
+    a: [Float], w: [Float], b: [Float],
+    m: Int, n: Int, k: Int
+) -> [Float] {
     var c = cpuGemm(a: a, b: w, m: m, n: n, k: k)
-    for r in 0..<m {
-        for j in 0..<n { c[r * n + j] += b[j] }
+    for r in 0 ..< m {
+        for j in 0 ..< n { c[r * n + j] += b[j] }
     }
     return c
 }
@@ -1180,15 +1273,15 @@ private func cpuRMSNorm(_ x: inout [Float], weight: [Float], eps: Float) {
     var sq: Float = 0
     for v in x { sq += v * v }
     let inv = 1.0 / (sq / Float(d) + eps).squareRoot()
-    for i in 0..<d { x[i] = x[i] * inv * weight[i] }
+    for i in 0 ..< d { x[i] = x[i] * inv * weight[i] }
 }
 
 /// In-place GELU (approximate tanh form) on a flat Float array.
 @inline(__always)
 private func cpuGeluInPlace(_ x: inout [Float]) {
-    let c: Float = 0.7978845608028654   // sqrt(2/π)
+    let c: Float = 0.7978845608028654  // sqrt(2/π)
     let k: Float = 0.044715
-    for i in 0..<x.count {
+    for i in 0 ..< x.count {
         let v = x[i]
         let inner = c * (v + k * v * v * v)
         x[i] = 0.5 * v * (1.0 + tanh(inner))
@@ -1198,21 +1291,23 @@ private func cpuGeluInPlace(_ x: inout [Float]) {
 /// In-place LayerNorm (used in the merger post-projection norm).
 /// mean-centre, then divide by std, then scale+shift.
 @inline(__always)
-private func cpuLayerNorm(_ x: inout [Float], nRows: Int, rowSize: Int,
-                           weight: [Float], bias: [Float]?) {
-    for r in 0..<nRows {
+private func cpuLayerNorm(
+    _ x: inout [Float], nRows: Int, rowSize: Int,
+    weight: [Float], bias: [Float]?
+) {
+    for r in 0 ..< nRows {
         let base = r * rowSize
         var mean: Float = 0
-        for i in 0..<rowSize { mean += x[base + i] }
+        for i in 0 ..< rowSize { mean += x[base + i] }
         mean /= Float(rowSize)
         var variance: Float = 0
-        for i in 0..<rowSize {
+        for i in 0 ..< rowSize {
             let d = x[base + i] - mean
             variance += d * d
         }
         variance /= Float(rowSize)
         let inv = 1.0 / (variance + 1e-5).squareRoot()
-        for i in 0..<rowSize {
+        for i in 0 ..< rowSize {
             let normalized = (x[base + i] - mean) * inv
             x[base + i] = normalized * weight[i] + (bias?[i] ?? 0)
         }
@@ -1222,19 +1317,21 @@ private func cpuLayerNorm(_ x: inout [Float], nRows: Int, rowSize: Int,
 /// Unfold a `GlmOcrRGBImage` into `[nPatches, tP·inCh·pY·pX]` patch rows.
 /// `patches` is pre-allocated and zeroed. For a single 2D image the
 /// temporal patch dim is filled by repeating the frame `tP` times.
-private func unfoldPatches(image: GlmOcrRGBImage,
-                           patches: inout [Float],
-                           gridH: Int, gridW: Int,
-                           patchSize p: Int, temporalPatch tP: Int) {
+private func unfoldPatches(
+    image: GlmOcrRGBImage,
+    patches: inout [Float],
+    gridH: Int, gridW: Int,
+    patchSize p: Int, temporalPatch tP: Int
+) {
     let inCh = 3
-    for ph in 0..<gridH {
-        for pw in 0..<gridW {
+    for ph in 0 ..< gridH {
+        for pw in 0 ..< gridW {
             let patchIdx = ph * gridW + pw
             let patchBase = patchIdx * (tP * inCh * p * p)
-            for t in 0..<tP {
-                for c in 0..<inCh {
-                    for py in 0..<p {
-                        for px in 0..<p {
+            for t in 0 ..< tP {
+                for c in 0 ..< inCh {
+                    for py in 0 ..< p {
+                        for px in 0 ..< p {
                             let imgRow = ph * p + py
                             let imgCol = pw * p + px
                             let pixelIdx = (imgRow * image.width + imgCol) * inCh + c
@@ -1250,19 +1347,21 @@ private func unfoldPatches(image: GlmOcrRGBImage,
 
 /// Copy a `[Float]` array into a GPU `Tensor` in the specified `dtype`.
 /// Converts f32 → f16 / bf16 as needed.
-private func makeDTypeTensor(from data: [Float], shape: [Int],
-                              dtype: DType, device: Device) -> Tensor {
+private func makeDTypeTensor(
+    from data: [Float], shape: [Int],
+    dtype: DType, device: Device
+) -> Tensor {
     let t = Tensor.empty(shape: shape, dtype: dtype, device: device)
     switch dtype {
     case .f32:
         t.copyIn(from: data)
     case .f16:
         var f16 = [UInt16](repeating: 0, count: data.count)
-        for i in 0..<data.count { f16[i] = floatToF16(data[i]) }
+        for i in 0 ..< data.count { f16[i] = floatToF16(data[i]) }
         t.copyIn(from: f16)
     case .bf16:
         var bf16 = [UInt16](repeating: 0, count: data.count)
-        for i in 0..<data.count { bf16[i] = floatToBf16(data[i]) }
+        for i in 0 ..< data.count { bf16[i] = floatToBf16(data[i]) }
         t.copyIn(from: bf16)
     default:
         // Fall back to f32 copy for unsupported types.
@@ -1281,8 +1380,8 @@ private func floatToF16(_ v: Float) -> UInt16 {
     withUnsafeBytes(of: &f) { ptr in
         let bits = ptr.load(as: UInt32.self)
         let sign = UInt16((bits >> 16) & 0x8000)
-        let exp  = Int((bits >> 23) & 0xff) - 127 + 15
-        let mant = bits & 0x007FFFFF
+        let exp = Int((bits >> 23) & 0xff) - 127 + 15
+        let mant = bits & 0x007F_FFFF
         if exp <= 0 {
             result = sign
         } else if exp >= 31 {
@@ -1306,11 +1405,11 @@ private func floatToBf16(_ v: Float) -> UInt16 {
 /// (Removed: `Tensor.toFloatArray()` already lives in
 /// `Sources/FFAI/Tensor.swift`.) Keeping the GlmOcr-private f16/bf16
 /// helpers below for the internal SafeTensors prefix view.
-private extension Tensor {
+extension Tensor {
     /// Internal duplicate path (renamed to `_glmOcrToFloatArray`) — kept
     /// only so the file's existing call-sites compile while the agent
     /// switches them over to the public `Tensor.toFloatArray()`.
-    func _glmOcrToFloatArray() -> [Float] {
+    fileprivate func _glmOcrToFloatArray() -> [Float] {
         let n = elementCount
         switch dtype {
         case .f32:
@@ -1329,14 +1428,14 @@ private extension Tensor {
 
 @inline(__always)
 private func f16ToFloat(_ bits: UInt16) -> Float {
-    let sign: UInt32  = (UInt32(bits) & 0x8000) << 16
-    let exp  = (UInt32(bits) >> 10) & 0x1F
+    let sign: UInt32 = (UInt32(bits) & 0x8000) << 16
+    let exp = (UInt32(bits) >> 10) & 0x1F
     let mant = UInt32(bits) & 0x03FF
     let f32bits: UInt32
     if exp == 0 {
-        f32bits = sign   // zero / subnormal → 0
+        f32bits = sign  // zero / subnormal → 0
     } else if exp == 31 {
-        f32bits = sign | 0x7F800000 | (mant << 13)  // inf / NaN
+        f32bits = sign | 0x7F80_0000 | (mant << 13)  // inf / NaN
     } else {
         f32bits = sign | ((exp + 112) << 23) | (mant << 13)
     }
@@ -1389,11 +1488,13 @@ func loadLinear(
     base name: String, in bundle: SafeTensorsBundlePrefixView,
     quantization: ModelConfig.QuantizationConfig?
 ) throws -> AnyLinear {
-    if let q = quantization, [3,4,5,6,8].contains(q.bits), bundle.isQuantized(name) {
+    if let q = quantization, [3, 4, 5, 6, 8].contains(q.bits), bundle.isQuantized(name) {
         let t = try bundle.quantizedTriplet(name)
-        return AnyLinear(QuantizedLinear(weight: t.weight, scales: t.scales,
-                                         biases: t.biases,
-                                         bits: q.bits, groupSize: q.groupSize))
+        return AnyLinear(
+            QuantizedLinear(
+                weight: t.weight, scales: t.scales,
+                biases: t.biases,
+                bits: q.bits, groupSize: q.groupSize))
     }
     return AnyLinear(Linear(weight: try bundle.tensor(named: "\(name).weight")))
 }
@@ -1402,11 +1503,12 @@ func loadEmbedding(
     base name: String, in bundle: SafeTensorsBundlePrefixView,
     hidden: Int, quantization: ModelConfig.QuantizationConfig?
 ) throws -> AnyEmbedding {
-    if let q = quantization, [3,4,5,6,8].contains(q.bits), bundle.isQuantized(name) {
+    if let q = quantization, [3, 4, 5, 6, 8].contains(q.bits), bundle.isQuantized(name) {
         let t = try bundle.quantizedTriplet(name)
-        return AnyEmbedding(QuantizedEmbedding(
-            weight: t.weight, scales: t.scales, biases: t.biases,
-            hidden: hidden, bits: q.bits, groupSize: q.groupSize))
+        return AnyEmbedding(
+            QuantizedEmbedding(
+                weight: t.weight, scales: t.scales, biases: t.biases,
+                hidden: hidden, bits: q.bits, groupSize: q.groupSize))
     }
     return AnyEmbedding(Embedding(weight: try bundle.tensor(named: "\(name).weight")))
 }

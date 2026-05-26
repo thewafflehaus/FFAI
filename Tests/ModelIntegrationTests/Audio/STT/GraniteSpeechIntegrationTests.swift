@@ -27,6 +27,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("GraniteSpeech Integration", .serialized)
@@ -38,7 +39,7 @@ struct GraniteSpeechIntegrationTests {
     /// the encoder pipeline without needing a real audio file.
     static func syntheticTone(durationSeconds: Float = 1.0, sampleRate: Int = 16000) -> [Float] {
         let n = Int(durationSeconds * Float(sampleRate))
-        return (0..<n).map { i in
+        return (0 ..< n).map { i in
             0.5 * sinf(2 * Float.pi * 440 * Float(i) / Float(sampleRate))
         }
     }
@@ -52,7 +53,7 @@ struct GraniteSpeechIntegrationTests {
 
         let dir = try await ModelLocator().resolve(idOrPath: modelID)
         let loaded = try await AudioModelRegistry.load(directory: dir)
-        guard case let .graniteSpeech(model) = loaded else {
+        guard case .graniteSpeech(let model) = loaded else {
             Issue.record("AudioModelRegistry did not route to .graniteSpeech; got \(loaded)")
             return
         }
@@ -78,12 +79,15 @@ struct GraniteSpeechIntegrationTests {
         // Contract: non-empty text, reasonable timing, positive token count.
         // We do NOT assert a specific string — the model's output for a synthetic
         // tone is not meaningful, but the pipeline must not crash.
-        #expect(!result.text.isEmpty || result.generatedTokens == 0,
-                "Expected non-crash transcription; got empty text with 0 tokens")
+        #expect(
+            !result.text.isEmpty || result.generatedTokens == 0,
+            "Expected non-crash transcription; got empty text with 0 tokens")
         #expect(result.totalTimeS > 0)
         #expect(result.generatedTokens >= 0)
 
-        print("GraniteSpeech transcription: '\(result.text)' "
-              + "(\(result.generatedTokens) tokens in \(String(format: "%.2f", result.totalTimeS))s)")
+        print(
+            "GraniteSpeech transcription: '\(result.text)' "
+                + "(\(result.generatedTokens) tokens in \(String(format: "%.2f", result.totalTimeS))s)"
+        )
     }
 }

@@ -50,9 +50,11 @@ public protocol DecoderLayer: Module {
     /// - `cache`: this layer's slot from `makeLayerCaches`. The layer
     ///   downcasts to its concrete cache type. Pure feed-forward layers
     ///   receive a `StatelessLayerCache` and ignore it.
-    func decode(_ h: Tensor, position: Int,
-                cache: any LayerCacheProtocol,
-                cmd: MTLCommandBuffer, device: Device) -> Tensor
+    func decode(
+        _ h: Tensor, position: Int,
+        cache: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor
 
     /// Layer-local **multi-token** decode — process `nRows` consecutive
     /// positions in one logical call. `h` is `[nRows, hidden]`; the
@@ -68,12 +70,14 @@ public protocol DecoderLayer: Module {
     /// layers (Mamba 2 selective scan, GDN delta) keep the default
     /// because their recurrence is inherently sequential — they can't
     /// batch state updates without giving up correctness.
-    func decodeMulti(_ h: Tensor, startingAt position: Int,
-                     cache: any LayerCacheProtocol,
-                     cmd: MTLCommandBuffer, device: Device) -> Tensor
+    func decodeMulti(
+        _ h: Tensor, startingAt position: Int,
+        cache: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor
 }
 
-public extension DecoderLayer {
+extension DecoderLayer {
     /// Default `decodeMulti`: loop `decode(...)` per row on the same
     /// `cmd`. Correct + commit-count-batched, but every dispatch
     /// inside `decode(...)` still runs per-token. Attention layers
@@ -88,17 +92,20 @@ public extension DecoderLayer {
     /// slice via `Ops.add(...into: dst)` — the only "row-copy onto
     /// the same `cmd`" primitive available without a dedicated
     /// `Ops.copy` kernel.
-    func decodeMulti(_ h: Tensor, startingAt position: Int,
-                     cache: any LayerCacheProtocol,
-                     cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func decodeMulti(
+        _ h: Tensor, startingAt position: Int,
+        cache: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let nRows = h.shape[0]
         let hidden = h.shape.last!
         let result = Tensor.empty(shape: h.shape, dtype: h.dtype, device: device)
         result.zero()
-        for i in 0..<nRows {
+        for i in 0 ..< nRows {
             let row = h.slicedRows(start: i, count: 1).reshaped(to: [hidden])
-            let out = decode(row, position: position + i,
-                             cache: cache, cmd: cmd, device: device)
+            let out = decode(
+                row, position: position + i,
+                cache: cache, cmd: cmd, device: device)
             let dst = result.slicedRows(start: i, count: 1).reshaped(to: [hidden])
             _ = Ops.add(out, dst, on: cmd, into: dst)
         }

@@ -80,7 +80,7 @@ public final class PhaseMemoryTracker: @unchecked Sendable {
         let now = device.mtlDevice.currentAllocatedSize
         switch phase {
         case .prefill: if now > prefillPeakBytes { prefillPeakBytes = now }
-        case .decode:  if now > decodePeakBytes  { decodePeakBytes  = now }
+        case .decode: if now > decodePeakBytes { decodePeakBytes = now }
         }
     }
 

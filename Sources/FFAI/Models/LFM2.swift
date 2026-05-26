@@ -134,7 +134,7 @@ public enum LFM2VL {
         device: Device
     ) throws -> VisionModel {
         guard let visionConfigRaw = config.nested("vision_config"),
-              let textConfigRaw  = config.nested("text_config")
+            let textConfigRaw = config.nested("text_config")
         else {
             throw LFM2VLError.missingConfig
         }
@@ -206,7 +206,7 @@ public enum LFM2VL {
         // facade so VisionModel's splice sees a single encode surface.
         let numPatches1D = Int(Double(numPatches).squareRoot().rounded())
         let patchSize = visionConfig.int("patch_size") ?? 16
-        let imageSize = numPatches1D * patchSize   // natural resolution (256)
+        let imageSize = numPatches1D * patchSize  // natural resolution (256)
         let composed = LFM2VLComposedTower(
             encoder: visionEncoder,
             projector: projector,

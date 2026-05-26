@@ -115,12 +115,13 @@ public final class SafeTensorsWriter {
         for p in pending {
             let start = offset
             let end = offset + p.bytes.count
-            headerDict[p.name] = [
-                // Keys sorted: data_offsets < dtype < shape
-                "data_offsets": [start, end],
-                "dtype": safeTensorsDTypeName(p.dtype),
-                "shape": p.shape,
-            ] as [String: Any]
+            headerDict[p.name] =
+                [
+                    // Keys sorted: data_offsets < dtype < shape
+                    "data_offsets": [start, end],
+                    "dtype": safeTensorsDTypeName(p.dtype),
+                    "shape": p.shape,
+                ] as [String: Any]
             offset = end
         }
 
@@ -165,15 +166,15 @@ public final class SafeTensorsWriter {
     /// (SafeTensors.swift → DType.fromSafeTensors) reads back correctly.
     private func safeTensorsDTypeName(_ dtype: DType) -> String {
         switch dtype {
-        case .f32:  return "F32"
-        case .f16:  return "F16"
+        case .f32: return "F32"
+        case .f16: return "F16"
         case .bf16: return "BF16"
-        case .i32:  return "I32"
-        case .u32:  return "U32"
-        case .i8:   return "I8"
-        case .u8:   return "U8"
-        case .i64:  return "I64"
-        case .u64:  return "U64"
+        case .i32: return "I32"
+        case .u32: return "U32"
+        case .i8: return "I8"
+        case .u8: return "U8"
+        case .i64: return "I64"
+        case .u64: return "U64"
         }
     }
 }

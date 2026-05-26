@@ -28,9 +28,10 @@
 // and produces a coherent endpoint probability".
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("SmartTurn Integration", .serialized)
 struct SmartTurnIntegrationTests {
@@ -43,14 +44,16 @@ struct SmartTurnIntegrationTests {
     /// burst of `burstMs`. SmartTurn consumes a whole utterance and
     /// emits one probability, so the exact content matters less than it
     /// being a finite, non-degenerate waveform of realistic length.
-    private func syntheticClip(sampleRate: Int = 16000,
-                               silenceMs: Int = 400,
-                               burstMs: Int = 800) -> [Float] {
+    private func syntheticClip(
+        sampleRate: Int = 16000,
+        silenceMs: Int = 400,
+        burstMs: Int = 800
+    ) -> [Float] {
         let silenceN = sampleRate * silenceMs / 1000
         let burstN = sampleRate * burstMs / 1000
         var clip = [Float](repeating: 0, count: silenceN)
         let twoPiF = 2 * Float.pi * 180
-        for i in 0..<burstN {
+        for i in 0 ..< burstN {
             let t = Float(i) / Float(sampleRate)
             // Two tones so the spectrum is broadband-ish, like voice.
             clip.append(0.35 * sinf(twoPiF * t) + 0.18 * sinf(2 * twoPiF * t))
@@ -67,7 +70,8 @@ struct SmartTurnIntegrationTests {
             try await VADModelRegistry.fromPretrained(Self.repoId)
         }
         guard case .smartTurn(let model) = loaded else {
-            Issue.record("VADModelRegistry resolved \(Self.repoId) to \(loaded.kind), expected .smartTurn")
+            Issue.record(
+                "VADModelRegistry resolved \(Self.repoId) to \(loaded.kind), expected .smartTurn")
             throw SmartTurnError.invalidAudio("registry dispatched to the wrong family")
         }
         return model
@@ -104,8 +108,9 @@ struct SmartTurnIntegrationTests {
         // `prediction` must be the thresholded probability.
         let expected = output.probability > model.config.threshold ? 1 : 0
         #expect(output.prediction == expected)
-        print("SmartTurn endpoint probability=\(output.probability) "
-              + "prediction=\(output.prediction)")
+        print(
+            "SmartTurn endpoint probability=\(output.probability) "
+                + "prediction=\(output.prediction)")
     }
 
     @Test("predictEndpoint — an explicit threshold overrides the config")

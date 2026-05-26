@@ -25,6 +25,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("PocketTTS")
@@ -50,7 +51,8 @@ struct PocketTTSTests {
                     "dim": 1024,
                     "n_bins": 4000,
                     "tokenizer": "sentencepiece",
-                    "tokenizer_path": "hf://kyutai/pocket-tts-without-voice-cloning/tokenizer.model",
+                    "tokenizer_path":
+                        "hf://kyutai/pocket-tts-without-voice-cloning/tokenizer.model",
                 ],
                 "weights_path": nil as Any?,
             ] as [String: Any],
@@ -90,7 +92,8 @@ struct PocketTTSTests {
                 "weights_path": nil as Any?,
             ] as [String: Any],
             "weights_path": "hf://kyutai/pocket-tts/tts_b6369a24.safetensors",
-            "weights_path_without_voice_cloning": "hf://kyutai/pocket-tts-without-voice-cloning/tts_b6369a24.safetensors",
+            "weights_path_without_voice_cloning":
+                "hf://kyutai/pocket-tts-without-voice-cloning/tts_b6369a24.safetensors",
             "model_path": nil as Any?,
         ]
     }
@@ -130,7 +133,8 @@ struct PocketTTSTests {
 
     @Test("PocketTTSConfig — weightsPath and weightsPathWithoutVoiceCloning decode")
     func configDecodesWeightsPaths() {
-        let config = ModelConfig(architecture: nil, modelType: "pocket_tts", raw: Self.canonicalRaw())
+        let config = ModelConfig(
+            architecture: nil, modelType: "pocket_tts", raw: Self.canonicalRaw())
         let ptts = PocketTTSConfig.from(config)!
         #expect(ptts.weightsPath?.contains("pocket-tts") == true)
         #expect(ptts.weightsPathWithoutVoiceCloning?.contains("without-voice-cloning") == true)
@@ -167,7 +171,7 @@ struct PocketTTSTests {
         #expect(xf.dModel == 1_024)
         #expect(xf.numHeads == 16)
         #expect(xf.numLayers == 6)
-        #expect(xf.dimFeedforward == 4_096)   // 4 × 1024
+        #expect(xf.dimFeedforward == 4_096)  // 4 × 1024
         #expect(abs(xf.maxPeriod - 10_000) < 1)
     }
 

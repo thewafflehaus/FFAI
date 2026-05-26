@@ -119,8 +119,10 @@ struct DescriptDACWeights {
     /// Reconstruct a weight-normalized conv at `prefix`. DAC stores conv
     /// weight as PyTorch `[Cout, Cin/groups, K]`; `weight_g` reduces over
     /// every axis except dim 0.
-    func wnConv1d(prefix: String, stride: Int, padding: Int,
-                  dilation: Int, groups: Int) throws -> SNACWNConv1d {
+    func wnConv1d(
+        prefix: String, stride: Int, padding: Int,
+        dilation: Int, groups: Int
+    ) throws -> SNACWNConv1d {
         let gKey = "\(prefix).weight_g"
         let vKey = "\(prefix).weight_v"
         guard has(gKey), has(vKey) else {
@@ -129,17 +131,21 @@ struct DescriptDACWeights {
         let g = try floats(gKey)
         let v = try floats(vKey)
         let vShape = try shape(vKey)
-        let weight = WeightNorm.effectiveWeight(g: g, v: v, shape: vShape,
-                                                exceptDim: 0)
+        let weight = WeightNorm.effectiveWeight(
+            g: g, v: v, shape: vShape,
+            exceptDim: 0)
         let bias = has("\(prefix).bias") ? try floats("\(prefix).bias") : nil
-        return SNACWNConv1d(weight: weight, wShape: vShape, bias: bias,
-                            stride: stride, padding: padding,
-                            dilation: dilation, groups: groups)
+        return SNACWNConv1d(
+            weight: weight, wShape: vShape, bias: bias,
+            stride: stride, padding: padding,
+            dilation: dilation, groups: groups)
     }
 
     /// Reconstruct a weight-normalized transposed conv at `prefix`.
-    func wnConvTranspose1d(prefix: String, stride: Int, padding: Int,
-                           outputPadding: Int, groups: Int) throws -> SNACWNConvTranspose1d {
+    func wnConvTranspose1d(
+        prefix: String, stride: Int, padding: Int,
+        outputPadding: Int, groups: Int
+    ) throws -> SNACWNConvTranspose1d {
         let gKey = "\(prefix).weight_g"
         let vKey = "\(prefix).weight_v"
         guard has(gKey), has(vKey) else {
@@ -148,12 +154,14 @@ struct DescriptDACWeights {
         let g = try floats(gKey)
         let v = try floats(vKey)
         let vShape = try shape(vKey)
-        let weight = WeightNorm.effectiveWeight(g: g, v: v, shape: vShape,
-                                                exceptDim: 0)
+        let weight = WeightNorm.effectiveWeight(
+            g: g, v: v, shape: vShape,
+            exceptDim: 0)
         let bias = has("\(prefix).bias") ? try floats("\(prefix).bias") : nil
-        return SNACWNConvTranspose1d(weight: weight, wShape: vShape, bias: bias,
-                                     stride: stride, padding: padding,
-                                     outputPadding: outputPadding, groups: groups)
+        return SNACWNConvTranspose1d(
+            weight: weight, wShape: vShape, bias: bias,
+            stride: stride, padding: padding,
+            outputPadding: outputPadding, groups: groups)
     }
 }
 
@@ -162,19 +170,24 @@ struct DescriptDACWeights {
 /// DAC residual unit — identical structure to SNAC's: Snake → WNConv
 /// (k=7, dilated) → Snake → WNConv (k=1), then a centre-cropped residual
 /// add. Reuses `SNACResidualUnit` so the math path is shared.
-private func dacResidualUnit(weights w: DescriptDACWeights, prefix: String,
-                             dilation: Int) throws -> SNACResidualUnit {
+private func dacResidualUnit(
+    weights w: DescriptDACWeights, prefix: String,
+    dilation: Int
+) throws -> SNACResidualUnit {
     let pad = ((7 - 1) * dilation) / 2
     // block.0 — Snake, block.1 — WNConv(k=7), block.2 — Snake,
     // block.3 — WNConv(k=1).
     let alpha1 = try w.floats("\(prefix).block.0.alpha")
-    let conv1 = try w.wnConv1d(prefix: "\(prefix).block.1", stride: 1,
-                               padding: pad, dilation: dilation, groups: 1)
+    let conv1 = try w.wnConv1d(
+        prefix: "\(prefix).block.1", stride: 1,
+        padding: pad, dilation: dilation, groups: 1)
     let alpha2 = try w.floats("\(prefix).block.2.alpha")
-    let conv2 = try w.wnConv1d(prefix: "\(prefix).block.3", stride: 1,
-                               padding: 0, dilation: 1, groups: 1)
-    return SNACResidualUnit(alpha1: alpha1, conv1: conv1,
-                            alpha2: alpha2, conv2: conv2)
+    let conv2 = try w.wnConv1d(
+        prefix: "\(prefix).block.3", stride: 1,
+        padding: 0, dilation: 1, groups: 1)
+    return SNACResidualUnit(
+        alpha1: alpha1, conv1: conv1,
+        alpha2: alpha2, conv2: conv2)
 }
 
 /// DAC encoder block — three dilated residual units, a Snake, then a
@@ -188,16 +201,18 @@ struct DescriptDACEncoderBlock {
         // block.{0,1,2} — ResidualUnit(dilation 1,3,9).
         var res: [SNACResidualUnit] = []
         for (i, dil) in [1, 3, 9].enumerated() {
-            res.append(try dacResidualUnit(
-                weights: w, prefix: "\(prefix).block.\(i)", dilation: dil))
+            res.append(
+                try dacResidualUnit(
+                    weights: w, prefix: "\(prefix).block.\(i)", dilation: dil))
         }
         self.residuals = res
         // block.3 — Snake; block.4 — WNConv(k=2*stride, stride).
         self.snakeAlpha = try w.floats("\(prefix).block.3.alpha")
         let pad = Int(ceil(Double(stride) / 2.0))
-        self.convDown = try w.wnConv1d(prefix: "\(prefix).block.4",
-                                       stride: stride, padding: pad,
-                                       dilation: 1, groups: 1)
+        self.convDown = try w.wnConv1d(
+            prefix: "\(prefix).block.4",
+            stride: stride, padding: pad,
+            dilation: 1, groups: 1)
     }
 
     func callAsFunction(_ x: [Float], shape: [Int]) -> (data: [Float], shape: [Int]) {
@@ -226,8 +241,9 @@ struct DescriptDACDecoderBlock {
         // block.{2,3,4} — ResidualUnit(dilation 1,3,9).
         var res: [SNACResidualUnit] = []
         for (i, dil) in [1, 3, 9].enumerated() {
-            res.append(try dacResidualUnit(
-                weights: w, prefix: "\(prefix).block.\(i + 2)", dilation: dil))
+            res.append(
+                try dacResidualUnit(
+                    weights: w, prefix: "\(prefix).block.\(i + 2)", dilation: dil))
         }
         self.residuals = res
     }
@@ -248,67 +264,78 @@ struct DescriptDACDecoderBlock {
 /// distance, and projects back up (`out_proj`). DAC has a single
 /// temporal scale, so there is no avg-pool / repeat-interleave.
 struct DescriptDACVectorQuantize {
-    let inProj: SNACWNConv1d        // [codebookDim, inputDim, 1]
-    let outProj: SNACWNConv1d       // [inputDim, codebookDim, 1]
-    let codebook: [Float]           // [codebookSize, codebookDim]
+    let inProj: SNACWNConv1d  // [codebookDim, inputDim, 1]
+    let outProj: SNACWNConv1d  // [inputDim, codebookDim, 1]
+    let codebook: [Float]  // [codebookSize, codebookDim]
     let codebookSize: Int
     let codebookDim: Int
 
-    init(weights w: DescriptDACWeights, prefix: String,
-         codebookSize: Int, codebookDim: Int) throws {
+    init(
+        weights w: DescriptDACWeights, prefix: String,
+        codebookSize: Int, codebookDim: Int
+    ) throws {
         self.codebookSize = codebookSize
         self.codebookDim = codebookDim
         // Reference `sanitize` rewrites `in_proj` -> `inProj`; the
         // physical checkpoint keys are `in_proj` / `out_proj`.
-        self.inProj = try w.wnConv1d(prefix: "\(prefix).in_proj",
-                                     stride: 1, padding: 0,
-                                     dilation: 1, groups: 1)
-        self.outProj = try w.wnConv1d(prefix: "\(prefix).out_proj",
-                                      stride: 1, padding: 0,
-                                      dilation: 1, groups: 1)
+        self.inProj = try w.wnConv1d(
+            prefix: "\(prefix).in_proj",
+            stride: 1, padding: 0,
+            dilation: 1, groups: 1)
+        self.outProj = try w.wnConv1d(
+            prefix: "\(prefix).out_proj",
+            stride: 1, padding: 0,
+            dilation: 1, groups: 1)
         self.codebook = try w.floats("\(prefix).codebook.weight")
     }
 
     /// Nearest-codebook lookup. `latents` is NCL `[1, codebookDim, T]`.
-    private func decodeLatents(_ latents: [Float],
-                               shape: [Int]) -> (zQ: [Float], indices: [Int32]) {
+    private func decodeLatents(
+        _ latents: [Float],
+        shape: [Int]
+    ) -> (zQ: [Float], indices: [Int32]) {
         let (_, d, t) = (shape[0], shape[1], shape[2])
         // Rearrange b d t -> (b t) d.
         var enc = [Float](repeating: 0, count: t * d)
-        for i in 0..<t {
-            for c in 0..<d { enc[i * d + c] = latents[c * t + i] }
+        for i in 0 ..< t {
+            for c in 0 ..< d { enc[i * d + c] = latents[c * t + i] }
         }
         // L2-normalize both encodings and codebook, then nearest by
         // distance = 2 - 2·dot (monotone in -dot for unit vectors).
         let encN = AudioMath.l2NormalizeRows(enc, rows: t, dim: d)
         let cbN = AudioMath.l2NormalizeRows(codebook, rows: codebookSize, dim: d)
         var indices = [Int32](repeating: 0, count: t)
-        for i in 0..<t {
+        for i in 0 ..< t {
             var best: Float = .greatestFiniteMagnitude
             var bestIdx = 0
             let eBase = i * d
-            for ci in 0..<codebookSize {
+            for ci in 0 ..< codebookSize {
                 let cBase = ci * d
                 var dot: Float = 0
-                for c in 0..<d { dot += encN[eBase + c] * cbN[cBase + c] }
+                for c in 0 ..< d { dot += encN[eBase + c] * cbN[cBase + c] }
                 let dist = 2.0 - 2.0 * dot
-                if dist < best { best = dist; bestIdx = ci }
+                if dist < best {
+                    best = dist
+                    bestIdx = ci
+                }
             }
             indices[i] = Int32(bestIdx)
         }
         // zQ = codebook[indices], rearranged back to [1, D, T].
         var zQ = [Float](repeating: 0, count: d * t)
-        for i in 0..<t {
+        for i in 0 ..< t {
             let cBase = Int(indices[i]) * d
-            for c in 0..<d { zQ[c * t + i] = codebook[cBase + c] }
+            for c in 0 ..< d { zQ[c * t + i] = codebook[cBase + c] }
         }
         return (zQ, indices)
     }
 
     /// Encode a residual latent: returns the upsampled quantized latent
     /// (for residual subtraction) and the codes.
-    func encode(_ z: [Float],
-                shape: [Int]) -> (zQ: [Float], indices: [Int32]) {
+    func encode(
+        _ z: [Float],
+        shape: [Int]
+    ) -> (zQ: [Float], indices: [Int32]) {
         // in_proj: [B, inputDim, T] -> [B, codebookDim, T].
         let (zE, zeShape) = inProj(z, shape: shape)
         let (zQLatent, indices) = decodeLatents(zE, shape: zeShape)
@@ -321,9 +348,9 @@ struct DescriptDACVectorQuantize {
     func decode(codes: [Int32]) -> (data: [Float], shape: [Int]) {
         let t = codes.count
         var zLatent = [Float](repeating: 0, count: codebookDim * t)
-        for i in 0..<t {
+        for i in 0 ..< t {
             let cBase = Int(codes[i]) * codebookDim
-            for c in 0..<codebookDim { zLatent[c * t + i] = codebook[cBase + c] }
+            for c in 0 ..< codebookDim { zLatent[c * t + i] = codebook[cBase + c] }
         }
         return outProj(zLatent, shape: [1, codebookDim, t])
     }
@@ -355,8 +382,9 @@ public final class DescriptDAC: @unchecked Sendable {
         guard FileManager.default.fileExists(atPath: configURL.path) else {
             throw DescriptDACError.configNotFound(configURL.path)
         }
-        let config = try JSONDecoder().decode(DescriptDACConfig.self,
-                                              from: Data(contentsOf: configURL))
+        let config = try JSONDecoder().decode(
+            DescriptDACConfig.self,
+            from: Data(contentsOf: configURL))
         let bundle = try SafeTensorsBundle(directory: directory)
         return try DescriptDAC(config: config, bundle: bundle)
     }
@@ -374,8 +402,9 @@ public final class DescriptDAC: @unchecked Sendable {
         var encBlocks: [DescriptDACEncoderBlock] = []
         var blockIdx = 1
         for stride in config.encoderRates {
-            encBlocks.append(try DescriptDACEncoderBlock(
-                weights: w, prefix: "encoder.block.\(blockIdx)", stride: stride))
+            encBlocks.append(
+                try DescriptDACEncoderBlock(
+                    weights: w, prefix: "encoder.block.\(blockIdx)", stride: stride))
             blockIdx += 1
         }
         self.encoderBlocks = encBlocks
@@ -388,11 +417,12 @@ public final class DescriptDAC: @unchecked Sendable {
 
         // ─── Quantizer ────────────────────────────────────────────
         var qs: [DescriptDACVectorQuantize] = []
-        for i in 0..<config.nCodebooks {
-            qs.append(try DescriptDACVectorQuantize(
-                weights: w, prefix: "quantizer.quantizers.\(i)",
-                codebookSize: config.codebookSize,
-                codebookDim: config.codebookDim))
+        for i in 0 ..< config.nCodebooks {
+            qs.append(
+                try DescriptDACVectorQuantize(
+                    weights: w, prefix: "quantizer.quantizers.\(i)",
+                    codebookSize: config.codebookSize,
+                    codebookDim: config.codebookDim))
         }
         self.quantizers = qs
 
@@ -404,8 +434,9 @@ public final class DescriptDAC: @unchecked Sendable {
         var decBlocks: [DescriptDACDecoderBlock] = []
         var decIdx = 1
         for stride in config.decoderRates {
-            decBlocks.append(try DescriptDACDecoderBlock(
-                weights: w, prefix: "decoder.model.\(decIdx)", stride: stride))
+            decBlocks.append(
+                try DescriptDACDecoderBlock(
+                    weights: w, prefix: "decoder.model.\(decIdx)", stride: stride))
             decIdx += 1
         }
         self.decoderBlocks = decBlocks
@@ -450,8 +481,10 @@ public final class DescriptDAC: @unchecked Sendable {
         return quantize(z.data, shape: z.shape)
     }
 
-    private func runEncoder(_ data: inout [Float],
-                            shape: inout [Int]) -> (data: [Float], shape: [Int]) {
+    private func runEncoder(
+        _ data: inout [Float],
+        shape: inout [Int]
+    ) -> (data: [Float], shape: [Int]) {
         var (d, s) = encoderConvIn(data, shape: shape)
         for block in encoderBlocks { (d, s) = block(d, shape: s) }
         d = AudioMath.snake(d, shape: s, alpha: encoderSnakeAlpha)
@@ -463,7 +496,7 @@ public final class DescriptDAC: @unchecked Sendable {
         var codes: [[Int32]] = []
         for q in quantizers {
             let (zQ, indices) = q.encode(residual, shape: shape)
-            for i in 0..<residual.count { residual[i] -= zQ[i] }
+            for i in 0 ..< residual.count { residual[i] -= zQ[i] }
             codes.append(indices)
         }
         return codes
@@ -483,9 +516,10 @@ public final class DescriptDAC: @unchecked Sendable {
                 zQ = zQI
                 zShape = sI
             } else {
-                precondition(zQI.count == zQ.count,
-                             "DescriptDAC.decode: quantizer latent length mismatch")
-                for j in 0..<zQ.count { zQ[j] += zQI[j] }
+                precondition(
+                    zQI.count == zQ.count,
+                    "DescriptDAC.decode: quantizer latent length mismatch")
+                for j in 0 ..< zQ.count { zQ[j] += zQI[j] }
             }
         }
         guard !zQ.isEmpty else {
@@ -497,8 +531,10 @@ public final class DescriptDAC: @unchecked Sendable {
         return out
     }
 
-    private func runDecoder(_ z: [Float],
-                            shape: [Int]) -> (data: [Float], shape: [Int]) {
+    private func runDecoder(
+        _ z: [Float],
+        shape: [Int]
+    ) -> (data: [Float], shape: [Int]) {
         var (d, s) = decoderConvIn(z, shape: shape)
         for block in decoderBlocks { (d, s) = block(d, shape: s) }
         d = AudioMath.snake(d, shape: s, alpha: decoderSnakeAlpha)

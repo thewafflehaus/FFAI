@@ -115,7 +115,8 @@ public enum OpsValidation {
         if !supportedSdpaHeadDims.contains(headDim) {
             let supported = supportedSdpaHeadDims.sorted()
                 .map(String.init).joined(separator: ", ")
-            return "head_dim must be one of {\(supported)} (got \(headDim)); other specializations not yet emitted"
+            return
+                "head_dim must be one of {\(supported)} (got \(headDim)); other specializations not yet emitted"
         }
         if nQHeads <= 0 {
             return "nQHeads must be positive (got \(nQHeads))"
@@ -130,14 +131,16 @@ public enum OpsValidation {
             return "nKV must be non-negative (got \(nKV))"
         }
         if nKV > kvStride {
-            return "nKV (\(nKV)) must not exceed kvStride (\(kvStride)) — kernel would read past cache"
+            return
+                "nKV (\(nKV)) must not exceed kvStride (\(kvStride)) — kernel would read past cache"
         }
         // Sliding-window / sink fast-path contract (invariant 4).
         if sinkEnd != 0 || windowStart != 0 {
             if !slidingWindowSdpaHeadDims.contains(headDim) {
                 let supported = slidingWindowSdpaHeadDims.sorted()
                     .map(String.init).joined(separator: ", ")
-                return "sinkEnd/windowStart are only supported for head_dim ∈ {\(supported)} (got \(headDim)); the d64/d256 kernels are dense-only"
+                return
+                    "sinkEnd/windowStart are only supported for head_dim ∈ {\(supported)} (got \(headDim)); the d64/d256 kernels are dense-only"
             }
             if sinkEnd < 0 {
                 return "sinkEnd must be non-negative (got \(sinkEnd))"
@@ -146,10 +149,12 @@ public enum OpsValidation {
                 return "windowStart must be non-negative (got \(windowStart))"
             }
             if sinkEnd > windowStart {
-                return "sinkEnd (\(sinkEnd)) must not exceed windowStart (\(windowStart)) — overlapping sink + window ranges double-count in the online softmax"
+                return
+                    "sinkEnd (\(sinkEnd)) must not exceed windowStart (\(windowStart)) — overlapping sink + window ranges double-count in the online softmax"
             }
             if windowStart > nKV {
-                return "windowStart (\(windowStart)) must not exceed nKV (\(nKV)) — window pass walks [windowStart, nKV)"
+                return
+                    "windowStart (\(windowStart)) must not exceed nKV (\(nKV)) — window pass walks [windowStart, nKV)"
             }
         }
         return nil
@@ -349,26 +354,31 @@ public enum OpsValidation {
         }
         // Footgun 1: partial trailing group.
         if !inDim.isMultiple(of: groupSize) {
-            return "inDim=\(inDim) must be a multiple of groupSize=\(groupSize) — partial trailing group would be silently dropped"
+            return
+                "inDim=\(inDim) must be a multiple of groupSize=\(groupSize) — partial trailing group would be silently dropped"
         }
         // Footgun 2: pack-alignment for pack-strided variants.
         if bits == 4 || bits == 8 {
             let valsPerPack = 32 / bits  // 8 for int4, 4 for int8
             if !inDim.isMultiple(of: valsPerPack) {
-                return "inDim=\(inDim) must be a multiple of \(valsPerPack) for bits=\(bits) (pack-strided kernel — unaligned tail elements silently dropped)"
+                return
+                    "inDim=\(inDim) must be a multiple of \(valsPerPack) for bits=\(bits) (pack-strided kernel — unaligned tail elements silently dropped)"
             }
             if !groupSize.isMultiple(of: valsPerPack) {
-                return "groupSize=\(groupSize) must be a multiple of \(valsPerPack) for bits=\(bits) (packs_per_group must be exact)"
+                return
+                    "groupSize=\(groupSize) must be a multiple of \(valsPerPack) for bits=\(bits) (packs_per_group must be exact)"
             }
         }
         // Footgun 3: scales/biases sizing.
         let nGroups = inDim / groupSize
         let expected = outDim * nGroups
         if scalesCount != expected {
-            return "scales must have outDim × n_groups = \(outDim) × \(nGroups) = \(expected) elements, got \(scalesCount)"
+            return
+                "scales must have outDim × n_groups = \(outDim) × \(nGroups) = \(expected) elements, got \(scalesCount)"
         }
         if biasesCount != expected {
-            return "biases must have outDim × n_groups = \(outDim) × \(nGroups) = \(expected) elements, got \(biasesCount)"
+            return
+                "biases must have outDim × n_groups = \(outDim) × \(nGroups) = \(expected) elements, got \(biasesCount)"
         }
         return nil
     }
@@ -392,13 +402,16 @@ public enum OpsValidation {
             return "dim must be positive (got \(dim))"
         }
         if !dim.isMultiple(of: 32) {
-            return "dim=\(dim) must be a multiple of 32 (one Apple simdgroup); simd_sum reduction is undefined otherwise"
+            return
+                "dim=\(dim) must be a multiple of 32 (one Apple simdgroup); simd_sum reduction is undefined otherwise"
         }
         if dim > 1024 {
-            return "dim=\(dim) > 1024 — exceeds the kernel's TPG cap (shared_unit allocates 1024 slots)"
+            return
+                "dim=\(dim) > 1024 — exceeds the kernel's TPG cap (shared_unit allocates 1024 slots)"
         }
         if bits != 2 && bits != 3 && bits != 4 && bits != 8 {
-            return "bits=\(bits) unsupported — encode kernel emits only int2/int3/int4/int8 variants"
+            return
+                "bits=\(bits) unsupported — encode kernel emits only int2/int3/int4/int8 variants"
         }
         return nil
     }
@@ -440,15 +453,18 @@ public enum OpsValidation {
         }
         // Footgun 1: partial trailing group.
         if !headDim.isMultiple(of: groupSize) {
-            return "headDim=\(headDim) must be a multiple of groupSize=\(groupSize) — partial trailing group would be silently dropped"
+            return
+                "headDim=\(headDim) must be a multiple of groupSize=\(groupSize) — partial trailing group would be silently dropped"
         }
         // Footguns 2 + 3: pack alignment. vals_per_pack = 32/bits.
         let valsPerPack = 32 / bits  // 8 for int4, 4 for int8
         if !headDim.isMultiple(of: valsPerPack) {
-            return "headDim=\(headDim) must be a multiple of \(valsPerPack) for bits=\(bits) (pack-strided kernel — unaligned tail packed at the wrong offset)"
+            return
+                "headDim=\(headDim) must be a multiple of \(valsPerPack) for bits=\(bits) (pack-strided kernel — unaligned tail packed at the wrong offset)"
         }
         if !groupSize.isMultiple(of: valsPerPack) {
-            return "groupSize=\(groupSize) must be a multiple of \(valsPerPack) for bits=\(bits) (packs_per_group must be exact)"
+            return
+                "groupSize=\(groupSize) must be a multiple of \(valsPerPack) for bits=\(bits) (packs_per_group must be exact)"
         }
         return nil
     }
@@ -481,7 +497,8 @@ public enum OpsValidation {
             return "groupSize must be positive (got \(groupSize))"
         }
         if !hidden.isMultiple(of: groupSize) {
-            return "hidden=\(hidden) must be a multiple of groupSize=\(groupSize) — partial trailing group would read scale/bias at the wrong index"
+            return
+                "hidden=\(hidden) must be a multiple of groupSize=\(groupSize) — partial trailing group would read scale/bias at the wrong index"
         }
         return nil
     }
@@ -524,7 +541,8 @@ public enum OpsValidation {
         }
         // Contract 1: per-head row stride.
         if cacheStride < tokens {
-            return "cacheStride (\(cacheStride)) must be >= tokens (\(tokens)) — smaller stride makes heads 1…n read/write the wrong rows (AURA coherent-then-collapse bug)"
+            return
+                "cacheStride (\(cacheStride)) must be >= tokens (\(tokens)) — smaller stride makes heads 1…n read/write the wrong rows (AURA coherent-then-collapse bug)"
         }
         // Contract 2: packedWidth must cover every dim. The clean path
         // packs `32/bits` dims per word; the odd-width path packs
@@ -533,7 +551,8 @@ public enum OpsValidation {
         let dimsPerWord = 32 / bits  // floor; clean path. ≥ odd-path stride.
         let minPackedWidth = (dim + dimsPerWord - 1) / dimsPerWord
         if packedWidth < minPackedWidth {
-            return "packedWidth=\(packedWidth) too small for dim=\(dim) at bits=\(bits) — need >= ceil(dim / \(dimsPerWord)) = \(minPackedWidth); trailing dims would be left as zeros"
+            return
+                "packedWidth=\(packedWidth) too small for dim=\(dim) at bits=\(bits) — need >= ceil(dim / \(dimsPerWord)) = \(minPackedWidth); trailing dims would be left as zeros"
         }
         return nil
     }
@@ -607,13 +626,16 @@ public enum OpsValidation {
             return "head counts must be positive (got Hk=\(numKeyHeads), Hv=\(numValueHeads))"
         }
         if !keyHeadDim.isMultiple(of: 32) {
-            return "keyHeadDim (\(keyHeadDim)) must be a multiple of 32 — each of the 32 lanes owns Dk/32 state columns"
+            return
+                "keyHeadDim (\(keyHeadDim)) must be a multiple of 32 — each of the 32 lanes owns Dk/32 state columns"
         }
         if keyHeadDim / 32 > gatedDeltaMaxStateColumns {
-            return "keyHeadDim (\(keyHeadDim)) exceeds the kernel's per-lane state cap — Dk/32 must be ≤ \(gatedDeltaMaxStateColumns) (Dk ≤ \(gatedDeltaMaxStateColumns * 32))"
+            return
+                "keyHeadDim (\(keyHeadDim)) exceeds the kernel's per-lane state cap — Dk/32 must be ≤ \(gatedDeltaMaxStateColumns) (Dk ≤ \(gatedDeltaMaxStateColumns * 32))"
         }
         if !numValueHeads.isMultiple(of: numKeyHeads) {
-            return "numValueHeads (\(numValueHeads)) must be a multiple of numKeyHeads (\(numKeyHeads)) for integer GQA fan-out"
+            return
+                "numValueHeads (\(numValueHeads)) must be a multiple of numKeyHeads (\(numKeyHeads)) for integer GQA fan-out"
         }
         return nil
     }
@@ -636,7 +658,8 @@ public enum OpsValidation {
             return "n=\(n) must be a multiple of 128 (32-lane simdgroup × 4 elements/thread)"
         }
         if n > 4096 {
-            return "n must be ≤ 4096 (got \(n)); the kernel's TPG = n/4 exceeds the 1024-thread group cap"
+            return
+                "n must be ≤ 4096 (got \(n)); the kernel's TPG = n/4 exceeds the 1024-thread group cap"
         }
         return nil
     }
@@ -652,7 +675,8 @@ public enum OpsValidation {
             return "n=\(n) must be a multiple of 128 (32-lane simdgroup × 4 elements/thread)"
         }
         if n > 4096 {
-            return "n must be ≤ 4096 (got \(n)); the kernel's TPG = n/4 exceeds the 1024-thread group cap"
+            return
+                "n must be ≤ 4096 (got \(n)); the kernel's TPG = n/4 exceeds the 1024-thread group cap"
         }
         return nil
     }
@@ -673,10 +697,12 @@ public enum OpsValidation {
             return "n=\(n) must be even (2 elements per thread)"
         }
         if n < 64 {
-            return "n=\(n) must be ≥ 64 — TPG = n/2 below 32 makes the simdgroup reduction degenerate"
+            return
+                "n=\(n) must be ≥ 64 — TPG = n/2 below 32 makes the simdgroup reduction degenerate"
         }
         if n > 2048 {
-            return "n=\(n) must be ≤ 2048 — TPG = n/2 exceeds the 1024-thread group cap; use rmsNorm or rmsNormWide for larger rows"
+            return
+                "n=\(n) must be ≤ 2048 — TPG = n/2 exceeds the 1024-thread group cap; use rmsNorm or rmsNormWide for larger rows"
         }
         return nil
     }
@@ -696,7 +722,8 @@ public enum OpsValidation {
             return "n must be positive (got \(n))"
         }
         if !temperature.isFinite || temperature <= 0 {
-            return "temperature must be a positive finite float (got \(temperature)); use Ops.argmax for greedy/zero-temperature sampling"
+            return
+                "temperature must be a positive finite float (got \(temperature)); use Ops.argmax for greedy/zero-temperature sampling"
         }
         return nil
     }

@@ -83,10 +83,12 @@ public struct Qwen3TTSTalkerConfig: Sendable {
     /// Codec codes per group the code predictor expands each step into.
     public let numCodeGroups: Int
 
-    public init(vocabSize: Int, hidden: Int, intermediate: Int,
-                nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-                rmsNormEps: Float, ropeTheta: Float, mropeSection: [Int]?,
-                textHidden: Int, textVocabSize: Int, numCodeGroups: Int) {
+    public init(
+        vocabSize: Int, hidden: Int, intermediate: Int,
+        nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        rmsNormEps: Float, ropeTheta: Float, mropeSection: [Int]?,
+        textHidden: Int, textVocabSize: Int, numCodeGroups: Int
+    ) {
         self.vocabSize = vocabSize
         self.hidden = hidden
         self.intermediate = intermediate
@@ -117,7 +119,8 @@ public struct Qwen3TTSTalkerConfig: Sendable {
         // The mRoPE section lives under `rope_scaling.mrope_section`.
         var mrope: [Int]? = nil
         if let rs = talker["rope_scaling"] as? [String: Any],
-           let sec = rs["mrope_section"] as? [Int] {
+            let sec = rs["mrope_section"] as? [Int]
+        {
             mrope = sec
         }
         return Qwen3TTSTalkerConfig(
@@ -150,9 +153,11 @@ public struct Qwen3TTSConfig: Sendable {
     public let ttsEosTokenId: Int
     public let ttsPadTokenId: Int
 
-    public init(talker: Qwen3TTSTalkerConfig, sampleRate: Int,
-                codecEosTokenId: Int, ttsBosTokenId: Int,
-                ttsEosTokenId: Int, ttsPadTokenId: Int) {
+    public init(
+        talker: Qwen3TTSTalkerConfig, sampleRate: Int,
+        codecEosTokenId: Int, ttsBosTokenId: Int,
+        ttsEosTokenId: Int, ttsPadTokenId: Int
+    ) {
         self.talker = talker
         self.sampleRate = sampleRate
         self.codecEosTokenId = codecEosTokenId
@@ -165,7 +170,7 @@ public struct Qwen3TTSConfig: Sendable {
     /// `talker_config`; the codec under `tokenizer_config`.
     public static func from(_ config: ModelConfig) -> Qwen3TTSConfig? {
         guard let talkerBlock = config.nested("talker_config"),
-              let talker = Qwen3TTSTalkerConfig.from(talkerBlock)
+            let talker = Qwen3TTSTalkerConfig.from(talkerBlock)
         else { return nil }
         // Codec EOS lives on the talker block; tts BOS/EOS/PAD top-level.
         let codecEos = (talkerBlock["codec_eos_token_id"] as? Int) ?? 2150
@@ -226,8 +231,10 @@ public final class Qwen3TTSModel: @unchecked Sendable {
     /// Full text→waveform synthesis. Throws `Qwen3TTSError.synthesisNotWired`
     /// until the talker / code-predictor / codec stages land — see the
     /// scope note at the top of this file.
-    public func synthesize(text: String, voice: String? = nil,
-                           device: Device = .shared) throws -> Tensor {
+    public func synthesize(
+        text: String, voice: String? = nil,
+        device: Device = .shared
+    ) throws -> Tensor {
         _ = (text, voice, device)
         throw Qwen3TTSError.synthesisNotWired
     }
@@ -238,7 +245,7 @@ public final class Qwen3TTSModel: @unchecked Sendable {
 extension Qwen3TTSModel {
     public static let modelTypes: Set<String> = ["qwen3_tts", "qwen3tts"]
     public static let architectures: Set<String> = [
-        "Qwen3TTSForConditionalGeneration",
+        "Qwen3TTSForConditionalGeneration"
     ]
 
     /// Whether a decoded `config.json` describes a Qwen3TTS checkpoint.
@@ -257,7 +264,8 @@ extension Qwen3TTSModel {
     /// Stage 1 decodes the config and retains the weight bundle; the
     /// sub-models are built in follow-on stages.
     public static func load(directory: URL, device: Device = .shared)
-        throws -> Qwen3TTSModel {
+        throws -> Qwen3TTSModel
+    {
         let config = try ModelConfig.load(from: directory)
         guard let qc = Qwen3TTSConfig.from(config) else {
             throw Qwen3TTSError.missingConfig

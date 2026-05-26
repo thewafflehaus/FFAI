@@ -23,9 +23,10 @@
 // available locally.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Gemma3 Text Integration", .serialized)
 struct Gemma3TextIntegrationTests {

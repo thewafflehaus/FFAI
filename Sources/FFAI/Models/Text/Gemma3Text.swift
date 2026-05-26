@@ -91,11 +91,11 @@ public struct Gemma3Dense: Gemma3Variant {
         device: Device
     ) throws -> Gemma3Model {
         guard let hidden = config.hiddenSize,
-              let nLayers = config.numLayers,
-              let nHeads = config.numAttentionHeads,
-              let intermediate = config.intermediateSize,
-              let eps = config.rmsNormEps,
-              let vocab = config.vocabSize
+            let nLayers = config.numLayers,
+            let nHeads = config.numAttentionHeads,
+            let intermediate = config.intermediateSize,
+            let eps = config.rmsNormEps,
+            let vocab = config.vocabSize
         else {
             throw Gemma3Error.missingConfig
         }
@@ -121,7 +121,7 @@ public struct Gemma3Dense: Gemma3Variant {
         var layers: [Gemma3Layer] = []
         layers.reserveCapacity(nLayers)
 
-        for i in 0..<nLayers {
+        for i in 0 ..< nLayers {
             let p = "model.layers.\(i)"
             // Layer index (i+1) % pattern == 0 is a global-attention
             // layer; the others are sliding (per mlx-swift-lm + the
@@ -129,20 +129,27 @@ public struct Gemma3Dense: Gemma3Variant {
             let isSliding = (i + 1) % slidingWindowPattern != 0
             let layerRopeTheta = isSliding ? ropeLocalBaseFreq : ropeTheta
 
-            let qProj = try loadLinear(base: "\(p).self_attn.q_proj",
-                                       in: weights, quantization: quant)
-            let kProj = try loadLinear(base: "\(p).self_attn.k_proj",
-                                       in: weights, quantization: quant)
-            let vProj = try loadLinear(base: "\(p).self_attn.v_proj",
-                                       in: weights, quantization: quant)
-            let oProj = try loadLinear(base: "\(p).self_attn.o_proj",
-                                       in: weights, quantization: quant)
-            let gateProj = try loadLinear(base: "\(p).mlp.gate_proj",
-                                          in: weights, quantization: quant)
-            let upProj = try loadLinear(base: "\(p).mlp.up_proj",
-                                        in: weights, quantization: quant)
-            let downProj = try loadLinear(base: "\(p).mlp.down_proj",
-                                          in: weights, quantization: quant)
+            let qProj = try loadLinear(
+                base: "\(p).self_attn.q_proj",
+                in: weights, quantization: quant)
+            let kProj = try loadLinear(
+                base: "\(p).self_attn.k_proj",
+                in: weights, quantization: quant)
+            let vProj = try loadLinear(
+                base: "\(p).self_attn.v_proj",
+                in: weights, quantization: quant)
+            let oProj = try loadLinear(
+                base: "\(p).self_attn.o_proj",
+                in: weights, quantization: quant)
+            let gateProj = try loadLinear(
+                base: "\(p).mlp.gate_proj",
+                in: weights, quantization: quant)
+            let upProj = try loadLinear(
+                base: "\(p).mlp.up_proj",
+                in: weights, quantization: quant)
+            let downProj = try loadLinear(
+                base: "\(p).mlp.down_proj",
+                in: weights, quantization: quant)
 
             let inputNorm = try loadGemmaRMSNorm(
                 base: "\(p).input_layernorm.weight", in: weights, eps: eps)
@@ -157,18 +164,19 @@ public struct Gemma3Dense: Gemma3Variant {
             let kNorm = try loadGemmaRMSNorm(
                 base: "\(p).self_attn.k_norm.weight", in: weights, eps: eps)
 
-            layers.append(Gemma3Layer(
-                qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
-                gateProj: gateProj, upProj: upProj, downProj: downProj,
-                inputNorm: inputNorm, postAttnNorm: postAttnNorm,
-                preFFNorm: preFFNorm, postFFNorm: postFFNorm,
-                qNorm: qNorm, kNorm: kNorm,
-                hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
-                headDim: headDim, intermediate: intermediate,
-                ropeTheta: layerRopeTheta,
-                queryPreAttnScalar: queryPreAttnScalar,
-                isSliding: isSliding
-            ))
+            layers.append(
+                Gemma3Layer(
+                    qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
+                    gateProj: gateProj, upProj: upProj, downProj: downProj,
+                    inputNorm: inputNorm, postAttnNorm: postAttnNorm,
+                    preFFNorm: preFFNorm, postFFNorm: postFFNorm,
+                    qNorm: qNorm, kNorm: kNorm,
+                    hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
+                    headDim: headDim, intermediate: intermediate,
+                    ropeTheta: layerRopeTheta,
+                    queryPreAttnScalar: queryPreAttnScalar,
+                    isSliding: isSliding
+                ))
         }
 
         let finalNorm = try loadGemmaRMSNorm(
@@ -183,17 +191,19 @@ public struct Gemma3Dense: Gemma3Variant {
                 weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
                 scaleCols: t.scales.shape[t.scales.shape.count - 1],
                 groupSize: q.groupSize)
-            lmHead = AnyLinear(QuantizedLinear(
-                weight: t.weight, scales: t.scales, biases: t.biases,
-                bits: bits, groupSize: q.groupSize
-            ))
+            lmHead = AnyLinear(
+                QuantizedLinear(
+                    weight: t.weight, scales: t.scales, biases: t.biases,
+                    bits: bits, groupSize: q.groupSize
+                ))
         } else {
             lmHead = AnyLinear(Linear(weight: embedTokens.weight))
         }
 
         let activationDtype: DType
         if weights.isQuantized("model.embed_tokens"),
-           let scales = try? weights.tensor(named: "model.embed_tokens.scales") {
+            let scales = try? weights.tensor(named: "model.embed_tokens.scales")
+        {
             activationDtype = scales.dtype
         } else {
             activationDtype = embedTokens.weight.dtype
@@ -248,20 +258,20 @@ internal func loadGemmaRMSNorm(
     case .f32:
         let src = srcPtr.bindMemory(to: Float.self, capacity: n)
         let dst = dstPtr.bindMemory(to: Float.self, capacity: n)
-        for i in 0..<n { dst[i] = src[i] + 1.0 }
+        for i in 0 ..< n { dst[i] = src[i] + 1.0 }
     case .f16:
         // f16 add via a single fp32 round-trip per element. n is the
         // hidden size (a few thousand), so this is one-shot cost.
         let src = srcPtr.bindMemory(to: UInt16.self, capacity: n)
         let dst = dstPtr.bindMemory(to: UInt16.self, capacity: n)
-        for i in 0..<n {
+        for i in 0 ..< n {
             let f = halfBitsToFloat(src[i]) + 1.0
             dst[i] = floatToHalfBits(f)
         }
     case .bf16:
         let src = srcPtr.bindMemory(to: UInt16.self, capacity: n)
         let dst = dstPtr.bindMemory(to: UInt16.self, capacity: n)
-        for i in 0..<n {
+        for i in 0 ..< n {
             let f = bf16BitsToFloat(src[i]) + 1.0
             dst[i] = floatToBf16Bits(f)
         }
@@ -280,15 +290,15 @@ internal func fillScalar(_ t: Tensor, scalar: Float, dtype: DType) {
     switch dtype {
     case .f32:
         let p = ptr.bindMemory(to: Float.self, capacity: n)
-        for i in 0..<n { p[i] = scalar }
+        for i in 0 ..< n { p[i] = scalar }
     case .f16:
         let p = ptr.bindMemory(to: UInt16.self, capacity: n)
         let h = floatToHalfBits(scalar)
-        for i in 0..<n { p[i] = h }
+        for i in 0 ..< n { p[i] = h }
     case .bf16:
         let p = ptr.bindMemory(to: UInt16.self, capacity: n)
         let h = floatToBf16Bits(scalar)
-        for i in 0..<n { p[i] = h }
+        for i in 0 ..< n { p[i] = h }
     default:
         fatalError("Gemma3: unsupported fillScalar dtype \(dtype)")
     }
@@ -311,13 +321,16 @@ private func halfBitsToFloat(_ bits: UInt16) -> Float {
         // Subnormal — renormalize.
         var e: UInt32 = 0
         var m = frac16
-        while (m & 0x400) == 0 { m <<= 1; e += 1 }
+        while (m & 0x400) == 0 {
+            m <<= 1
+            e += 1
+        }
         m &= 0x3FF
         let exp32 = 127 - 15 - e + 1
         return Float(bitPattern: sign | (exp32 << 23) | (m << 13))
     }
     if exp16 == 0x1F {
-        return Float(bitPattern: sign | 0x7F800000 | (frac16 << 13))
+        return Float(bitPattern: sign | 0x7F80_0000 | (frac16 << 13))
     }
     let exp32 = exp16 + (127 - 15)
     return Float(bitPattern: sign | (exp32 << 23) | (frac16 << 13))
@@ -393,17 +406,17 @@ public func gemmaFoldRMSNormForTest(
     case .f32:
         let src = srcPtr.bindMemory(to: Float.self, capacity: n)
         let dst = dstPtr.bindMemory(to: Float.self, capacity: n)
-        for i in 0..<n { dst[i] = src[i] + 1.0 }
+        for i in 0 ..< n { dst[i] = src[i] + 1.0 }
     case .f16:
         let src = srcPtr.bindMemory(to: UInt16.self, capacity: n)
         let dst = dstPtr.bindMemory(to: UInt16.self, capacity: n)
-        for i in 0..<n {
+        for i in 0 ..< n {
             dst[i] = floatToHalfBits(halfBitsToFloat(src[i]) + 1.0)
         }
     case .bf16:
         let src = srcPtr.bindMemory(to: UInt16.self, capacity: n)
         let dst = dstPtr.bindMemory(to: UInt16.self, capacity: n)
-        for i in 0..<n {
+        for i in 0 ..< n {
             dst[i] = floatToBf16Bits(bf16BitsToFloat(src[i]) + 1.0)
         }
     default:
@@ -427,21 +440,34 @@ public final class Gemma3Layer: Module {
     /// Gemma3Model.makeLayerCaches.
     public let isSliding: Bool
 
-    init(qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
-         gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
-         inputNorm: RMSNorm, postAttnNorm: RMSNorm,
-         preFFNorm: RMSNorm, postFFNorm: RMSNorm,
-         qNorm: RMSNorm, kNorm: RMSNorm,
-         hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         intermediate: Int, ropeTheta: Float,
-         queryPreAttnScalar: Float, isSliding: Bool) {
-        self.qProj = qProj; self.kProj = kProj; self.vProj = vProj; self.oProj = oProj
-        self.gateProj = gateProj; self.upProj = upProj; self.downProj = downProj
-        self.inputNorm = inputNorm; self.postAttnNorm = postAttnNorm
-        self.preFFNorm = preFFNorm; self.postFFNorm = postFFNorm
-        self.qNorm = qNorm; self.kNorm = kNorm
-        self.hidden = hidden; self.nHeads = nHeads; self.nKVHeads = nKVHeads
-        self.headDim = headDim; self.intermediate = intermediate
+    init(
+        qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
+        gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
+        inputNorm: RMSNorm, postAttnNorm: RMSNorm,
+        preFFNorm: RMSNorm, postFFNorm: RMSNorm,
+        qNorm: RMSNorm, kNorm: RMSNorm,
+        hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        intermediate: Int, ropeTheta: Float,
+        queryPreAttnScalar: Float, isSliding: Bool
+    ) {
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
+        self.gateProj = gateProj
+        self.upProj = upProj
+        self.downProj = downProj
+        self.inputNorm = inputNorm
+        self.postAttnNorm = postAttnNorm
+        self.preFFNorm = preFFNorm
+        self.postFFNorm = postFFNorm
+        self.qNorm = qNorm
+        self.kNorm = kNorm
+        self.hidden = hidden
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.intermediate = intermediate
         self.ropeTheta = ropeTheta
         self.isSliding = isSliding
         // mlx-swift-lm: scale = pow(queryPreAttnScalar, -0.5) = 1/sqrt(scalar)
@@ -474,8 +500,10 @@ public final class Gemma3Layer: Module {
     /// `Gemma3Model.forward(...)` via `InspectTap`, NOT here. The
     /// layer's hot path stays bespoke-debug-free; first-light
     /// triage happens at `ffai inspect --layer-trace`.
-    func forward(_ h: Tensor, position: Int, cache: any KVCacheProtocol,
-                 on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forward(
+        _ h: Tensor, position: Int, cache: any KVCacheProtocol,
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // Pre-attn norm.
         let xNorm = inputNorm(h, on: cmd)
 
@@ -497,17 +525,20 @@ public final class Gemma3Layer: Module {
         ).reshaped(to: [nKVHeads, headDim])
 
         // RoPE on the normed q and k.
-        let qRotated = Ops.rope(qNorm2D,
-                                position: position, headDim: headDim,
-                                thetaBase: ropeTheta, scaling: .none, on: cmd)
-        let kRotated = Ops.rope(kNorm2D,
-                                position: position, headDim: headDim,
-                                thetaBase: ropeTheta, scaling: .none, on: cmd)
+        let qRotated = Ops.rope(
+            qNorm2D,
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, scaling: .none, on: cmd)
+        let kRotated = Ops.rope(
+            kNorm2D,
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, scaling: .none, on: cmd)
 
         // Append + SDPA.
-        cache.appendOnGPU(kFlat: kRotated,
-                          vFlat: v.reshaped(to: [nKVHeads, headDim]),
-                          on: cmd)
+        cache.appendOnGPU(
+            kFlat: kRotated,
+            vFlat: v.reshaped(to: [nKVHeads, headDim]),
+            on: cmd)
         let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
         // Sliding layers run a `.window` KV cache; the helper derives
         // the kernel's sink/window fast-path bounds from the eviction
@@ -586,21 +617,28 @@ public final class Gemma3Model: LanguageModel {
     /// `.window(slidingWindow)`, global layers stay `.unbounded`.
     public let kvEviction: KVEviction
 
-    init(embedTokens: AnyEmbedding, layers: [Gemma3Layer],
-         finalNorm: RMSNorm, lmHead: AnyLinear,
-         embedScale: Tensor,
-         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         vocab: Int, maxSeq: Int, dtype: DType,
-         slidingWindow: Int, slidingWindowPattern: Int,
-         kvCacheKind: KVCacheKind, kvEviction: KVEviction) {
+    init(
+        embedTokens: AnyEmbedding, layers: [Gemma3Layer],
+        finalNorm: RMSNorm, lmHead: AnyLinear,
+        embedScale: Tensor,
+        hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        vocab: Int, maxSeq: Int, dtype: DType,
+        slidingWindow: Int, slidingWindowPattern: Int,
+        kvCacheKind: KVCacheKind, kvEviction: KVEviction
+    ) {
         self.embedTokens = embedTokens
         self.layers = layers
         self.finalNorm = finalNorm
         self.lmHead = lmHead
         self.embedScale = embedScale
-        self.hidden = hidden; self.nLayers = nLayers; self.nHeads = nHeads
-        self.nKVHeads = nKVHeads; self.headDim = headDim
-        self.vocab = vocab; self.maxSeq = maxSeq; self.dtype = dtype
+        self.hidden = hidden
+        self.nLayers = nLayers
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.vocab = vocab
+        self.maxSeq = maxSeq
+        self.dtype = dtype
         self.slidingWindow = slidingWindow
         self.slidingWindowPattern = slidingWindowPattern
         self.kvCacheKind = kvCacheKind
@@ -628,7 +666,7 @@ public final class Gemma3Model: LanguageModel {
         let cap = maxSeq ?? self.maxSeq
         var caches: [any LayerCacheProtocol] = []
         caches.reserveCapacity(nLayers)
-        for i in 0..<nLayers {
+        for i in 0 ..< nLayers {
             let layerEviction: KVEviction
             switch kvEviction {
             case .window:
@@ -636,30 +674,35 @@ public final class Gemma3Model: LanguageModel {
                 layerEviction = kvEviction
             case .unbounded:
                 // Heuristic: sliding layers cap at slidingWindow.
-                layerEviction = layers[i].isSliding
+                layerEviction =
+                    layers[i].isSliding
                     ? .window(maxSize: min(slidingWindow, cap), keep: 0)
                     : .unbounded
             }
             switch kvCacheKind {
             case .raw:
-                caches.append(KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
-                    dtype: dtype, eviction: layerEviction, device: device
-                ))
+                caches.append(
+                    KVCache(
+                        nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                        dtype: dtype, eviction: layerEviction, device: device
+                    ))
             default:
                 // First-light: only raw KV supported on Gemma 3. The
                 // affine + AURA paths require a per-layer working
                 // buffer wired through Gemma3Model's storage, which
                 // we haven't built yet.
-                preconditionFailure("Gemma3: only .raw KV cache supported today; got \(kvCacheKind)")
+                preconditionFailure(
+                    "Gemma3: only .raw KV cache supported today; got \(kvCacheKind)")
             }
         }
         return caches
     }
 
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // Debug-tap mode forces a *private* cmdbuf so per-op
         // commit+wait sync points don't double-commit the caller's
         // cmd. In production / non-debug mode, queue everything on
@@ -676,26 +719,31 @@ public final class Gemma3Model: LanguageModel {
         let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
         let h0 = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
         var h = Ops.mul(h0, embedScale, on: workCmd)
-        workCmd = tap.dumpLayerBoundary(h, label: "embed*scale", layer: -1,
-                                        cmd: workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(
+            h, label: "embed*scale", layer: -1,
+            cmd: workCmd, device: device)
 
         // Per-layer forward. Tap fires at the OUTPUT of each layer.
         // The first layer's input is the embed dump above; every
         // subsequent layer's input is the prior layer's output, so
         // we only need one dump per boundary.
         for (i, layer) in layers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              on: workCmd, device: device)
-            workCmd = tap.dumpLayerBoundary(h, label: "layer_out", layer: i,
-                                            cmd: workCmd, device: device)
+            h = layer.forward(
+                h, position: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                on: workCmd, device: device)
+            workCmd = tap.dumpLayerBoundary(
+                h, label: "layer_out", layer: i,
+                cmd: workCmd, device: device)
         }
         h = finalNorm(h, on: workCmd)
-        workCmd = tap.dumpLayerBoundary(h, label: "final_norm", layer: -1,
-                                        cmd: workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(
+            h, label: "final_norm", layer: -1,
+            cmd: workCmd, device: device)
         let logits = lmHead(h, on: workCmd)
-        workCmd = tap.dumpLayerBoundary(logits, label: "logits", layer: -1,
-                                        cmd: workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(
+            logits, label: "logits", layer: -1,
+            cmd: workCmd, device: device)
 
         // In tap-active mode the last tap committed + waited;
         // logits buffer holds valid data. The caller's cmd has no
@@ -721,15 +769,19 @@ public final class Gemma3Model: LanguageModel {
     /// window). Pending that per-layer split, this override is
     /// commit-count-batched only — same correctness as the protocol
     /// default, no new SDPA dispatch savings yet.
-    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                             caches: [any LayerCacheProtocol],
-                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(!tokenIds.isEmpty,
-                     "Gemma3Model.forwardMulti: tokenIds must be non-empty")
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "Gemma3Model.forwardMulti: tokenIds must be non-empty")
         var logits: Tensor!
         for (i, tok) in tokenIds.enumerated() {
-            logits = forward(tokenId: tok, position: position + i,
-                             caches: caches, on: cmd, device: device)
+            logits = forward(
+                tokenId: tok, position: position + i,
+                caches: caches, on: cmd, device: device)
         }
         return logits
     }
@@ -742,17 +794,21 @@ public final class Gemma3Model: LanguageModel {
     /// way as text tokens.
     public var supportsEmbeddingInput: Bool { true }
 
-    public func forward(inputEmbedding: Tensor, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(inputEmbedding.elementCount == hidden,
-                     "Gemma3Model.forward(inputEmbedding:): expected [\(hidden)], "
-                     + "got \(inputEmbedding.shape)")
+    public func forward(
+        inputEmbedding: Tensor, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            inputEmbedding.elementCount == hidden,
+            "Gemma3Model.forward(inputEmbedding:): expected [\(hidden)], "
+                + "got \(inputEmbedding.shape)")
         var h = Ops.mul(inputEmbedding.reshaped(to: [hidden]), embedScale, on: cmd)
         for (i, layer) in layers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              on: cmd, device: device)
+            h = layer.forward(
+                h, position: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                on: cmd, device: device)
         }
         h = finalNorm(h, on: cmd)
         return lmHead(h, on: cmd)

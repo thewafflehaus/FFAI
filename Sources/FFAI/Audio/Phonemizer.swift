@@ -73,10 +73,10 @@ public protocol Phonemizer: Sendable {
     var phonemeVocabulary: [String: Int] { get }
 }
 
-public extension Phonemizer {
+extension Phonemizer {
     /// Default `tokenize` implementation — single-character lookup.
     /// Unknown characters map to 0 (treated as silence by most models).
-    func tokenize(phonemes: String) throws -> [Int] {
+    public func tokenize(phonemes: String) throws -> [Int] {
         var ids: [Int] = []
         ids.reserveCapacity(phonemes.count)
         let vocab = phonemeVocabulary

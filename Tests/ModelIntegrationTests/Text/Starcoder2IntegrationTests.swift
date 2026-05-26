@@ -17,9 +17,10 @@
 // auto-detection path as Qwen 2.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Starcoder2 Integration", .serialized)
 struct Starcoder2IntegrationTests {

@@ -219,10 +219,12 @@ public enum NemotronDiffusionVL {
 
         // Image token count for the default square-image path; the
         // composed encoder adjusts at encode time for dynamic images.
-        let mergedPatches = visionCfg.numPatches
+        let mergedPatches =
+            visionCfg.numPatches
             / (spatialMergeSize * spatialMergeSize)
 
-        let imageTokenId = config.int("image_token_id")
+        let imageTokenId =
+            config.int("image_token_id")
             ?? config.int("image_token_index")
             ?? defaultImageTokenId
 

@@ -18,6 +18,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("SmartTurn")
@@ -117,16 +118,18 @@ struct SmartTurnTests {
 
     @Test("VADModelRegistry.detectKind — recognizes smart_turn model_type")
     func registryDetectKindSmartTurn() throws {
-        let dir = try writeTempConfig(["model_type": "smart_turn"],
-                                      named: "smart-turn-checkpoint")
+        let dir = try writeTempConfig(
+            ["model_type": "smart_turn"],
+            named: "smart-turn-checkpoint")
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(try VADModelRegistry.detectKind(in: dir) == .smartTurn)
     }
 
     @Test("VADModelRegistry.detectKind — recognizes smart_turn_v3 model_type")
     func registryDetectKindSmartTurnV3() throws {
-        let dir = try writeTempConfig(["model_type": "smart_turn_v3"],
-                                      named: "smart-turn-v3-checkpoint")
+        let dir = try writeTempConfig(
+            ["model_type": "smart_turn_v3"],
+            named: "smart-turn-v3-checkpoint")
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(try VADModelRegistry.detectKind(in: dir) == .smartTurn)
     }
@@ -156,8 +159,10 @@ struct SmartTurnTests {
 
     // ─── Helpers ─────────────────────────────────────────────────────────
 
-    private func writeTempConfig(_ config: [String: Any],
-                                 named: String) throws -> URL {
+    private func writeTempConfig(
+        _ config: [String: Any],
+        named: String
+    ) throws -> URL {
         let base = FileManager.default.temporaryDirectory
         let dir = base.appendingPathComponent("\(named)-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

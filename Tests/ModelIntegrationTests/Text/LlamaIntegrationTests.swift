@@ -21,9 +21,10 @@
 // Skipped automatically if the network/checkpoint isn't available.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Llama Integration", .serialized)
 struct LlamaIntegrationTests {

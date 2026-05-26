@@ -171,9 +171,11 @@ public struct Qwen3ASRConfig: Sendable {
     public static func from(_ config: ModelConfig) -> Qwen3ASRConfig? {
         // Locate the thinker_config (or fall back to top-level).
         let thinker = config.nested("thinker_config")
-        let audioRaw = (thinker?["audio_config"] as? [String: Any])
+        let audioRaw =
+            (thinker?["audio_config"] as? [String: Any])
             ?? config.nested("audio_config")
-        let textRaw = (thinker?["text_config"] as? [String: Any])
+        let textRaw =
+            (thinker?["text_config"] as? [String: Any])
             ?? config.nested("text_config")
 
         guard audioRaw != nil || textRaw != nil else { return nil }
@@ -246,7 +248,7 @@ public struct Qwen3ASRConfig: Sendable {
             eosTokenIds: eosIds,
             padTokenId: (thinker?["pad_token_id"] as? Int)
                 ?? (config.raw["pad_token_id"] as? Int)
-                ?? 151643,
+                    ?? 151643,
             supportLanguages: supportLanguages
         )
     }
@@ -265,14 +267,19 @@ public final class Qwen3ASREncoderLayer: Module {
     let hidden, nHeads, headDim: Int
     let scale: Float
 
-    init(selfAttnNorm: LayerNorm, finalNorm: LayerNorm,
-         qProj: Linear, kProj: Linear, vProj: Linear, outProj: Linear,
-         fc1: Linear, fc2: Linear, hidden: Int, nHeads: Int) {
+    init(
+        selfAttnNorm: LayerNorm, finalNorm: LayerNorm,
+        qProj: Linear, kProj: Linear, vProj: Linear, outProj: Linear,
+        fc1: Linear, fc2: Linear, hidden: Int, nHeads: Int
+    ) {
         self.selfAttnNorm = selfAttnNorm
         self.finalNorm = finalNorm
-        self.qProj = qProj; self.kProj = kProj
-        self.vProj = vProj; self.outProj = outProj
-        self.fc1 = fc1; self.fc2 = fc2
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.outProj = outProj
+        self.fc1 = fc1
+        self.fc2 = fc2
         self.hidden = hidden
         self.nHeads = nHeads
         self.headDim = hidden / nHeads
@@ -322,11 +329,17 @@ public final class Qwen3ASRTextLayer: Module {
         qNorm: RMSNorm, kNorm: RMSNorm,
         gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear
     ) {
-        self.inputNorm = inputNorm; self.postAttnNorm = postAttnNorm
-        self.qProj = qProj; self.kProj = kProj
-        self.vProj = vProj; self.oProj = oProj
-        self.qNorm = qNorm; self.kNorm = kNorm
-        self.gateProj = gateProj; self.upProj = upProj; self.downProj = downProj
+        self.inputNorm = inputNorm
+        self.postAttnNorm = postAttnNorm
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
+        self.qNorm = qNorm
+        self.kNorm = kNorm
+        self.gateProj = gateProj
+        self.upProj = upProj
+        self.downProj = downProj
     }
 
     public func parameters() -> [(String, Tensor)] { [] }
@@ -438,43 +451,49 @@ public final class Qwen3ASRModel: @unchecked Sendable {
         // melF shape: [nFrames, nMels]. Treat as a 2D image with a single
         // channel — reshape to [1, 1, nMels, nFrames] (NCHW).
         let nFrames = melF.shape[0]
-        let nMels   = melF.shape[1]
+        let nMels = melF.shape[1]
         let melNCHW = melF.reshaped(to: [1, 1, nMels, nFrames])
 
         // ── Conv2d frontend (3 × stride-2, kernel 3×3, padding 1) ──
         let cmd1 = device.makeCommandBuffer()
-        var x = Ops.conv2d(input: melNCHW, weight: conv2d1Weight,
-                           bias: conv2d1Bias, strideH: 2, strideW: 2,
-                           padH: 1, padW: 1, on: cmd1)
+        var x = Ops.conv2d(
+            input: melNCHW, weight: conv2d1Weight,
+            bias: conv2d1Bias, strideH: 2, strideW: 2,
+            padH: 1, padW: 1, on: cmd1)
         x = Ops.gelu(x, on: cmd1)
-        cmd1.commit(); cmd1.waitUntilCompleted()
+        cmd1.commit()
+        cmd1.waitUntilCompleted()
 
         let cmd2 = device.makeCommandBuffer()
-        x = Ops.conv2d(input: x, weight: conv2d2Weight, bias: conv2d2Bias,
-                       strideH: 2, strideW: 2, padH: 1, padW: 1, on: cmd2)
+        x = Ops.conv2d(
+            input: x, weight: conv2d2Weight, bias: conv2d2Bias,
+            strideH: 2, strideW: 2, padH: 1, padW: 1, on: cmd2)
         x = Ops.gelu(x, on: cmd2)
-        cmd2.commit(); cmd2.waitUntilCompleted()
+        cmd2.commit()
+        cmd2.waitUntilCompleted()
 
         let cmd3 = device.makeCommandBuffer()
-        x = Ops.conv2d(input: x, weight: conv2d3Weight, bias: conv2d3Bias,
-                       strideH: 2, strideW: 2, padH: 1, padW: 1, on: cmd3)
+        x = Ops.conv2d(
+            input: x, weight: conv2d3Weight, bias: conv2d3Bias,
+            strideH: 2, strideW: 2, padH: 1, padW: 1, on: cmd3)
         x = Ops.gelu(x, on: cmd3)
-        cmd3.commit(); cmd3.waitUntilCompleted()
+        cmd3.commit()
+        cmd3.waitUntilCompleted()
 
         // x shape: [1, downsampleHidden, freqOut, timeOut]
         // Transpose NCHW → [timeOut, freqOut × channels] by iterating over
         // the GPU readback and reordering: x[n,c,h,w] → out[w, h*C + c].
         let C = x.shape[1]
         let H = x.shape[2]
-        let W = x.shape[3]   // timeOut
+        let W = x.shape[3]  // timeOut
         let flatDim = H * C  // freqOut * downsampleHidden
 
         let xVals = x.toFloatArray()
         // NCHW: x[c, h, w] = xVals[c*H*W + h*W + w] (batch dim 0 = singleton)
         var reordered = [Float](repeating: 0, count: W * flatDim)
-        for w in 0..<W {
-            for h in 0..<H {
-                for c in 0..<C {
+        for w in 0 ..< W {
+            for h in 0 ..< H {
+                for c in 0 ..< C {
                     reordered[w * flatDim + h * C + c] = xVals[c * H * W + h * W + w]
                 }
             }
@@ -486,7 +505,8 @@ public final class Qwen3ASRModel: @unchecked Sendable {
         let dModel = ac.dModel
         let cmd4 = device.makeCommandBuffer()
         var h = Ops.gemm(weight: convOutWeight, input: xFlat, nRows: W, on: cmd4)
-        cmd4.commit(); cmd4.waitUntilCompleted()
+        cmd4.commit()
+        cmd4.waitUntilCompleted()
 
         // ── Add sinusoidal positional embedding for the W time steps ──
         let peCount = min(W, ac.maxSourcePositions) * dModel
@@ -495,7 +515,8 @@ public final class Qwen3ASRModel: @unchecked Sendable {
         AudioPreprocessing.copyFloats(peVals, into: peT)
         let cmd5 = device.makeCommandBuffer()
         h = Ops.add(h, peT, on: cmd5)
-        cmd5.commit(); cmd5.waitUntilCompleted()
+        cmd5.commit()
+        cmd5.waitUntilCompleted()
 
         // ── Transformer encoder blocks (bidirectional self-attention) ──
         // Executed CPU-side over [W * dModel] floats (same pattern as Whisper).
@@ -512,20 +533,22 @@ public final class Qwen3ASRModel: @unchecked Sendable {
 
         // ── Post layer-norm → proj1 (GELU) → proj2 ──
         let cmd6 = device.makeCommandBuffer()
-        let normed = Ops.layerNorm(seqT, weight: lnPost.weight,
-                                   bias: lnPost.bias, eps: lnPost.eps,
-                                   nRows: W, rowSize: dModel, on: cmd6)
+        let normed = Ops.layerNorm(
+            seqT, weight: lnPost.weight,
+            bias: lnPost.bias, eps: lnPost.eps,
+            nRows: W, rowSize: dModel, on: cmd6)
         let proj1Out = Ops.gemm(weight: proj1Weight, input: normed, nRows: W, on: cmd6)
-        cmd6.commit(); cmd6.waitUntilCompleted()
+        cmd6.commit()
+        cmd6.waitUntilCompleted()
 
         // Add proj1 bias and apply GELU (CPU-side; W is small).
-        let p1Vals  = proj1Out.toFloatArray()
-        let b1Vals  = proj1Bias.toFloatArray()
-        let p1Dim   = proj1Weight.shape[0]  // output dim of proj1
-        let gk: Float = 0.7978845608        // √(2/π)
+        let p1Vals = proj1Out.toFloatArray()
+        let b1Vals = proj1Bias.toFloatArray()
+        let p1Dim = proj1Weight.shape[0]  // output dim of proj1
+        let gk: Float = 0.7978845608  // √(2/π)
         let gc: Float = 0.044715
         var p1Act = [Float](repeating: 0, count: W * p1Dim)
-        for i in 0..<p1Act.count {
+        for i in 0 ..< p1Act.count {
             let v = p1Vals[i] + b1Vals[i % p1Dim]
             // GELU approximation: 0.5·x·(1 + tanh(√(2/π)·(x + 0.044715·x³)))
             let inner = gk * (v + gc * v * v * v)
@@ -538,17 +561,19 @@ public final class Qwen3ASRModel: @unchecked Sendable {
         let outputDim = ac.outputDim
         let cmd7 = device.makeCommandBuffer()
         let out2 = Ops.gemm(weight: proj2Weight, input: p1T, nRows: W, on: cmd7)
-        cmd7.commit(); cmd7.waitUntilCompleted()
+        cmd7.commit()
+        cmd7.waitUntilCompleted()
 
         // Add proj2 bias.
         let o2Vals = out2.toFloatArray()
         let b2Vals = proj2Bias.toFloatArray()
         var finalVals = [Float](repeating: 0, count: W * outputDim)
-        for i in 0..<finalVals.count {
+        for i in 0 ..< finalVals.count {
             finalVals[i] = o2Vals[i] + b2Vals[i % outputDim]
         }
-        let audioFeatures = Tensor.empty(shape: [W, outputDim], dtype: dtype,
-                                         device: device)
+        let audioFeatures = Tensor.empty(
+            shape: [W, outputDim], dtype: dtype,
+            device: device)
         AudioPreprocessing.copyFloats(finalVals, into: audioFeatures)
         return audioFeatures  // [nAudioTokens, outputDim]
     }
@@ -568,28 +593,39 @@ public final class Qwen3ASRModel: @unchecked Sendable {
         AudioPreprocessing.copyFloats(seqVals, into: seqT)
 
         let cmd = device.makeCommandBuffer()
-        let normed = Ops.layerNorm(seqT, weight: layer.selfAttnNorm.weight,
-                                   bias: layer.selfAttnNorm.bias,
-                                   eps: layer.selfAttnNorm.eps,
-                                   nRows: seqLen, rowSize: hidden, on: cmd)
-        let q = Ops.gemm(weight: layer.qProj.weight, input: normed,
-                         nRows: seqLen, on: cmd)
-        let k = Ops.gemm(weight: layer.kProj.weight, input: normed,
-                         nRows: seqLen, on: cmd)
-        let v = Ops.gemm(weight: layer.vProj.weight, input: normed,
-                         nRows: seqLen, on: cmd)
-        cmd.commit(); cmd.waitUntilCompleted()
+        let normed = Ops.layerNorm(
+            seqT, weight: layer.selfAttnNorm.weight,
+            bias: layer.selfAttnNorm.bias,
+            eps: layer.selfAttnNorm.eps,
+            nRows: seqLen, rowSize: hidden, on: cmd)
+        let q = Ops.gemm(
+            weight: layer.qProj.weight, input: normed,
+            nRows: seqLen, on: cmd)
+        let k = Ops.gemm(
+            weight: layer.kProj.weight, input: normed,
+            nRows: seqLen, on: cmd)
+        let v = Ops.gemm(
+            weight: layer.vProj.weight, input: normed,
+            nRows: seqLen, on: cmd)
+        cmd.commit()
+        cmd.waitUntilCompleted()
 
         // Add Q/K/V biases if present (audio encoder uses biased Q/K/V).
-        let qa = addRowBiasIfPresent(q, bias: layer.qProj.bias,
-                                     nRows: seqLen, rowSize: hidden,
-                                     device: device).toFloatArray()
-        let ka = addRowBiasIfPresent(k, bias: layer.kProj.bias,
-                                     nRows: seqLen, rowSize: hidden,
-                                     device: device).toFloatArray()
-        let va = addRowBiasIfPresent(v, bias: layer.vProj.bias,
-                                     nRows: seqLen, rowSize: hidden,
-                                     device: device).toFloatArray()
+        let qa = addRowBiasIfPresent(
+            q, bias: layer.qProj.bias,
+            nRows: seqLen, rowSize: hidden,
+            device: device
+        ).toFloatArray()
+        let ka = addRowBiasIfPresent(
+            k, bias: layer.kProj.bias,
+            nRows: seqLen, rowSize: hidden,
+            device: device
+        ).toFloatArray()
+        let va = addRowBiasIfPresent(
+            v, bias: layer.vProj.bias,
+            nRows: seqLen, rowSize: hidden,
+            device: device
+        ).toFloatArray()
 
         // CPU bidirectional multi-head attention (no causal mask).
         let attnCtx = cpuBidirectionalAttention(
@@ -600,47 +636,58 @@ public final class Qwen3ASRModel: @unchecked Sendable {
 
         // Output projection + residual.
         let cmd2 = device.makeCommandBuffer()
-        let outProj = Ops.gemm(weight: layer.outProj.weight, input: attnCtx,
-                               nRows: seqLen, on: cmd2)
-        let selfOut = addRowBiasIfPresent(outProj, bias: layer.outProj.bias,
-                                         nRows: seqLen, rowSize: hidden,
-                                         device: device)
+        let outProj = Ops.gemm(
+            weight: layer.outProj.weight, input: attnCtx,
+            nRows: seqLen, on: cmd2)
+        let selfOut = addRowBiasIfPresent(
+            outProj, bias: layer.outProj.bias,
+            nRows: seqLen, rowSize: hidden,
+            device: device)
         let h = Ops.add(seqT, selfOut, on: cmd2)
 
         // Pre-norm FFN (GELU MLP).
         let ffIntermediate = layer.fc1.weight.shape[0]
-        let normed2 = Ops.layerNorm(h, weight: layer.finalNorm.weight,
-                                    bias: layer.finalNorm.bias,
-                                    eps: layer.finalNorm.eps,
-                                    nRows: seqLen, rowSize: hidden, on: cmd2)
-        let ff1 = Ops.gemm(weight: layer.fc1.weight, input: normed2,
-                           nRows: seqLen, on: cmd2)
-        cmd2.commit(); cmd2.waitUntilCompleted()
+        let normed2 = Ops.layerNorm(
+            h, weight: layer.finalNorm.weight,
+            bias: layer.finalNorm.bias,
+            eps: layer.finalNorm.eps,
+            nRows: seqLen, rowSize: hidden, on: cmd2)
+        let ff1 = Ops.gemm(
+            weight: layer.fc1.weight, input: normed2,
+            nRows: seqLen, on: cmd2)
+        cmd2.commit()
+        cmd2.waitUntilCompleted()
 
         // GELU on FFN output + bias (CPU-side for small intermediates).
-        let ff1Vals = addRowBiasIfPresent(ff1, bias: layer.fc1.bias,
-                                          nRows: seqLen, rowSize: ffIntermediate,
-                                          device: device).toFloatArray()
+        let ff1Vals = addRowBiasIfPresent(
+            ff1, bias: layer.fc1.bias,
+            nRows: seqLen, rowSize: ffIntermediate,
+            device: device
+        ).toFloatArray()
         let gk: Float = 0.7978845608
         let gc: Float = 0.044715
         var geluVals = [Float](repeating: 0, count: ff1Vals.count)
-        for i in 0..<ff1Vals.count {
+        for i in 0 ..< ff1Vals.count {
             let xv = ff1Vals[i]
             let inner = gk * (xv + gc * xv * xv * xv)
             geluVals[i] = 0.5 * xv * (1 + tanh(inner))
         }
-        let geluT = Tensor.empty(shape: [seqLen, ffIntermediate], dtype: dtype,
-                                 device: device)
+        let geluT = Tensor.empty(
+            shape: [seqLen, ffIntermediate], dtype: dtype,
+            device: device)
         AudioPreprocessing.copyFloats(geluVals, into: geluT)
 
         let cmd3 = device.makeCommandBuffer()
-        let ff2 = Ops.gemm(weight: layer.fc2.weight, input: geluT,
-                           nRows: seqLen, on: cmd3)
-        let ff2Out = addRowBiasIfPresent(ff2, bias: layer.fc2.bias,
-                                         nRows: seqLen, rowSize: hidden,
-                                         device: device)
+        let ff2 = Ops.gemm(
+            weight: layer.fc2.weight, input: geluT,
+            nRows: seqLen, on: cmd3)
+        let ff2Out = addRowBiasIfPresent(
+            ff2, bias: layer.fc2.bias,
+            nRows: seqLen, rowSize: hidden,
+            device: device)
         let out = Ops.add(h, ff2Out, on: cmd3)
-        cmd3.commit(); cmd3.waitUntilCompleted()
+        cmd3.commit()
+        cmd3.waitUntilCompleted()
         return out.toFloatArray()
     }
 
@@ -663,41 +710,44 @@ public final class Qwen3ASRModel: @unchecked Sendable {
         out.withUnsafeMutableBufferPointer { outBuf in
             let outPtr = outBuf.baseAddress!
             qa.withUnsafeBufferPointer { qPtr in
-            ka.withUnsafeBufferPointer { kPtr in
-            va.withUnsafeBufferPointer { vPtr in
-                let qb = qPtr.baseAddress!
-                let kb = kPtr.baseAddress!
-                let vb = vPtr.baseAddress!
-                DispatchQueue.concurrentPerform(iterations: nHeads * seqLen) { work in
-                    let head = work / seqLen
-                    let i = work % seqLen
-                    let hOff = head * headDim
-                    // Attention scores for query position i.
-                    var scores = [Float](repeating: 0, count: seqLen)
-                    var maxScore = -Float.greatestFiniteMagnitude
-                    let qBase = i * H + hOff
-                    for j in 0..<seqLen {
-                        var dot: Float = 0
-                        let kBase = j * H + hOff
-                        for d in 0..<headDim { dot += qb[qBase + d] * kb[kBase + d] }
-                        let s = dot * scale
-                        scores[j] = s
-                        if s > maxScore { maxScore = s }
-                    }
-                    var sumExp: Float = 0
-                    for j in 0..<seqLen {
-                        let e = exp(scores[j] - maxScore)
-                        scores[j] = e; sumExp += e
-                    }
-                    let inv = sumExp > 0 ? 1 / sumExp : 0
-                    let oBase = i * H + hOff
-                    for j in 0..<seqLen {
-                        let w = scores[j] * inv
-                        let vBase = j * H + hOff
-                        for d in 0..<headDim { outPtr[oBase + d] += w * vb[vBase + d] }
+                ka.withUnsafeBufferPointer { kPtr in
+                    va.withUnsafeBufferPointer { vPtr in
+                        let qb = qPtr.baseAddress!
+                        let kb = kPtr.baseAddress!
+                        let vb = vPtr.baseAddress!
+                        DispatchQueue.concurrentPerform(iterations: nHeads * seqLen) { work in
+                            let head = work / seqLen
+                            let i = work % seqLen
+                            let hOff = head * headDim
+                            // Attention scores for query position i.
+                            var scores = [Float](repeating: 0, count: seqLen)
+                            var maxScore = -Float.greatestFiniteMagnitude
+                            let qBase = i * H + hOff
+                            for j in 0 ..< seqLen {
+                                var dot: Float = 0
+                                let kBase = j * H + hOff
+                                for d in 0 ..< headDim { dot += qb[qBase + d] * kb[kBase + d] }
+                                let s = dot * scale
+                                scores[j] = s
+                                if s > maxScore { maxScore = s }
+                            }
+                            var sumExp: Float = 0
+                            for j in 0 ..< seqLen {
+                                let e = exp(scores[j] - maxScore)
+                                scores[j] = e
+                                sumExp += e
+                            }
+                            let inv = sumExp > 0 ? 1 / sumExp : 0
+                            let oBase = i * H + hOff
+                            for j in 0 ..< seqLen {
+                                let w = scores[j] * inv
+                                let vBase = j * H + hOff
+                                for d in 0 ..< headDim { outPtr[oBase + d] += w * vb[vBase + d] }
+                            }
+                        }
                     }
                 }
-            }}}
+            }
         }
         let result = Tensor.empty(shape: [seqLen, H], dtype: dtype, device: device)
         AudioPreprocessing.copyFloats(out, into: result)
@@ -714,8 +764,8 @@ public final class Qwen3ASRModel: @unchecked Sendable {
         let tVals = t.toFloatArray()
         let bVals = bias.toFloatArray()
         var out = [Float](repeating: 0, count: nRows * rowSize)
-        for r in 0..<nRows {
-            for c in 0..<rowSize {
+        for r in 0 ..< nRows {
+            for c in 0 ..< rowSize {
                 out[r * rowSize + c] = tVals[r * rowSize + c] + bVals[c]
             }
         }
@@ -743,7 +793,8 @@ public final class Qwen3ASRModel: @unchecked Sendable {
         // The audio pad tokens will be replaced with audio features after
         // embedding. Their count must match the encoder output length.
         let audioPad = String(repeating: "<|audio_pad|>", count: numAudioTokens)
-        let prompt = "<|im_start|>system\n<|im_end|>\n"
+        let prompt =
+            "<|im_start|>system\n<|im_end|>\n"
             + "<|im_start|>user\n<|audio_start|>"
             + audioPad
             + "<|audio_end|><|im_end|>\n"
@@ -788,7 +839,8 @@ public final class Qwen3ASRModel: @unchecked Sendable {
         idsTensor.copyIn(from: inputIds.map { UInt32($0) })
         let cmd = device.makeCommandBuffer()
         let fullEmbeds = embedTokens(idsTensor, on: cmd)
-        cmd.commit(); cmd.waitUntilCompleted()
+        cmd.commit()
+        cmd.waitUntilCompleted()
 
         // ── 4. Splice audio features into audio_pad positions ──
         let audioTokenId = Int32(config.audioTokenId)
@@ -801,19 +853,20 @@ public final class Qwen3ASRModel: @unchecked Sendable {
         // We feed the prompt one token at a time through the seqLen=1 decode
         // path. This avoids batched GEMM over quantized weights — the single-
         // token path uses GPU dequantGemv which handles any weight dtype correctly.
-        let nLayers    = config.textLayers
-        let nKVHeads   = config.textKVHeads
-        let hd         = config.headDim
-        let maxSeq     = promptLen + maxTokens + 16
+        let nLayers = config.textLayers
+        let nKVHeads = config.textKVHeads
+        let hd = config.headDim
+        let maxSeq = promptLen + maxTokens + 16
 
-        let caches = (0..<nLayers).map { _ in
-            KVCache(nKVHeads: nKVHeads, headDim: hd, maxSeq: maxSeq,
-                    dtype: dtype, device: device)
+        let caches = (0 ..< nLayers).map { _ in
+            KVCache(
+                nKVHeads: nKVHeads, headDim: hd, maxSeq: maxSeq,
+                dtype: dtype, device: device)
         }
 
         // Feed every prompt position one at a time; retain only the last logits.
         var lastLogits: Tensor? = nil
-        for pos in 0..<promptLen {
+        for pos in 0 ..< promptLen {
             // Slice the embedding row for this position → [1, H].
             let rowEmbed = embeds.slicedRows(start: pos, count: 1)
             lastLogits = forwardOneToken(embed: rowEmbed, caches: caches, device: device)
@@ -825,13 +878,14 @@ public final class Qwen3ASRModel: @unchecked Sendable {
         var generated: [Int] = []
         let eosIds = Set(config.eosTokenIds)
 
-        for _ in 0..<maxTokens {
+        for _ in 0 ..< maxTokens {
             // Pick the next token greedily.
             let logitVals = logits.toFloatArray()
             var best = 0
             var bestVal = -Float.greatestFiniteMagnitude
             for (i, v) in logitVals.enumerated() where v > bestVal {
-                bestVal = v; best = i
+                bestVal = v
+                best = i
             }
             if eosIds.contains(best) { break }
             generated.append(best)
@@ -847,7 +901,8 @@ public final class Qwen3ASRModel: @unchecked Sendable {
             nextIdT.copyIn(from: [UInt32(best)])
             let cmd2 = device.makeCommandBuffer()
             let nextEmbed = embedTokens(nextIdT, on: cmd2)
-            cmd2.commit(); cmd2.waitUntilCompleted()
+            cmd2.commit()
+            cmd2.waitUntilCompleted()
 
             logits = forwardOneToken(embed: nextEmbed, caches: caches, device: device)
         }
@@ -877,20 +932,23 @@ public final class Qwen3ASRModel: @unchecked Sendable {
         let offset = caches[0].length
 
         for (i, layer) in textLayers.enumerated() {
-            h = runTextLayer(layer, h: h,
-                             offset: offset, hidden: H,
-                             cache: caches[i], device: device)
+            h = runTextLayer(
+                layer, h: h,
+                offset: offset, hidden: H,
+                cache: caches[i], device: device)
         }
 
         // Post-decoder RMSNorm (1D) → lm_head → [vocabSize] logits.
         // lmHead is an AnyLinear so it dispatches gemv for dense weights or
         // dequantGemv for quantized tied embeddings — no raw Tensor gemv needed.
         let cmd = device.makeCommandBuffer()
-        let hFlat  = h.reshaped(to: [H])
-        let normed = Ops.rmsNorm(hFlat, weight: textNorm.weight,
-                                 eps: textNorm.eps, on: cmd)
+        let hFlat = h.reshaped(to: [H])
+        let normed = Ops.rmsNorm(
+            hFlat, weight: textNorm.weight,
+            eps: textNorm.eps, on: cmd)
         let logits = lmHead(normed, on: cmd)
-        cmd.commit(); cmd.waitUntilCompleted()
+        cmd.commit()
+        cmd.waitUntilCompleted()
         return logits
     }
 
@@ -903,44 +961,52 @@ public final class Qwen3ASRModel: @unchecked Sendable {
         offset: Int, hidden: Int,
         cache: KVCache, device: Device
     ) -> Tensor {
-        let nHeads   = config.textHeads
+        let nHeads = config.textHeads
         let nKVHeads = config.textKVHeads
-        let hd       = config.headDim
-        let theta    = config.ropeTheta
-        let eps      = config.rmsNormEps
-        let scale    = 1.0 / Float(Double(hd).squareRoot())
+        let hd = config.headDim
+        let theta = config.ropeTheta
+        let eps = config.rmsNormEps
+        let scale = 1.0 / Float(Double(hd).squareRoot())
 
         let cmd1 = device.makeCommandBuffer()
 
         // ── Pre-norm (1D) + Q/K/V projections via GPU gemv/dequantGemv ──
-        let hFlat  = hIn.reshaped(to: [hidden])
-        let normed = Ops.rmsNorm(hFlat, weight: layer.inputNorm.weight,
-                                 eps: eps, on: cmd1)
+        let hFlat = hIn.reshaped(to: [hidden])
+        let normed = Ops.rmsNorm(
+            hFlat, weight: layer.inputNorm.weight,
+            eps: eps, on: cmd1)
         let q = layer.qProj(normed, on: cmd1)  // [nHeads * hd]
         let k = layer.kProj(normed, on: cmd1)  // [nKVHeads * hd]
         let v = layer.vProj(normed, on: cmd1)  // [nKVHeads * hd]
-        cmd1.commit(); cmd1.waitUntilCompleted()
+        cmd1.commit()
+        cmd1.waitUntilCompleted()
 
         // ── Per-head Q/K RMSNorm (Qwen3 structural delta) ──
         // Treat each head's [hd] slice as a separate row.
         let cmd2 = device.makeCommandBuffer()
-        let qNormed = Ops.rmsNormRows(q.reshaped(to: [nHeads, hd]),
-                                      weight: layer.qNorm.weight,
-                                      eps: eps, nRows: nHeads, rowSize: hd, on: cmd2)
-        let kNormed = Ops.rmsNormRows(k.reshaped(to: [nKVHeads, hd]),
-                                      weight: layer.kNorm.weight,
-                                      eps: eps, nRows: nKVHeads, rowSize: hd, on: cmd2)
-        cmd2.commit(); cmd2.waitUntilCompleted()
+        let qNormed = Ops.rmsNormRows(
+            q.reshaped(to: [nHeads, hd]),
+            weight: layer.qNorm.weight,
+            eps: eps, nRows: nHeads, rowSize: hd, on: cmd2)
+        let kNormed = Ops.rmsNormRows(
+            k.reshaped(to: [nKVHeads, hd]),
+            weight: layer.kNorm.weight,
+            eps: eps, nRows: nKVHeads, rowSize: hd, on: cmd2)
+        cmd2.commit()
+        cmd2.waitUntilCompleted()
 
         // ── RoPE (single position) ──
         let qFlat = qNormed.reshaped(to: [nHeads * hd])
         let kFlat = kNormed.reshaped(to: [nKVHeads * hd])
         let cmd3 = device.makeCommandBuffer()
-        let qRot  = Ops.rope(qFlat, position: offset, headDim: hd,
-                             thetaBase: theta, on: cmd3)
-        let kRot  = Ops.rope(kFlat, position: offset, headDim: hd,
-                             thetaBase: theta, on: cmd3)
-        cmd3.commit(); cmd3.waitUntilCompleted()
+        let qRot = Ops.rope(
+            qFlat, position: offset, headDim: hd,
+            thetaBase: theta, on: cmd3)
+        let kRot = Ops.rope(
+            kFlat, position: offset, headDim: hd,
+            thetaBase: theta, on: cmd3)
+        cmd3.commit()
+        cmd3.waitUntilCompleted()
 
         // ── KV cache append + sdpaDecode ──
         let vShaped = v.reshaped(to: [nKVHeads, hd])
@@ -960,18 +1026,20 @@ public final class Qwen3ASRModel: @unchecked Sendable {
 
         // ── Output projection + residual ──
         // o_proj maps [nHeads * hd] → [hidden]; add residual on the [hidden] side.
-        let oOut     = layer.oProj(attnFlat, on: cmd4)
+        let oOut = layer.oProj(attnFlat, on: cmd4)
         let postAttn = Ops.add(hFlat, oOut, on: cmd4)
 
         // ── FFN (SiLU gated MLP) ──
-        let normed2 = Ops.rmsNorm(postAttn, weight: layer.postAttnNorm.weight,
-                                  eps: eps, on: cmd4)
-        let gate  = layer.gateProj(normed2, on: cmd4)
-        let up    = layer.upProj(normed2, on: cmd4)
+        let normed2 = Ops.rmsNorm(
+            postAttn, weight: layer.postAttnNorm.weight,
+            eps: eps, on: cmd4)
+        let gate = layer.gateProj(normed2, on: cmd4)
+        let up = layer.upProj(normed2, on: cmd4)
         let gated = Ops.mul(Ops.silu(gate, on: cmd4), up, on: cmd4)
-        let down  = layer.downProj(gated, on: cmd4)
+        let down = layer.downProj(gated, on: cmd4)
         let result = Ops.add(postAttn, down, on: cmd4)
-        cmd4.commit(); cmd4.waitUntilCompleted()
+        cmd4.commit()
+        cmd4.waitUntilCompleted()
 
         // Return as [1, hidden] to match the caller's expected shape.
         return result.reshaped(to: [1, hidden])
@@ -991,9 +1059,9 @@ public final class Qwen3ASRModel: @unchecked Sendable {
         inputIds: [Int32], audioTokenId: Int32,
         device: Device
     ) -> Tensor {
-        let seqLen  = embeds.shape[0]
-        let hidden  = embeds.shape[1]
-        let nAudio  = audioFeatures.shape[0]
+        let seqLen = embeds.shape[0]
+        let hidden = embeds.shape[1]
+        let nAudio = audioFeatures.shape[0]
 
         guard let firstAudio = inputIds.firstIndex(of: audioTokenId) else {
             return embeds
@@ -1004,9 +1072,9 @@ public final class Qwen3ASRModel: @unchecked Sendable {
         var out = embedVals
 
         let replaceCount = min(nAudio, seqLen - firstAudio)
-        for i in 0..<replaceCount {
+        for i in 0 ..< replaceCount {
             let dstRow = firstAudio + i
-            for c in 0..<hidden {
+            for c in 0 ..< hidden {
                 out[dstRow * hidden + c] = audioVals[i * hidden + c]
             }
         }
@@ -1022,7 +1090,7 @@ public final class Qwen3ASRModel: @unchecked Sendable {
 extension Qwen3ASRModel {
     public static let modelTypes: Set<String> = ["qwen3_asr"]
     public static let architectures: Set<String> = [
-        "Qwen3ASRForConditionalGeneration",
+        "Qwen3ASRForConditionalGeneration"
     ]
 
     /// Whether a decoded `config.json` describes a Qwen3ASR checkpoint.
@@ -1036,7 +1104,8 @@ extension Qwen3ASRModel {
 
     /// Load a Qwen3ASR checkpoint from a resolved snapshot directory.
     public static func load(directory: URL, device: Device = .shared)
-        throws -> Qwen3ASRModel {
+        throws -> Qwen3ASRModel
+    {
         let config = try ModelConfig.load(from: directory)
         guard let qc = Qwen3ASRConfig.from(config) else {
             throw ModelError.unsupportedModelType(
@@ -1049,13 +1118,16 @@ extension Qwen3ASRModel {
     /// Assemble a `Qwen3ASRModel` from a decoded config + weight bundle.
     /// `rootConfig` is the top-level `ModelConfig` (used for quantization
     /// detection); pass `nil` to skip quantization (unquantized checkpoint).
-    public static func build(config qc: Qwen3ASRConfig,
-                             bundle: SafeTensorsBundle,
-                             rootConfig: ModelConfig? = nil) throws -> Qwen3ASRModel {
+    public static func build(
+        config qc: Qwen3ASRConfig,
+        bundle: SafeTensorsBundle,
+        rootConfig: ModelConfig? = nil
+    ) throws -> Qwen3ASRModel {
         let ac = qc.audioConfig
 
         // Detect the activation dtype from a probe tensor.
-        let probeKey = bundle.has("audio_tower.conv2d1.weight")
+        let probeKey =
+            bundle.has("audio_tower.conv2d1.weight")
             ? "audio_tower.conv2d1.weight"
             : "model.embed_tokens.weight"
         let dtype = try bundle.tensor(named: probeKey).dtype
@@ -1067,15 +1139,15 @@ extension Qwen3ASRModel {
         func loadConv2dWeight(_ key: String) throws -> Tensor {
             let raw = try bundle.tensor(named: key)
             let outCh = raw.shape[0]
-            let kH    = raw.shape[1]
-            let kW    = raw.shape[2]
-            let inCh  = raw.shape[3]
+            let kH = raw.shape[1]
+            let kW = raw.shape[2]
+            let inCh = raw.shape[3]
             let rawVals = raw.toFloatArray()
             var transposed = [Float](repeating: 0, count: outCh * inCh * kH * kW)
-            for o in 0..<outCh {
-                for h in 0..<kH {
-                    for w in 0..<kW {
-                        for i in 0..<inCh {
+            for o in 0 ..< outCh {
+                for h in 0 ..< kH {
+                    for w in 0 ..< kW {
+                        for i in 0 ..< inCh {
                             let src = o * kH * kW * inCh + h * kW * inCh + w * inCh + i
                             let dst = o * inCh * kH * kW + i * kH * kW + h * kW + w
                             transposed[dst] = rawVals[src]
@@ -1083,18 +1155,19 @@ extension Qwen3ASRModel {
                     }
                 }
             }
-            let out = Tensor.empty(shape: [outCh, inCh, kH, kW], dtype: dtype,
-                                   device: .shared)
+            let out = Tensor.empty(
+                shape: [outCh, inCh, kH, kW], dtype: dtype,
+                device: .shared)
             AudioPreprocessing.copyFloats(transposed, into: out)
             return out
         }
 
         let conv2d1Weight = try loadConv2dWeight("audio_tower.conv2d1.weight")
-        let conv2d1Bias   = try bundle.tensor(named: "audio_tower.conv2d1.bias")
+        let conv2d1Bias = try bundle.tensor(named: "audio_tower.conv2d1.bias")
         let conv2d2Weight = try loadConv2dWeight("audio_tower.conv2d2.weight")
-        let conv2d2Bias   = try bundle.tensor(named: "audio_tower.conv2d2.bias")
+        let conv2d2Bias = try bundle.tensor(named: "audio_tower.conv2d2.bias")
         let conv2d3Weight = try loadConv2dWeight("audio_tower.conv2d3.weight")
-        let conv2d3Bias   = try bundle.tensor(named: "audio_tower.conv2d3.bias")
+        let conv2d3Bias = try bundle.tensor(named: "audio_tower.conv2d3.bias")
 
         // conv_out is a plain linear [dModel, flatFreq] — no transposing needed.
         let convOutWeight = try bundle.tensor(named: "audio_tower.conv_out.weight")
@@ -1112,25 +1185,27 @@ extension Qwen3ASRModel {
         }
         func linear(_ base: String, hasBias: Bool = true) throws -> Linear {
             let w = try bundle.tensor(named: "\(base).weight")
-            let b = hasBias && bundle.has("\(base).bias")
+            let b =
+                hasBias && bundle.has("\(base).bias")
                 ? try bundle.tensor(named: "\(base).bias") : nil
             return Linear(weight: w, bias: b)
         }
 
         var audioLayers: [Qwen3ASREncoderLayer] = []
         audioLayers.reserveCapacity(ac.encoderLayers)
-        for i in 0..<ac.encoderLayers {
+        for i in 0 ..< ac.encoderLayers {
             let p = "audio_tower.layers.\(i)"
-            audioLayers.append(Qwen3ASREncoderLayer(
-                selfAttnNorm: try layerNorm("\(p).self_attn_layer_norm"),
-                finalNorm: try layerNorm("\(p).final_layer_norm"),
-                qProj: try linear("\(p).self_attn.q_proj"),
-                kProj: try linear("\(p).self_attn.k_proj"),
-                vProj: try linear("\(p).self_attn.v_proj"),
-                outProj: try linear("\(p).self_attn.out_proj"),
-                fc1: try linear("\(p).fc1"),
-                fc2: try linear("\(p).fc2"),
-                hidden: ac.dModel, nHeads: ac.encoderAttentionHeads))
+            audioLayers.append(
+                Qwen3ASREncoderLayer(
+                    selfAttnNorm: try layerNorm("\(p).self_attn_layer_norm"),
+                    finalNorm: try layerNorm("\(p).final_layer_norm"),
+                    qProj: try linear("\(p).self_attn.q_proj"),
+                    kProj: try linear("\(p).self_attn.k_proj"),
+                    vProj: try linear("\(p).self_attn.v_proj"),
+                    outProj: try linear("\(p).self_attn.out_proj"),
+                    fc1: try linear("\(p).fc1"),
+                    fc2: try linear("\(p).fc2"),
+                    hidden: ac.dModel, nHeads: ac.encoderAttentionHeads))
         }
 
         // proj1 and proj2 may not exist in every conversion (some omit them
@@ -1141,16 +1216,16 @@ extension Qwen3ASRModel {
         let proj2Bias: Tensor
         if bundle.has("audio_tower.proj1.weight") {
             proj1Weight = try bundle.tensor(named: "audio_tower.proj1.weight")
-            proj1Bias   = try bundle.tensor(named: "audio_tower.proj1.bias")
+            proj1Bias = try bundle.tensor(named: "audio_tower.proj1.bias")
             proj2Weight = try bundle.tensor(named: "audio_tower.proj2.weight")
-            proj2Bias   = try bundle.tensor(named: "audio_tower.proj2.bias")
+            proj2Bias = try bundle.tensor(named: "audio_tower.proj2.bias")
         } else {
             // Identity fallback: pass-through (dModel → dModel → outputDim).
             proj1Weight = makeIdentity(size: ac.dModel, dtype: dtype)
-            proj1Bias   = Tensor.empty(shape: [ac.dModel], dtype: dtype)
+            proj1Bias = Tensor.empty(shape: [ac.dModel], dtype: dtype)
             proj1Bias.zero()
             proj2Weight = makeIdentity(size: ac.outputDim, dtype: dtype)
-            proj2Bias   = Tensor.empty(shape: [ac.outputDim], dtype: dtype)
+            proj2Bias = Tensor.empty(shape: [ac.outputDim], dtype: dtype)
             proj2Bias.zero()
         }
 
@@ -1165,7 +1240,7 @@ extension Qwen3ASRModel {
 
         var textLayers: [Qwen3ASRTextLayer] = []
         textLayers.reserveCapacity(qc.textLayers)
-        for i in 0..<qc.textLayers {
+        for i in 0 ..< qc.textLayers {
             let p = "model.layers.\(i)"
             let inputNorm = RMSNorm(
                 weight: try bundle.tensor(named: "\(p).input_layernorm.weight"),
@@ -1194,11 +1269,12 @@ extension Qwen3ASRModel {
                 base: "\(p).mlp.up_proj", in: bundle, quantization: quant)
             let downProj = try loadLinear(
                 base: "\(p).mlp.down_proj", in: bundle, quantization: quant)
-            textLayers.append(Qwen3ASRTextLayer(
-                inputNorm: inputNorm, postAttnNorm: postAttnNorm,
-                qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
-                qNorm: qNorm, kNorm: kNorm,
-                gateProj: gateProj, upProj: upProj, downProj: downProj))
+            textLayers.append(
+                Qwen3ASRTextLayer(
+                    inputNorm: inputNorm, postAttnNorm: postAttnNorm,
+                    qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
+                    qNorm: qNorm, kNorm: kNorm,
+                    gateProj: gateProj, upProj: upProj, downProj: downProj))
         }
 
         let textNorm = RMSNorm(
@@ -1220,9 +1296,10 @@ extension Qwen3ASRModel {
                 weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
                 scaleCols: t.scales.shape[t.scales.shape.count - 1],
                 groupSize: q.groupSize)
-            lmHead = AnyLinear(QuantizedLinear(
-                weight: t.weight, scales: t.scales, biases: t.biases,
-                bits: bits, groupSize: q.groupSize))
+            lmHead = AnyLinear(
+                QuantizedLinear(
+                    weight: t.weight, scales: t.scales, biases: t.biases,
+                    bits: bits, groupSize: q.groupSize))
         } else {
             // Dense (unquantized) tied embedding — safe to use weight directly.
             lmHead = AnyLinear(Linear(weight: embedTokens.weight))
@@ -1249,7 +1326,7 @@ extension Qwen3ASRModel {
     /// Build a `[size, size]` identity matrix in the given dtype (CPU-side).
     private static func makeIdentity(size: Int, dtype: DType) -> Tensor {
         var vals = [Float](repeating: 0, count: size * size)
-        for i in 0..<size { vals[i * size + i] = 1.0 }
+        for i in 0 ..< size { vals[i * size + i] = 1.0 }
         let t = Tensor.empty(shape: [size, size], dtype: dtype)
         AudioPreprocessing.copyFloats(vals, into: t)
         return t

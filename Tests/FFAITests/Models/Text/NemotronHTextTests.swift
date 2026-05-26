@@ -23,6 +23,7 @@
 import Foundation
 import Metal
 import Testing
+
 @testable import FFAI
 
 @Suite("NemotronH Text Hybrid Layer Parsing + Dense MLP Layer")
@@ -66,7 +67,7 @@ struct NemotronHTextTests {
         // Weight is row-major [outFeatures, inFeatures]; gemv computes
         // out[i] = Σ_j W[i,j] x[j], so W[i,i] = scale, else 0.
         var w = [Float](repeating: 0, count: dim * dim)
-        for i in 0..<dim { w[i * dim + i] = scale }
+        for i in 0 ..< dim { w[i * dim + i] = scale }
         let t = Tensor.empty(shape: [dim, dim], dtype: .f32)
         t.copyIn(from: w)
         return AnyLinear(Linear(weight: t))
@@ -96,16 +97,17 @@ struct NemotronHTextTests {
             // A spread of positive + negative inputs so the ReLU clamp
             // is genuinely exercised.
             var hValues = [Float](repeating: 0, count: dim)
-            for i in 0..<dim { hValues[i] = Float(i) - 64.0 }
+            for i in 0 ..< dim { hValues[i] = Float(i) - 64.0 }
             let h = Tensor.empty(shape: [dim], dtype: .f32)
             h.copyIn(from: hValues)
 
             let device = Device.shared
             var out: Tensor!
             let cmd = device.makeCommandBuffer()
-            out = layer.decode(h, position: 0,
-                               cache: StatelessLayerCache(),
-                               cmd: cmd, device: device)
+            out = layer.decode(
+                h, position: 0,
+                cache: StatelessLayerCache(),
+                cmd: cmd, device: device)
             cmd.commit()
             cmd.waitUntilCompleted()
 
@@ -113,7 +115,7 @@ struct NemotronHTextTests {
             let meanSq = hValues.map { $0 * $0 }.reduce(0, +) / Float(dim)
             let rms = (meanSq + 1e-6).squareRoot()
             let result = out.toArray(as: Float.self)
-            for i in 0..<dim {
+            for i in 0 ..< dim {
                 let normed = hValues[i] / rms
                 let upOut = up * normed
                 let relu2 = max(upOut, 0) * max(upOut, 0)

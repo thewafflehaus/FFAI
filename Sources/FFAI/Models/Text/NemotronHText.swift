@@ -101,10 +101,10 @@ import Metal
 
 /// The four mixer kinds a `hybrid_override_pattern` character can name.
 enum NemotronHLayerKind: Equatable {
-    case mamba       // "M"
-    case attention   // "*"
-    case mlp         // "-"
-    case moe         // "E"
+    case mamba  // "M"
+    case attention  // "*"
+    case mlp  // "-"
+    case moe  // "E"
 
     init(from char: Character) throws {
         switch char {
@@ -143,19 +143,21 @@ public struct NemotronHHybrid: NemotronHVariant {
         device: Device
     ) throws -> NemotronHModel {
         guard let hidden = config.hiddenSize,
-              let vocab = config.vocabSize,
-              let nHeads = config.numAttentionHeads
+            let vocab = config.vocabSize,
+            let nHeads = config.numAttentionHeads
         else { throw NemotronHError.missingConfig("hidden / vocab / num_attention_heads") }
         let nKVHeads = config.numKeyValueHeads ?? nHeads
         // NemotronH attention can carry an explicit head_dim
         // (attention_head_dim on the 4B config, head_dim elsewhere) that
         // is NOT hidden / n_heads.
-        let headDim = config.int("attention_head_dim")
+        let headDim =
+            config.int("attention_head_dim")
             ?? config.int("head_dim")
             ?? (hidden / nHeads)
         let intermediate = config.intermediateSize ?? (4 * hidden)
-        let eps = Float(config.float("layer_norm_epsilon")
-            ?? config.float("rms_norm_eps") ?? 1e-5)
+        let eps = Float(
+            config.float("layer_norm_epsilon")
+                ?? config.float("rms_norm_eps") ?? 1e-5)
         let tieEmbed = config.tieWordEmbeddings
 
         // ── Hybrid layer schedule ─────────────────────────────────────
@@ -177,8 +179,8 @@ public struct NemotronHHybrid: NemotronHVariant {
             guard nGroupMoE == 1, topKGroupMoE == 1 else {
                 throw NemotronHError.unsupportedConfig(
                     "MoE grouped routing (n_group=\(nGroupMoE), "
-                    + "topk_group=\(topKGroupMoE)) not yet supported — "
-                    + "every shipped Nemotron MoE checkpoint sets both to 1.")
+                        + "topk_group=\(topKGroupMoE)) not yet supported — "
+                        + "every shipped Nemotron MoE checkpoint sets both to 1.")
             }
         }
 
@@ -199,7 +201,7 @@ public struct NemotronHHybrid: NemotronHVariant {
         guard mambaNHeads % nGroups == 0 else {
             throw NemotronHError.unsupportedConfig(
                 "mamba_num_heads (\(mambaNHeads)) must be a multiple of "
-                + "n_groups (\(nGroups))")
+                    + "n_groups (\(nGroups))")
         }
         // The gated mixer RMSNorm runs per group via Ops.rmsNormRows,
         // whose kernel requires the row size (group size) to be a
@@ -208,8 +210,8 @@ public struct NemotronHHybrid: NemotronHVariant {
         guard groupSize % 128 == 0, groupSize <= 4096 else {
             throw NemotronHError.unsupportedConfig(
                 "per-group mixer RMSNorm row size d_inner/n_groups = "
-                + "\(groupSize) must be a multiple of 128 and ≤ 4096 "
-                + "(rmsNormRows kernel invariant)")
+                    + "\(groupSize) must be a multiple of 128 and ≤ 4096 "
+                    + "(rmsNormRows kernel invariant)")
         }
         let convDim = dInner + 2 * nGroups * stateDim
 
@@ -239,9 +241,10 @@ public struct NemotronHHybrid: NemotronHVariant {
         // checkpoints (e.g. Nemotron-H-4B-Base) to carry MoE fields they
         // don't have. Read once, here, so each MoE layer construction is
         // a pure pass-through.
-        let moeIntermediate = hasMoE
+        let moeIntermediate =
+            hasMoE
             ? (config.int("moe_intermediate_size")
-               ?? config.int("intermediate_size") ?? intermediate)
+                ?? config.int("intermediate_size") ?? intermediate)
             : 0
         let moeTopK = hasMoE ? (config.int("num_experts_per_tok") ?? 6) : 0
         let nRoutedExperts = hasMoE ? (config.int("n_routed_experts") ?? 0) : 0
@@ -251,10 +254,12 @@ public struct NemotronHHybrid: NemotronHVariant {
             }
         }
         let nSharedExperts = hasMoE ? (config.int("n_shared_experts") ?? 1) : 0
-        let sharedExpertIntermediate = hasMoE
+        let sharedExpertIntermediate =
+            hasMoE
             ? (config.int("moe_shared_expert_intermediate_size") ?? moeIntermediate)
             : 0
-        let routedScalingFactor: Float = hasMoE
+        let routedScalingFactor: Float =
+            hasMoE
             ? Float(config.float("routed_scaling_factor") ?? 1.0)
             : 1.0
         let normTopkProb = hasMoE ? (config.bool("norm_topk_prob") ?? true) : true
@@ -270,48 +275,58 @@ public struct NemotronHHybrid: NemotronHVariant {
 
             switch kind {
             case .mamba:
-                layers.append(try buildMambaLayer(
-                    prefix: "\(p).mixer", norm: norm, weights: weights,
-                    hidden: hidden, dInner: dInner, convDim: convDim,
-                    nHeads: mambaNHeads, headDim: mambaHeadDim, stateDim: stateDim,
-                    nGroups: nGroups, convKernel: convKernel,
-                    useConvBias: useConvBias, eps: eps,
-                    tsMin: tsMin, tsMax: tsMax,
-                    dtype: activationDtype, device: device))
+                layers.append(
+                    try buildMambaLayer(
+                        prefix: "\(p).mixer", norm: norm, weights: weights,
+                        hidden: hidden, dInner: dInner, convDim: convDim,
+                        nHeads: mambaNHeads, headDim: mambaHeadDim, stateDim: stateDim,
+                        nGroups: nGroups, convKernel: convKernel,
+                        useConvBias: useConvBias, eps: eps,
+                        tsMin: tsMin, tsMax: tsMax,
+                        dtype: activationDtype, device: device))
 
             case .attention:
-                let qProj = AnyLinear(Linear(
-                    weight: try weights.tensor(named: "\(p).mixer.q_proj.weight")))
-                let kProj = AnyLinear(Linear(
-                    weight: try weights.tensor(named: "\(p).mixer.k_proj.weight")))
-                let vProj = AnyLinear(Linear(
-                    weight: try weights.tensor(named: "\(p).mixer.v_proj.weight")))
-                let oProj = AnyLinear(Linear(
-                    weight: try weights.tensor(named: "\(p).mixer.o_proj.weight")))
-                layers.append(NemotronHAttentionLayer(
-                    norm: norm,
-                    qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
-                    nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim))
+                let qProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).mixer.q_proj.weight")))
+                let kProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).mixer.k_proj.weight")))
+                let vProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).mixer.v_proj.weight")))
+                let oProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).mixer.o_proj.weight")))
+                layers.append(
+                    NemotronHAttentionLayer(
+                        norm: norm,
+                        qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
+                        nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim))
 
             case .mlp:
-                let upProj = AnyLinear(Linear(
-                    weight: try weights.tensor(named: "\(p).mixer.up_proj.weight")))
-                let downProj = AnyLinear(Linear(
-                    weight: try weights.tensor(named: "\(p).mixer.down_proj.weight")))
-                layers.append(NemotronHMLPLayer(
-                    norm: norm, upProj: upProj, downProj: downProj,
-                    hidden: hidden, intermediate: intermediate))
+                let upProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).mixer.up_proj.weight")))
+                let downProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).mixer.down_proj.weight")))
+                layers.append(
+                    NemotronHMLPLayer(
+                        norm: norm, upProj: upProj, downProj: downProj,
+                        hidden: hidden, intermediate: intermediate))
 
             case .moe:
-                layers.append(try buildNemotronHMoELayer(
-                    prefix: "\(p).mixer", norm: norm, weights: weights,
-                    hidden: hidden, moeIntermediate: moeIntermediate,
-                    nRoutedExperts: nRoutedExperts, topK: moeTopK,
-                    nSharedExperts: nSharedExperts,
-                    sharedExpertIntermediate: sharedExpertIntermediate,
-                    routedScalingFactor: routedScalingFactor,
-                    normTopkProb: normTopkProb,
-                    dtype: activationDtype, device: device))
+                layers.append(
+                    try buildNemotronHMoELayer(
+                        prefix: "\(p).mixer", norm: norm, weights: weights,
+                        hidden: hidden, moeIntermediate: moeIntermediate,
+                        nRoutedExperts: nRoutedExperts, topK: moeTopK,
+                        nSharedExperts: nSharedExperts,
+                        sharedExpertIntermediate: sharedExpertIntermediate,
+                        routedScalingFactor: routedScalingFactor,
+                        normTopkProb: normTopkProb,
+                        dtype: activationDtype, device: device))
             }
         }
 
@@ -348,23 +363,27 @@ public struct NemotronHHybrid: NemotronHVariant {
         tsMin: Float, tsMax: Float,
         dtype: DType, device: Device
     ) throws -> NemotronHMambaLayer {
-        let inProj = AnyLinear(Linear(
-            weight: try weights.tensor(named: "\(p).in_proj.weight")))
-        let outProj = AnyLinear(Linear(
-            weight: try weights.tensor(named: "\(p).out_proj.weight")))
+        let inProj = AnyLinear(
+            Linear(
+                weight: try weights.tensor(named: "\(p).in_proj.weight")))
+        let outProj = AnyLinear(
+            Linear(
+                weight: try weights.tensor(named: "\(p).out_proj.weight")))
 
         // conv1d.weight ships [conv_dim, 1, kernel]; the metaltile kernel
         // wants [kernel, conv_dim].
         let convWSrc = try weights.tensor(named: "\(p).conv1d.weight")
-        precondition(convWSrc.elementCount == convDim * convKernel,
-                     "NemotronH: conv1d.weight count mismatch: \(convWSrc.shape)")
+        precondition(
+            convWSrc.elementCount == convDim * convKernel,
+            "NemotronH: conv1d.weight count mismatch: \(convWSrc.shape)")
         let convW = transposeConv1dWeightNH(
             src: convWSrc, kernel: convKernel, channels: convDim,
             dtype: dtype, device: device)
         let convB: Tensor = {
             if useConvBias, weights.has("\(p).conv1d.bias") {
-                return castVectorNH((try? weights.tensor(named: "\(p).conv1d.bias"))
-                    ?? zeroVectorNH(convDim, dtype: dtype, device: device),
+                return castVectorNH(
+                    (try? weights.tensor(named: "\(p).conv1d.bias"))
+                        ?? zeroVectorNH(convDim, dtype: dtype, device: device),
                     count: convDim, dtype: dtype, device: device)
             }
             return zeroVectorNH(convDim, dtype: dtype, device: device)
@@ -406,12 +425,12 @@ public struct NemotronHHybrid: NemotronHVariant {
 public final class NemotronHMambaLayer: Module, DecoderLayer {
     let norm: RMSNorm
     let inProj, outProj: AnyLinear
-    let convW: Tensor        // [kernel, conv_dim]
-    let convB: Tensor        // [conv_dim]
-    let aEff: Tensor         // [n_heads]   = -exp(A_log)
-    let dtBias: Tensor       // [n_heads]
-    let dTiled: Tensor       // [d_inner]   D[h] tiled across head_dim
-    let mixerNorm: RMSNorm   // gated mixer RMSNorm weight [d_inner]
+    let convW: Tensor  // [kernel, conv_dim]
+    let convB: Tensor  // [conv_dim]
+    let aEff: Tensor  // [n_heads]   = -exp(A_log)
+    let dtBias: Tensor  // [n_heads]
+    let dTiled: Tensor  // [d_inner]   D[h] tiled across head_dim
+    let mixerNorm: RMSNorm  // gated mixer RMSNorm weight [d_inner]
     let hidden, dInner, convDim, nHeads, headDim, stateDim, nGroups, convKernel: Int
     let tsMin, tsMax: Float
     let dtype: DType
@@ -424,22 +443,35 @@ public final class NemotronHMambaLayer: Module, DecoderLayer {
     /// weight is applied afterwards via `Ops.mul`). Built once at load.
     let onesWeight: Tensor
 
-    init(norm: RMSNorm, inProj: AnyLinear, outProj: AnyLinear,
-         convW: Tensor, convB: Tensor,
-         aEff: Tensor, dtBias: Tensor, dTiled: Tensor,
-         mixerNorm: RMSNorm,
-         hidden: Int, dInner: Int, convDim: Int,
-         nHeads: Int, headDim: Int, stateDim: Int, nGroups: Int,
-         convKernel: Int, tsMin: Float, tsMax: Float, dtype: DType) {
+    init(
+        norm: RMSNorm, inProj: AnyLinear, outProj: AnyLinear,
+        convW: Tensor, convB: Tensor,
+        aEff: Tensor, dtBias: Tensor, dTiled: Tensor,
+        mixerNorm: RMSNorm,
+        hidden: Int, dInner: Int, convDim: Int,
+        nHeads: Int, headDim: Int, stateDim: Int, nGroups: Int,
+        convKernel: Int, tsMin: Float, tsMax: Float, dtype: DType
+    ) {
         self.norm = norm
-        self.inProj = inProj; self.outProj = outProj
-        self.convW = convW; self.convB = convB
-        self.aEff = aEff; self.dtBias = dtBias; self.dTiled = dTiled
+        self.inProj = inProj
+        self.outProj = outProj
+        self.convW = convW
+        self.convB = convB
+        self.aEff = aEff
+        self.dtBias = dtBias
+        self.dTiled = dTiled
         self.mixerNorm = mixerNorm
-        self.hidden = hidden; self.dInner = dInner; self.convDim = convDim
-        self.nHeads = nHeads; self.headDim = headDim; self.stateDim = stateDim
-        self.nGroups = nGroups; self.convKernel = convKernel
-        self.tsMin = tsMin; self.tsMax = tsMax; self.dtype = dtype
+        self.hidden = hidden
+        self.dInner = dInner
+        self.convDim = convDim
+        self.nHeads = nHeads
+        self.headDim = headDim
+        self.stateDim = stateDim
+        self.nGroups = nGroups
+        self.convKernel = convKernel
+        self.tsMin = tsMin
+        self.tsMax = tsMax
+        self.dtype = dtype
         self.headsPerGroup = nHeads / nGroups
         self.groupSize = dInner / nGroups
         self.onesWeight = Tensor.filled(1.0, shape: [dInner / nGroups], dtype: dtype)
@@ -455,9 +487,11 @@ public final class NemotronHMambaLayer: Module, DecoderLayer {
     }
 
     /// `DecoderLayer` conformance. Cache slot is a `Mamba2LayerCache`.
-    public func decode(_ h: Tensor, position _: Int,
-                       cache: any LayerCacheProtocol,
-                       cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func decode(
+        _ h: Tensor, position _: Int,
+        cache: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         guard let layerCache = cache as? Mamba2LayerCache else {
             fatalError("NemotronHMambaLayer: expected Mamba2LayerCache, got \(type(of: cache))")
         }
@@ -485,9 +519,11 @@ public final class NemotronHMambaLayer: Module, DecoderLayer {
         let x = convAct.slicedRows(start: 0, count: dInner)
         let bAll = convAct.slicedRows(start: dInner, count: nGroups * stateDim)
             .reshaped(to: [nGroups, stateDim])
-        let cAll = convAct.slicedRows(start: dInner + nGroups * stateDim,
-                                      count: nGroups * stateDim)
-            .reshaped(to: [nGroups, stateDim])
+        let cAll = convAct.slicedRows(
+            start: dInner + nGroups * stateDim,
+            count: nGroups * stateDim
+        )
+        .reshaped(to: [nGroups, stateDim])
 
         // (5) dt = softplus(dt_raw + dt_bias).
         let dtSum = Ops.add(dtRaw, dtBias, on: cmd)
@@ -498,8 +534,8 @@ public final class NemotronHMambaLayer: Module, DecoderLayer {
         //     group owns a contiguous head sub-slab in x / state / y.
         let y = Tensor.empty(shape: [nHeads, headDim], dtype: dtype, device: device)
         let xHeads = x.reshaped(to: [nHeads, headDim])
-        let stateHeads = layerCache.ssm.h        // [nHeads, headDim, stateDim]
-        for g in 0..<nGroups {
+        let stateHeads = layerCache.ssm.h  // [nHeads, headDim, stateDim]
+        for g in 0 ..< nGroups {
             let h0 = g * headsPerGroup
             let xg = xHeads.slicedRows(start: h0, count: headsPerGroup)
                 .reshaped(to: [headsPerGroup * headDim])
@@ -551,12 +587,19 @@ public final class NemotronHAttentionLayer: Module, DecoderLayer {
     let nHeads, nKVHeads, headDim: Int
     let scale: Float
 
-    init(norm: RMSNorm,
-         qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
-         nHeads: Int, nKVHeads: Int, headDim: Int) {
+    init(
+        norm: RMSNorm,
+        qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
+        nHeads: Int, nKVHeads: Int, headDim: Int
+    ) {
         self.norm = norm
-        self.qProj = qProj; self.kProj = kProj; self.vProj = vProj; self.oProj = oProj
-        self.nHeads = nHeads; self.nKVHeads = nKVHeads; self.headDim = headDim
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
         self.scale = 1.0 / Float(Double(headDim).squareRoot())
     }
 
@@ -571,9 +614,11 @@ public final class NemotronHAttentionLayer: Module, DecoderLayer {
     }
 
     /// `DecoderLayer` conformance. Cache slot is a `KVCache`.
-    public func decode(_ h: Tensor, position _: Int,
-                       cache: any LayerCacheProtocol,
-                       cmd: MTLCommandBuffer, device _: Device) -> Tensor {
+    public func decode(
+        _ h: Tensor, position _: Int,
+        cache: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device _: Device
+    ) -> Tensor {
         guard let kv = cache as? KVCache else {
             fatalError("NemotronHAttentionLayer: expected KVCache, got \(type(of: cache))")
         }
@@ -584,8 +629,9 @@ public final class NemotronHAttentionLayer: Module, DecoderLayer {
 
         // No RoPE — NemotronH attention attends without positional
         // rotation. K/V go straight into the cache unrotated.
-        kv.appendOnGPU(kFlat: k.reshaped(to: [nKVHeads, headDim]),
-                       vFlat: v.reshaped(to: [nKVHeads, headDim]), on: cmd)
+        kv.appendOnGPU(
+            kFlat: k.reshaped(to: [nKVHeads, headDim]),
+            vFlat: v.reshaped(to: [nKVHeads, headDim]), on: cmd)
 
         let (cacheK, cacheV) = kv.prepareForAttention(on: cmd)
         let attnOut = Ops.sdpaDecode(
@@ -610,11 +656,15 @@ public final class NemotronHMLPLayer: Module, DecoderLayer {
     let upProj, downProj: AnyLinear
     let hidden, intermediate: Int
 
-    init(norm: RMSNorm, upProj: AnyLinear, downProj: AnyLinear,
-         hidden: Int, intermediate: Int) {
+    init(
+        norm: RMSNorm, upProj: AnyLinear, downProj: AnyLinear,
+        hidden: Int, intermediate: Int
+    ) {
         self.norm = norm
-        self.upProj = upProj; self.downProj = downProj
-        self.hidden = hidden; self.intermediate = intermediate
+        self.upProj = upProj
+        self.downProj = downProj
+        self.hidden = hidden
+        self.intermediate = intermediate
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -627,9 +677,11 @@ public final class NemotronHMLPLayer: Module, DecoderLayer {
 
     /// `DecoderLayer` conformance. Cache slot is a `StatelessLayerCache`
     /// and is ignored — a dense MLP holds no per-token state.
-    public func decode(_ h: Tensor, position _: Int,
-                       cache _: any LayerCacheProtocol,
-                       cmd: MTLCommandBuffer, device _: Device) -> Tensor {
+    public func decode(
+        _ h: Tensor, position _: Int,
+        cache _: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device _: Device
+    ) -> Tensor {
         let xNorm = norm(h, on: cmd)
         // down( relu(up(x))^2 ) — squared-ReLU activation.
         let up = upProj(xNorm, on: cmd)
@@ -729,14 +781,17 @@ public final class NemotronHMoELayer: Module, DecoderLayer {
     public let normTopkProb: Bool
     let dtype: DType
 
-    init(norm: RMSNorm, gate: AnyLinear, eScoreCorrectionBias: Tensor,
-         experts: [NemotronHExpert], sharedExpert: NemotronHExpert?,
-         hidden: Int, topK: Int,
-         routedScalingFactor: Float, normTopkProb: Bool,
-         dtype: DType) {
-        precondition(topK > 0 && topK <= experts.count,
-                     "NemotronHMoELayer: topK \(topK) out of range "
-                     + "1…\(experts.count)")
+    init(
+        norm: RMSNorm, gate: AnyLinear, eScoreCorrectionBias: Tensor,
+        experts: [NemotronHExpert], sharedExpert: NemotronHExpert?,
+        hidden: Int, topK: Int,
+        routedScalingFactor: Float, normTopkProb: Bool,
+        dtype: DType
+    ) {
+        precondition(
+            topK > 0 && topK <= experts.count,
+            "NemotronHMoELayer: topK \(topK) out of range "
+                + "1…\(experts.count)")
         self.norm = norm
         self.gate = gate
         self.eScoreCorrectionBias = eScoreCorrectionBias
@@ -755,8 +810,11 @@ public final class NemotronHMoELayer: Module, DecoderLayer {
         var out: [(String, Tensor)] = []
         for (k, v) in norm.parameters() { out.append(("norm.\(k)", v)) }
         for (k, v) in gate.parameters() { out.append(("mixer.gate.\(k)", v)) }
-        out.append(("mixer.gate.e_score_correction_bias",
-                    eScoreCorrectionBias))
+        out.append(
+            (
+                "mixer.gate.e_score_correction_bias",
+                eScoreCorrectionBias
+            ))
         for (i, expert) in experts.enumerated() {
             for (k, v) in expert.parameters() {
                 out.append(("mixer.experts.\(i).\(k)", v))
@@ -772,9 +830,11 @@ public final class NemotronHMoELayer: Module, DecoderLayer {
 
     /// `DecoderLayer` conformance. Commits `cmd` and returns a
     /// fully-resident tensor produced on a fresh internal buffer.
-    public func decode(_ h: Tensor, position _: Int,
-                       cache _: any LayerCacheProtocol,
-                       cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func decode(
+        _ h: Tensor, position _: Int,
+        cache _: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // ── Pre-mixer RMSNorm + router GEMV on the caller's buffer ───
         let xNorm = norm(h, on: cmd)
         let logitsTensor = gate(xNorm, on: cmd)
@@ -786,12 +846,12 @@ public final class NemotronHMoELayer: Module, DecoderLayer {
         let logits = logitsTensor.toFloatArray()
         var origScores = [Float](repeating: 0, count: nRouted)
         var selectionScores = [Float](repeating: 0, count: nRouted)
-        for i in 0..<nRouted {
+        for i in 0 ..< nRouted {
             let s = 1.0 / (1.0 + Foundation.exp(-logits[i]))
             origScores[i] = s
             selectionScores[i] = s + eScoreCorrectionBiasHost[i]
         }
-        let order = (0..<nRouted).sorted { a, b in
+        let order = (0 ..< nRouted).sorted { a, b in
             if selectionScores[a] != selectionScores[b] {
                 return selectionScores[a] > selectionScores[b]
             }
@@ -811,17 +871,20 @@ public final class NemotronHMoELayer: Module, DecoderLayer {
         var accumulator: Tensor?
         for (k, ei) in inds.enumerated() {
             let y = experts[ei].forward(xNorm, on: workCmd)
-            let w = Tensor.filled(finalScores[k], shape: [hidden],
-                                  dtype: dtype, device: device)
+            let w = Tensor.filled(
+                finalScores[k], shape: [hidden],
+                dtype: dtype, device: device)
             let scaled = Ops.mul(y, w, on: workCmd)
-            accumulator = accumulator.map { Ops.add($0, scaled, on: workCmd) }
+            accumulator =
+                accumulator.map { Ops.add($0, scaled, on: workCmd) }
                 ?? scaled
         }
         // Shared expert — squared-ReLU MLP, always-on. Mirrors
         // mlx-lm's `if let sharedExperts { y = y + sharedExperts(x) }`.
         if let sharedExpert {
             let sharedOut = sharedExpert.forward(xNorm, on: workCmd)
-            accumulator = accumulator.map { Ops.add($0, sharedOut, on: workCmd) }
+            accumulator =
+                accumulator.map { Ops.add($0, sharedOut, on: workCmd) }
                 ?? sharedOut
         }
         // ── Residual ─────────────────────────────────────────────────
@@ -849,15 +912,17 @@ private func buildNemotronHMoELayer(
     // Router: hidden → nRouted logits. NemotronH MoE checkpoints ship
     // these projections as plain (non-quantized) Linear (the family
     // rejects quantized configs at load), so we read the raw weight.
-    let gate = AnyLinear(Linear(
-        weight: try weights.tensor(named: "\(p).gate.weight")))
+    let gate = AnyLinear(
+        Linear(
+            weight: try weights.tensor(named: "\(p).gate.weight")))
     // The correction bias is per-expert; mlx-lm keeps it in fp32 — we
     // do the same (the bias is the only thing the cast-predicate
     // protects from being cast down to bf16/f16).
     let eSCBRaw = try weights.tensor(named: "\(p).gate.e_score_correction_bias")
-    precondition(eSCBRaw.elementCount == nRoutedExperts,
-                 "NemotronH MoE: e_score_correction_bias has "
-                 + "\(eSCBRaw.elementCount) entries, expected \(nRoutedExperts)")
+    precondition(
+        eSCBRaw.elementCount == nRoutedExperts,
+        "NemotronH MoE: e_score_correction_bias has "
+            + "\(eSCBRaw.elementCount) entries, expected \(nRoutedExperts)")
 
     // Routed experts: each is a squared-ReLU 2-layer MLP. The published
     // checkpoint ships them as `mixer.experts.<e>.{up_proj,down_proj}.weight`
@@ -867,13 +932,15 @@ private func buildNemotronHMoELayer(
     // never need the stacked form).
     var experts: [NemotronHExpert] = []
     experts.reserveCapacity(nRoutedExperts)
-    for e in 0..<nRoutedExperts {
-        let upProj = AnyLinear(Linear(
-            weight: try weights.tensor(
-                named: "\(p).experts.\(e).up_proj.weight")))
-        let downProj = AnyLinear(Linear(
-            weight: try weights.tensor(
-                named: "\(p).experts.\(e).down_proj.weight")))
+    for e in 0 ..< nRoutedExperts {
+        let upProj = AnyLinear(
+            Linear(
+                weight: try weights.tensor(
+                    named: "\(p).experts.\(e).up_proj.weight")))
+        let downProj = AnyLinear(
+            Linear(
+                weight: try weights.tensor(
+                    named: "\(p).experts.\(e).down_proj.weight")))
         experts.append(NemotronHExpert(upProj: upProj, downProj: downProj))
     }
 
@@ -885,19 +952,22 @@ private func buildNemotronHMoELayer(
     // shipped checkpoint exercising it.
     let sharedExpert: NemotronHExpert?
     if nSharedExperts > 0 {
-        precondition(nSharedExperts == 1,
-                     "NemotronH MoE: n_shared_experts \(nSharedExperts) > 1 "
-                     + "not supported (no shipped checkpoint uses it).")
-        let sharedUp = AnyLinear(Linear(
-            weight: try weights.tensor(named: "\(p).shared_experts.up_proj.weight")))
-        let sharedDown = AnyLinear(Linear(
-            weight: try weights.tensor(named: "\(p).shared_experts.down_proj.weight")))
+        precondition(
+            nSharedExperts == 1,
+            "NemotronH MoE: n_shared_experts \(nSharedExperts) > 1 "
+                + "not supported (no shipped checkpoint uses it).")
+        let sharedUp = AnyLinear(
+            Linear(
+                weight: try weights.tensor(named: "\(p).shared_experts.up_proj.weight")))
+        let sharedDown = AnyLinear(
+            Linear(
+                weight: try weights.tensor(named: "\(p).shared_experts.down_proj.weight")))
         sharedExpert = NemotronHExpert(upProj: sharedUp, downProj: sharedDown)
-        _ = sharedExpertIntermediate    // Plumbed for future shape checks.
+        _ = sharedExpertIntermediate  // Plumbed for future shape checks.
     } else {
         sharedExpert = nil
     }
-    _ = moeIntermediate    // Plumbed for future shape checks.
+    _ = moeIntermediate  // Plumbed for future shape checks.
 
     return NemotronHMoELayer(
         norm: norm, gate: gate, eScoreCorrectionBias: eSCBRaw,
@@ -925,22 +995,33 @@ public final class NemotronHModel: LanguageModel {
     /// Layer kinds, index-aligned with `layers` — drives `makeLayerCaches`.
     let layerKinds: [NemotronHLayerKind]
 
-    init(embedTokens: AnyEmbedding, layers: [any DecoderLayer],
-         finalNorm: RMSNorm, lmHead: AnyLinear,
-         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         mambaNHeads: Int, mambaHeadDim: Int, stateDim: Int,
-         convDim: Int, convKernel: Int, nGroups: Int, dInner: Int,
-         vocab: Int, maxSeq: Int, dtype: DType) {
+    init(
+        embedTokens: AnyEmbedding, layers: [any DecoderLayer],
+        finalNorm: RMSNorm, lmHead: AnyLinear,
+        hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        mambaNHeads: Int, mambaHeadDim: Int, stateDim: Int,
+        convDim: Int, convKernel: Int, nGroups: Int, dInner: Int,
+        vocab: Int, maxSeq: Int, dtype: DType
+    ) {
         self.embedTokens = embedTokens
         self.layers = layers
         self.finalNorm = finalNorm
         self.lmHead = lmHead
-        self.hidden = hidden; self.nLayers = nLayers
-        self.nHeads = nHeads; self.nKVHeads = nKVHeads; self.headDim = headDim
-        self.mambaNHeads = mambaNHeads; self.mambaHeadDim = mambaHeadDim
-        self.stateDim = stateDim; self.convDim = convDim
-        self.convKernel = convKernel; self.nGroups = nGroups; self.dInner = dInner
-        self.vocab = vocab; self.maxSeq = maxSeq; self.dtype = dtype
+        self.hidden = hidden
+        self.nLayers = nLayers
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.mambaNHeads = mambaNHeads
+        self.mambaHeadDim = mambaHeadDim
+        self.stateDim = stateDim
+        self.convDim = convDim
+        self.convKernel = convKernel
+        self.nGroups = nGroups
+        self.dInner = dInner
+        self.vocab = vocab
+        self.maxSeq = maxSeq
+        self.dtype = dtype
         self.layerKinds = layers.map { layer in
             switch layer {
             case is NemotronHMambaLayer: return .mamba
@@ -948,8 +1029,9 @@ public final class NemotronHModel: LanguageModel {
             case is NemotronHMLPLayer: return .mlp
             case is NemotronHMoELayer: return .moe
             default:
-                fatalError("NemotronHModel: unknown DecoderLayer "
-                           + "\(type(of: layer)) in heterogeneous stack")
+                fatalError(
+                    "NemotronHModel: unknown DecoderLayer "
+                        + "\(type(of: layer)) in heterogeneous stack")
             }
         }
     }
@@ -1007,9 +1089,11 @@ public final class NemotronHModel: LanguageModel {
     /// (Mamba / Attention / MLP) still benefit: their `workCmd`
     /// commits on the next layer transition (or at the end of the
     /// loop) rather than fighting for the caller's buffer.
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let tokenBuf = device.makeBuffer(length: 4)
         var tid = UInt32(tokenId)
         memcpy(tokenBuf.contents(), &tid, 4)
@@ -1023,8 +1107,9 @@ public final class NemotronHModel: LanguageModel {
         if !hasCommittingLayer {
             var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
             for (i, layer) in layers.enumerated() {
-                h = layer.decode(h, position: position, cache: caches[i],
-                                 cmd: cmd, device: device)
+                h = layer.decode(
+                    h, position: position, cache: caches[i],
+                    cmd: cmd, device: device)
             }
             let normed = finalNorm(h, on: cmd)
             return lmHead(normed, on: cmd)
@@ -1036,8 +1121,9 @@ public final class NemotronHModel: LanguageModel {
         var workCmd = device.makeCommandBuffer()
         var h = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
         for (i, layer) in layers.enumerated() {
-            h = layer.decode(h, position: position, cache: caches[i],
-                             cmd: workCmd, device: device)
+            h = layer.decode(
+                h, position: position, cache: caches[i],
+                cmd: workCmd, device: device)
             // Layers that commit `workCmd` (MoE) hand back a resident
             // tensor; we obtain a fresh buffer so the next layer's
             // dispatches don't land on an already-committed buffer.
@@ -1063,15 +1149,19 @@ public final class NemotronHModel: LanguageModel {
     /// `decodeMulti` override on the attention DecoderLayer slot; the
     /// Mamba 2 / MLP / nothing layer kinds keep the per-token default.
     /// Today this override is commit-count-batched only.
-    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                             caches: [any LayerCacheProtocol],
-                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(!tokenIds.isEmpty,
-                     "NemotronHModel.forwardMulti: tokenIds must be non-empty")
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "NemotronHModel.forwardMulti: tokenIds must be non-empty")
         var logits: Tensor!
         for (i, tok) in tokenIds.enumerated() {
-            logits = forward(tokenId: tok, position: position + i,
-                             caches: caches, on: cmd, device: device)
+            logits = forward(
+                tokenId: tok, position: position + i,
+                caches: caches, on: cmd, device: device)
         }
         return logits
     }
@@ -1087,19 +1177,23 @@ public final class NemotronHModel: LanguageModel {
 
     public var supportsEmbeddingInput: Bool { true }
 
-    public func forward(inputEmbedding: Tensor, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(inputEmbedding.elementCount == hidden,
-                     "NemotronHModel.forward(inputEmbedding:): expected [\(hidden)], "
-                     + "got \(inputEmbedding.shape)")
+    public func forward(
+        inputEmbedding: Tensor, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            inputEmbedding.elementCount == hidden,
+            "NemotronHModel.forward(inputEmbedding:): expected [\(hidden)], "
+                + "got \(inputEmbedding.shape)")
 
         let hasCommittingLayer = layerKinds.contains(.moe)
         if !hasCommittingLayer {
             var h = inputEmbedding.reshaped(to: [hidden])
             for (i, layer) in layers.enumerated() {
-                h = layer.decode(h, position: position, cache: caches[i],
-                                 cmd: cmd, device: device)
+                h = layer.decode(
+                    h, position: position, cache: caches[i],
+                    cmd: cmd, device: device)
             }
             let normed = finalNorm(h, on: cmd)
             return lmHead(normed, on: cmd)
@@ -1108,8 +1202,9 @@ public final class NemotronHModel: LanguageModel {
         var workCmd = device.makeCommandBuffer()
         var h = inputEmbedding.reshaped(to: [hidden])
         for (i, layer) in layers.enumerated() {
-            h = layer.decode(h, position: position, cache: caches[i],
-                             cmd: workCmd, device: device)
+            h = layer.decode(
+                h, position: position, cache: caches[i],
+                cmd: workCmd, device: device)
             if layerKinds[i] == .moe {
                 workCmd = device.makeCommandBuffer()
             }
@@ -1154,8 +1249,10 @@ private func readFloatsNH(_ t: Tensor) -> [Float] {
 }
 
 /// Write a `[Float]` into a fresh tensor of the requested dtype.
-private func writeFloatsNH(_ values: [Float], shape: [Int],
-                           dtype: DType, device: Device) -> Tensor {
+private func writeFloatsNH(
+    _ values: [Float], shape: [Int],
+    dtype: DType, device: Device
+) -> Tensor {
     let t = Tensor.empty(shape: shape, dtype: dtype, device: device)
     switch dtype {
     case .f32:
@@ -1171,17 +1268,22 @@ private func writeFloatsNH(_ values: [Float], shape: [Int],
 }
 
 /// A_eff = -exp(A_log), per head, in the activation dtype.
-private func computeAEffNH(aLog: Tensor, nHeads: Int,
-                           dtype: DType, device: Device) -> Tensor {
+private func computeAEffNH(
+    aLog: Tensor, nHeads: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     let floats = readFloatsNH(aLog)
     precondition(floats.count == nHeads, "NemotronH: A_log expected [n_heads]")
-    return writeFloatsNH(floats.map { -Foundation.exp($0) },
-                         shape: [nHeads], dtype: dtype, device: device)
+    return writeFloatsNH(
+        floats.map { -Foundation.exp($0) },
+        shape: [nHeads], dtype: dtype, device: device)
 }
 
 /// Cast a per-head / per-channel vector to the activation dtype.
-private func castVectorNH(_ src: Tensor, count: Int,
-                          dtype: DType, device: Device) -> Tensor {
+private func castVectorNH(
+    _ src: Tensor, count: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     if src.dtype == dtype { return src }
     let floats = readFloatsNH(src)
     precondition(floats.count == count, "NemotronH: vector size mismatch")
@@ -1189,27 +1291,31 @@ private func castVectorNH(_ src: Tensor, count: Int,
 }
 
 /// Tile `D[h]` across `head_dim` channels → `[n_heads * head_dim]`.
-private func tileDNH(d: Tensor, nHeads: Int, headDim: Int,
-                     dtype: DType, device: Device) -> Tensor {
+private func tileDNH(
+    d: Tensor, nHeads: Int, headDim: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     let floats = readFloatsNH(d)
     precondition(floats.count == nHeads, "NemotronH: D expected [n_heads]")
     var tiled: [Float] = []
     tiled.reserveCapacity(nHeads * headDim)
-    for h in 0..<nHeads {
-        for _ in 0..<headDim { tiled.append(floats[h]) }
+    for h in 0 ..< nHeads {
+        for _ in 0 ..< headDim { tiled.append(floats[h]) }
     }
     return writeFloatsNH(tiled, shape: [nHeads * headDim], dtype: dtype, device: device)
 }
 
 /// Transpose HF conv1d.weight `[C, 1, K]` → `[K, C]` for the metaltile
 /// conv kernel.
-private func transposeConv1dWeightNH(src: Tensor, kernel K: Int, channels C: Int,
-                                     dtype: DType, device: Device) -> Tensor {
+private func transposeConv1dWeightNH(
+    src: Tensor, kernel K: Int, channels C: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     let floats = readFloatsNH(src)
     precondition(floats.count == K * C, "NemotronH: conv1d.weight count mismatch")
     var dst = [Float](repeating: 0, count: K * C)
-    for c in 0..<C {
-        for k in 0..<K { dst[k * C + c] = floats[c * K + k] }
+    for c in 0 ..< C {
+        for k in 0 ..< K { dst[k * C + c] = floats[c * K + k] }
     }
     return writeFloatsNH(dst, shape: [K, C], dtype: dtype, device: device)
 }

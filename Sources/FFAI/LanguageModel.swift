@@ -82,9 +82,11 @@ public protocol LanguageModel: Module {
     /// hand-roll fused forwardSampleCategorical overrides to avoid the
     /// 2-cmdbuf default path; with this protocol method, the default
     /// is fast and overrides are unnecessary.
-    func forward(tokenId: Int, position: Int,
-                 caches: [any LayerCacheProtocol],
-                 on cmd: MTLCommandBuffer, device: Device) -> Tensor
+    func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor
 
     /// Queue a **multi-token** forward pass — process `tokenIds.count`
     /// positions in one logical call. Updates each cache for positions
@@ -103,14 +105,18 @@ public protocol LanguageModel: Module {
     /// `tokenIds.isEmpty == false` is a precondition (an empty chunk
     /// is a caller bug — `Generate.driveGeneration` never produces
     /// one).
-    func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                      caches: [any LayerCacheProtocol],
-                      on cmd: MTLCommandBuffer, device: Device) -> Tensor
+    func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor
 
     /// Forward + GPU argmax in one command buffer. Returns just the
     /// chosen token id (4-byte readback) — no full logits transfer.
-    func forwardSample(tokenId: Int, position: Int,
-                       caches: [any LayerCacheProtocol], device: Device) -> Int
+    func forwardSample(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol], device: Device
+    ) -> Int
 
     /// Whether this engine supports `forward(inputEmbedding:...)` — the
     /// embedding-input forward path a VLM needs to splice image tokens
@@ -127,9 +133,11 @@ public protocol LanguageModel: Module {
     ///
     /// Families that don't support this trap; check `supportsEmbeddingInput`
     /// first. The default implementation traps.
-    func forward(inputEmbedding: Tensor, position: Int,
-                 caches: [any LayerCacheProtocol],
-                 on cmd: MTLCommandBuffer, device: Device) -> Tensor
+    func forward(
+        inputEmbedding: Tensor, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor
 
     /// Look up the raw `[hidden]` embedding row for a text token — the
     /// table gather *without* any family-specific post-scale (Gemma's
@@ -141,51 +149,58 @@ public protocol LanguageModel: Module {
     func textEmbedding(tokenId: Int, device: Device) -> Tensor
 }
 
-public extension LanguageModel {
+extension LanguageModel {
     /// Default prefill chunk size matches mlx-swift-lm's generic
     /// `LanguageModel` default (1024 — Llama / Mistral / Phi / Qwen3
     /// dense). GPT-OSS, Qwen 3.5 MoE, Gemma 4 override this per the
     /// values benched in mlx-swift-lm.
-    var defaultPrefillStepSize: Int { 1024 }
+    public var defaultPrefillStepSize: Int { 1024 }
 
     /// Default: no explicit BOS prefixing. Families that are BOS-critical
     /// and whose tokenizer post-processor does not add one (Gemma 4)
     /// override this to `true`.
-    var requiresLeadingBOS: Bool { false }
+    public var requiresLeadingBOS: Bool { false }
 
     /// Default: embedding-input forward unsupported. VL-target families
     /// override both this and `forward(inputEmbedding:...)`.
-    var supportsEmbeddingInput: Bool { false }
+    public var supportsEmbeddingInput: Bool { false }
 
     /// Default `forward(inputEmbedding:...)`: traps. VL-target families
     /// provide a real implementation.
-    func forward(inputEmbedding: Tensor, position: Int,
-                 caches: [any LayerCacheProtocol],
-                 on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func forward(
+        inputEmbedding: Tensor, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         preconditionFailure(
             "\(type(of: self)) does not support embedding-input forward — "
-            + "check supportsEmbeddingInput before calling")
+                + "check supportsEmbeddingInput before calling")
     }
 
     /// Default `textEmbedding(...)`: traps. VL-target families provide a
     /// real implementation.
-    func textEmbedding(tokenId: Int, device: Device) -> Tensor {
+    public func textEmbedding(tokenId: Int, device: Device) -> Tensor {
         preconditionFailure(
             "\(type(of: self)) does not support textEmbedding — "
-            + "check supportsEmbeddingInput before calling")
+                + "check supportsEmbeddingInput before calling")
     }
 
-    func makeLayerCaches(maxSeq: Int? = nil, device: Device = .shared) -> [any LayerCacheProtocol] {
+    public func makeLayerCaches(maxSeq: Int? = nil, device: Device = .shared)
+        -> [any LayerCacheProtocol]
+    {
         makeLayerCaches(maxSeq: maxSeq, device: device)
     }
 
     /// Default `forward(...)`: wraps `forward(...on cmd:)` in a fresh
     /// command buffer, commits, waits. Returns logits.
-    func forward(tokenId: Int, position: Int,
-                 caches: [any LayerCacheProtocol], device: Device = .shared) -> Tensor {
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol], device: Device = .shared
+    ) -> Tensor {
         let cmd = device.makeCommandBuffer()
-        let logits = forward(tokenId: tokenId, position: position,
-                             caches: caches, on: cmd, device: device)
+        let logits = forward(
+            tokenId: tokenId, position: position,
+            caches: caches, on: cmd, device: device)
         cmd.commit()
         cmd.waitUntilCompleted()
         return logits
@@ -196,27 +211,34 @@ public extension LanguageModel {
     /// the tail logits. Correct-but-slow — every family inherits this
     /// for free, optimised families override to batch the chunk in
     /// one `Ops.sdpaMulti(causal: true)` dispatch.
-    func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                      caches: [any LayerCacheProtocol],
-                      on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(!tokenIds.isEmpty,
-                     "forwardMulti: tokenIds must be non-empty")
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "forwardMulti: tokenIds must be non-empty")
         var logits: Tensor!
         for (i, token) in tokenIds.enumerated() {
-            logits = forward(tokenId: token, position: position + i,
-                             caches: caches, on: cmd, device: device)
+            logits = forward(
+                tokenId: token, position: position + i,
+                caches: caches, on: cmd, device: device)
         }
         return logits
     }
 
     /// Default `forwardSample(...)`: queues forward + argmax on the
     /// same command buffer; returns the chosen token id.
-    func forwardSample(tokenId: Int, position: Int,
-                       caches: [any LayerCacheProtocol],
-                       device: Device = .shared) -> Int {
+    public func forwardSample(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        device: Device = .shared
+    ) -> Int {
         let cmd = device.makeCommandBuffer()
-        let logits = forward(tokenId: tokenId, position: position,
-                             caches: caches, on: cmd, device: device)
+        let logits = forward(
+            tokenId: tokenId, position: position,
+            caches: caches, on: cmd, device: device)
         let outBuf = device.makeBuffer(length: 4)
         let outT = Tensor(buffer: outBuf, offset: 0, shape: [1], dtype: .u32)
         Ops.argmax(logits, into: outT, on: cmd)
@@ -237,14 +259,15 @@ public extension LanguageModel {
     /// used 2 cmdbufs (forward inside its own commit, then a separate
     /// commit for the sampler); Llama and Qwen3 worked around it with
     /// hand-rolled overrides which are now redundant.
-    func forwardSampleCategorical(
+    public func forwardSampleCategorical(
         tokenId: Int, position: Int, caches: [any LayerCacheProtocol],
         temperature: Float, uniformDraw: Float,
         device: Device = .shared
     ) -> Int {
         let cmd = device.makeCommandBuffer()
-        let logits = forward(tokenId: tokenId, position: position,
-                             caches: caches, on: cmd, device: device)
+        let logits = forward(
+            tokenId: tokenId, position: position,
+            caches: caches, on: cmd, device: device)
 
         let tBuf = device.makeBuffer(length: 4)
         var tVal = temperature
@@ -258,9 +281,10 @@ public extension LanguageModel {
 
         let outBuf = device.makeBuffer(length: 4)
         let outT = Tensor(buffer: outBuf, offset: 0, shape: [1], dtype: .u32)
-        Ops.softmaxCategoricalSample(logits, into: outT,
-                                     temperature: temperatureT,
-                                     uniform: uniformT, on: cmd)
+        Ops.softmaxCategoricalSample(
+            logits, into: outT,
+            temperature: temperatureT,
+            uniform: uniformT, on: cmd)
 
         cmd.commit()
         cmd.waitUntilCompleted()

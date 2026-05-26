@@ -46,14 +46,14 @@ import Tokenizers
 /// in the mlx-audio-swift reference.
 public struct GraniteSpeechConfig: Sendable {
     public struct EncoderConfig: Sendable {
-        public let inputDim: Int       // mel features (160 = 2×80)
-        public let numLayers: Int      // conformer blocks
+        public let inputDim: Int  // mel features (160 = 2×80)
+        public let numLayers: Int  // conformer blocks
         public let hiddenDim: Int
         public let feedforwardMult: Int
         public let numHeads: Int
         public let dimHead: Int
-        public let outputDim: Int      // CTC vocab size / projection dim
-        public let contextSize: Int    // block size for relative pos attention
+        public let outputDim: Int  // CTC vocab size / projection dim
+        public let contextSize: Int  // block size for relative pos attention
         public let maxPosEmb: Int
         public let convKernelSize: Int
         public let convExpansionFactor: Int
@@ -90,9 +90,9 @@ public struct GraniteSpeechConfig: Sendable {
     public let encoderConfig: EncoderConfig
     public let projectorConfig: ProjectorConfig
     public let textConfig: TextConfig
-    public let audioTokenIndex: Int   // token id replaced by audio embeddings
-    public let downsampleRate: Int    // QFormer output compression
-    public let windowSize: Int        // QFormer chunk size (frames)
+    public let audioTokenIndex: Int  // token id replaced by audio embeddings
+    public let downsampleRate: Int  // QFormer output compression
+    public let windowSize: Int  // QFormer chunk size (frames)
     public let quantization: ModelConfig.QuantizationConfig?
 
     // Derived: number of QFormer output tokens per window.
@@ -101,7 +101,7 @@ public struct GraniteSpeechConfig: Sendable {
     public static func load(from config: ModelConfig) throws -> GraniteSpeechConfig {
         let enc = config.nested("encoder_config") ?? [:]
         let proj = config.nested("projector_config") ?? [:]
-        let txt  = config.nested("text_config") ?? [:]
+        let txt = config.nested("text_config") ?? [:]
 
         func intE(_ k: String, _ d: Int) -> Int {
             (enc[k] as? Int) ?? d
@@ -126,55 +126,55 @@ public struct GraniteSpeechConfig: Sendable {
         }
 
         let encoderCfg = EncoderConfig(
-            inputDim:           intE("input_dim",          160),
-            numLayers:          intE("num_layers",          16),
-            hiddenDim:          intE("hidden_dim",         1024),
-            feedforwardMult:    intE("feedforward_mult",      4),
-            numHeads:           intE("num_heads",             8),
-            dimHead:            intE("dim_head",           128),
-            outputDim:          intE("output_dim",         348),
-            contextSize:        intE("context_size",       200),
-            maxPosEmb:          intE("max_pos_emb",        512),
-            convKernelSize:     intE("conv_kernel_size",    15),
-            convExpansionFactor:intE("conv_expansion_factor", 2)
+            inputDim: intE("input_dim", 160),
+            numLayers: intE("num_layers", 16),
+            hiddenDim: intE("hidden_dim", 1024),
+            feedforwardMult: intE("feedforward_mult", 4),
+            numHeads: intE("num_heads", 8),
+            dimHead: intE("dim_head", 128),
+            outputDim: intE("output_dim", 348),
+            contextSize: intE("context_size", 200),
+            maxPosEmb: intE("max_pos_emb", 512),
+            convKernelSize: intE("conv_kernel_size", 15),
+            convExpansionFactor: intE("conv_expansion_factor", 2)
         )
 
         let projCfg = ProjectorConfig(
-            hiddenSize:         intP("hidden_size",       1024),
-            numHiddenLayers:    intP("num_hidden_layers",    2),
-            numAttentionHeads:  intP("num_attention_heads", 16),
-            intermediateSize:   intP("intermediate_size", 4096),
-            layerNormEps:       floatP("layer_norm_eps",  1e-12),
-            encoderHiddenSize:  intP("encoder_hidden_size", 1024)
+            hiddenSize: intP("hidden_size", 1024),
+            numHiddenLayers: intP("num_hidden_layers", 2),
+            numAttentionHeads: intP("num_attention_heads", 16),
+            intermediateSize: intP("intermediate_size", 4096),
+            layerNormEps: floatP("layer_norm_eps", 1e-12),
+            encoderHiddenSize: intP("encoder_hidden_size", 1024)
         )
 
         let textCfg = TextConfig(
-            vocabSize:            intT("vocab_size",           100353),
-            hiddenSize:           intT("hidden_size",            2048),
-            intermediateSize:     intT("intermediate_size",     4096),
-            numHiddenLayers:      intT("num_hidden_layers",       40),
-            numAttentionHeads:    intT("num_attention_heads",     16),
-            numKeyValueHeads:     intT("num_key_value_heads",      4),
-            maxPositionEmbeddings:intT("max_position_embeddings", 4096),
-            rmsNormEps:           floatT("rms_norm_eps",         1e-5),
-            ropeTheta:            floatT("rope_theta",         10000),
-            attentionBias:        boolT("attention_bias",      false),
-            mlpBias:              boolT("mlp_bias",             false),
-            attentionMultiplier:  floatT("attention_multiplier", 0.0078125),
-            embeddingMultiplier:  floatT("embedding_multiplier",    12.0),
-            residualMultiplier:   floatT("residual_multiplier",     0.22),
-            logitsScaling:        floatT("logits_scaling",           8.0),
-            tieWordEmbeddings:    boolT("tie_word_embeddings",    false)
+            vocabSize: intT("vocab_size", 100353),
+            hiddenSize: intT("hidden_size", 2048),
+            intermediateSize: intT("intermediate_size", 4096),
+            numHiddenLayers: intT("num_hidden_layers", 40),
+            numAttentionHeads: intT("num_attention_heads", 16),
+            numKeyValueHeads: intT("num_key_value_heads", 4),
+            maxPositionEmbeddings: intT("max_position_embeddings", 4096),
+            rmsNormEps: floatT("rms_norm_eps", 1e-5),
+            ropeTheta: floatT("rope_theta", 10000),
+            attentionBias: boolT("attention_bias", false),
+            mlpBias: boolT("mlp_bias", false),
+            attentionMultiplier: floatT("attention_multiplier", 0.0078125),
+            embeddingMultiplier: floatT("embedding_multiplier", 12.0),
+            residualMultiplier: floatT("residual_multiplier", 0.22),
+            logitsScaling: floatT("logits_scaling", 8.0),
+            tieWordEmbeddings: boolT("tie_word_embeddings", false)
         )
 
         return GraniteSpeechConfig(
-            encoderConfig:  encoderCfg,
+            encoderConfig: encoderCfg,
             projectorConfig: projCfg,
             textConfig: textCfg,
             audioTokenIndex: config.int("audio_token_index") ?? 100352,
             downsampleRate: config.int("downsample_rate") ?? 5,
-            windowSize:     config.int("window_size")      ?? 15,
-            quantization:   config.quantization
+            windowSize: config.int("window_size") ?? 15,
+            quantization: config.quantization
         )
     }
 }
@@ -208,20 +208,23 @@ private func loadBiasF32(_ bundle: SafeTensorsBundle, _ key: String, size: Int) 
 private func float16ToFloat32(_ bits: UInt16) -> Float {
     // IEEE 754 half → float conversion.
     let sign: UInt32 = UInt32(bits >> 15) << 31
-    let exp  = (bits >> 10) & 0x1F
+    let exp = (bits >> 10) & 0x1F
     let mant = bits & 0x3FF
     if exp == 0 {
         // subnormal
         if mant == 0 { return Float(bitPattern: sign) }
         var e: UInt32 = 0
         var m = UInt32(mant)
-        while m & 0x400 == 0 { m <<= 1; e += 1 }
+        while m & 0x400 == 0 {
+            m <<= 1
+            e += 1
+        }
         let fullExp = (127 - 15 - e + 1) << 23
         return Float(bitPattern: sign | fullExp | ((m & 0x3FF) << 13))
     }
     if exp == 0x1F {
         // inf / nan
-        return Float(bitPattern: sign | 0x7F800000 | (UInt32(mant) << 13))
+        return Float(bitPattern: sign | 0x7F80_0000 | (UInt32(mant) << 13))
     }
     let fullExp = (UInt32(exp) + (127 - 15)) << 23
     return Float(bitPattern: sign | fullExp | (UInt32(mant) << 13))
@@ -233,8 +236,10 @@ private func bfloat16ToFloat32(_ bits: UInt16) -> Float {
 
 /// Dense matrix-vector multiply: y = W·x + b.
 /// W shape: [outDim, inDim] (row-major), x shape: [inDim], b shape: [outDim].
-private func matVec(_ w: [Float], _ x: [Float], _ b: [Float]? = nil,
-                    outDim: Int, inDim: Int) -> [Float] {
+private func matVec(
+    _ w: [Float], _ x: [Float], _ b: [Float]? = nil,
+    outDim: Int, inDim: Int
+) -> [Float] {
     precondition(w.count == outDim * inDim)
     precondition(x.count == inDim)
     var y = [Float](repeating: 0, count: outDim)
@@ -243,32 +248,34 @@ private func matVec(_ w: [Float], _ x: [Float], _ b: [Float]? = nil,
     DispatchQueue.concurrentPerform(iterations: outDim) { i in
         var acc: Float = 0
         let base = i * inDim
-        for j in 0..<inDim { acc += w[base + j] * x[j] }
+        for j in 0 ..< inDim { acc += w[base + j] * x[j] }
         y[i] = acc
     }
     if let bias = b {
-        for i in 0..<outDim { y[i] += bias[i] }
+        for i in 0 ..< outDim { y[i] += bias[i] }
     }
     return y
 }
 
 /// Batch matrix-vector: each row of `x` (shape [n, inDim]) projected by W.
 /// Output shape [n, outDim]. Parallelised over rows × output channels.
-private func batchMatVec(_ w: [Float], _ xRows: [[Float]], _ b: [Float]? = nil,
-                         outDim: Int, inDim: Int) -> [[Float]] {
+private func batchMatVec(
+    _ w: [Float], _ xRows: [[Float]], _ b: [Float]? = nil,
+    outDim: Int, inDim: Int
+) -> [[Float]] {
     let n = xRows.count
     var out = [[Float]](repeating: [Float](repeating: 0, count: outDim), count: n)
     DispatchQueue.concurrentPerform(iterations: n) { row in
         let x = xRows[row]
         var y = [Float](repeating: 0, count: outDim)
-        for i in 0..<outDim {
+        for i in 0 ..< outDim {
             var acc: Float = 0
             let base = i * inDim
-            for j in 0..<inDim { acc += w[base + j] * x[j] }
+            for j in 0 ..< inDim { acc += w[base + j] * x[j] }
             y[i] = acc
         }
         if let bias = b {
-            for i in 0..<outDim { y[i] += bias[i] }
+            for i in 0 ..< outDim { y[i] += bias[i] }
         }
         out[row] = y
     }
@@ -308,7 +315,7 @@ private func layerNorm(_ x: inout [Float], weight: [Float], bias: [Float], eps: 
     let mean = x.reduce(0, +) / Float(n)
     let variance = x.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Float(n)
     let std = sqrtf(variance + eps)
-    for i in 0..<n {
+    for i in 0 ..< n {
         x[i] = (x[i] - mean) / std * weight[i] + bias[i]
     }
 }
@@ -318,7 +325,7 @@ private func rmsNorm(_ x: inout [Float], weight: [Float], eps: Float) {
     let n = x.count
     let meanSq = x.map { $0 * $0 }.reduce(0, +) / Float(n)
     let scale = 1.0 / sqrtf(meanSq + eps)
-    for i in 0..<n { x[i] = x[i] * scale * weight[i] }
+    for i in 0 ..< n { x[i] = x[i] * scale * weight[i] }
 }
 
 // MARK: - Encoder weight store
@@ -334,39 +341,55 @@ final class GraniteSpeechEncoderWeights {
     // per-layer weights
     struct LayerWeights {
         // ff1
-        let ff1PreNormW: [Float]; let ff1PreNormB: [Float]
-        let ff1UpW: [Float];     let ff1UpB: [Float]
-        let ff1DownW: [Float];   let ff1DownB: [Float]
+        let ff1PreNormW: [Float]
+        let ff1PreNormB: [Float]
+        let ff1UpW: [Float]
+        let ff1UpB: [Float]
+        let ff1DownW: [Float]
+        let ff1DownB: [Float]
 
         // attn
-        let attnPreNormW: [Float]; let attnPreNormB: [Float]
-        let attnRelPosW: [Float]   // [2*maxPosEmb+1, dimHead]
-        let attnToQW: [Float]      // [numHeads*dimHead, hiddenDim]
-        let attnToKVW: [Float]     // [2*numHeads*dimHead, hiddenDim]
-        let attnToOutW: [Float];   let attnToOutB: [Float]
+        let attnPreNormW: [Float]
+        let attnPreNormB: [Float]
+        let attnRelPosW: [Float]  // [2*maxPosEmb+1, dimHead]
+        let attnToQW: [Float]  // [numHeads*dimHead, hiddenDim]
+        let attnToKVW: [Float]  // [2*numHeads*dimHead, hiddenDim]
+        let attnToOutW: [Float]
+        let attnToOutB: [Float]
 
         // conv
-        let convNormW: [Float]; let convNormB: [Float]
-        let convUpW: [Float];   let convUpB: [Float]
+        let convNormW: [Float]
+        let convNormB: [Float]
+        let convUpW: [Float]
+        let convUpB: [Float]
         let convDepthW: [Float]  // [innerDim, 1, kernelSize] — already (chanOut,chanIn,k) order
-        let convBnW: [Float]; let convBnB: [Float]
-        let convBnMean: [Float]; let convBnVar: [Float]
-        let convDownW: [Float];  let convDownB: [Float]
+        let convBnW: [Float]
+        let convBnB: [Float]
+        let convBnMean: [Float]
+        let convBnVar: [Float]
+        let convDownW: [Float]
+        let convDownB: [Float]
 
         // ff2
-        let ff2PreNormW: [Float]; let ff2PreNormB: [Float]
-        let ff2UpW: [Float];     let ff2UpB: [Float]
-        let ff2DownW: [Float];   let ff2DownB: [Float]
+        let ff2PreNormW: [Float]
+        let ff2PreNormB: [Float]
+        let ff2UpW: [Float]
+        let ff2UpB: [Float]
+        let ff2DownW: [Float]
+        let ff2DownB: [Float]
 
         // post_norm
-        let postNormW: [Float]; let postNormB: [Float]
+        let postNormW: [Float]
+        let postNormB: [Float]
     }
 
     let layers: [LayerWeights]
 
     // out linear + out_mid linear
-    let outW: [Float];    let outB: [Float]
-    let outMidW: [Float]; let outMidB: [Float]
+    let outW: [Float]
+    let outB: [Float]
+    let outMidW: [Float]
+    let outMidB: [Float]
 
     init(_ cfg: GraniteSpeechConfig.EncoderConfig, bundle: SafeTensorsBundle) throws {
         self.cfg = cfg
@@ -377,75 +400,78 @@ final class GraniteSpeechEncoderWeights {
 
         var ls: [LayerWeights] = []
         let innerConvDim = cfg.hiddenDim * cfg.convExpansionFactor
-        for i in 0..<cfg.numLayers {
+        for i in 0 ..< cfg.numLayers {
             let lp = "\(p).layers.\(i)"
 
             let ff1PreNormW = loadF32(try bundle.tensor(named: "\(lp).ff1.pre_norm.weight"))
             let ff1PreNormB = loadBiasF32(bundle, "\(lp).ff1.pre_norm.bias", size: cfg.hiddenDim)
-            let ff1UpW   = loadF32(try bundle.tensor(named: "\(lp).ff1.up_proj.weight"))
-            let ff1UpB   = loadBiasF32(bundle, "\(lp).ff1.up_proj.bias", size: cfg.hiddenDim * cfg.feedforwardMult)
+            let ff1UpW = loadF32(try bundle.tensor(named: "\(lp).ff1.up_proj.weight"))
+            let ff1UpB = loadBiasF32(
+                bundle, "\(lp).ff1.up_proj.bias", size: cfg.hiddenDim * cfg.feedforwardMult)
             let ff1DownW = loadF32(try bundle.tensor(named: "\(lp).ff1.down_proj.weight"))
             let ff1DownB = loadBiasF32(bundle, "\(lp).ff1.down_proj.bias", size: cfg.hiddenDim)
 
             let attnPreNormW = loadF32(try bundle.tensor(named: "\(lp).attn.pre_norm.weight"))
             let attnPreNormB = loadBiasF32(bundle, "\(lp).attn.pre_norm.bias", size: cfg.hiddenDim)
-            let attnRelPosW  = loadF32(try bundle.tensor(named: "\(lp).attn.rel_pos_emb.weight"))
-            let attnToQW     = loadF32(try bundle.tensor(named: "\(lp).attn.to_q.weight"))
-            let attnToKVW    = loadF32(try bundle.tensor(named: "\(lp).attn.to_kv.weight"))
-            let attnToOutW   = loadF32(try bundle.tensor(named: "\(lp).attn.to_out.weight"))
-            let attnToOutB   = loadBiasF32(bundle, "\(lp).attn.to_out.bias", size: cfg.hiddenDim)
+            let attnRelPosW = loadF32(try bundle.tensor(named: "\(lp).attn.rel_pos_emb.weight"))
+            let attnToQW = loadF32(try bundle.tensor(named: "\(lp).attn.to_q.weight"))
+            let attnToKVW = loadF32(try bundle.tensor(named: "\(lp).attn.to_kv.weight"))
+            let attnToOutW = loadF32(try bundle.tensor(named: "\(lp).attn.to_out.weight"))
+            let attnToOutB = loadBiasF32(bundle, "\(lp).attn.to_out.bias", size: cfg.hiddenDim)
 
             let convNormW = loadF32(try bundle.tensor(named: "\(lp).conv.norm.weight"))
             let convNormB = loadBiasF32(bundle, "\(lp).conv.norm.bias", size: cfg.hiddenDim)
-            let convUpW   = loadF32(try bundle.tensor(named: "\(lp).conv.up_conv.weight"))
-            let convUpB   = loadBiasF32(bundle, "\(lp).conv.up_conv.bias", size: innerConvDim * 2)
+            let convUpW = loadF32(try bundle.tensor(named: "\(lp).conv.up_conv.weight"))
+            let convUpB = loadBiasF32(bundle, "\(lp).conv.up_conv.bias", size: innerConvDim * 2)
 
             // depthwise conv weight: [innerDim, 1, kernelSize] in PyTorch order
             // MLX has transposed it to [kernelSize, 1, innerDim] (Conv1d format).
             // We store as-loaded and handle the order in convForward.
             let convDepthW = loadF32(try bundle.tensor(named: "\(lp).conv.depth_conv.conv.weight"))
 
-            let convBnW    = loadF32(try bundle.tensor(named: "\(lp).conv.batch_norm.weight"))
-            let convBnB    = loadBiasF32(bundle, "\(lp).conv.batch_norm.bias", size: innerConvDim)
+            let convBnW = loadF32(try bundle.tensor(named: "\(lp).conv.batch_norm.weight"))
+            let convBnB = loadBiasF32(bundle, "\(lp).conv.batch_norm.bias", size: innerConvDim)
             let convBnMean = loadF32(try bundle.tensor(named: "\(lp).conv.batch_norm.running_mean"))
-            let convBnVar  = loadF32(try bundle.tensor(named: "\(lp).conv.batch_norm.running_var"))
-            let convDownW  = loadF32(try bundle.tensor(named: "\(lp).conv.down_conv.weight"))
-            let convDownB  = loadBiasF32(bundle, "\(lp).conv.down_conv.bias", size: cfg.hiddenDim)
+            let convBnVar = loadF32(try bundle.tensor(named: "\(lp).conv.batch_norm.running_var"))
+            let convDownW = loadF32(try bundle.tensor(named: "\(lp).conv.down_conv.weight"))
+            let convDownB = loadBiasF32(bundle, "\(lp).conv.down_conv.bias", size: cfg.hiddenDim)
 
             let ff2PreNormW = loadF32(try bundle.tensor(named: "\(lp).ff2.pre_norm.weight"))
             let ff2PreNormB = loadBiasF32(bundle, "\(lp).ff2.pre_norm.bias", size: cfg.hiddenDim)
-            let ff2UpW   = loadF32(try bundle.tensor(named: "\(lp).ff2.up_proj.weight"))
-            let ff2UpB   = loadBiasF32(bundle, "\(lp).ff2.up_proj.bias", size: cfg.hiddenDim * cfg.feedforwardMult)
+            let ff2UpW = loadF32(try bundle.tensor(named: "\(lp).ff2.up_proj.weight"))
+            let ff2UpB = loadBiasF32(
+                bundle, "\(lp).ff2.up_proj.bias", size: cfg.hiddenDim * cfg.feedforwardMult)
             let ff2DownW = loadF32(try bundle.tensor(named: "\(lp).ff2.down_proj.weight"))
             let ff2DownB = loadBiasF32(bundle, "\(lp).ff2.down_proj.bias", size: cfg.hiddenDim)
 
             let postNormW = loadF32(try bundle.tensor(named: "\(lp).post_norm.weight"))
             let postNormB = loadBiasF32(bundle, "\(lp).post_norm.bias", size: cfg.hiddenDim)
 
-            ls.append(LayerWeights(
-                ff1PreNormW: ff1PreNormW, ff1PreNormB: ff1PreNormB,
-                ff1UpW: ff1UpW, ff1UpB: ff1UpB,
-                ff1DownW: ff1DownW, ff1DownB: ff1DownB,
-                attnPreNormW: attnPreNormW, attnPreNormB: attnPreNormB,
-                attnRelPosW: attnRelPosW,
-                attnToQW: attnToQW, attnToKVW: attnToKVW,
-                attnToOutW: attnToOutW, attnToOutB: attnToOutB,
-                convNormW: convNormW, convNormB: convNormB,
-                convUpW: convUpW, convUpB: convUpB,
-                convDepthW: convDepthW,
-                convBnW: convBnW, convBnB: convBnB,
-                convBnMean: convBnMean, convBnVar: convBnVar,
-                convDownW: convDownW, convDownB: convDownB,
-                ff2PreNormW: ff2PreNormW, ff2PreNormB: ff2PreNormB,
-                ff2UpW: ff2UpW, ff2UpB: ff2UpB,
-                ff2DownW: ff2DownW, ff2DownB: ff2DownB,
-                postNormW: postNormW, postNormB: postNormB
-            ))
+            ls.append(
+                LayerWeights(
+                    ff1PreNormW: ff1PreNormW, ff1PreNormB: ff1PreNormB,
+                    ff1UpW: ff1UpW, ff1UpB: ff1UpB,
+                    ff1DownW: ff1DownW, ff1DownB: ff1DownB,
+                    attnPreNormW: attnPreNormW, attnPreNormB: attnPreNormB,
+                    attnRelPosW: attnRelPosW,
+                    attnToQW: attnToQW, attnToKVW: attnToKVW,
+                    attnToOutW: attnToOutW, attnToOutB: attnToOutB,
+                    convNormW: convNormW, convNormB: convNormB,
+                    convUpW: convUpW, convUpB: convUpB,
+                    convDepthW: convDepthW,
+                    convBnW: convBnW, convBnB: convBnB,
+                    convBnMean: convBnMean, convBnVar: convBnVar,
+                    convDownW: convDownW, convDownB: convDownB,
+                    ff2PreNormW: ff2PreNormW, ff2PreNormB: ff2PreNormB,
+                    ff2UpW: ff2UpW, ff2UpB: ff2UpB,
+                    ff2DownW: ff2DownW, ff2DownB: ff2DownB,
+                    postNormW: postNormW, postNormB: postNormB
+                ))
         }
         self.layers = ls
 
-        outW    = loadF32(try bundle.tensor(named: "\(p).out.weight"))
-        outB    = loadBiasF32(bundle, "\(p).out.bias", size: cfg.outputDim)
+        outW = loadF32(try bundle.tensor(named: "\(p).out.weight"))
+        outB = loadBiasF32(bundle, "\(p).out.bias", size: cfg.outputDim)
         outMidW = loadF32(try bundle.tensor(named: "\(p).out_mid.weight"))
         outMidB = loadBiasF32(bundle, "\(p).out_mid.bias", size: cfg.hiddenDim)
     }
@@ -456,31 +482,46 @@ final class GraniteSpeechEncoderWeights {
 final class GraniteSpeechProjectorWeights {
     let cfg: GraniteSpeechConfig
     // query: [1, numQueries, hiddenSize]
-    let query: [Float]      // shape: [numQueries * hiddenSize]
+    let query: [Float]  // shape: [numQueries * hiddenSize]
     // qformer.layernorm
-    let qfLnW: [Float]; let qfLnB: [Float]
+    let qfLnW: [Float]
+    let qfLnB: [Float]
     // per-layer
     struct QFLayerWeights {
         // self-attention
-        let saQW: [Float]; let saQB: [Float]
-        let saKW: [Float]; let saKB: [Float]
-        let saVW: [Float]; let saVB: [Float]
-        let saOutDenseW: [Float]; let saOutDenseB: [Float]
-        let saOutLnW: [Float];   let saOutLnB: [Float]
+        let saQW: [Float]
+        let saQB: [Float]
+        let saKW: [Float]
+        let saKB: [Float]
+        let saVW: [Float]
+        let saVB: [Float]
+        let saOutDenseW: [Float]
+        let saOutDenseB: [Float]
+        let saOutLnW: [Float]
+        let saOutLnB: [Float]
         // cross-attention
-        let caQW: [Float]; let caQB: [Float]
-        let caKW: [Float]; let caKB: [Float]
-        let caVW: [Float]; let caVB: [Float]
-        let caOutDenseW: [Float]; let caOutDenseB: [Float]
-        let caOutLnW: [Float];   let caOutLnB: [Float]
+        let caQW: [Float]
+        let caQB: [Float]
+        let caKW: [Float]
+        let caKB: [Float]
+        let caVW: [Float]
+        let caVB: [Float]
+        let caOutDenseW: [Float]
+        let caOutDenseB: [Float]
+        let caOutLnW: [Float]
+        let caOutLnB: [Float]
         // intermediate + output
-        let intDenseW: [Float]; let intDenseB: [Float]
-        let outDenseW: [Float]; let outDenseB: [Float]
-        let outLnW: [Float];   let outLnB: [Float]
+        let intDenseW: [Float]
+        let intDenseB: [Float]
+        let outDenseW: [Float]
+        let outDenseB: [Float]
+        let outLnW: [Float]
+        let outLnB: [Float]
     }
     let layers: [QFLayerWeights]
     // linear: projector.linear
-    let linearW: [Float]; let linearB: [Float]
+    let linearW: [Float]
+    let linearB: [Float]
 
     init(_ cfg: GraniteSpeechConfig, bundle: SafeTensorsBundle) throws {
         self.cfg = cfg
@@ -497,7 +538,7 @@ final class GraniteSpeechProjectorWeights {
         qfLnB = loadBiasF32(bundle, "\(p).qformer.layernorm.bias", size: hs)
 
         var ls: [QFLayerWeights] = []
-        for i in 0..<pcfg.numHiddenLayers {
+        for i in 0 ..< pcfg.numHiddenLayers {
             let lp = "\(p).qformer.encoder.layer.\(i)"
 
             // self-attention (projection: key/value against self → kvDim=hs)
@@ -507,42 +548,54 @@ final class GraniteSpeechProjectorWeights {
             let saKB = loadBiasF32(bundle, "\(lp).attention.attention.key.bias", size: hs)
             let saVW = loadF32(try bundle.tensor(named: "\(lp).attention.attention.value.weight"))
             let saVB = loadBiasF32(bundle, "\(lp).attention.attention.value.bias", size: hs)
-            let saOutDenseW = loadF32(try bundle.tensor(named: "\(lp).attention.output.dense.weight"))
+            let saOutDenseW = loadF32(
+                try bundle.tensor(named: "\(lp).attention.output.dense.weight"))
             let saOutDenseB = loadBiasF32(bundle, "\(lp).attention.output.dense.bias", size: hs)
-            let saOutLnW = loadF32(try bundle.tensor(named: "\(lp).attention.output.LayerNorm.weight"))
+            let saOutLnW = loadF32(
+                try bundle.tensor(named: "\(lp).attention.output.LayerNorm.weight"))
             let saOutLnB = loadBiasF32(bundle, "\(lp).attention.output.LayerNorm.bias", size: hs)
 
             // cross-attention (key/value against encoder hidden → kvDim=ehs)
-            let caQW = loadF32(try bundle.tensor(named: "\(lp).crossattention.attention.query.weight"))
+            let caQW = loadF32(
+                try bundle.tensor(named: "\(lp).crossattention.attention.query.weight"))
             let caQB = loadBiasF32(bundle, "\(lp).crossattention.attention.query.bias", size: hs)
-            let caKW = loadF32(try bundle.tensor(named: "\(lp).crossattention.attention.key.weight"))
+            let caKW = loadF32(
+                try bundle.tensor(named: "\(lp).crossattention.attention.key.weight"))
             let caKB = loadBiasF32(bundle, "\(lp).crossattention.attention.key.bias", size: hs)
-            let caVW = loadF32(try bundle.tensor(named: "\(lp).crossattention.attention.value.weight"))
+            let caVW = loadF32(
+                try bundle.tensor(named: "\(lp).crossattention.attention.value.weight"))
             let caVB = loadBiasF32(bundle, "\(lp).crossattention.attention.value.bias", size: hs)
-            let caOutDenseW = loadF32(try bundle.tensor(named: "\(lp).crossattention.output.dense.weight"))
-            let caOutDenseB = loadBiasF32(bundle, "\(lp).crossattention.output.dense.bias", size: hs)
-            let caOutLnW = loadF32(try bundle.tensor(named: "\(lp).crossattention.output.LayerNorm.weight"))
-            let caOutLnB = loadBiasF32(bundle, "\(lp).crossattention.output.LayerNorm.bias", size: hs)
+            let caOutDenseW = loadF32(
+                try bundle.tensor(named: "\(lp).crossattention.output.dense.weight"))
+            let caOutDenseB = loadBiasF32(
+                bundle, "\(lp).crossattention.output.dense.bias", size: hs)
+            let caOutLnW = loadF32(
+                try bundle.tensor(named: "\(lp).crossattention.output.LayerNorm.weight"))
+            let caOutLnB = loadBiasF32(
+                bundle, "\(lp).crossattention.output.LayerNorm.bias", size: hs)
 
-            let intDenseW = loadF32(try bundle.tensor(named: "\(lp).intermediate_query.dense.weight"))
-            let intDenseB = loadBiasF32(bundle, "\(lp).intermediate_query.dense.bias", size: pcfg.intermediateSize)
+            let intDenseW = loadF32(
+                try bundle.tensor(named: "\(lp).intermediate_query.dense.weight"))
+            let intDenseB = loadBiasF32(
+                bundle, "\(lp).intermediate_query.dense.bias", size: pcfg.intermediateSize)
             let outDenseW = loadF32(try bundle.tensor(named: "\(lp).output_query.dense.weight"))
             let outDenseB = loadBiasF32(bundle, "\(lp).output_query.dense.bias", size: hs)
             let outLnW = loadF32(try bundle.tensor(named: "\(lp).output_query.LayerNorm.weight"))
             let outLnB = loadBiasF32(bundle, "\(lp).output_query.LayerNorm.bias", size: hs)
 
             _ = numQ  // suppress "unused" warning — used as numQ queries per window at runtime
-            ls.append(QFLayerWeights(
-                saQW: saQW, saQB: saQB, saKW: saKW, saKB: saKB, saVW: saVW, saVB: saVB,
-                saOutDenseW: saOutDenseW, saOutDenseB: saOutDenseB,
-                saOutLnW: saOutLnW, saOutLnB: saOutLnB,
-                caQW: caQW, caQB: caQB, caKW: caKW, caKB: caKB, caVW: caVW, caVB: caVB,
-                caOutDenseW: caOutDenseW, caOutDenseB: caOutDenseB,
-                caOutLnW: caOutLnW, caOutLnB: caOutLnB,
-                intDenseW: intDenseW, intDenseB: intDenseB,
-                outDenseW: outDenseW, outDenseB: outDenseB,
-                outLnW: outLnW, outLnB: outLnB
-            ))
+            ls.append(
+                QFLayerWeights(
+                    saQW: saQW, saQB: saQB, saKW: saKW, saKB: saKB, saVW: saVW, saVB: saVB,
+                    saOutDenseW: saOutDenseW, saOutDenseB: saOutDenseB,
+                    saOutLnW: saOutLnW, saOutLnB: saOutLnB,
+                    caQW: caQW, caQB: caQB, caKW: caKW, caKB: caKB, caVW: caVW, caVB: caVB,
+                    caOutDenseW: caOutDenseW, caOutDenseB: caOutDenseB,
+                    caOutLnW: caOutLnW, caOutLnB: caOutLnB,
+                    intDenseW: intDenseW, intDenseB: intDenseB,
+                    outDenseW: outDenseW, outDenseB: outDenseB,
+                    outLnW: outLnW, outLnB: outLnB
+                ))
         }
         self.layers = ls
 
@@ -556,34 +609,34 @@ final class GraniteSpeechProjectorWeights {
 /// Compute mel spectrogram from a 16 kHz mono waveform.
 /// Returns a 2D array of shape [T, 160] (pairs of 80-dim mel frames).
 private func extractMelFeatures(_ waveform: [Float]) -> [[Float]] {
-    let nFft     = 512
-    let winLen   = 400
-    let hopLen   = 160
-    let nMels    = 80
+    let nFft = 512
+    let winLen = 400
+    let hopLen = 160
+    let nMels = 80
     let sampleRate = 16000
 
     // Hanning window (periodic, padded to nFft)
     var win = [Float](repeating: 0, count: winLen)
-    for n in 0..<winLen {
+    for n in 0 ..< winLen {
         win[n] = 0.5 * (1 - cos(2.0 * Float.pi * Float(n) / Float(winLen)))
     }
     // Pad: centre the winLen window in nFft
-    let padLeft  = (nFft - winLen) / 2
+    let padLeft = (nFft - winLen) / 2
     var winPadded = [Float](repeating: 0, count: nFft)
-    for i in 0..<winLen { winPadded[padLeft + i] = win[i] }
+    for i in 0 ..< winLen { winPadded[padLeft + i] = win[i] }
 
     // Reflect-pad audio so first and last windows are centred
     let halfWin = nFft / 2
     var audio = [Float](repeating: 0, count: waveform.count + 2 * halfWin)
-    for i in 0..<halfWin { audio[halfWin - 1 - i] = waveform[min(i, waveform.count - 1)] }
-    for i in 0..<waveform.count { audio[halfWin + i] = waveform[i] }
-    for i in 0..<halfWin {
+    for i in 0 ..< halfWin { audio[halfWin - 1 - i] = waveform[min(i, waveform.count - 1)] }
+    for i in 0 ..< waveform.count { audio[halfWin + i] = waveform[i] }
+    for i in 0 ..< halfWin {
         let src = waveform.count - 1 - i
         audio[halfWin + waveform.count + i] = waveform[max(0, src)]
     }
 
     let nFrames = (audio.count - nFft) / hopLen + 1
-    let nFreqs  = nFft / 2 + 1
+    let nFreqs = nFft / 2 + 1
 
     // STFT: magnitude squared spectrum [nFrames, nFreqs]
     var powerSpec = [[Float]](repeating: [Float](repeating: 0, count: nFreqs), count: nFrames)
@@ -592,12 +645,13 @@ private func extractMelFeatures(_ waveform: [Float]) -> [[Float]] {
         let offset = frame * hopLen
         // windowed frame (imaginary part unused — pure real input)
         var re = [Float](repeating: 0, count: nFft)
-        for k in 0..<nFft { re[k] = audio[offset + k] * winPadded[k] }
+        for k in 0 ..< nFft { re[k] = audio[offset + k] * winPadded[k] }
         // DFT of this frame (only positive frequencies)
-        for freq in 0..<nFreqs {
-            var rSum: Float = 0, iSum: Float = 0
+        for freq in 0 ..< nFreqs {
+            var rSum: Float = 0
+            var iSum: Float = 0
             let angle = -2.0 * Float.pi * Float(freq) / Float(nFft)
-            for t in 0..<nFft {
+            for t in 0 ..< nFft {
                 let theta = angle * Float(t)
                 rSum += re[t] * cos(theta)
                 iSum += re[t] * sin(theta)
@@ -615,21 +669,21 @@ private func extractMelFeatures(_ waveform: [Float]) -> [[Float]] {
     let melMax = hzToMel(fMax)
     // nMels+2 evenly spaced mel points
     var melPts = [Float](repeating: 0, count: nMels + 2)
-    for i in 0..<(nMels + 2) {
+    for i in 0 ..< (nMels + 2) {
         melPts[i] = melToHz(melMin + Float(i) * (melMax - melMin) / Float(nMels + 1))
     }
     // Convert to bin indices
     let binPts = melPts.map { Int(($0 / (Float(sampleRate) / Float(nFft))).rounded()) }
     // Build filter bank
     var melFB = [[Float]](repeating: [Float](repeating: 0, count: nMels), count: nFreqs)
-    for m in 0..<nMels {
-        let fLeft  = binPts[m]
+    for m in 0 ..< nMels {
+        let fLeft = binPts[m]
         let fCenter = binPts[m + 1]
         let fRight = binPts[m + 2]
-        for k in fLeft..<fCenter where fCenter > fLeft {
+        for k in fLeft ..< fCenter where fCenter > fLeft {
             melFB[k][m] = Float(k - fLeft) / Float(fCenter - fLeft)
         }
-        for k in fCenter..<fRight where fRight > fCenter {
+        for k in fCenter ..< fRight where fRight > fCenter {
             melFB[k][m] = Float(fRight - k) / Float(fRight - fCenter)
         }
     }
@@ -637,9 +691,9 @@ private func extractMelFeatures(_ waveform: [Float]) -> [[Float]] {
     // Mel spectrogram [nFrames, nMels]
     var melSpec = [[Float]](repeating: [Float](repeating: 0, count: nMels), count: nFrames)
     DispatchQueue.concurrentPerform(iterations: nFrames) { frame in
-        for m in 0..<nMels {
+        for m in 0 ..< nMels {
             var sum: Float = 0
-            for k in 0..<nFreqs { sum += powerSpec[frame][k] * melFB[k][m] }
+            for k in 0 ..< nFreqs { sum += powerSpec[frame][k] * melFB[k][m] }
             melSpec[frame][m] = sum
         }
     }
@@ -655,9 +709,12 @@ private func extractMelFeatures(_ waveform: [Float]) -> [[Float]] {
 
     // Drop trailing frame if total is odd, then pair adjacent frames: [T, 160]
     var nF = logMel.count
-    if nF % 2 == 1 { logMel.removeLast(); nF -= 1 }
+    if nF % 2 == 1 {
+        logMel.removeLast()
+        nF -= 1
+    }
     var paired = [[Float]](repeating: [Float](repeating: 0, count: 2 * nMels), count: nF / 2)
-    for i in 0..<(nF / 2) {
+    for i in 0 ..< (nF / 2) {
         paired[i] = logMel[2 * i] + logMel[2 * i + 1]
     }
     return paired
@@ -667,21 +724,24 @@ private func extractMelFeatures(_ waveform: [Float]) -> [[Float]] {
 /// Input: [T, chan], weight: [outChan, 1, kernelSize] (PyTorch layout after MLX transpose).
 /// The MLX port transposes the weight to [kernelSize, 1, chan] (Conv1d layout).
 /// We handle both layouts — detect by comparing weight count vs shapes.
-private func depthwiseConv1d(input: [[Float]], weight: [Float],
-                              kernelSize: Int, chan: Int,
-                              paddingLeft: Int, paddingRight: Int) -> [[Float]] {
-    let padded = (0..<paddingLeft).map { _ in [Float](repeating: 0, count: chan) }
+private func depthwiseConv1d(
+    input: [[Float]], weight: [Float],
+    kernelSize: Int, chan: Int,
+    paddingLeft: Int, paddingRight: Int
+) -> [[Float]] {
+    let padded =
+        (0 ..< paddingLeft).map { _ in [Float](repeating: 0, count: chan) }
         + input
-        + (0..<paddingRight).map { _ in [Float](repeating: 0, count: chan) }
+        + (0 ..< paddingRight).map { _ in [Float](repeating: 0, count: chan) }
     let outT = padded.count - kernelSize + 1
 
     // Weight layout from MLX (after sanitise transposition):
     // [kernelSize, 1, chan] — i.e., weight[k * chan + c] = filter coeff for channel c, offset k
     var out = [[Float]](repeating: [Float](repeating: 0, count: chan), count: outT)
     DispatchQueue.concurrentPerform(iterations: outT) { t in
-        for c in 0..<chan {
+        for c in 0 ..< chan {
             var acc: Float = 0
-            for k in 0..<kernelSize {
+            for k in 0 ..< kernelSize {
                 acc += padded[t + k][c] * weight[k * chan + c]
             }
             out[t][c] = acc
@@ -691,18 +751,22 @@ private func depthwiseConv1d(input: [[Float]], weight: [Float],
 }
 
 /// Apply 1×1 convolution: [T, inChan] → [T, outChan] (equivalent to row-wise linear).
-private func conv1x1(input: [[Float]], weight: [Float], bias: [Float],
-                     outChan: Int, inChan: Int) -> [[Float]] {
+private func conv1x1(
+    input: [[Float]], weight: [Float], bias: [Float],
+    outChan: Int, inChan: Int
+) -> [[Float]] {
     return batchMatVec(weight, input, bias, outDim: outChan, inDim: inChan)
 }
 
 /// Batch norm (inference-only): (x - mean) / sqrt(var + eps) * weight + bias.
-private func batchNorm1d(_ x: [[Float]], weight: [Float], bias: [Float],
-                          mean: [Float], variance: [Float], eps: Float = 1e-5) -> [[Float]] {
+private func batchNorm1d(
+    _ x: [[Float]], weight: [Float], bias: [Float],
+    mean: [Float], variance: [Float], eps: Float = 1e-5
+) -> [[Float]] {
     let chan = weight.count
     return x.map { frame in
         var y = frame
-        for c in 0..<chan {
+        for c in 0 ..< chan {
             y[c] = (y[c] - mean[c]) / sqrtf(variance[c] + eps) * weight[c] + bias[c]
         }
         return y
@@ -715,7 +779,7 @@ private func conformerFF(
     isFF1: Bool, cfg: GraniteSpeechConfig.EncoderConfig
 ) -> [[Float]] {
     let ffDim = cfg.hiddenDim * cfg.feedforwardMult
-    let (preNormW, preNormB, upW, upB, downW, downB): ([Float],[Float],[Float],[Float],[Float],[Float])
+    let (preNormW, preNormB, upW, upB, downW, downB): ([Float], [Float], [Float], [Float], [Float], [Float])
     if isFF1 {
         (preNormW, preNormB) = (w.ff1PreNormW, w.ff1PreNormB)
         (upW, upB) = (w.ff1UpW, w.ff1UpB)
@@ -727,12 +791,12 @@ private func conformerFF(
     }
     let T = x.count
     var normed = x
-    for t in 0..<T { layerNorm(&normed[t], weight: preNormW, bias: preNormB, eps: 1e-5) }
+    for t in 0 ..< T { layerNorm(&normed[t], weight: preNormW, bias: preNormB, eps: 1e-5) }
     var up = batchMatVec(upW, normed, upB, outDim: ffDim, inDim: cfg.hiddenDim)
-    for t in 0..<T { silu(&up[t]) }
+    for t in 0 ..< T { silu(&up[t]) }
     var down = batchMatVec(downW, up, downB, outDim: cfg.hiddenDim, inDim: ffDim)
     // Residual: 0.5 * ff(x) + x
-    for t in 0..<T { for d in 0..<cfg.hiddenDim { down[t][d] = 0.5 * down[t][d] + x[t][d] } }
+    for t in 0 ..< T { for d in 0 ..< cfg.hiddenDim { down[t][d] = 0.5 * down[t][d] + x[t][d] } }
     return down
 }
 
@@ -750,7 +814,9 @@ private func conformerAttn(
     let scale = pow(Float(Dh), -0.5)
 
     var normed = x
-    for t in 0..<T { layerNorm(&normed[t], weight: w.attnPreNormW, bias: w.attnPreNormB, eps: 1e-5) }
+    for t in 0 ..< T {
+        layerNorm(&normed[t], weight: w.attnPreNormW, bias: w.attnPreNormB, eps: 1e-5)
+    }
 
     // Pad to multiple of contextSize
     let numBlocks = (T + C - 1) / C
@@ -769,21 +835,24 @@ private func conformerAttn(
     var outRows = [[Float]](repeating: [Float](repeating: 0, count: innerDim), count: T)
 
     // Process each block independently
-    for b in 0..<numBlocks {
+    for b in 0 ..< numBlocks {
         let start = b * C
         let isLast = b == numBlocks - 1
         let validLen = isLast && remainder > 0 ? remainder : C
 
         // Extract Q,K,V for this block: [C, H, Dh]
         // Reshape: q[t][h*Dh + d] → q[h][t][d]
-        var qBlock = [[[Float]]](repeating: [[Float]](repeating: [Float](repeating: 0, count: Dh), count: C), count: H)
-        var kBlock = [[[Float]]](repeating: [[Float]](repeating: [Float](repeating: 0, count: Dh), count: C), count: H)
-        var vBlock = [[[Float]]](repeating: [[Float]](repeating: [Float](repeating: 0, count: Dh), count: C), count: H)
+        var qBlock = [[[Float]]](
+            repeating: [[Float]](repeating: [Float](repeating: 0, count: Dh), count: C), count: H)
+        var kBlock = [[[Float]]](
+            repeating: [[Float]](repeating: [Float](repeating: 0, count: Dh), count: C), count: H)
+        var vBlock = [[[Float]]](
+            repeating: [[Float]](repeating: [Float](repeating: 0, count: Dh), count: C), count: H)
 
-        for t in 0..<C {
+        for t in 0 ..< C {
             let row = start + t
-            for h in 0..<H {
-                for d in 0..<Dh {
+            for h in 0 ..< H {
+                for d in 0 ..< Dh {
                     qBlock[h][t][d] = qFlat[row][h * Dh + d]
                     kBlock[h][t][d] = kvFlat[row][h * Dh + d]
                     vBlock[h][t][d] = kvFlat[row][innerDim + h * Dh + d]
@@ -800,32 +869,33 @@ private func conformerAttn(
         // bidirectional SDPA contract. Until a `sdpaBidirectionalRelPos`
         // / d128 kernel lands, this stays on the CPU concurrent loop. The
         // QFormer MHA below (16 × 64) already runs on GPU.
-        var headOuts = [[[Float]]](repeating: [[Float]](repeating: [Float](repeating: 0, count: Dh), count: C), count: H)
+        var headOuts = [[[Float]]](
+            repeating: [[Float]](repeating: [Float](repeating: 0, count: Dh), count: C), count: H)
         DispatchQueue.concurrentPerform(iterations: H) { h in
             // Dot-product scores [C, C]: q[h][i] · k[h][j] * scale
             var scores = [[Float]](repeating: [Float](repeating: 0, count: C), count: C)
-            for i in 0..<C {
-                for j in 0..<C {
+            for i in 0 ..< C {
+                for j in 0 ..< C {
                     var dot: Float = 0
-                    for d in 0..<Dh { dot += qBlock[h][i][d] * kBlock[h][j][d] }
+                    for d in 0 ..< Dh { dot += qBlock[h][i][d] * kBlock[h][j][d] }
                     scores[i][j] = dot * scale
                 }
             }
             // Add relative position bias: posAttn[i][j] = q[i] · relEmb[dist(i,j)] * scale
-            for i in 0..<C {
-                for j in 0..<C {
+            for i in 0 ..< C {
+                for j in 0 ..< C {
                     let distIdx = Int(attnDists[i][j])  // already clamped+shifted
                     var posDot: Float = 0
                     // relPosEmb: [2*maxPosEmb+1, dimHead] — look up row distIdx
                     let relBase = distIdx * Dh
-                    for d in 0..<Dh { posDot += qBlock[h][i][d] * w.attnRelPosW[relBase + d] }
+                    for d in 0 ..< Dh { posDot += qBlock[h][i][d] * w.attnRelPosW[relBase + d] }
                     scores[i][j] += posDot * scale
                 }
             }
             // Mask padding tokens in the last block
             if isLast && remainder > 0 {
-                for i in 0..<C {
-                    for j in 0..<C {
+                for i in 0 ..< C {
+                    for j in 0 ..< C {
                         let rowValid = i < validLen
                         let colValid = j < validLen
                         if !rowValid || !colValid { scores[i][j] = -1e9 }
@@ -833,31 +903,32 @@ private func conformerAttn(
                 }
             }
             // Softmax per row then attend
-            for i in 0..<C {
+            for i in 0 ..< C {
                 let w_i = softmax(scores[i])
-                for d in 0..<Dh {
+                for d in 0 ..< Dh {
                     var acc: Float = 0
-                    for j in 0..<C { acc += w_i[j] * vBlock[h][j][d] }
+                    for j in 0 ..< C { acc += w_i[j] * vBlock[h][j][d] }
                     headOuts[h][i][d] = acc
                 }
             }
         }
 
         // Concatenate heads → [validLen, innerDim], apply to_out
-        for t in 0..<validLen {
+        for t in 0 ..< validLen {
             let globalT = start + t
             guard globalT < T else { break }
             var concat = [Float](repeating: 0, count: innerDim)
-            for h in 0..<H {
-                for d in 0..<Dh { concat[h * Dh + d] = headOuts[h][t][d] }
+            for h in 0 ..< H {
+                for d in 0 ..< Dh { concat[h * Dh + d] = headOuts[h][t][d] }
             }
-            let out = matVec(w.attnToOutW, concat, w.attnToOutB, outDim: cfg.hiddenDim, inDim: innerDim)
-            for d in 0..<cfg.hiddenDim { outRows[globalT][d] += out[d] }
+            let out = matVec(
+                w.attnToOutW, concat, w.attnToOutB, outDim: cfg.hiddenDim, inDim: innerDim)
+            for d in 0 ..< cfg.hiddenDim { outRows[globalT][d] += out[d] }
         }
     }
 
     // Residual (output of attn + original x)
-    for t in 0..<T { for d in 0..<cfg.hiddenDim { outRows[t][d] += x[t][d] } }
+    for t in 0 ..< T { for d in 0 ..< cfg.hiddenDim { outRows[t][d] += x[t][d] } }
     return outRows
 }
 
@@ -871,19 +942,20 @@ private func conformerConv(
 
     // Layer norm
     var normed = x
-    for t in 0..<T { layerNorm(&normed[t], weight: w.convNormW, bias: w.convNormB, eps: 1e-5) }
+    for t in 0 ..< T { layerNorm(&normed[t], weight: w.convNormW, bias: w.convNormB, eps: 1e-5) }
 
     // up_conv: [T, hiddenDim] → [T, innerDim*2]  (1×1 conv = linear per frame)
-    let up = conv1x1(input: normed, weight: w.convUpW, bias: w.convUpB,
-                     outChan: innerDim * 2, inChan: cfg.hiddenDim)
+    let up = conv1x1(
+        input: normed, weight: w.convUpW, bias: w.convUpB,
+        outChan: innerDim * 2, inChan: cfg.hiddenDim)
 
     // GLU: split [innerDim*2] → gate + signal, gate through sigmoid
     var gated = [[Float]](repeating: [Float](repeating: 0, count: innerDim), count: T)
-    for t in 0..<T {
-        let sig = Array(up[t][0..<innerDim])
-        let gate = Array(up[t][innerDim..<2 * innerDim])
+    for t in 0 ..< T {
+        let sig = Array(up[t][0 ..< innerDim])
+        let gate = Array(up[t][innerDim ..< 2 * innerDim])
         let gateAct = sigmoid(gate)
-        for d in 0..<innerDim { gated[t][d] = sig[d] * gateAct[d] }
+        for d in 0 ..< innerDim { gated[t][d] = sig[d] * gateAct[d] }
     }
 
     // Depthwise conv1d
@@ -900,25 +972,27 @@ private func conformerConv(
     )
 
     // BatchNorm + SiLU
-    depthOut = batchNorm1d(depthOut, weight: w.convBnW, bias: w.convBnB,
-                            mean: w.convBnMean, variance: w.convBnVar)
-    for t in 0..<T { silu(&depthOut[t]) }
+    depthOut = batchNorm1d(
+        depthOut, weight: w.convBnW, bias: w.convBnB,
+        mean: w.convBnMean, variance: w.convBnVar)
+    for t in 0 ..< T { silu(&depthOut[t]) }
 
     // down_conv: [T, innerDim] → [T, hiddenDim]
-    let out = conv1x1(input: depthOut, weight: w.convDownW, bias: w.convDownB,
-                      outChan: cfg.hiddenDim, inChan: innerDim)
+    let out = conv1x1(
+        input: depthOut, weight: w.convDownW, bias: w.convDownB,
+        outChan: cfg.hiddenDim, inChan: innerDim)
 
     // Residual
     var res = out
-    for t in 0..<T { for d in 0..<cfg.hiddenDim { res[t][d] += x[t][d] } }
+    for t in 0 ..< T { for d in 0 ..< cfg.hiddenDim { res[t][d] += x[t][d] } }
     return res
 }
 
 /// Build the relative-position distance table once.
 private func buildAttnDists(contextSize: Int, maxPosEmb: Int) -> [[Int32]] {
     var dists = [[Int32]](repeating: [Int32](repeating: 0, count: contextSize), count: contextSize)
-    for i in 0..<contextSize {
-        for j in 0..<contextSize {
+    for i in 0 ..< contextSize {
+        for j in 0 ..< contextSize {
             let raw = i - j
             let clamped = max(-contextSize, min(contextSize, raw))
             dists[i][j] = Int32(clamped + maxPosEmb)
@@ -935,8 +1009,9 @@ func runEncoder(_ input: [[Float]], weights: GraniteSpeechEncoderWeights) -> [[F
     let T = input.count
 
     // input_linear
-    var h = batchMatVec(weights.inputW, input, weights.inputB,
-                        outDim: cfg.hiddenDim, inDim: cfg.inputDim)
+    var h = batchMatVec(
+        weights.inputW, input, weights.inputB,
+        outDim: cfg.hiddenDim, inDim: cfg.inputDim)
 
     let attnDists = buildAttnDists(contextSize: cfg.contextSize, maxPosEmb: cfg.maxPosEmb)
     let halfLayers = cfg.numLayers / 2
@@ -947,19 +1022,23 @@ func runEncoder(_ input: [[Float]], weights: GraniteSpeechEncoderWeights) -> [[F
         h = conformerAttn(h, w: layer, attnDists: attnDists, cfg: cfg)
         h = conformerConv(h, w: layer, cfg: cfg)
         h = conformerFF(h, w: layer, isFF1: false, cfg: cfg)
-        for t in 0..<T { layerNorm(&h[t], weight: layer.postNormW, bias: layer.postNormB, eps: 1e-5) }
+        for t in 0 ..< T {
+            layerNorm(&h[t], weight: layer.postNormW, bias: layer.postNormB, eps: 1e-5)
+        }
 
         // Mid-point softmax residual connection (after layer numLayers/2)
         if idx + 1 == halfLayers {
             // xMid = out(h): [T, outputDim]
-            let xMid = batchMatVec(weights.outW, h, weights.outB,
-                                   outDim: cfg.outputDim, inDim: cfg.hiddenDim)
+            let xMid = batchMatVec(
+                weights.outW, h, weights.outB,
+                outDim: cfg.outputDim, inDim: cfg.hiddenDim)
             var softMid = xMid
-            for t in 0..<T { softMid[t] = softmax(xMid[t]) }
+            for t in 0 ..< T { softMid[t] = softmax(xMid[t]) }
             // outMid(softmax(xMid)): [T, hiddenDim]
-            let midProj = batchMatVec(weights.outMidW, softMid, weights.outMidB,
-                                      outDim: cfg.hiddenDim, inDim: cfg.outputDim)
-            for t in 0..<T { for d in 0..<cfg.hiddenDim { h[t][d] += midProj[t][d] } }
+            let midProj = batchMatVec(
+                weights.outMidW, softMid, weights.outMidB,
+                outDim: cfg.hiddenDim, inDim: cfg.outputDim)
+            for t in 0 ..< T { for d in 0 ..< cfg.hiddenDim { h[t][d] += midProj[t][d] } }
         }
     }
     return h
@@ -988,8 +1067,9 @@ private func qformerMHA(
     let L = queries.count
     let M = kvInput.count
     let headDim = hs / numHeads
-    precondition(hs == numHeads * headDim,
-                 "qformerMHA: hs (\(hs)) must equal numHeads*headDim")
+    precondition(
+        hs == numHeads * headDim,
+        "qformerMHA: hs (\(hs)) must equal numHeads*headDim")
     let scale = pow(Float(headDim), -0.5)
 
     let q = batchMatVec(qW, queries, qB, outDim: hs, inDim: hs)
@@ -1006,30 +1086,33 @@ private func qformerMHA(
         // [numHeads, M, headDim] for the kernel's
         // `[nKVHeads, kvStride, headDim]` contract.
         var qFlat = [Float](repeating: 0, count: L * hs)
-        for i in 0..<L {
+        for i in 0 ..< L {
             let base = i * hs
-            for d in 0..<hs { qFlat[base + d] = q[i][d] }
+            for d in 0 ..< hs { qFlat[base + d] = q[i][d] }
         }
         var kFlat = [Float](repeating: 0, count: M * hs)
         var vFlat = [Float](repeating: 0, count: M * hs)
-        for j in 0..<M {
-            for h in 0..<numHeads {
+        for j in 0 ..< M {
+            for h in 0 ..< numHeads {
                 let srcOff = h * headDim
                 let dst = (h * M + j) * headDim
-                for d in 0..<headDim {
+                for d in 0 ..< headDim {
                     kFlat[dst + d] = k[j][srcOff + d]
                     vFlat[dst + d] = v[j][srcOff + d]
                 }
             }
         }
-        let qT = Tensor.empty(shape: [L, numHeads, headDim],
-                              dtype: .f32, device: device)
+        let qT = Tensor.empty(
+            shape: [L, numHeads, headDim],
+            dtype: .f32, device: device)
         qT.copyIn(from: qFlat)
-        let kT = Tensor.empty(shape: [numHeads, M, headDim],
-                              dtype: .f32, device: device)
+        let kT = Tensor.empty(
+            shape: [numHeads, M, headDim],
+            dtype: .f32, device: device)
         kT.copyIn(from: kFlat)
-        let vT = Tensor.empty(shape: [numHeads, M, headDim],
-                              dtype: .f32, device: device)
+        let vT = Tensor.empty(
+            shape: [numHeads, M, headDim],
+            dtype: .f32, device: device)
         vT.copyIn(from: vFlat)
         let cmd = device.makeCommandBuffer()
         let outT = Ops.sdpaBidirectional(
@@ -1041,9 +1124,9 @@ private func qformerMHA(
         cmd.waitUntilCompleted()
         let outFlat = outT.toFloatArray()  // [L, numHeads, headDim]
         // Reassemble back into [L, hs] — the row-major layout matches.
-        return (0..<L).map { i in
+        return (0 ..< L).map { i in
             let src = i * hs
-            return Array(outFlat[src..<src + hs])
+            return Array(outFlat[src ..< src + hs])
         }
     }
 
@@ -1052,18 +1135,18 @@ private func qformerMHA(
     DispatchQueue.concurrentPerform(iterations: numHeads) { h in
         let base = h * headDim
         var scores = [[Float]](repeating: [Float](repeating: 0, count: M), count: L)
-        for i in 0..<L {
-            for j in 0..<M {
+        for i in 0 ..< L {
+            for j in 0 ..< M {
                 var dot: Float = 0
-                for d in 0..<headDim { dot += q[i][base + d] * k[j][base + d] }
+                for d in 0 ..< headDim { dot += q[i][base + d] * k[j][base + d] }
                 scores[i][j] = dot * scale
             }
         }
-        for i in 0..<L {
+        for i in 0 ..< L {
             let attnW = softmax(scores[i])
-            for d in 0..<headDim {
+            for d in 0 ..< headDim {
                 var acc: Float = 0
-                for j in 0..<M { acc += attnW[j] * v[j][base + d] }
+                for j in 0 ..< M { acc += attnW[j] * v[j][base + d] }
                 out[i][base + d] = acc
             }
         }
@@ -1077,11 +1160,11 @@ private func qformerLayer(
     lw: GraniteSpeechProjectorWeights.QFLayerWeights,
     cfg: GraniteSpeechConfig.ProjectorConfig
 ) -> [[Float]] {
-    let hs  = cfg.hiddenSize
+    let hs = cfg.hiddenSize
     let ehs = cfg.encoderHiddenSize
-    let H   = cfg.numAttentionHeads
+    let H = cfg.numAttentionHeads
     let eps = cfg.layerNormEps
-    let L   = hidden.count
+    let L = hidden.count
 
     // Self-attention
     var saOut = qformerMHA(
@@ -1092,9 +1175,9 @@ private func qformerLayer(
     saOut = batchMatVec(lw.saOutDenseW, saOut, lw.saOutDenseB, outDim: hs, inDim: hs)
     // residual + LayerNorm
     var afterSA = [[Float]](repeating: [Float](repeating: 0, count: hs), count: L)
-    for i in 0..<L {
+    for i in 0 ..< L {
         var v = saOut[i]
-        for d in 0..<hs { v[d] += hidden[i][d] }
+        for d in 0 ..< hs { v[d] += hidden[i][d] }
         layerNorm(&v, weight: lw.saOutLnW, bias: lw.saOutLnB, eps: eps)
         afterSA[i] = v
     }
@@ -1107,22 +1190,24 @@ private func qformerLayer(
     )
     caOut = batchMatVec(lw.caOutDenseW, caOut, lw.caOutDenseB, outDim: hs, inDim: hs)
     var afterCA = [[Float]](repeating: [Float](repeating: 0, count: hs), count: L)
-    for i in 0..<L {
+    for i in 0 ..< L {
         var v = caOut[i]
-        for d in 0..<hs { v[d] += afterSA[i][d] }
+        for d in 0 ..< hs { v[d] += afterSA[i][d] }
         layerNorm(&v, weight: lw.caOutLnW, bias: lw.caOutLnB, eps: eps)
         afterCA[i] = v
     }
 
     // Intermediate + output FFN
-    var ffn = batchMatVec(lw.intDenseW, afterCA, lw.intDenseB,
-                          outDim: cfg.intermediateSize, inDim: hs)
+    var ffn = batchMatVec(
+        lw.intDenseW, afterCA, lw.intDenseB,
+        outDim: cfg.intermediateSize, inDim: hs)
     for i in ffn.indices { gelu(&ffn[i]) }
-    let ffnOut = batchMatVec(lw.outDenseW, ffn, lw.outDenseB, outDim: hs, inDim: cfg.intermediateSize)
+    let ffnOut = batchMatVec(
+        lw.outDenseW, ffn, lw.outDenseB, outDim: hs, inDim: cfg.intermediateSize)
     var result = [[Float]](repeating: [Float](repeating: 0, count: hs), count: L)
-    for i in 0..<L {
+    for i in 0 ..< L {
         var v = ffnOut[i]
-        for d in 0..<hs { v[d] += afterCA[i][d] }
+        for d in 0 ..< hs { v[d] += afterCA[i][d] }
         layerNorm(&v, weight: lw.outLnW, bias: lw.outLnB, eps: eps)
         result[i] = v
     }
@@ -1135,33 +1220,37 @@ private func qformerLayer(
 /// Returns [[Float]] shape [numAudioTokens, lmHiddenSize]
 func runProjector(_ encoderOut: [[Float]], weights: GraniteSpeechProjectorWeights) -> [[Float]] {
     let cfg = weights.cfg
-    let T   = encoderOut.count
-    let ws  = cfg.windowSize
-    let nQ  = cfg.numQueriesPerWindow
-    let hs  = cfg.projectorConfig.hiddenSize
+    let T = encoderOut.count
+    let ws = cfg.windowSize
+    let nQ = cfg.numQueriesPerWindow
+    let hs = cfg.projectorConfig.hiddenSize
     let eps = cfg.projectorConfig.layerNormEps
 
     // Number of blocks (pad encoder output to multiple of windowSize)
     let nBlocks = (T + ws - 1) / ws
-    let padded   = encoderOut + [[Float]](
-        repeating: [Float](repeating: 0, count: cfg.projectorConfig.encoderHiddenSize),
-        count: nBlocks * ws - T
-    )
+    let padded =
+        encoderOut
+        + [[Float]](
+            repeating: [Float](repeating: 0, count: cfg.projectorConfig.encoderHiddenSize),
+            count: nBlocks * ws - T
+        )
 
     // query: [nQ * hs] — expand to [nQ, hs] per block
-    let baseQuery: [[Float]] = (0..<nQ).map { qi in
-        Array(weights.query[(qi * hs)..<((qi + 1) * hs)])
+    let baseQuery: [[Float]] = (0 ..< nQ).map { qi in
+        Array(weights.query[(qi * hs) ..< ((qi + 1) * hs)])
     }
 
     var allQueryOutputs = [[Float]]()
     allQueryOutputs.reserveCapacity(nBlocks * nQ)
 
-    for b in 0..<nBlocks {
-        let window = Array(padded[(b * ws)..<((b + 1) * ws)])
+    for b in 0 ..< nBlocks {
+        let window = Array(padded[(b * ws) ..< ((b + 1) * ws)])
 
         // Layer norm on initial query
         var qNormed = baseQuery
-        for i in qNormed.indices { layerNorm(&qNormed[i], weight: weights.qfLnW, bias: weights.qfLnB, eps: eps) }
+        for i in qNormed.indices {
+            layerNorm(&qNormed[i], weight: weights.qfLnW, bias: weights.qfLnB, eps: eps)
+        }
 
         // QFormer layers
         var h = qNormed
@@ -1173,8 +1262,9 @@ func runProjector(_ encoderOut: [[Float]], weights: GraniteSpeechProjectorWeight
 
     // Project to LM hidden size
     let lmHidden = cfg.textConfig.hiddenSize
-    return batchMatVec(weights.linearW, allQueryOutputs, weights.linearB,
-                       outDim: lmHidden, inDim: hs)
+    return batchMatVec(
+        weights.linearW, allQueryOutputs, weights.linearB,
+        outDim: lmHidden, inDim: hs)
 }
 
 // MARK: - Granite LM backbone (GPU decode)
@@ -1200,11 +1290,21 @@ public final class GraniteSpeechLMLayer: Module {
         ropeTheta: Float, ropeScaling: Ops.RoPEScaling,
         attentionMultiplier: Float, residualMultiplier: Float
     ) {
-        self.qProj = qProj; self.kProj = kProj; self.vProj = vProj; self.oProj = oProj
-        self.gateProj = gateProj; self.upProj = upProj; self.downProj = downProj
-        self.inputNorm = inputNorm; self.postAttnNorm = postAttnNorm
-        self.hidden = hidden; self.nHeads = nHeads; self.nKVHeads = nKVHeads; self.headDim = headDim
-        self.ropeTheta = ropeTheta; self.ropeScaling = ropeScaling
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
+        self.gateProj = gateProj
+        self.upProj = upProj
+        self.downProj = downProj
+        self.inputNorm = inputNorm
+        self.postAttnNorm = postAttnNorm
+        self.hidden = hidden
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.ropeTheta = ropeTheta
+        self.ropeScaling = ropeScaling
         self.attentionMultiplier = attentionMultiplier
         self.residualMultiplier = residualMultiplier
     }
@@ -1224,17 +1324,21 @@ public final class GraniteSpeechLMLayer: Module {
     }
 
     /// Single-token decode step. Returns updated residual [hidden].
-    func forward(_ h: Tensor, position: Int, cache: any KVCacheProtocol,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forward(
+        _ h: Tensor, position: Int, cache: any KVCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let xNorm = inputNorm(h, on: cmd)
         let q = qProj(xNorm, on: cmd)
         let k = kProj(xNorm, on: cmd)
         let v = vProj(xNorm, on: cmd)
 
-        let qRotated = Ops.rope(q.reshaped(to: [nHeads, headDim]), position: position,
-                                headDim: headDim, thetaBase: ropeTheta, scaling: ropeScaling, on: cmd)
-        let kRotated = Ops.rope(k.reshaped(to: [nKVHeads, headDim]), position: position,
-                                headDim: headDim, thetaBase: ropeTheta, scaling: ropeScaling, on: cmd)
+        let qRotated = Ops.rope(
+            q.reshaped(to: [nHeads, headDim]), position: position,
+            headDim: headDim, thetaBase: ropeTheta, scaling: ropeScaling, on: cmd)
+        let kRotated = Ops.rope(
+            k.reshaped(to: [nKVHeads, headDim]), position: position,
+            headDim: headDim, thetaBase: ropeTheta, scaling: ropeScaling, on: cmd)
 
         cache.appendOnGPU(kFlat: kRotated, vFlat: v.reshaped(to: [nKVHeads, headDim]), on: cmd)
         let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
@@ -1253,7 +1357,7 @@ public final class GraniteSpeechLMLayer: Module {
         // MLP — SwiGLU
         let mlpNorm = postAttnNorm(postAttn, on: cmd)
         let gate = gateProj(mlpNorm, on: cmd)
-        let up   = upProj(mlpNorm, on: cmd)
+        let up = upProj(mlpNorm, on: cmd)
         let siluGate = Ops.silu(gate, on: cmd)
         let mlpInner = Ops.mul(siluGate, up, on: cmd)
         let mlpOut = downProj(mlpInner, on: cmd)
@@ -1264,7 +1368,9 @@ public final class GraniteSpeechLMLayer: Module {
 
 /// Scale a tensor by a scalar (element-wise multiply with a broadcast value).
 /// Used for Granite's residual and embedding multipliers.
-private func scalarMul(_ x: Tensor, scalar: Float, device: Device, on cmd: MTLCommandBuffer) -> Tensor {
+private func scalarMul(_ x: Tensor, scalar: Float, device: Device, on cmd: MTLCommandBuffer)
+    -> Tensor
+{
     // Create a scalar broadcast tensor filled with `scalar`, then use Ops.mul.
     // A clean route: fill a same-shaped tensor with the constant and multiply.
     let out = Tensor.empty(shape: x.shape, dtype: x.dtype)
@@ -1275,16 +1381,16 @@ private func scalarMul(_ x: Tensor, scalar: Float, device: Device, on cmd: MTLCo
     switch x.dtype {
     case .f32:
         let ptr = scalarBuf.contents().bindMemory(to: Float.self, capacity: n)
-        for i in 0..<n { ptr[i] = scalar }
+        for i in 0 ..< n { ptr[i] = scalar }
     case .f16:
         // Convert f32 scalar to f16
         let bits = float32ToFloat16(scalar)
         let ptr = scalarBuf.contents().bindMemory(to: UInt16.self, capacity: n)
-        for i in 0..<n { ptr[i] = bits }
+        for i in 0 ..< n { ptr[i] = bits }
     case .bf16:
         let bits = float32ToBFloat16(scalar)
         let ptr = scalarBuf.contents().bindMemory(to: UInt16.self, capacity: n)
-        for i in 0..<n { ptr[i] = bits }
+        for i in 0 ..< n { ptr[i] = bits }
     default:
         fatalError("scalarMul: unsupported dtype \(x.dtype)")
     }
@@ -1295,7 +1401,7 @@ private func float32ToFloat16(_ v: Float) -> UInt16 {
     // Simple f32 → f16 (may clamp, no denormal handling for constants)
     let bits = v.bitPattern
     let sign = UInt16((bits >> 31) & 1) << 15
-    let exp  = Int((bits >> 23) & 0xFF) - 127 + 15
+    let exp = Int((bits >> 23) & 0xFF) - 127 + 15
     let mant = bits & 0x7FFFFF
     if exp <= 0 { return sign }
     if exp >= 31 { return sign | 0x7C00 }
@@ -1353,15 +1459,17 @@ public final class GraniteSpeechModel: Module {
     private let eosTokenId: Int
     private let bosTokenId: Int
 
-    init(config: GraniteSpeechConfig,
-         encoderWeights: GraniteSpeechEncoderWeights,
-         projectorWeights: GraniteSpeechProjectorWeights,
-         embedTokens: AnyEmbedding,
-         lmLayers: [GraniteSpeechLMLayer],
-         finalNorm: RMSNorm,
-         lmHead: AnyLinear,
-         tokenizer: any Tokenizer,
-         device: Device) {
+    init(
+        config: GraniteSpeechConfig,
+        encoderWeights: GraniteSpeechEncoderWeights,
+        projectorWeights: GraniteSpeechProjectorWeights,
+        embedTokens: AnyEmbedding,
+        lmLayers: [GraniteSpeechLMLayer],
+        finalNorm: RMSNorm,
+        lmHead: AnyLinear,
+        tokenizer: any Tokenizer,
+        device: Device
+    ) {
         self.config = config
         self.encoderWeights = encoderWeights
         self.projectorWeights = projectorWeights
@@ -1430,7 +1538,8 @@ public final class GraniteSpeechModel: Module {
         let lmHidden = config.textConfig.hiddenSize
 
         // Assemble the full embedding sequence on CPU then copy to GPU
-        var allEmbeddings = [[Float]](repeating: [Float](repeating: 0, count: lmHidden), count: promptLen)
+        var allEmbeddings = [[Float]](
+            repeating: [Float](repeating: 0, count: lmHidden), count: promptLen)
         var audioIdx = 0
         for (pos, tokenId) in promptIds.enumerated() {
             if tokenId == audioTokenId, audioIdx < numAudioTokens {
@@ -1444,8 +1553,8 @@ public final class GraniteSpeechModel: Module {
         }
         // Apply embedding multiplier
         let em = embeddingMultiplier
-        for i in 0..<promptLen {
-            for d in 0..<lmHidden { allEmbeddings[i][d] *= em }
+        for i in 0 ..< promptLen {
+            for d in 0 ..< lmHidden { allEmbeddings[i][d] *= em }
         }
 
         // 5. Run prefill (process all prompt tokens sequentially, feeding embeddings)
@@ -1453,7 +1562,7 @@ public final class GraniteSpeechModel: Module {
         let caches = makeLMCaches()
         var lastLogits = Tensor.empty(shape: [config.textConfig.vocabSize], dtype: dtype)
 
-        for pos in 0..<promptLen {
+        for pos in 0 ..< promptLen {
             let embVec = allEmbeddings[pos]
             let embBuf = device.makeBuffer(length: lmHidden * dtype.byteSize)
             let embTensor = Tensor(buffer: embBuf, offset: 0, shape: [lmHidden], dtype: dtype)
@@ -1471,30 +1580,34 @@ public final class GraniteSpeechModel: Module {
             lastTok = Sampling.argmax(lastLogits)
         } else {
             var rng = SystemRandomNumberGenerator()
-            lastTok = Sampling.sample(lastLogits,
-                                      parameters: GenerationParameters(temperature: temperature),
-                                      rng: &rng)
+            lastTok = Sampling.sample(
+                lastLogits,
+                parameters: GenerationParameters(temperature: temperature),
+                rng: &rng)
         }
 
-        for _ in 0..<maxNewTokens {
+        for _ in 0 ..< maxNewTokens {
             if lastTok == eosTokenId { break }
             generatedTokens.append(lastTok)
 
-            let nextLogits = lmForwardToken(tokenId: lastTok, position: promptLen + generatedTokens.count - 1, caches: caches)
+            let nextLogits = lmForwardToken(
+                tokenId: lastTok, position: promptLen + generatedTokens.count - 1, caches: caches)
             if temperature == 0 {
                 lastTok = Sampling.argmax(nextLogits)
             } else {
                 var rng = SystemRandomNumberGenerator()
-                lastTok = Sampling.sample(nextLogits,
-                                          parameters: GenerationParameters(temperature: temperature),
-                                          rng: &rng)
+                lastTok = Sampling.sample(
+                    nextLogits,
+                    parameters: GenerationParameters(temperature: temperature),
+                    rng: &rng)
             }
         }
 
         let text = tokenizer.decode(tokens: generatedTokens)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let elapsed = Date().timeIntervalSince(start)
-        return TranscriptionResult(text: text, generatedTokens: generatedTokens.count, totalTimeS: elapsed)
+        return TranscriptionResult(
+            text: text, generatedTokens: generatedTokens.count, totalTimeS: elapsed)
     }
 
     // MARK: - Internal helpers
@@ -1507,7 +1620,8 @@ public final class GraniteSpeechModel: Module {
         memcpy(tidBuf.contents(), &tid, 4)
         let tidTensor = Tensor(buffer: tidBuf, offset: 0, shape: [1], dtype: .u32)
         let emb = embedTokens(tidTensor, on: cmd)
-        cmd.commit(); cmd.waitUntilCompleted()
+        cmd.commit()
+        cmd.waitUntilCompleted()
         return emb.toArray(as: Float.self)
     }
 
@@ -1529,26 +1643,32 @@ public final class GraniteSpeechModel: Module {
     }
 
     /// LM forward from a pre-computed embedding vector. Returns logits [vocab].
-    private func lmForwardEmbed(_ emb: Tensor, position: Int,
-                                 caches: [any LayerCacheProtocol]) -> Tensor {
+    private func lmForwardEmbed(
+        _ emb: Tensor, position: Int,
+        caches: [any LayerCacheProtocol]
+    ) -> Tensor {
         let cmd = device.makeCommandBuffer()
         var h = emb
         for (i, layer) in lmLayers.enumerated() {
-            h = layer.forward(h, position: position, cache: caches[i] as! any KVCacheProtocol,
-                              cmd: cmd, device: device)
+            h = layer.forward(
+                h, position: position, cache: caches[i] as! any KVCacheProtocol,
+                cmd: cmd, device: device)
         }
         let normed = finalNorm(h, on: cmd)
         var logits = lmHead(normed, on: cmd)
         // Divide by logits_scaling
         let invScale = 1.0 / logitsScaling
         logits = scalarMul(logits, scalar: invScale, device: device, on: cmd)
-        cmd.commit(); cmd.waitUntilCompleted()
+        cmd.commit()
+        cmd.waitUntilCompleted()
         return logits
     }
 
     /// LM forward for a single token id (embedding lookup + layers). Returns logits [vocab].
-    private func lmForwardToken(tokenId: Int, position: Int,
-                                 caches: [any LayerCacheProtocol]) -> Tensor {
+    private func lmForwardToken(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol]
+    ) -> Tensor {
         let cmd = device.makeCommandBuffer()
 
         // Embedding lookup
@@ -1562,13 +1682,15 @@ public final class GraniteSpeechModel: Module {
         h = scalarMul(h, scalar: embeddingMultiplier, device: device, on: cmd)
 
         for (i, layer) in lmLayers.enumerated() {
-            h = layer.forward(h, position: position, cache: caches[i] as! any KVCacheProtocol,
-                              cmd: cmd, device: device)
+            h = layer.forward(
+                h, position: position, cache: caches[i] as! any KVCacheProtocol,
+                cmd: cmd, device: device)
         }
         let normed = finalNorm(h, on: cmd)
         var logits = lmHead(normed, on: cmd)
         logits = scalarMul(logits, scalar: 1.0 / logitsScaling, device: device, on: cmd)
-        cmd.commit(); cmd.waitUntilCompleted()
+        cmd.commit()
+        cmd.waitUntilCompleted()
         return logits
     }
 
@@ -1578,9 +1700,10 @@ public final class GraniteSpeechModel: Module {
         let dtype = embedTokens.weight.dtype
         let nKVHeads = config.textConfig.numKeyValueHeads
         let headDim = config.textConfig.hiddenSize / config.textConfig.numAttentionHeads
-        return (0..<config.textConfig.numHiddenLayers).map { _ in
-            KVCache(nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
-                    dtype: dtype, device: device)
+        return (0 ..< config.textConfig.numHiddenLayers).map { _ in
+            KVCache(
+                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                dtype: dtype, device: device)
         }
     }
 }
@@ -1588,7 +1711,7 @@ public final class GraniteSpeechModel: Module {
 // MARK: - Family entry point
 
 public enum GraniteSpeech {
-    public static let modelTypes: Set<String>   = ["granite_speech"]
+    public static let modelTypes: Set<String> = ["granite_speech"]
     public static let architectures: Set<String> = ["GraniteSpeechForConditionalGeneration"]
 
     public static let defaultTranscriptionParameters = TranscriptionParameters(
@@ -1613,7 +1736,7 @@ public enum GraniteSpeech {
         let cfg = try GraniteSpeechConfig.load(from: rawConfig)
 
         let bundle = try SafeTensorsBundle(directory: directory, device: device)
-        let quant  = cfg.quantization
+        let quant = cfg.quantization
 
         // Load tokenizer
         let tokenizer = try await TokenizerLoader().load(from: directory)
@@ -1627,14 +1750,14 @@ public enum GraniteSpeech {
         // GPU LM backbone
         let textCfg = cfg.textConfig
         let nLayers = textCfg.numHiddenLayers
-        let hidden  = textCfg.hiddenSize
-        let nHeads  = textCfg.numAttentionHeads
-        let nKV     = textCfg.numKeyValueHeads
+        let hidden = textCfg.hiddenSize
+        let nHeads = textCfg.numAttentionHeads
+        let nKV = textCfg.numKeyValueHeads
         let headDim = hidden / nHeads
-        let theta   = textCfg.ropeTheta
-        let attMul  = textCfg.attentionMultiplier
-        let resMul  = textCfg.residualMultiplier
-        let prefix  = "language_model"
+        let theta = textCfg.ropeTheta
+        let attMul = textCfg.attentionMultiplier
+        let resMul = textCfg.residualMultiplier
+        let prefix = "language_model"
 
         let embedTokens = try loadEmbedding(
             base: "\(prefix).model.embed_tokens", in: bundle, hidden: hidden, quantization: quant
@@ -1642,31 +1765,39 @@ public enum GraniteSpeech {
 
         var lmLayers: [GraniteSpeechLMLayer] = []
         lmLayers.reserveCapacity(nLayers)
-        for i in 0..<nLayers {
+        for i in 0 ..< nLayers {
             let lp = "\(prefix).model.layers.\(i)"
-            let qProj = try loadLinear(base: "\(lp).self_attn.q_proj", in: bundle, quantization: quant)
-            let kProj = try loadLinear(base: "\(lp).self_attn.k_proj", in: bundle, quantization: quant)
-            let vProj = try loadLinear(base: "\(lp).self_attn.v_proj", in: bundle, quantization: quant)
-            let oProj = try loadLinear(base: "\(lp).self_attn.o_proj", in: bundle, quantization: quant)
-            let gProj = try loadLinear(base: "\(lp).mlp.gate_proj",    in: bundle, quantization: quant)
-            let uProj = try loadLinear(base: "\(lp).mlp.up_proj",      in: bundle, quantization: quant)
-            let dProj = try loadLinear(base: "\(lp).mlp.down_proj",    in: bundle, quantization: quant)
-            let inNorm   = RMSNorm(weight: try bundle.tensor(named: "\(lp).input_layernorm.weight"),
-                                   eps: textCfg.rmsNormEps)
-            let postNorm = RMSNorm(weight: try bundle.tensor(named: "\(lp).post_attention_layernorm.weight"),
-                                   eps: textCfg.rmsNormEps)
-            lmLayers.append(GraniteSpeechLMLayer(
-                qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
-                gateProj: gProj, upProj: uProj, downProj: dProj,
-                inputNorm: inNorm, postAttnNorm: postNorm,
-                hidden: hidden, nHeads: nHeads, nKVHeads: nKV, headDim: headDim,
-                ropeTheta: theta, ropeScaling: .none,
-                attentionMultiplier: attMul, residualMultiplier: resMul
-            ))
+            let qProj = try loadLinear(
+                base: "\(lp).self_attn.q_proj", in: bundle, quantization: quant)
+            let kProj = try loadLinear(
+                base: "\(lp).self_attn.k_proj", in: bundle, quantization: quant)
+            let vProj = try loadLinear(
+                base: "\(lp).self_attn.v_proj", in: bundle, quantization: quant)
+            let oProj = try loadLinear(
+                base: "\(lp).self_attn.o_proj", in: bundle, quantization: quant)
+            let gProj = try loadLinear(base: "\(lp).mlp.gate_proj", in: bundle, quantization: quant)
+            let uProj = try loadLinear(base: "\(lp).mlp.up_proj", in: bundle, quantization: quant)
+            let dProj = try loadLinear(base: "\(lp).mlp.down_proj", in: bundle, quantization: quant)
+            let inNorm = RMSNorm(
+                weight: try bundle.tensor(named: "\(lp).input_layernorm.weight"),
+                eps: textCfg.rmsNormEps)
+            let postNorm = RMSNorm(
+                weight: try bundle.tensor(named: "\(lp).post_attention_layernorm.weight"),
+                eps: textCfg.rmsNormEps)
+            lmLayers.append(
+                GraniteSpeechLMLayer(
+                    qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
+                    gateProj: gProj, upProj: uProj, downProj: dProj,
+                    inputNorm: inNorm, postAttnNorm: postNorm,
+                    hidden: hidden, nHeads: nHeads, nKVHeads: nKV, headDim: headDim,
+                    ropeTheta: theta, ropeScaling: .none,
+                    attentionMultiplier: attMul, residualMultiplier: resMul
+                ))
         }
 
-        let finalNorm = RMSNorm(weight: try bundle.tensor(named: "\(prefix).model.norm.weight"),
-                                eps: textCfg.rmsNormEps)
+        let finalNorm = RMSNorm(
+            weight: try bundle.tensor(named: "\(prefix).model.norm.weight"),
+            eps: textCfg.rmsNormEps)
 
         // LM head — GraniteSpeech always has an explicit lm_head (tieWordEmbeddings=false)
         let lmHead: AnyLinear

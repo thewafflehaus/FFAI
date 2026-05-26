@@ -80,12 +80,16 @@ public struct KVEvictionState {
         case .unbounded:
             break
         case .window(let maxSize, let keep):
-            precondition(maxSize > 0, "KVEviction.window: maxSize must be positive (got \(maxSize))")
+            precondition(
+                maxSize > 0, "KVEviction.window: maxSize must be positive (got \(maxSize))")
             precondition(keep >= 0, "KVEviction.window: keep must be non-negative (got \(keep))")
-            precondition(keep < maxSize,
-                         "KVEviction.window: keep (\(keep)) must be < maxSize (\(maxSize))")
-            precondition(maxSize <= bufferCapacity,
-                         "KVEviction.window: maxSize (\(maxSize)) must be ≤ bufferCapacity (\(bufferCapacity))")
+            precondition(
+                keep < maxSize,
+                "KVEviction.window: keep (\(keep)) must be < maxSize (\(maxSize))")
+            precondition(
+                maxSize <= bufferCapacity,
+                "KVEviction.window: maxSize (\(maxSize)) must be ≤ bufferCapacity (\(bufferCapacity))"
+            )
         }
         self.policy = policy
         self.bufferCapacity = bufferCapacity
@@ -114,8 +118,10 @@ public struct KVEvictionState {
         let slot: Int
         switch policy {
         case .unbounded:
-            precondition(absoluteCount < bufferCapacity,
-                         "KVCache: capacity exhausted (\(bufferCapacity)) — pass `.window(maxSize:)` to enable FIFO eviction")
+            precondition(
+                absoluteCount < bufferCapacity,
+                "KVCache: capacity exhausted (\(bufferCapacity)) — pass `.window(maxSize:)` to enable FIFO eviction"
+            )
             slot = absoluteCount
         case .window(let maxSize, let keep):
             if absoluteCount < keep {
@@ -145,12 +151,14 @@ public struct KVEvictionState {
     /// with their absolute positions; rolling back a rotated ring buffer
     /// is rejected.
     public mutating func truncate(toLength length: Int) {
-        precondition(length >= 0 && length <= self.length,
-                     "KVEvictionState.truncate: length \(length) out of range 0...\(self.length)")
+        precondition(
+            length >= 0 && length <= self.length,
+            "KVEvictionState.truncate: length \(length) out of range 0...\(self.length)")
         if case .window(let maxSize, _) = policy {
-            precondition(absoluteCount <= maxSize,
-                         "KVEvictionState.truncate: unsupported after window rotation "
-                         + "(absoluteCount \(absoluteCount) > maxSize \(maxSize))")
+            precondition(
+                absoluteCount <= maxSize,
+                "KVEvictionState.truncate: unsupported after window rotation "
+                    + "(absoluteCount \(absoluteCount) > maxSize \(maxSize))")
         }
         absoluteCount = length
     }

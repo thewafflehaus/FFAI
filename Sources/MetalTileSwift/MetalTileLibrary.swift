@@ -83,7 +83,7 @@ public final class MetalTileLibrary: @unchecked Sendable {
     /// tradeoffs without rebuilding.
     public static let defaultMaxCommandBufferCount: Int = {
         if let raw = ProcessInfo.processInfo.environment["FFAI_MAX_COMMAND_BUFFERS"],
-           let parsed = Int(raw), parsed > 0
+            let parsed = Int(raw), parsed > 0
         {
             return parsed
         }
@@ -110,12 +110,16 @@ public final class MetalTileLibrary: @unchecked Sendable {
         // Emit at process startup so we can verify FFAI_MAX_COMMAND_BUFFERS
         // is actually being honored. Cheap (one line on stderr per process).
         // Remove once the freeze diagnostic settles.
-        FileHandle.standardError.write(Data(
-            "[MetalTileLibrary] maxCommandBufferCount=\(cap) (FFAI_MAX_COMMAND_BUFFERS=\(ProcessInfo.processInfo.environment["FFAI_MAX_COMMAND_BUFFERS"] ?? "<unset>"))\n".utf8
-        ))
-        guard let queue = device.makeCommandQueue(
-            maxCommandBufferCount: cap
-        ) else {
+        FileHandle.standardError.write(
+            Data(
+                "[MetalTileLibrary] maxCommandBufferCount=\(cap) (FFAI_MAX_COMMAND_BUFFERS=\(ProcessInfo.processInfo.environment["FFAI_MAX_COMMAND_BUFFERS"] ?? "<unset>"))\n"
+                    .utf8
+            ))
+        guard
+            let queue = device.makeCommandQueue(
+                maxCommandBufferCount: cap
+            )
+        else {
             throw MetalTileLibraryError.noCommandQueue
         }
         let url = try Self.locateMetallib()

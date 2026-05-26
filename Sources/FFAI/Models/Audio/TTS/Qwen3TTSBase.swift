@@ -87,15 +87,15 @@ public enum Qwen3TTSBaseTokens {
     public static let baseVocabSize = 151_669
 
     // Special tokens beyond the base vocab:
-    public static let startOfText    = 151_643  // <|im_start|> (reused from base)
-    public static let endOfText      = 151_645  // <|im_end|>  (reused from base)
-    public static let startOfSpeech  = baseVocabSize + 1   // 151 670
-    public static let endOfSpeech    = baseVocabSize + 2   // 151 671
-    public static let startOfHuman   = baseVocabSize + 3   // 151 672
-    public static let endOfHuman     = baseVocabSize + 4   // 151 673
-    public static let startOfAI      = baseVocabSize + 5   // 151 674
-    public static let endOfAI        = baseVocabSize + 6   // 151 675
-    public static let padToken       = baseVocabSize + 7   // 151 676
+    public static let startOfText = 151_643  // <|im_start|> (reused from base)
+    public static let endOfText = 151_645  // <|im_end|>  (reused from base)
+    public static let startOfSpeech = baseVocabSize + 1  // 151 670
+    public static let endOfSpeech = baseVocabSize + 2  // 151 671
+    public static let startOfHuman = baseVocabSize + 3  // 151 672
+    public static let endOfHuman = baseVocabSize + 4  // 151 673
+    public static let startOfAI = baseVocabSize + 5  // 151 674
+    public static let endOfAI = baseVocabSize + 6  // 151 675
+    public static let padToken = baseVocabSize + 7  // 151 676
 
     /// Audio-codec tokens start here. Each token minus this offset gives
     /// the raw SNAC code value (same stride/offset layout as Orpheus).
@@ -149,19 +149,19 @@ public struct Qwen3TTSBaseConfig: Sendable {
 
     /// Decode from a `config.json` ModelConfig.
     public static func from(_ config: ModelConfig) -> Qwen3TTSBaseConfig? {
-        guard let vocab    = config.vocabSize,
-              let hidden   = config.hiddenSize,
-              let inter    = config.intermediateSize,
-              let nLayers  = config.numLayers,
-              let nHeads   = config.numAttentionHeads,
-              let headDim  = config.headDim,
-              let eps      = config.rmsNormEps
+        guard let vocab = config.vocabSize,
+            let hidden = config.hiddenSize,
+            let inter = config.intermediateSize,
+            let nLayers = config.numLayers,
+            let nHeads = config.numAttentionHeads,
+            let headDim = config.headDim,
+            let eps = config.rmsNormEps
         else { return nil }
         let nKVHeads = config.numKeyValueHeads ?? nHeads
-        let theta    = Float(config.ropeTheta ?? 1_000_000)
-        let maxPos   = config.int("max_position_embeddings") ?? 32_768
+        let theta = Float(config.ropeTheta ?? 1_000_000)
+        let maxPos = config.int("max_position_embeddings") ?? 32_768
         let tieEmbed = config.tieWordEmbeddings
-        let rate     = config.int("sample_rate") ?? 24_000
+        let rate = config.int("sample_rate") ?? 24_000
         return Qwen3TTSBaseConfig(
             vocabSize: vocab,
             hidden: hidden, intermediate: inter,
@@ -269,7 +269,7 @@ public final class Qwen3TTSBaseModel: @unchecked Sendable {
         var layer2: [Int] = []
         var layer3: [Int] = []
         let groups = usable / frameSize
-        for g in 0..<groups {
+        for g in 0 ..< groups {
             let base = frameSize * g
             layer1.append(tokens[base])
             layer2.append(tokens[base + 1] - stride)
@@ -314,8 +314,9 @@ public final class Qwen3TTSBaseModel: @unchecked Sendable {
         // for the last token in the decode loop.
         var position = 0
         for tok in prompt.dropLast() {
-            _ = backbone.forward(tokenId: tok, position: position,
-                                 caches: caches, device: device)
+            _ = backbone.forward(
+                tokenId: tok, position: position,
+                caches: caches, device: device)
             position += 1
         }
         var nextInput = prompt.last ?? Qwen3TTSBaseTokens.endOfHuman
@@ -326,10 +327,10 @@ public final class Qwen3TTSBaseModel: @unchecked Sendable {
         let maxTokens = maxFrames * 7
         var inSpeech = false
 
-        for _ in 0..<(maxTokens + prompt.count) {
+        for _ in 0 ..< (maxTokens + prompt.count) {
             let token: Int
             if temperature > 0 {
-                let draw = Float.random(in: 0..<1, using: &rng)
+                let draw = Float.random(in: 0 ..< 1, using: &rng)
                 token = backbone.forwardSampleCategorical(
                     tokenId: nextInput, position: position, caches: caches,
                     temperature: temperature, uniformDraw: draw,
@@ -342,7 +343,10 @@ public final class Qwen3TTSBaseModel: @unchecked Sendable {
             position += 1
             nextInput = token
 
-            if token == Qwen3TTSBaseTokens.startOfSpeech { inSpeech = true; continue }
+            if token == Qwen3TTSBaseTokens.startOfSpeech {
+                inSpeech = true
+                continue
+            }
             if token == Qwen3TTSBaseTokens.endOfSpeech { break }
             if inSpeech, token >= Qwen3TTSBaseTokens.audioTokensStart {
                 codeTokens.append(token - Qwen3TTSBaseTokens.audioTokensStart)
@@ -386,7 +390,7 @@ extension Qwen3TTSBaseModel {
     public static let modelTypes: Set<String> = ["qwen3_tts_base", "qwen3base_tts"]
     /// Architecture strings this family handles.
     public static let architectures: Set<String> = [
-        "Qwen3TTSBaseForConditionalGeneration",
+        "Qwen3TTSBaseForConditionalGeneration"
     ]
 
     /// Whether a decoded `config.json` describes a Qwen3TTSBase checkpoint.
@@ -422,7 +426,8 @@ extension Qwen3TTSBaseModel {
         // vocab_size=180 352 — the codec-token extension is the
         // distinguishing structural marker. The vocab guard keeps plain
         // Qwen3 text checkpoints out of the audio routing path.
-        let isQwen3 = (config.modelType == "qwen3")
+        let isQwen3 =
+            (config.modelType == "qwen3")
             || (config.architecture == "Qwen3ForCausalLM")
         let hasAudioVocab = (config.vocabSize ?? 0) > 151_936
         return isQwen3 && hasAudioVocab

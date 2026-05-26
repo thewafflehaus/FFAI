@@ -55,8 +55,9 @@ extension Ops {
             preconditionFailure("Ops.logitsTemperature: \(reason)")
         }
         let result = out ?? Tensor.empty(shape: inp.shape, dtype: inp.dtype)
-        precondition(result.shape == inp.shape && result.dtype == inp.dtype,
-                     "Ops.logitsTemperature: out shape/dtype must match inp")
+        precondition(
+            result.shape == inp.shape && result.dtype == inp.dtype,
+            "Ops.logitsTemperature: out shape/dtype must match inp")
         let (grid, tg) = elementwiseGrid(inp.elementCount)
         switch inp.dtype {
         case .f32:
@@ -95,8 +96,9 @@ extension Ops {
         logits: Tensor, tokenIds: Tensor, penalty: Float,
         on cmd: MTLCommandBuffer
     ) {
-        precondition(tokenIds.dtype == .u32 || tokenIds.dtype == .i32,
-                     "Ops.logitsRepetitionPenalty: tokenIds must be u32 or i32")
+        precondition(
+            tokenIds.dtype == .u32 || tokenIds.dtype == .i32,
+            "Ops.logitsRepetitionPenalty: tokenIds must be u32 or i32")
         if let reason = OpsValidation.validateLogitsRepetitionPenalty(
             vocab: logits.elementCount, nTokenIds: tokenIds.elementCount,
             penalty: penalty
@@ -146,8 +148,9 @@ extension Ops {
             preconditionFailure("Ops.logitsTopKMask: \(reason)")
         }
         let result = out ?? Tensor.empty(shape: inp.shape, dtype: inp.dtype)
-        precondition(result.shape == inp.shape && result.dtype == inp.dtype,
-                     "Ops.logitsTopKMask: out shape/dtype must match inp")
+        precondition(
+            result.shape == inp.shape && result.dtype == inp.dtype,
+            "Ops.logitsTopKMask: out shape/dtype must match inp")
         let (grid, tg) = elementwiseGrid(inp.elementCount)
         switch inp.dtype {
         case .f32:

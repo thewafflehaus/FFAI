@@ -123,18 +123,22 @@ public struct GenerationStats: Sendable {
         out += "  generated:        \(generatedTokens) tokens\n"
         out += "  context:          \(contextSize) tokens\n"
         out += String(format: "  ttft:             %.2f ms\n", timeToFirstTokenMs)
-        out += String(format: "  prefill:          %.2fs (%.2f tok/s)\n",
-                      prefillTimeS, prefillTokensPerSecond)
-        out += String(format: "  decode:           %.2fs (%.2f tok/s)\n",
-                      decodeTimeS, decodeTokensPerSecond)
+        out += String(
+            format: "  prefill:          %.2fs (%.2f tok/s)\n",
+            prefillTimeS, prefillTokensPerSecond)
+        out += String(
+            format: "  decode:           %.2fs (%.2f tok/s)\n",
+            decodeTimeS, decodeTokensPerSecond)
         if let s = steadyTokensPerSecond {
             out += String(format: "  decode (steady):  %.2f tok/s   (tokens 11+)\n", s)
         }
         out += String(format: "  baseline GPU:     %@\n", Self.fmt(baselineGPUBytes))
-        out += String(format: "  post-prefill GPU: %@   (+ %@)\n",
-                      Self.fmt(postPrefillGPUBytes), Self.fmt(prefillGrowthBytes))
-        out += String(format: "  post-decode  GPU: %@   (+ %@)\n",
-                      Self.fmt(postDecodeGPUBytes), Self.fmt(decodeGrowthBytes))
+        out += String(
+            format: "  post-prefill GPU: %@   (+ %@)\n",
+            Self.fmt(postPrefillGPUBytes), Self.fmt(prefillGrowthBytes))
+        out += String(
+            format: "  post-decode  GPU: %@   (+ %@)\n",
+            Self.fmt(postDecodeGPUBytes), Self.fmt(decodeGrowthBytes))
         out += String(format: "  prefill peak:     %@\n", Self.fmt(prefillPeakGPUBytes))
         out += String(format: "  decode  peak:     %@\n", Self.fmt(decodePeakGPUBytes))
         out += String(format: "  weights:          %@\n", Self.fmt(weightsBytes))

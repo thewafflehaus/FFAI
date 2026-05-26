@@ -32,8 +32,8 @@
 // layout); we transpose to PyTorch `[outC, inC, H, W]` at load time.
 // Conv1d weights are `[outC, K, inC]` in MLX → `[outC, inC, K]` in PyTorch.
 
-import Foundation
 import Accelerate
+import Foundation
 
 // MARK: - Config
 
@@ -53,18 +53,18 @@ public struct SortformerFCConfig: Sendable {
     public let scaleInput: Bool
 
     public init(from raw: [String: Any]) {
-        hiddenSize              = (raw["hidden_size"] as? Int) ?? 512
-        numLayers               = (raw["num_hidden_layers"] as? Int) ?? 18
-        numHeads                = (raw["num_attention_heads"] as? Int) ?? 8
-        intermediateSize        = (raw["intermediate_size"] as? Int) ?? 2048
-        numMelBins              = (raw["num_mel_bins"] as? Int) ?? 80
-        convKernelSize          = (raw["conv_kernel_size"] as? Int) ?? 9
-        subsamplingFactor       = (raw["subsampling_factor"] as? Int) ?? 8
+        hiddenSize = (raw["hidden_size"] as? Int) ?? 512
+        numLayers = (raw["num_hidden_layers"] as? Int) ?? 18
+        numHeads = (raw["num_attention_heads"] as? Int) ?? 8
+        intermediateSize = (raw["intermediate_size"] as? Int) ?? 2048
+        numMelBins = (raw["num_mel_bins"] as? Int) ?? 80
+        convKernelSize = (raw["conv_kernel_size"] as? Int) ?? 9
+        subsamplingFactor = (raw["subsampling_factor"] as? Int) ?? 8
         subsamplingConvChannels = (raw["subsampling_conv_channels"] as? Int) ?? 256
         subsamplingConvKernelSize = (raw["subsampling_conv_kernel_size"] as? Int) ?? 3
-        subsamplingConvStride   = (raw["subsampling_conv_stride"] as? Int) ?? 2
-        attentionBias           = (raw["attention_bias"] as? Bool) ?? true
-        scaleInput              = (raw["scale_input"] as? Bool) ?? true
+        subsamplingConvStride = (raw["subsampling_conv_stride"] as? Int) ?? 2
+        attentionBias = (raw["attention_bias"] as? Bool) ?? true
+        scaleInput = (raw["scale_input"] as? Bool) ?? true
     }
 }
 
@@ -79,13 +79,13 @@ public struct SortformerTFConfig: Sendable {
     public let kProjBias: Bool
 
     public init(from raw: [String: Any]) {
-        dModel       = (raw["d_model"] as? Int) ?? 192
-        numLayers    = (raw["encoder_layers"] as? Int) ?? 18
-        numHeads     = (raw["encoder_attention_heads"] as? Int) ?? 8
-        ffnDim       = (raw["encoder_ffn_dim"] as? Int) ?? 768
+        dModel = (raw["d_model"] as? Int) ?? 192
+        numLayers = (raw["encoder_layers"] as? Int) ?? 18
+        numHeads = (raw["encoder_attention_heads"] as? Int) ?? 8
+        ffnDim = (raw["encoder_ffn_dim"] as? Int) ?? 768
         layerNormEps = (raw["layer_norm_eps"] as? Double).map { Float($0) } ?? 1e-5
         maxPositions = (raw["max_source_positions"] as? Int) ?? 1500
-        kProjBias    = (raw["k_proj_bias"] as? Bool) ?? false
+        kProjBias = (raw["k_proj_bias"] as? Bool) ?? false
     }
 }
 
@@ -97,9 +97,9 @@ public struct SortformerModulesConfig: Sendable {
     public let subsamplingFactor: Int
 
     public init(from raw: [String: Any]) {
-        numSpeakers      = (raw["num_speakers"] as? Int) ?? 4
-        fcDModel         = (raw["fc_d_model"] as? Int) ?? 512
-        tfDModel         = (raw["tf_d_model"] as? Int) ?? 192
+        numSpeakers = (raw["num_speakers"] as? Int) ?? 4
+        fcDModel = (raw["fc_d_model"] as? Int) ?? 512
+        tfDModel = (raw["tf_d_model"] as? Int) ?? 192
         subsamplingFactor = (raw["subsampling_factor"] as? Int) ?? 8
     }
 }
@@ -114,12 +114,12 @@ public struct SortformerProcessorConfig: Sendable {
     public let preemphasis: Float
 
     public init(from raw: [String: Any]) {
-        featureSize  = (raw["feature_size"] as? Int) ?? 80
-        sampleRate   = (raw["sampling_rate"] as? Int) ?? 16000
-        hopLength    = (raw["hop_length"] as? Int) ?? 160
-        nFft         = (raw["n_fft"] as? Int) ?? 512
-        winLength    = (raw["win_length"] as? Int) ?? 400
-        preemphasis  = (raw["preemphasis"] as? Double).map { Float($0) } ?? 0.97
+        featureSize = (raw["feature_size"] as? Int) ?? 80
+        sampleRate = (raw["sampling_rate"] as? Int) ?? 16000
+        hopLength = (raw["hop_length"] as? Int) ?? 160
+        nFft = (raw["n_fft"] as? Int) ?? 512
+        winLength = (raw["win_length"] as? Int) ?? 400
+        preemphasis = (raw["preemphasis"] as? Double).map { Float($0) } ?? 0.97
     }
 }
 
@@ -133,10 +133,11 @@ public struct SortformerConfig: Sendable {
 
     public init(from raw: [String: Any]) {
         numSpeakers = (raw["num_speakers"] as? Int) ?? 4
-        fcEncoder  = SortformerFCConfig(from: (raw["fc_encoder_config"] as? [String: Any]) ?? [:])
-        tfEncoder  = SortformerTFConfig(from: (raw["tf_encoder_config"] as? [String: Any]) ?? [:])
-        modules    = SortformerModulesConfig(from: (raw["modules_config"] as? [String: Any]) ?? [:])
-        processor  = SortformerProcessorConfig(from: (raw["processor_config"] as? [String: Any]) ?? [:])
+        fcEncoder = SortformerFCConfig(from: (raw["fc_encoder_config"] as? [String: Any]) ?? [:])
+        tfEncoder = SortformerTFConfig(from: (raw["tf_encoder_config"] as? [String: Any]) ?? [:])
+        modules = SortformerModulesConfig(from: (raw["modules_config"] as? [String: Any]) ?? [:])
+        processor = SortformerProcessorConfig(
+            from: (raw["processor_config"] as? [String: Any]) ?? [:])
     }
 }
 
@@ -181,7 +182,7 @@ func sortformerMelFeatures(
     // Preemphasis: y[0] = x[0], y[n] = x[n] - coeff * x[n-1]
     var wav = [Float](repeating: 0, count: waveform.count)
     wav[0] = waveform[0]
-    for i in 1..<waveform.count {
+    for i in 1 ..< waveform.count {
         wav[i] = waveform[i] - proc.preemphasis * waveform[i - 1]
     }
 
@@ -208,14 +209,15 @@ func sortformerMelFeatures(
     // Compute power spectrum for each frame.
     var power = [Float](repeating: 0, count: numFrames * nBins)
     var frame = [Float](repeating: 0, count: nFft)
-    for f in 0..<numFrames {
+    for f in 0 ..< numFrames {
         let start = f * hop
-        for n in 0..<nFft { frame[n] = padded[start + n] * window[n] }
+        for n in 0 ..< nFft { frame[n] = padded[start + n] * window[n] }
         // Real-to-complex DFT → power.
-        for k in 0..<nBins {
-            var re: Float = 0, im: Float = 0
+        for k in 0 ..< nBins {
+            var re: Float = 0
+            var im: Float = 0
             let w = -2 * Float.pi * Float(k) / Float(nFft)
-            for n in 0..<nFft {
+            for n in 0 ..< nFft {
                 let angle = w * Float(n)
                 re += frame[n] * cosf(angle)
                 im += frame[n] * sinf(angle)
@@ -240,22 +242,25 @@ func sortformerMelFeatures(
     // mel is [numFrames, nMels] row-major; normalize each mel bin over frames.
     let normEps: Float = 1e-5
     var normed = [Float](repeating: 0, count: numFrames * nMels)
-    for m in 0..<nMels {
+    for m in 0 ..< nMels {
         var sum: Float = 0
-        for f in 0..<numFrames { sum += mel[f * nMels + m] }
+        for f in 0 ..< numFrames { sum += mel[f * nMels + m] }
         let mean = sum / Float(numFrames)
         var varSum: Float = 0
-        for f in 0..<numFrames { let d = mel[f * nMels + m] - mean; varSum += d * d }
+        for f in 0 ..< numFrames {
+            let d = mel[f * nMels + m] - mean
+            varSum += d * d
+        }
         let std = (varSum / Float(max(numFrames - 1, 1))).squareRoot()
-        for f in 0..<numFrames {
+        for f in 0 ..< numFrames {
             normed[f * nMels + m] = (mel[f * nMels + m] - mean) / (std + normEps)
         }
     }
 
     // Transpose to channel-major [nMels, numFrames].
     var chMajor = [Float](repeating: 0, count: nMels * numFrames)
-    for m in 0..<nMels {
-        for f in 0..<numFrames { chMajor[m * numFrames + f] = normed[f * nMels + m] }
+    for m in 0 ..< nMels {
+        for f in 0 ..< numFrames { chMajor[m * numFrames + f] = normed[f * nMels + m] }
     }
 
     return (chMajor, nMels, numFrames)
@@ -278,24 +283,25 @@ private func conv2dForward(
     var out = [Float](repeating: 0, count: outC * outH * outW)
     let inCPerGroup = inC / groups
     let outCPerGroup = outC / groups
-    for g in 0..<groups {
-        for oc in 0..<outCPerGroup {
+    for g in 0 ..< groups {
+        for oc in 0 ..< outCPerGroup {
             let globalOC = g * outCPerGroup + oc
             let b = bias?[globalOC] ?? 0
-            for oh in 0..<outH {
-                for ow in 0..<outW {
+            for oh in 0 ..< outH {
+                for ow in 0 ..< outW {
                     var acc = b
-                    for ic in 0..<inCPerGroup {
+                    for ic in 0 ..< inCPerGroup {
                         let globalIC = g * inCPerGroup + ic
                         let wBase = (globalOC * inCPerGroup + ic) * kH * kW
-                        for kh in 0..<kH {
+                        for kh in 0 ..< kH {
                             let ih = oh * strideH - padH + kh
                             if ih < 0 || ih >= inH { continue }
-                            for kw in 0..<kW {
+                            for kw in 0 ..< kW {
                                 let iw = ow * strideW - padW + kw
                                 if iw < 0 || iw >= inW { continue }
-                                acc += input[(globalIC * inH + ih) * inW + iw]
-                                     * weight[wBase + kh * kW + kw]
+                                acc +=
+                                    input[(globalIC * inH + ih) * inW + iw]
+                                    * weight[wBase + kh * kW + kw]
                             }
                         }
                     }
@@ -320,16 +326,16 @@ private func conv1dForward(
     var out = [Float](repeating: 0, count: outC * outLen)
     let inCPerGroup = inC / groups
     let outCPerGroup = outC / groups
-    for g in 0..<groups {
-        for oc in 0..<outCPerGroup {
+    for g in 0 ..< groups {
+        for oc in 0 ..< outCPerGroup {
             let goc = g * outCPerGroup + oc
             let b = bias?[goc] ?? 0
             let wBase = (goc * inCPerGroup) * kernelSize
-            for t in 0..<outLen {
+            for t in 0 ..< outLen {
                 var acc = b
-                for ic in 0..<inCPerGroup {
+                for ic in 0 ..< inCPerGroup {
                     let gic = g * inCPerGroup + ic
-                    for k in 0..<kernelSize {
+                    for k in 0 ..< kernelSize {
                         let idx = t * stride - padding + k
                         if idx >= 0 && idx < length {
                             acc += input[gic * length + idx] * weight[wBase + ic * kernelSize + k]
@@ -352,10 +358,12 @@ private func batchNorm1dForward(
     eps: Float = 1e-5
 ) -> [Float] {
     var out = [Float](repeating: 0, count: rows * features)
-    for f in 0..<features {
+    for f in 0 ..< features {
         let inv = 1 / (runningVar[f] + eps).squareRoot()
-        let w = weight[f]; let b = bias[f]; let mu = runningMean[f]
-        for t in 0..<rows {
+        let w = weight[f]
+        let b = bias[f]
+        let mu = runningMean[f]
+        for t in 0 ..< rows {
             out[t * features + f] = (input[t * features + f] - mu) * inv * w + b
         }
     }
@@ -377,9 +385,9 @@ private func relPositionalEncoding(seqLen: Int, dModel: Int) -> [Float] {
     let posLen = 2 * seqLen - 1
     var pe = [Float](repeating: 0, count: posLen * dModel)
     let half = dModel / 2
-    for i in 0..<posLen {
+    for i in 0 ..< posLen {
         let pos = Float(seqLen - 1 - i)
-        for j in 0..<half {
+        for j in 0 ..< half {
             let divTerm = exp(Float(j) * (-log(10000.0) / Float(dModel)))
             pe[i * dModel + j] = sinf(pos * divTerm)
             pe[i * dModel + half + j] = cosf(pos * divTerm)
@@ -472,9 +480,9 @@ private func fastConformerForward(
     let outTime = curW3
     let flatFeat = convC * curH3
     var seq = [Float](repeating: 0, count: outTime * flatFeat)
-    for t in 0..<outTime {
-        for c in 0..<convC {
-            for f in 0..<curH3 {
+    for t in 0 ..< outTime {
+        for c in 0 ..< convC {
+            for f in 0 ..< curH3 {
                 // src: h3[(c * curH3 + f) * curW3 + t]
                 // dst: seq[t * flatFeat + c * curH3 + f] — wait, PyTorch transposes as (b,t,c,f)
                 // Reference: h.transposed(0,1,3,2).reshaped(b,t,c*f) so it's (c,f) order
@@ -489,7 +497,7 @@ private func fastConformerForward(
 
     // Compute output lengths (3× floor((L-1)/2+1)).
     var outLen = nFrames
-    for _ in 0..<3 { outLen = (outLen - 1) / 2 + 1 }
+    for _ in 0 ..< 3 { outLen = (outLen - 1) / 2 + 1 }
     let diarLen = min(outLen, outTime)
 
     // Scale input if configured.
@@ -502,7 +510,7 @@ private func fastConformerForward(
     let posEmb = relPositionalEncoding(seqLen: diarLen, dModel: dModel)
 
     // Conformer layers.
-    for layerIdx in 0..<cfg.numLayers {
+    for layerIdx in 0 ..< cfg.numLayers {
         let prefix = "fc_encoder.layers.\(layerIdx)"
         embeddings = conformerLayerForward(
             x: embeddings, seqLen: diarLen, dModel: dModel,
@@ -526,8 +534,9 @@ private func conformerLayerForward(
     let nFf = cfg.intermediateSize
 
     // ── FF1 sub-block ──────────────────────────────────────────────────
-    let norm1 = vadLNFromWeights(weights, prefix: "\(prefix).norm_feed_forward1",
-                                 dim: dModel)
+    let norm1 = vadLNFromWeights(
+        weights, prefix: "\(prefix).norm_feed_forward1",
+        dim: dModel)
     let ff1W1 = weights["\(prefix).feed_forward1.linear1.weight"] ?? []
     let ff1B1 = weights["\(prefix).feed_forward1.linear1.bias"]
     let ff1W2 = weights["\(prefix).feed_forward1.linear2.weight"] ?? []
@@ -538,7 +547,7 @@ private func conformerLayerForward(
     let n1 = norm1.applyRows(x, rows: seqLen)
     let ff1mid = lin1.applyRows(n1, rows: seqLen).map { silu($0) }
     let ff1out = lin2.applyRows(ff1mid, rows: seqLen)
-    for i in 0..<residual.count { residual[i] += ff1out[i] * ffFactor }
+    for i in 0 ..< residual.count { residual[i] += ff1out[i] * ffFactor }
 
     // ── Self-attention sub-block ───────────────────────────────────────
     let normAttn = vadLNFromWeights(weights, prefix: "\(prefix).norm_self_att", dim: dModel)
@@ -572,18 +581,18 @@ private func conformerLayerForward(
         seqLen: seqLen, posLen: posEmb.count / dModel,
         nHeads: nHeads, headDim: headDim)
     let attnProj = oL.applyRows(attnOut, rows: seqLen)
-    for i in 0..<residual.count { residual[i] += attnProj[i] }
+    for i in 0 ..< residual.count { residual[i] += attnProj[i] }
 
     // ── Conformer conv sub-block ───────────────────────────────────────
     let normConv = vadLNFromWeights(weights, prefix: "\(prefix).norm_conv", dim: dModel)
     let pw1W = weights["\(prefix).conv.pointwise_conv1.weight"] ?? []
     let pw1B = weights["\(prefix).conv.pointwise_conv1.bias"]
-    let dwW  = weights["\(prefix).conv.depthwise_conv.weight"] ?? []
-    let dwB  = weights["\(prefix).conv.depthwise_conv.bias"]
+    let dwW = weights["\(prefix).conv.depthwise_conv.weight"] ?? []
+    let dwB = weights["\(prefix).conv.depthwise_conv.bias"]
     let pw2W = weights["\(prefix).conv.pointwise_conv2.weight"] ?? []
     let pw2B = weights["\(prefix).conv.pointwise_conv2.bias"]
-    let bnW  = weights["\(prefix).conv.norm.weight"] ?? []
-    let bnB  = weights["\(prefix).conv.norm.bias"] ?? []
+    let bnW = weights["\(prefix).conv.norm.weight"] ?? []
+    let bnB = weights["\(prefix).conv.norm.bias"] ?? []
     let bnMu = weights["\(prefix).conv.norm.running_mean"] ?? []
     let bnVar = weights["\(prefix).conv.norm.running_var"] ?? []
 
@@ -591,15 +600,18 @@ private func conformerLayerForward(
     let normedConv = normConv.applyRows(residual, rows: seqLen)
     // Transpose to channel-major [dModel, seqLen] for Conv1d.
     var chMajor = [Float](repeating: 0, count: dModel * seqLen)
-    for t in 0..<seqLen { for d in 0..<dModel { chMajor[d * seqLen + t] = normedConv[t * dModel + d] } }
+    for t in 0 ..< seqLen {
+        for d in 0 ..< dModel { chMajor[d * seqLen + t] = normedConv[t * dModel + d] }
+    }
 
     // Pointwise conv1: [dModel → dModel*2], K=1.
-    var (cv, cvLen) = conv1dForward(input: chMajor, inC: dModel, length: seqLen,
-                                    weight: pw1W, bias: pw1B, outC: dModel * 2, kernelSize: 1)
+    var (cv, cvLen) = conv1dForward(
+        input: chMajor, inC: dModel, length: seqLen,
+        weight: pw1W, bias: pw1B, outC: dModel * 2, kernelSize: 1)
     // GLU: split into two halves, apply sigmoid to second half.
     var gluOut = [Float](repeating: 0, count: dModel * cvLen)
-    for c in 0..<dModel {
-        for t in 0..<cvLen {
+    for c in 0 ..< dModel {
+        for t in 0 ..< cvLen {
             let a = cv[c * cvLen + t]
             let b2 = cv[(c + dModel) * cvLen + t]
             gluOut[c * cvLen + t] = a * VADMath.sigmoid(b2)
@@ -608,31 +620,34 @@ private func conformerLayerForward(
 
     // Depthwise conv: [dModel → dModel], K=convKern, pad=(K-1)/2, groups=dModel.
     let dwPad = (convKern - 1) / 2
-    var (dw, dwLen) = conv1dForward(input: gluOut, inC: dModel, length: cvLen,
-                                    weight: dwW, bias: dwB,
-                                    outC: dModel, kernelSize: convKern,
-                                    stride: 1, padding: dwPad, groups: dModel)
+    var (dw, dwLen) = conv1dForward(
+        input: gluOut, inC: dModel, length: cvLen,
+        weight: dwW, bias: dwB,
+        outC: dModel, kernelSize: convKern,
+        stride: 1, padding: dwPad, groups: dModel)
 
     // Batch norm: input is [dModel, dwLen], norm operates per-feature over time.
     // Transpose to [dwLen, dModel] for batchNorm1dForward.
     var dwTime = [Float](repeating: 0, count: dwLen * dModel)
-    for d in 0..<dModel { for t in 0..<dwLen { dwTime[t * dModel + d] = dw[d * dwLen + t] } }
+    for d in 0 ..< dModel { for t in 0 ..< dwLen { dwTime[t * dModel + d] = dw[d * dwLen + t] } }
     if !bnW.isEmpty {
-        dwTime = batchNorm1dForward(input: dwTime, rows: dwLen, features: dModel,
-                                    weight: bnW, bias: bnB, runningMean: bnMu, runningVar: bnVar)
+        dwTime = batchNorm1dForward(
+            input: dwTime, rows: dwLen, features: dModel,
+            weight: bnW, bias: bnB, runningMean: bnMu, runningVar: bnVar)
     }
     // SiLU.
     dwTime = dwTime.map { silu($0) }
     // Transpose back to channel-major for pointwise conv2.
-    for d in 0..<dModel { for t in 0..<dwLen { dw[d * dwLen + t] = dwTime[t * dModel + d] } }
+    for d in 0 ..< dModel { for t in 0 ..< dwLen { dw[d * dwLen + t] = dwTime[t * dModel + d] } }
 
     // Pointwise conv2: [dModel → dModel], K=1.
-    var (pw2, _) = conv1dForward(input: dw, inC: dModel, length: dwLen,
-                                 weight: pw2W, bias: pw2B, outC: dModel, kernelSize: 1)
+    var (pw2, _) = conv1dForward(
+        input: dw, inC: dModel, length: dwLen,
+        weight: pw2W, bias: pw2B, outC: dModel, kernelSize: 1)
     // Transpose back to [seqLen, dModel] and add residual.
     let pw2Len = min(dwLen, seqLen)
-    for t in 0..<pw2Len {
-        for d in 0..<dModel { residual[t * dModel + d] += pw2[d * pw2Len + t] }
+    for t in 0 ..< pw2Len {
+        for d in 0 ..< dModel { residual[t * dModel + d] += pw2[d * pw2Len + t] }
     }
 
     // ── FF2 sub-block ──────────────────────────────────────────────────
@@ -646,7 +661,7 @@ private func conformerLayerForward(
     let n3 = norm3.applyRows(residual, rows: seqLen)
     let ff2mid = lin3.applyRows(n3, rows: seqLen).map { silu($0) }
     let ff2out = lin4.applyRows(ff2mid, rows: seqLen)
-    for i in 0..<residual.count { residual[i] += ff2out[i] * ffFactor }
+    for i in 0 ..< residual.count { residual[i] += ff2out[i] * ffFactor }
 
     // ── Final layer norm ───────────────────────────────────────────────
     let normOut = vadLNFromWeights(weights, prefix: "\(prefix).norm_out", dim: dModel)
@@ -669,20 +684,20 @@ private func relPositionMultiHeadAttention(
     // For each head: matrix_AC[i,j] = (q_i + bu_h) · k_j / scale
     //                matrix_BD[i,j] = relShift((q_i + bv_h) · p_j / scale)
     // Scores = matrix_AC + matrix_BD[:, :, :, :seqLen]
-    for head in 0..<nHeads {
+    for head in 0 ..< nHeads {
         let hOff = head * headDim
         let uOff = head * headDim  // biasU[head, :headDim]
         let vOff = head * headDim  // biasV[head, :headDim]
 
         // Compute score matrix.
         var scores = [Float](repeating: 0, count: seqLen * seqLen)
-        for i in 0..<seqLen {
+        for i in 0 ..< seqLen {
             let qBase = i * dModel + hOff
             // matrix_AC scores.
-            for j in 0..<seqLen {
+            for j in 0 ..< seqLen {
                 let kBase = j * dModel + hOff
                 var dot: Float = 0
-                for d in 0..<headDim {
+                for d in 0 ..< headDim {
                     dot += (q[qBase + d] + biasU[uOff + d]) * k[kBase + d]
                 }
                 scores[i * seqLen + j] = dot / scale
@@ -690,10 +705,10 @@ private func relPositionMultiHeadAttention(
             // matrix_BD scores (relative shift).
             // (q_i + bv) · p_j for j in 0..posLen-1, then relShift.
             var bdRow = [Float](repeating: 0, count: posLen)
-            for j in 0..<posLen {
+            for j in 0 ..< posLen {
                 let pBase = j * dModel + hOff
                 var dot: Float = 0
-                for d in 0..<headDim {
+                for d in 0 ..< headDim {
                     dot += (q[qBase + d] + biasV[vOff + d]) * p[pBase + d]
                 }
                 bdRow[j] = dot / scale
@@ -701,7 +716,7 @@ private func relPositionMultiHeadAttention(
             // relShift: left-pad by 1, reshape [posLen+1, seqLen], drop row 0,
             // flatten back, keep first seqLen values.
             // Equiv: shifted[i,j] = bdRow[seqLen-1-i+j] for j in 0..seqLen
-            for j in 0..<seqLen {
+            for j in 0 ..< seqLen {
                 let relIdx = seqLen - 1 - i + j
                 if relIdx >= 0 && relIdx < posLen {
                     scores[i * seqLen + j] += bdRow[relIdx]
@@ -710,18 +725,18 @@ private func relPositionMultiHeadAttention(
         }
 
         // Softmax over j (last dim).
-        for i in 0..<seqLen {
-            VADMath.softmaxInPlace(&scores, range: (i * seqLen)..<(i * seqLen + seqLen))
+        for i in 0 ..< seqLen {
+            VADMath.softmaxInPlace(&scores, range: (i * seqLen) ..< (i * seqLen + seqLen))
         }
 
         // Weighted sum of v.
-        for i in 0..<seqLen {
-            for j in 0..<seqLen {
+        for i in 0 ..< seqLen {
+            for j in 0 ..< seqLen {
                 let w = scores[i * seqLen + j]
                 if w == 0 { continue }
                 let vBase = j * dModel + hOff
                 let outBase = i * dModel + hOff
-                for d in 0..<headDim { out[outBase + d] += w * v[vBase + d] }
+                for d in 0 ..< headDim { out[outBase + d] += w * v[vBase + d] }
             }
         }
     }
@@ -733,7 +748,7 @@ private func vadLNFromWeights(
     _ w: WeightTable, prefix: String, dim: Int, eps: Float = 1e-5
 ) -> VADLayerNorm {
     let weight = w["\(prefix).weight"] ?? [Float](repeating: 1, count: dim)
-    let bias   = w["\(prefix).bias"]   ?? [Float](repeating: 0, count: dim)
+    let bias = w["\(prefix).bias"] ?? [Float](repeating: 0, count: dim)
     return VADLayerNorm(weight: weight, bias: bias, dim: dim, eps: eps)
 }
 
@@ -744,11 +759,11 @@ private func addLearnedPositionEmb(
     _ x: [Float], seqLen: Int, dModel: Int, embedTable: [Float]
 ) -> [Float] {
     var out = x
-    for t in 0..<seqLen {
+    for t in 0 ..< seqLen {
         let eBase = t * dModel
         let xBase = t * dModel
         guard eBase + dModel <= embedTable.count else { continue }
-        for d in 0..<dModel { out[xBase + d] += embedTable[eBase + d] }
+        for d in 0 ..< dModel { out[xBase + d] += embedTable[eBase + d] }
     }
     return out
 }
@@ -762,12 +777,14 @@ private func transformerEncoderForward(
     var h = x
     let headDim = dModel / cfg.numHeads
 
-    for layerIdx in 0..<cfg.numLayers {
+    for layerIdx in 0 ..< cfg.numLayers {
         let prefix = "tf_encoder.layers.\(layerIdx)"
-        let attnLN = vadLNFromWeights(weights, prefix: "\(prefix).self_attn_layer_norm",
-                                      dim: dModel, eps: cfg.layerNormEps)
-        let finalLN = vadLNFromWeights(weights, prefix: "\(prefix).final_layer_norm",
-                                       dim: dModel, eps: cfg.layerNormEps)
+        let attnLN = vadLNFromWeights(
+            weights, prefix: "\(prefix).self_attn_layer_norm",
+            dim: dModel, eps: cfg.layerNormEps)
+        let finalLN = vadLNFromWeights(
+            weights, prefix: "\(prefix).final_layer_norm",
+            dim: dModel, eps: cfg.layerNormEps)
 
         let qW = weights["\(prefix).self_attn.q_proj.weight"] ?? []
         let qB = weights["\(prefix).self_attn.q_proj.bias"]
@@ -792,11 +809,12 @@ private func transformerEncoderForward(
         let k = kL.applyRows(h, rows: seqLen)
         let v = vL.applyRows(h, rows: seqLen)
         let scale = Float(headDim).squareRoot()
-        let attn = vadMultiHeadAttention(q: q, k: k, v: v, seqLen: seqLen,
-                                         numHeads: cfg.numHeads, headDim: headDim, scale: scale)
+        let attn = vadMultiHeadAttention(
+            q: q, k: k, v: v, seqLen: seqLen,
+            numHeads: cfg.numHeads, headDim: headDim, scale: scale)
         let attnProj = oL.applyRows(attn, rows: seqLen)
         var h2 = [Float](repeating: 0, count: seqLen * dModel)
-        for i in 0..<h.count { h2[i] = h[i] + attnProj[i] }
+        for i in 0 ..< h.count { h2[i] = h[i] + attnProj[i] }
         h2 = attnLN.applyRows(h2, rows: seqLen)
 
         // Post-LN FFN sub-block: FC2(ReLU(FC1(x))) + x → LN.
@@ -805,7 +823,7 @@ private func transformerEncoderForward(
         let mid = fc1L.applyRows(h2, rows: seqLen).map { relu($0) }
         let ffOut = fc2L.applyRows(mid, rows: seqLen)
         var h3 = [Float](repeating: 0, count: seqLen * dModel)
-        for i in 0..<h2.count { h3[i] = h2[i] + ffOut[i] }
+        for i in 0 ..< h2.count { h3[i] = h2[i] + ffOut[i] }
         h = finalLN.applyRows(h3, rows: seqLen)
     }
     return h
@@ -901,14 +919,16 @@ public final class SortformerModel: @unchecked Sendable {
         let fcDModel = config.fcEncoder.hiddenSize
         let projW = weights["sortformer_modules.encoder_proj.weight"] ?? []
         let projB = weights["sortformer_modules.encoder_proj.bias"]
-        let projL = VADLinear(weight: projW, bias: projB,
-                              inFeatures: fcDModel, outFeatures: tfDModel)
+        let projL = VADLinear(
+            weight: projW, bias: projB,
+            inFeatures: fcDModel, outFeatures: tfDModel)
         var projected = projL.applyRows(fcOut, rows: diarLen)  // [diarLen, tfDModel]
 
         // 4. Add learned positional embeddings.
         let posTable = weights["tf_encoder.embed_positions.weight"] ?? []
-        projected = addLearnedPositionEmb(projected, seqLen: diarLen,
-                                          dModel: tfDModel, embedTable: posTable)
+        projected = addLearnedPositionEmb(
+            projected, seqLen: diarLen,
+            dModel: tfDModel, embedTable: posTable)
 
         // 5. Transformer encoder: [diarLen, tfDModel].
         let transOut = transformerEncoderForward(
@@ -922,10 +942,11 @@ public final class SortformerModel: @unchecked Sendable {
             numSpeakers: nSpk, weights: weights)
 
         // 7. Build per-frame output rows.
-        var speakerRows = [[Float]](repeating: [Float](repeating: 0, count: nSpk),
-                                   count: diarLen)
-        for f in 0..<diarLen {
-            for s in 0..<nSpk { speakerRows[f][s] = probs[f * nSpk + s] }
+        var speakerRows = [[Float]](
+            repeating: [Float](repeating: 0, count: nSpk),
+            count: diarLen)
+        for f in 0 ..< diarLen {
+            for s in 0 ..< nSpk { speakerRows[f][s] = probs[f * nSpk + s] }
         }
 
         // 8. Threshold to segments.
@@ -959,7 +980,7 @@ public final class SortformerModel: @unchecked Sendable {
         let nSpk = probs[0].count
         var segments = [DiarizationSegment]()
 
-        for spk in 0..<nSpk {
+        for spk in 0 ..< nSpk {
             var inSpeech = false
             var startFrame = 0
 
@@ -1014,13 +1035,15 @@ public final class SortformerModel: @unchecked Sendable {
             // Conv2d weight transposition: MLX [outC, H, W, inC] → PyTorch [outC, inC, H, W].
             if k.contains("subsampling") && k.contains("weight") && !k.contains("linear") {
                 if tensor.shape.count == 4 {
-                    let (outC, H, W, inC) = (tensor.shape[0], tensor.shape[1],
-                                             tensor.shape[2], tensor.shape[3])
+                    let (outC, H, W, inC) = (
+                        tensor.shape[0], tensor.shape[1],
+                        tensor.shape[2], tensor.shape[3]
+                    )
                     var transposed = [Float](repeating: 0, count: floats.count)
-                    for o in 0..<outC {
-                        for ic in 0..<inC {
-                            for h in 0..<H {
-                                for w in 0..<W {
+                    for o in 0 ..< outC {
+                        for ic in 0 ..< inC {
+                            for h in 0 ..< H {
+                                for w in 0 ..< W {
                                     // src: [o, H, W, inC] row-major → index (o*H*W + h*W + w)*inC + ic
                                     // dst: [o, ic, H, W] row-major → index ((o*inC + ic)*H + h)*W + w
                                     let src = (o * H * W + h * W + w) * inC + ic
@@ -1036,16 +1059,18 @@ public final class SortformerModel: @unchecked Sendable {
 
             // Conv1d weight transposition: MLX [outC, K, inC] → PyTorch [outC, inC, K].
             if (k.contains("pointwise_conv1") || k.contains("pointwise_conv2")
-                    || k.contains("depthwise_conv")) && k.contains("weight") {
+                || k.contains("depthwise_conv")) && k.contains("weight")
+            {
                 if tensor.shape.count == 3 {
                     let (outC, K, inC) = (tensor.shape[0], tensor.shape[1], tensor.shape[2])
                     var transposed = [Float](repeating: 0, count: floats.count)
-                    for o in 0..<outC {
-                        for ic in 0..<inC {
-                            for kk in 0..<K {
+                    for o in 0 ..< outC {
+                        for ic in 0 ..< inC {
+                            for kk in 0 ..< K {
                                 // src: [o, K, inC] → o*K*inC + kk*inC + ic
                                 // dst: [o, inC, K] → o*inC*K + ic*K + kk
-                                transposed[o * inC * K + ic * K + kk] = floats[o * K * inC + kk * inC + ic]
+                                transposed[o * inC * K + ic * K + kk] =
+                                    floats[o * K * inC + kk * inC + ic]
                             }
                         }
                     }
@@ -1068,7 +1093,7 @@ public final class SortformerModel: @unchecked Sendable {
     ) throws -> SortformerModel {
         let configURL = directory.appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: configURL),
-              let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         else { throw SortformerError.configNotFound(directory) }
         let config = SortformerConfig(from: raw)
 

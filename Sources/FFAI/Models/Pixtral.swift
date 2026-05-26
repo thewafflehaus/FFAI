@@ -82,7 +82,7 @@ public enum Pixtral {
     /// auto-model mapping routes `pixtral` → Llava). The mlx-community
     /// conversion uses the same architecture string.
     public static let architectures: Set<String> = [
-        "LlavaForConditionalGeneration",
+        "LlavaForConditionalGeneration"
     ]
 
     /// Default `image_token_id` for Pixtral-12B-4bit mlx-community.
@@ -97,7 +97,7 @@ public enum Pixtral {
         options: LoadOptions, device: Device
     ) throws -> VisionModel {
         guard let visionConfig = config.subConfig("vision_config"),
-              let textConfig = config.subConfig("text_config")
+            let textConfig = config.subConfig("text_config")
         else {
             throw PixtralError.missingConfig
         }
@@ -110,8 +110,9 @@ public enum Pixtral {
         let mergedTextConfig = ModelConfig(
             architecture: "MistralForCausalLM",
             modelType: textConfig.modelType ?? "mistral",
-            raw: pixtralTextConfigWithDefaults(textConfig.raw,
-                                               vocabFallback: config.int("vocab_size")))
+            raw: pixtralTextConfigWithDefaults(
+                textConfig.raw,
+                vocabFallback: config.int("vocab_size")))
         let textWeights = weights.prefixed("language_model.")
         let textEngine = try LlamaDense.loadModel(
             config: mergedTextConfig, weights: textWeights,
@@ -152,7 +153,8 @@ public enum Pixtral {
             visionCfg: visionCfg, textHidden: textEngine.hidden,
             dtype: textEngine.dtype)
 
-        let imageTokenId = config.int("image_token_id")
+        let imageTokenId =
+            config.int("image_token_id")
             ?? config.int("image_token_index")
             ?? defaultImageTokenId
 

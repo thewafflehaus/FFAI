@@ -41,11 +41,11 @@ func nemotronVLLoadVisionEncoder(
     config: ModelConfig, weights: SafeTensorsBundle, device: Device
 ) throws -> VisionEncoder {
     guard let hidden = config.int("hidden_size"),
-          let imageSize = config.int("image_size"),
-          let patchSize = config.int("patch_size"),
-          let intermediate = config.int("intermediate_size"),
-          let nLayers = config.int("num_hidden_layers"),
-          let nHeads = config.int("num_attention_heads")
+        let imageSize = config.int("image_size"),
+        let patchSize = config.int("patch_size"),
+        let intermediate = config.int("intermediate_size"),
+        let nLayers = config.int("num_hidden_layers"),
+        let nHeads = config.int("num_attention_heads")
     else {
         throw NemotronHError.missingConfig("vision_config")
     }
@@ -56,7 +56,8 @@ func nemotronVLLoadVisionEncoder(
         layerNormEps: eps, textHidden: hidden)
 
     // Probe the vision-tower weight prefix.
-    let vm = weights.has("vision_model.embeddings.patch_embedding.weight")
+    let vm =
+        weights.has("vision_model.embeddings.patch_embedding.weight")
         ? weights.prefixed("vision_model.")
         : weights.prefixed("model.vision_model.")
 
@@ -65,7 +66,8 @@ func nemotronVLLoadVisionEncoder(
     // `Ops.conv2d` expects PyTorch OIHW. Transpose when the trailing
     // dim is the channel count.
     let patchWRaw = try vm.tensor(named: "embeddings.patch_embedding.weight")
-    let patchW = patchWRaw.shape.count == 4 && patchWRaw.shape[3] == 3
+    let patchW =
+        patchWRaw.shape.count == 4 && patchWRaw.shape[3] == 3
         ? transposeOHWItoOIHW(patchWRaw)
         : patchWRaw
     let patchB = try vm.tensor(named: "embeddings.patch_embedding.bias")
@@ -73,7 +75,7 @@ func nemotronVLLoadVisionEncoder(
 
     var layers: [VisionEncoderLayer] = []
     layers.reserveCapacity(nLayers)
-    for i in 0..<nLayers {
+    for i in 0 ..< nLayers {
         let p = "encoder.layers.\(i)"
         let ln1 = LayerNorm(
             weight: try vm.tensor(named: "\(p).layer_norm1.weight"),
@@ -82,18 +84,20 @@ func nemotronVLLoadVisionEncoder(
             weight: try vm.tensor(named: "\(p).layer_norm2.weight"),
             bias: try vm.tensor(named: "\(p).layer_norm2.bias"), eps: eps)
         func lin(_ name: String) throws -> Linear {
-            Linear(weight: try vm.tensor(named: "\(p).\(name).weight"),
-                   bias: try? vm.tensor(named: "\(p).\(name).bias"))
+            Linear(
+                weight: try vm.tensor(named: "\(p).\(name).weight"),
+                bias: try? vm.tensor(named: "\(p).\(name).bias"))
         }
-        layers.append(VisionEncoderLayer(
-            layerNorm1: ln1,
-            qProj: try lin("self_attn.q_proj"),
-            kProj: try lin("self_attn.k_proj"),
-            vProj: try lin("self_attn.v_proj"),
-            oProj: try lin("self_attn.out_proj"),
-            layerNorm2: ln2,
-            fc1: try lin("mlp.fc1"), fc2: try lin("mlp.fc2"),
-            hidden: hidden, nHeads: nHeads, intermediate: intermediate))
+        layers.append(
+            VisionEncoderLayer(
+                layerNorm1: ln1,
+                qProj: try lin("self_attn.q_proj"),
+                kProj: try lin("self_attn.k_proj"),
+                vProj: try lin("self_attn.v_proj"),
+                oProj: try lin("self_attn.out_proj"),
+                layerNorm2: ln2,
+                fc1: try lin("mlp.fc1"), fc2: try lin("mlp.fc2"),
+                hidden: hidden, nHeads: nHeads, intermediate: intermediate))
     }
     let postLN = LayerNorm(
         weight: try vm.tensor(named: "post_layernorm.weight"),
@@ -134,12 +138,14 @@ public final class NemotronVLProjector: @unchecked Sendable {
         }
         // The projector is namespaced under `multi_modal_projector.`
         // (the HF convention) — probe both possible prefixes.
-        let mp = weights.has("multi_modal_projector.linear_1.weight")
+        let mp =
+            weights.has("multi_modal_projector.linear_1.weight")
             ? weights.prefixed("multi_modal_projector.")
             : weights.prefixed("model.multi_modal_projector.")
         func lin(_ name: String) throws -> Linear {
-            Linear(weight: try mp.tensor(named: "\(name).weight"),
-                   bias: try? mp.tensor(named: "\(name).bias"))
+            Linear(
+                weight: try mp.tensor(named: "\(name).weight"),
+                bias: try? mp.tensor(named: "\(name).bias"))
         }
         return NemotronVLProjector(
             linear1: try lin("linear_1"), linear2: try lin("linear_2"),
@@ -151,16 +157,18 @@ public final class NemotronVLProjector: @unchecked Sendable {
     func project(encoderTokens: Tensor, device: Device) -> Tensor {
         let numTokens = encoderTokens.shape[0]
         let cmd = device.makeCommandBuffer()
-        var x = Ops.gemm(weight: linear1.weight, input: encoderTokens,
-                         nRows: numTokens, on: cmd)
+        var x = Ops.gemm(
+            weight: linear1.weight, input: encoderTokens,
+            nRows: numTokens, on: cmd)
         if let b = linear1.bias {
             x = addRowBias(
                 x, bias: b, nRows: numTokens,
                 rowSize: linear1.weight.shape[0], on: cmd)
         }
         x = Ops.gelu(x, on: cmd)
-        var y = Ops.gemm(weight: linear2.weight, input: x,
-                         nRows: numTokens, on: cmd)
+        var y = Ops.gemm(
+            weight: linear2.weight, input: x,
+            nRows: numTokens, on: cmd)
         if let b = linear2.bias {
             y = addRowBias(
                 y, bias: b, nRows: numTokens,
@@ -184,8 +192,10 @@ final class NemotronVLVisionTower {
     let textHidden: Int
     let dtype: DType
 
-    init(encoder: VisionEncoder, projector: NemotronVLProjector,
-         textHidden: Int, dtype: DType) {
+    init(
+        encoder: VisionEncoder, projector: NemotronVLProjector,
+        textHidden: Int, dtype: DType
+    ) {
         self.encoder = encoder
         self.projector = projector
         self.textHidden = textHidden
@@ -255,7 +265,7 @@ public enum NemotronVL {
         options: LoadOptions, device: Device
     ) throws -> VisionModel {
         guard let visionConfig = config.subConfig("vision_config"),
-              let textConfigRaw = config.nested("text_config")
+            let textConfigRaw = config.nested("text_config")
         else {
             throw NemotronHError.missingConfig("vision_config")
         }
@@ -289,7 +299,8 @@ public enum NemotronVL {
             encoder: visionEncoder, projector: projector,
             textHidden: textEngine.hidden, dtype: textEngine.dtype)
 
-        let imageTokenId = config.int("image_token_id")
+        let imageTokenId =
+            config.int("image_token_id")
             ?? config.int("image_token_index") ?? defaultImageTokenId
         return try VisionModel(
             visionEncoder: composedTower.asVisionEncoder(),

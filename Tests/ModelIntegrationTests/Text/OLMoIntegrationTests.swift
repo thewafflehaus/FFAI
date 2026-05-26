@@ -18,9 +18,10 @@
 // architecture-string routing or forward path.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("OLMo Integration", .serialized)
 struct OLMoIntegrationTests {

@@ -25,9 +25,10 @@
 // correctly-shaped feature tokens.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("QwenOmni Integration", .serialized)
 struct QwenOmniIntegrationTests {
@@ -53,7 +54,8 @@ struct QwenOmniIntegrationTests {
         #expect(model.config.encoderHidden > 0)
         #expect(model.config.textHidden > 0)
         // The audio tower's encoder block count must match the config.
-        #expect(model.audioEncoder.layers.count
+        #expect(
+            model.audioEncoder.layers.count
                 == model.config.encoderLayers)
     }
 
@@ -64,7 +66,7 @@ struct QwenOmniIntegrationTests {
         // transformer stack to exercise the full encoder.
         let sr = 16_000
         var wave = [Float](repeating: 0, count: sr)
-        for i in 0..<sr {
+        for i in 0 ..< sr {
             wave[i] = 0.3 * sin(2.0 * Float.pi * 350.0 * Float(i) / Float(sr))
         }
         let features = model.encodeAudio(waveform: wave)
@@ -75,8 +77,9 @@ struct QwenOmniIntegrationTests {
         #expect(vals.allSatisfy { $0.isFinite })
         let variance = vals.map { $0 * $0 }.reduce(0, +) / Float(vals.count)
         #expect(variance > 1e-6, "QwenOmni audio features are degenerate")
-        print("QwenOmni encoded audio into \(features.shape[0]) tokens "
-              + "of dim \(features.shape[1])")
+        print(
+            "QwenOmni encoded audio into \(features.shape[0]) tokens "
+                + "of dim \(features.shape[1])")
     }
 
     @Test("encodeAudio — real speech yields non-degenerate feature tokens")
@@ -88,17 +91,20 @@ struct QwenOmniIntegrationTests {
 
         let features = model.encodeAudio(waveform: wave)
         #expect(features.shape[1] == model.config.textHidden)
-        #expect(features.shape[0] > 0,
-                "QwenOmni produced no audio feature tokens for real speech")
+        #expect(
+            features.shape[0] > 0,
+            "QwenOmni produced no audio feature tokens for real speech")
         let vals = features.toFloatArray()
         #expect(vals.allSatisfy { $0.isFinite })
         // Real speech must produce features with genuine variance — a
         // flat / constant feature map is a degenerate encode.
         let mean = vals.reduce(0, +) / Float(vals.count)
-        let variance = vals.map { ($0 - mean) * ($0 - mean) }
+        let variance =
+            vals.map { ($0 - mean) * ($0 - mean) }
             .reduce(0, +) / Float(vals.count)
         #expect(variance > 1e-6, "QwenOmni real-speech features are degenerate")
-        print("QwenOmni encoded real speech into \(features.shape[0]) "
-              + "tokens, feature variance=\(variance)")
+        print(
+            "QwenOmni encoded real speech into \(features.shape[0]) "
+                + "tokens, feature variance=\(variance)")
     }
 }

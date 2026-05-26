@@ -136,12 +136,12 @@ public struct SopranoConfig: Sendable {
             guard let v = config.float(k) else { return nil }
             return Float(v)
         }
-        guard let hidden       = i("hidden_size"),
-              let nLayers      = i("num_hidden_layers"),
-              let nHeads       = i("num_attention_heads"),
-              let headDim      = i("head_dim"),
-              let vocab        = i("vocab_size"),
-              let intermediate = i("intermediate_size")
+        guard let hidden = i("hidden_size"),
+            let nLayers = i("num_hidden_layers"),
+            let nHeads = i("num_attention_heads"),
+            let headDim = i("head_dim"),
+            let vocab = i("vocab_size"),
+            let intermediate = i("intermediate_size")
         else { return nil }
 
         return SopranoConfig(
@@ -194,12 +194,22 @@ final class SopranoLayer: Module {
         hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int, intermediate: Int,
         ropeTheta: Float
     ) {
-        self.qProj = qProj; self.kProj = kProj; self.vProj = vProj; self.oProj = oProj
-        self.qNorm = qNorm; self.kNorm = kNorm
-        self.gateProj = gateProj; self.upProj = upProj; self.downProj = downProj
-        self.inputNorm = inputNorm; self.postAttnNorm = postAttnNorm
-        self.hidden = hidden; self.nHeads = nHeads; self.nKVHeads = nKVHeads
-        self.headDim = headDim; self.intermediate = intermediate
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
+        self.qNorm = qNorm
+        self.kNorm = kNorm
+        self.gateProj = gateProj
+        self.upProj = upProj
+        self.downProj = downProj
+        self.inputNorm = inputNorm
+        self.postAttnNorm = postAttnNorm
+        self.hidden = hidden
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.intermediate = intermediate
         self.ropeTheta = ropeTheta
         self.scale = 1.0 / sqrtf(Float(headDim))
     }
@@ -235,22 +245,27 @@ final class SopranoLayer: Module {
         let v = vProj(xNorm, on: cmd)
 
         // Per-head q_norm / k_norm — the Qwen3/Soprano structural marker.
-        let qNormed = Ops.rmsNormRows(q, weight: qNorm.weight, eps: qNorm.eps,
-                                      nRows: nHeads, rowSize: headDim, on: cmd)
-        let kNormed = Ops.rmsNormRows(k, weight: kNorm.weight, eps: kNorm.eps,
-                                      nRows: nKVHeads, rowSize: headDim, on: cmd)
+        let qNormed = Ops.rmsNormRows(
+            q, weight: qNorm.weight, eps: qNorm.eps,
+            nRows: nHeads, rowSize: headDim, on: cmd)
+        let kNormed = Ops.rmsNormRows(
+            k, weight: kNorm.weight, eps: kNorm.eps,
+            nRows: nKVHeads, rowSize: headDim, on: cmd)
 
         // RoPE — standard, no scaling.
-        let qRot = Ops.rope(qNormed.reshaped(to: [nHeads, headDim]),
-                            position: position, headDim: headDim,
-                            thetaBase: ropeTheta, scaling: .none, on: cmd)
-        let kRot = Ops.rope(kNormed.reshaped(to: [nKVHeads, headDim]),
-                            position: position, headDim: headDim,
-                            thetaBase: ropeTheta, scaling: .none, on: cmd)
+        let qRot = Ops.rope(
+            qNormed.reshaped(to: [nHeads, headDim]),
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, scaling: .none, on: cmd)
+        let kRot = Ops.rope(
+            kNormed.reshaped(to: [nKVHeads, headDim]),
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, scaling: .none, on: cmd)
 
-        cache.appendOnGPU(kFlat: kRot,
-                          vFlat: v.reshaped(to: [nKVHeads, headDim]),
-                          on: cmd)
+        cache.appendOnGPU(
+            kFlat: kRot,
+            vFlat: v.reshaped(to: [nKVHeads, headDim]),
+            on: cmd)
         let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
         let attnOut = Ops.sdpaDecode(
             q: qRot, k: cacheK, v: cacheV,
@@ -291,11 +306,18 @@ final class SopranoLLM: Module {
         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int,
         headDim: Int, maxSeq: Int, ropeTheta: Float, dtype: DType
     ) {
-        self.embedTokens = embedTokens; self.layers = layers
-        self.finalNorm = finalNorm; self.lmHead = lmHead
-        self.hidden = hidden; self.nLayers = nLayers; self.nHeads = nHeads
-        self.nKVHeads = nKVHeads; self.headDim = headDim; self.maxSeq = maxSeq
-        self.ropeTheta = ropeTheta; self.dtype = dtype
+        self.embedTokens = embedTokens
+        self.layers = layers
+        self.finalNorm = finalNorm
+        self.lmHead = lmHead
+        self.hidden = hidden
+        self.nLayers = nLayers
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.maxSeq = maxSeq
+        self.ropeTheta = ropeTheta
+        self.dtype = dtype
     }
 
     func parameters() -> [(String, Tensor)] {
@@ -314,9 +336,10 @@ final class SopranoLLM: Module {
     }
 
     func makeLayerCaches(device: Device) -> [KVCache] {
-        (0..<nLayers).map { _ in
-            KVCache(nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
-                    dtype: dtype, eviction: .unbounded, device: device)
+        (0 ..< nLayers).map { _ in
+            KVCache(
+                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                dtype: dtype, eviction: .unbounded, device: device)
         }
     }
 
@@ -329,13 +352,15 @@ final class SopranoLLM: Module {
         let tokenBuf = device.makeBuffer(length: 4)
         var tid = UInt32(tokenId)
         memcpy(tokenBuf.contents(), &tid, 4)
-        let tokenTensor = Tensor(buffer: tokenBuf, offset: 0,
-                                 shape: [1], dtype: .u32)
+        let tokenTensor = Tensor(
+            buffer: tokenBuf, offset: 0,
+            shape: [1], dtype: .u32)
         var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
 
         for (i, layer) in layers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i], cmd: cmd, device: device)
+            h = layer.forward(
+                h, position: position,
+                cache: caches[i], cmd: cmd, device: device)
         }
         let normed = finalNorm(h, on: cmd)
         let logits = lmHead(normed, on: cmd)
@@ -369,7 +394,7 @@ final class SopranoLLM: Module {
 ///   decoder.decoder.final_layer_norm.weight/.bias
 ///   decoder.head.out.weight/.bias
 public final class SopranoDecoder {
-    public let inputChannels: Int     // == LLM hidden size
+    public let inputChannels: Int  // == LLM hidden size
     public let decoderDim: Int
     public let upscale: Int
     public let nFFT: Int
@@ -383,7 +408,7 @@ public final class SopranoDecoder {
     private let finalNormW: [Float], finalNormB: [Float]?
 
     // ISTFT head weights
-    private let headOutW: [Float]    // [nFFT+2, decoderDim]
+    private let headOutW: [Float]  // [nFFT+2, decoderDim]
     private let headOutB: [Float]?
 
     /// Magnitude clamp — iSTFT stability guard (matches MLX reference).
@@ -397,13 +422,21 @@ public final class SopranoDecoder {
         finalNormW: [Float], finalNormB: [Float]?,
         headOutW: [Float], headOutB: [Float]?
     ) {
-        self.inputChannels = inputChannels; self.decoderDim = decoderDim
-        self.upscale = upscale; self.nFFT = nFFT; self.hopLength = hopLength
-        self.embedW = embedW; self.embedShape = embedShape; self.embedB = embedB
-        self.normW = normW; self.normB = normB
+        self.inputChannels = inputChannels
+        self.decoderDim = decoderDim
+        self.upscale = upscale
+        self.nFFT = nFFT
+        self.hopLength = hopLength
+        self.embedW = embedW
+        self.embedShape = embedShape
+        self.embedB = embedB
+        self.normW = normW
+        self.normB = normB
         self.blocks = blocks
-        self.finalNormW = finalNormW; self.finalNormB = finalNormB
-        self.headOutW = headOutW; self.headOutB = headOutB
+        self.finalNormW = finalNormW
+        self.finalNormB = finalNormB
+        self.headOutW = headOutW
+        self.headOutB = headOutB
     }
 
     /// Load from a SafeTensorsBundle using Soprano-80M key layout.
@@ -427,9 +460,9 @@ public final class SopranoDecoder {
             let s = try shape(key)
             let (cOut, k, cIn) = (s[0], s[1], s[2])
             var out = [Float](repeating: 0, count: raw.count)
-            for o in 0..<cOut {
-                for kk in 0..<k {
-                    for ic in 0..<cIn {
+            for o in 0 ..< cOut {
+                for kk in 0 ..< k {
+                    for ic in 0 ..< cIn {
                         out[(o * cIn + ic) * k + kk] = raw[(o * k + kk) * cIn + ic]
                     }
                 }
@@ -445,7 +478,7 @@ public final class SopranoDecoder {
         let nb = has("\(bb).norm.bias") ? try floats("\(bb).norm.bias") : nil
 
         var blockList: [SopranoConvNeXtBlock] = []
-        for i in 0..<numLayers {
+        for i in 0 ..< numLayers {
             let p = "\(bb).convnext.\(i)"
             let (dw, ds) = try convW("\(p).dwconv.weight")
             let dwb = has("\(p).dwconv.bias") ? try floats("\(p).dwconv.bias") : nil
@@ -456,16 +489,18 @@ public final class SopranoDecoder {
             let pw2w = try floats("\(p).pwconv2.weight")
             let pw2b = has("\(p).pwconv2.bias") ? try floats("\(p).pwconv2.bias") : nil
             let gamma = has("\(p).gamma") ? try floats("\(p).gamma") : nil
-            blockList.append(SopranoConvNeXtBlock(
-                dwWeight: dw, dwShape: ds, dwBias: dwb,
-                normW: cnW, normB: cnB,
-                pw1W: pw1w, pw1B: pw1b,
-                pw2W: pw2w, pw2B: pw2b,
-                gamma: gamma, dim: decoderDim, interDim: intermediateDim))
+            blockList.append(
+                SopranoConvNeXtBlock(
+                    dwWeight: dw, dwShape: ds, dwBias: dwb,
+                    normW: cnW, normB: cnB,
+                    pw1W: pw1w, pw1B: pw1b,
+                    pw2W: pw2w, pw2B: pw2b,
+                    gamma: gamma, dim: decoderDim, interDim: intermediateDim))
         }
 
         let fnw = try floats("\(bb).final_layer_norm.weight")
-        let fnb = has("\(bb).final_layer_norm.bias") ? try floats("\(bb).final_layer_norm.bias") : nil
+        let fnb =
+            has("\(bb).final_layer_norm.bias") ? try floats("\(bb).final_layer_norm.bias") : nil
 
         let hw = try floats("decoder.head.out.weight")
         let hb = has("decoder.head.out.bias") ? try floats("decoder.head.out.bias") : nil
@@ -485,15 +520,17 @@ public final class SopranoDecoder {
     ///   - hiddenStates: Flat `[tokenCount × inputChannels]` row-major array.
     ///   - tokenCount: Number of hidden-state rows.
     ///   - device: Metal device for the ISTFT overlap-add kernel.
-    public func decode(hiddenStates: [Float], tokenCount: Int,
-                       device: Device = .shared) -> Tensor {
+    public func decode(
+        hiddenStates: [Float], tokenCount: Int,
+        device: Device = .shared
+    ) -> Tensor {
         let hidden = inputChannels
         let t = tokenCount
 
         // Transpose [T, hidden] row-major → NCL [1, hidden, T]
         var ncl = [Float](repeating: 0, count: hidden * t)
-        for tok in 0..<t {
-            for ch in 0..<hidden {
+        for tok in 0 ..< t {
+            for ch in 0 ..< hidden {
                 ncl[ch * t + tok] = hiddenStates[tok * hidden + ch]
             }
         }
@@ -512,8 +549,9 @@ public final class SopranoDecoder {
 
         // Initial LayerNorm over channels (NCL → rows → NCL).
         var rows = nclToRows(embedded, c: decoderDim, t: curShape[2])
-        rows = AudioMath.layerNorm(rows, rows: curShape[2], dim: decoderDim,
-                                   weight: normW, bias: normB)
+        rows = AudioMath.layerNorm(
+            rows, rows: curShape[2], dim: decoderDim,
+            weight: normW, bias: normB)
         var h = rowsToNcl(rows, c: decoderDim, t: curShape[2])
 
         // ConvNeXt blocks — parallelise CPU attention per block.
@@ -521,8 +559,9 @@ public final class SopranoDecoder {
 
         // Final LayerNorm
         rows = nclToRows(h, c: decoderDim, t: curShape[2])
-        rows = AudioMath.layerNorm(rows, rows: curShape[2], dim: decoderDim,
-                                   weight: finalNormW, bias: finalNormB)
+        rows = AudioMath.layerNorm(
+            rows, rows: curShape[2], dim: decoderDim,
+            weight: finalNormW, bias: finalNormB)
         h = rowsToNcl(rows, c: decoderDim, t: curShape[2])
 
         // ISTFT head: project to STFT coefficients, split mag+phase, iSTFT.
@@ -538,16 +577,17 @@ public final class SopranoDecoder {
 
         // Project [T, decoderDim] → [T, nFFT+2] via linear.
         let rows = nclToRows(features, c: decoderDim, t: t)
-        let coeffs = AudioMath.linear(rows, rows: t, inDim: decoderDim,
-                                      weight: headOutW, outDim: nFFT + 2,
-                                      bias: headOutB)
+        let coeffs = AudioMath.linear(
+            rows, rows: t, inDim: decoderDim,
+            weight: headOutW, outDim: nFFT + 2,
+            bias: headOutB)
 
         // Split into magnitude (exp, clipped) and phase → complex STFT [T, nFreq].
         var specRe = [Float](repeating: 0, count: t * nFreq)
         var specIm = [Float](repeating: 0, count: t * nFreq)
-        for frame in 0..<t {
+        for frame in 0 ..< t {
             let base = frame * (nFFT + 2)
-            for f in 0..<nFreq {
+            for f in 0 ..< nFreq {
                 let mag = min(expf(coeffs[base + f]), Self.magClip)
                 let phase = coeffs[base + nFreq + f]
                 specRe[frame * nFreq + f] = mag * cosf(phase)
@@ -556,11 +596,11 @@ public final class SopranoDecoder {
         }
 
         // GPU iSTFT overlap-add via `Ops.vocoderISTFT`.
-        let reT  = Tensor.empty(shape: [t, nFreq], dtype: .f32, device: device)
+        let reT = Tensor.empty(shape: [t, nFreq], dtype: .f32, device: device)
         reT.copyIn(from: specRe)
-        let imT  = Tensor.empty(shape: [t, nFreq], dtype: .f32, device: device)
+        let imT = Tensor.empty(shape: [t, nFreq], dtype: .f32, device: device)
         imT.copyIn(from: specIm)
-        let win  = AudioPreprocessing.hannWindow(nFFT)
+        let win = AudioPreprocessing.hannWindow(nFFT)
         let winT = Tensor.empty(shape: [nFFT], dtype: .f32, device: device)
         winT.copyIn(from: win)
 
@@ -583,7 +623,7 @@ public final class SopranoDecoder {
 /// Mirrors VocosConvNeXtBlock from `VocosBackbone.swift` but operates on
 /// Soprano-specific weight key prefixes and is self-contained.
 private struct SopranoConvNeXtBlock {
-    let dwWeight: [Float]    // [dim, 1, K]  (depthwise)
+    let dwWeight: [Float]  // [dim, 1, K]  (depthwise)
     let dwShape: [Int]
     let dwBias: [Float]?
     let normW: [Float], normB: [Float]?
@@ -608,27 +648,30 @@ private struct SopranoConvNeXtBlock {
         rows = AudioMath.layerNorm(rows, rows: t, dim: dim, weight: normW, bias: normB)
 
         // Pointwise linear 1 (dim → interDim) + GELU.
-        var ff = AudioMath.linear(rows, rows: t, inDim: dim,
-                                  weight: pw1W, outDim: interDim, bias: pw1B)
+        var ff = AudioMath.linear(
+            rows, rows: t, inDim: dim,
+            weight: pw1W, outDim: interDim, bias: pw1B)
         ff = AudioMath.gelu(ff)
 
         // Pointwise linear 2 (interDim → dim).
-        var out = AudioMath.linear(ff, rows: t, inDim: interDim,
-                                   weight: pw2W, outDim: dim, bias: pw2B)
+        var out = AudioMath.linear(
+            ff, rows: t, inDim: interDim,
+            weight: pw2W, outDim: dim, bias: pw2B)
 
         // Per-channel layer scale.
         if let g = gamma {
-            for pos in 0..<t {
-                for ch in 0..<dim { out[pos * dim + ch] *= g[ch] }
+            for pos in 0 ..< t {
+                for ch in 0 ..< dim { out[pos * dim + ch] *= g[ch] }
             }
         }
 
         // Residual add (out is [T, dim]; x is NCL → transpose back first).
         let outNcl = rowsToNcl(out, c: dim, t: t)
-        precondition(outNcl.count == x.count,
-                     "SopranoConvNeXtBlock: residual length mismatch")
+        precondition(
+            outNcl.count == x.count,
+            "SopranoConvNeXtBlock: residual length mismatch")
         var sum = x
-        for i in 0..<sum.count { sum[i] += outNcl[i] }
+        for i in 0 ..< sum.count { sum[i] += outNcl[i] }
         return (sum, shape)
     }
 }
@@ -638,8 +681,8 @@ private struct SopranoConvNeXtBlock {
 /// Transpose NCL [1, C, T] tensor to row-major [T, C].
 private func nclToRows(_ x: [Float], c: Int, t: Int) -> [Float] {
     var out = [Float](repeating: 0, count: t * c)
-    for ch in 0..<c {
-        for pos in 0..<t { out[pos * c + ch] = x[ch * t + pos] }
+    for ch in 0 ..< c {
+        for pos in 0 ..< t { out[pos * c + ch] = x[ch * t + pos] }
     }
     return out
 }
@@ -647,8 +690,8 @@ private func nclToRows(_ x: [Float], c: Int, t: Int) -> [Float] {
 /// Transpose row-major [T, C] back to NCL [1, C, T].
 private func rowsToNcl(_ x: [Float], c: Int, t: Int) -> [Float] {
     var out = [Float](repeating: 0, count: c * t)
-    for pos in 0..<t {
-        for ch in 0..<c { out[ch * t + pos] = x[pos * c + ch] }
+    for pos in 0 ..< t {
+        for ch in 0 ..< c { out[ch * t + pos] = x[pos * c + ch] }
     }
     return out
 }
@@ -663,9 +706,9 @@ private func sopranoInterpolate1d(
     if size == inWidth { return (x, shape) }
     if inWidth == 1 {
         var out = [Float](repeating: 0, count: c * size)
-        for ch in 0..<c {
+        for ch in 0 ..< c {
             let v = x[ch * inWidth]
-            for i in 0..<size { out[ch * size + i] = v }
+            for i in 0 ..< size { out[ch * size + i] = v }
         }
         return (out, [1, c, size])
     }
@@ -678,7 +721,7 @@ private func sopranoInterpolate1d(
     DispatchQueue.concurrentPerform(iterations: c) { ch in
         let base = ch * inWidth
         let outBase = ch * size
-        for i in 0..<size {
+        for i in 0 ..< size {
             let p = Float(i) * scale
             let lo = min(Int(p), inWidth - 1)
             let hi = min(lo + 1, inWidth - 1)
@@ -696,11 +739,11 @@ private func sopranoInterpolate1d(
 private let sopranoOnes = [
     "", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
     "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
-    "seventeen", "eighteen", "nineteen"
+    "seventeen", "eighteen", "nineteen",
 ]
 private let sopranoTens = [
     "", "", "twenty", "thirty", "forty", "fifty", "sixty",
-    "seventy", "eighty", "ninety"
+    "seventy", "eighty", "ninety",
 ]
 private let sopranoOrdinals: [Int: String] = [
     1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth",
@@ -709,7 +752,7 @@ private let sopranoOrdinals: [Int: String] = [
     15: "fifteenth", 16: "sixteenth", 17: "seventeenth", 18: "eighteenth",
     19: "nineteenth", 20: "twentieth", 30: "thirtieth", 40: "fortieth",
     50: "fiftieth", 60: "sixtieth", 70: "seventieth", 80: "eightieth",
-    90: "ninetieth"
+    90: "ninetieth",
 ]
 
 private func sopranoNumToWords(_ n: Int) -> String {
@@ -739,7 +782,8 @@ private func sopranoNumToWords(_ n: Int) -> String {
 private func sopranoOrdinalToWords(_ n: Int) -> String {
     if let o = sopranoOrdinals[n] { return o }
     if n < 100 {
-        let t = n / 10; let o = n % 10
+        let t = n / 10
+        let o = n % 10
         if o == 0 { return sopranoTens[t] + "ieth" }
         return sopranoTens[t] + " " + (sopranoOrdinals[o] ?? sopranoOnes[o] + "th")
     }
@@ -754,7 +798,7 @@ private let sopranoAbbreviations: [(String, String)] = [
     ("\\bdrs\\.", "doctors"), ("\\brev\\.", "reverend"), ("\\blt\\.", "lieutenant"),
     ("\\bhon\\.", "honorable"), ("\\bsgt\\.", "sergeant"), ("\\bcapt\\.", "captain"),
     ("\\besq\\.", "esquire"), ("\\bltd\\.", "limited"), ("\\bcol\\.", "colonel"),
-    ("\\bft\\.", "fort")
+    ("\\bft\\.", "fort"),
 ]
 
 private let sopranoCasedAbbreviations: [(String, String)] = [
@@ -768,14 +812,14 @@ private let sopranoCasedAbbreviations: [(String, String)] = [
     ("\\bCLI\\b", "c l i"), ("\\bCPUs\\b", "c p u's"),
     ("\\bCPU\\b", "c p u"), ("\\bGPUs\\b", "g p u's"),
     ("\\bGPU\\b", "g p u"), ("\\bAve\\b", "avenue"),
-    ("\\betc\\b", "etcetera")
+    ("\\betc\\b", "etcetera"),
 ]
 
 private let sopranoSpecialChars: [(String, String)] = [
     ("@", " at "), ("&", " and "), ("%", " percent "), (":", "."), (";", ","),
     ("\\+", " plus "), ("\\\\", " backslash "), ("~", " about "),
     ("<", " less than "), (">", " greater than "), ("=", " equals "),
-    ("/", " slash "), ("_", " ")
+    ("/", " slash "), ("_", " "),
 ]
 
 /// Clean and normalise text for Soprano TTS — converts numbers, expands
@@ -811,7 +855,8 @@ func cleanTextForSoprano(_ text: String) -> String {
     result = result.lowercased()
     // Remove non-allowed characters
     if let re = try? NSRegularExpression(
-        pattern: "[^A-Za-z !\\$%&'\\*\\+,\\-./0123456789<>\\?_]") {
+        pattern: "[^A-Za-z !\\$%&'\\*\\+,\\-./0123456789<>\\?_]")
+    {
         let r = NSRange(result.startIndex..., in: result)
         result = re.stringByReplacingMatches(in: result, range: r, withTemplate: "")
     }
@@ -833,7 +878,7 @@ func cleanTextForSoprano(_ text: String) -> String {
     for (pat, rep): (String, String) in [
         ("\\.{3,}", "..."), (",+", ","),
         ("[.,]*\\.[.,]*", "."), ("[.,!]*![.,!]*", "!"),
-        ("[.,!?]*\\?[.,!?]*", "?")
+        ("[.,!?]*\\?[.,!?]*", "?"),
     ] {
         if let re = try? NSRegularExpression(pattern: pat) {
             let r = NSRange(result.startIndex..., in: result)
@@ -847,8 +892,10 @@ private func sopranoNormalizeNumbers(_ text: String) -> String {
     var result = text
 
     // Applies regex substitution in reverse-match order to preserve offsets.
-    func replace(_ pattern: String, opts: NSRegularExpression.Options = [],
-                 transform: (String) -> String) {
+    func replace(
+        _ pattern: String, opts: NSRegularExpression.Options = [],
+        transform: (String) -> String
+    ) {
         guard let re = try? NSRegularExpression(pattern: pattern, options: opts) else { return }
         let ns = result as NSString
         let rng = NSRange(location: 0, length: ns.length)
@@ -860,8 +907,10 @@ private func sopranoNormalizeNumbers(_ text: String) -> String {
 
     replace("#\\d") { m in "number \(String(m.dropFirst()))" }
     replace("\\d[KMBTkmbt]") { m in
-        let map = ["K":"thousand","M":"million","B":"billion","T":"trillion",
-                   "k":"thousand","m":"million","b":"billion","t":"trillion"]
+        let map = [
+            "K": "thousand", "M": "million", "B": "billion", "T": "trillion",
+            "k": "thousand", "m": "million", "b": "billion", "t": "trillion",
+        ]
         return "\(String(m.dropLast())) \(map[String(m.last!)] ?? "")"
     }
     replace("(\\d[\\d,]+\\d)") { m in m.replacingOccurrences(of: ",", with: "") }
@@ -872,15 +921,16 @@ private func sopranoNormalizeNumbers(_ text: String) -> String {
         let c = parts.count > 1 ? (Int(parts[1]) ?? 0) : 0
         if d > 0 && c > 0 {
             return "\(sopranoNumToWords(d)) dollar\(d==1 ? "" : "s"), "
-                 + "\(sopranoNumToWords(c)) cent\(c==1 ? "" : "s")"
+                + "\(sopranoNumToWords(c)) cent\(c==1 ? "" : "s")"
         }
         if d > 0 { return "\(sopranoNumToWords(d)) dollar\(d==1 ? "" : "s")" }
         if c > 0 { return "\(sopranoNumToWords(c)) cent\(c==1 ? "" : "s")" }
         return "zero dollars"
     }
     replace("\\d+(st|nd|rd|th)") { m in
-        let n = m.replacingOccurrences(of: "st|nd|rd|th", with: "",
-                                        options: .regularExpression)
+        let n = m.replacingOccurrences(
+            of: "st|nd|rd|th", with: "",
+            options: .regularExpression)
         return (Int(n).map { sopranoOrdinalToWords($0) }) ?? m
     }
     replace("\\d+") { m in
@@ -889,7 +939,8 @@ private func sopranoNormalizeNumbers(_ text: String) -> String {
             if n == 2000 { return "two thousand" }
             if n > 2000 && n < 2010 { return "two thousand " + sopranoNumToWords(n % 100) }
             if n % 100 == 0 { return sopranoNumToWords(n / 100) + " hundred" }
-            let f = n / 100; let s = n % 100
+            let f = n / 100
+            let s = n % 100
             return sopranoNumToWords(f) + (s < 10 ? " oh " : " ") + sopranoNumToWords(s)
         }
         return sopranoNumToWords(n)
@@ -966,7 +1017,7 @@ public final class SopranoModel: @unchecked Sendable {
         let trim = dec.nFFT / 2
         let lo = min(trim, raw.count)
         let hi = max(raw.count - trim, lo)
-        return Array(raw[lo..<hi])
+        return Array(raw[lo ..< hi])
     }
 
     // ── Tokenizer ─────────────────────────────────────────────────────
@@ -979,10 +1030,11 @@ public final class SopranoModel: @unchecked Sendable {
     ///   • Whitespace runs — substituted with the space-token ID (8004)
     ///     to work around a swift-transformers BPE splitter quirk.
     private func tokenize(_ text: String, tokenizer: any Tokenizer) -> [Int] {
-        guard let specialRe = try? NSRegularExpression(
-                  pattern: #"\[(STOP|TEXT|START)\]"#),
-              let preTokenRe = try? NSRegularExpression(
-                  pattern: #"\s+|\w+|[^\w\s]+"#)
+        guard
+            let specialRe = try? NSRegularExpression(
+                pattern: #"\[(STOP|TEXT|START)\]"#),
+            let preTokenRe = try? NSRegularExpression(
+                pattern: #"\s+|\w+|[^\w\s]+"#)
         else { return tokenizer.encode(text: text, addSpecialTokens: false) }
 
         let nsText = text as NSString
@@ -993,8 +1045,9 @@ public final class SopranoModel: @unchecked Sendable {
         var lastEnd = 0
         for match in specialMatches {
             if match.range.location > lastEnd {
-                let r = NSRange(location: lastEnd,
-                                length: match.range.location - lastEnd)
+                let r = NSRange(
+                    location: lastEnd,
+                    length: match.range.location - lastEnd)
                 segments.append((nsText.substring(with: r), false))
             }
             segments.append((nsText.substring(with: match.range), true))
@@ -1007,8 +1060,9 @@ public final class SopranoModel: @unchecked Sendable {
         var allTokens: [Int] = []
         for seg in segments where !seg.text.isEmpty {
             if seg.isSpecial {
-                allTokens += tokenizer.encode(text: seg.text,
-                                               addSpecialTokens: false)
+                allTokens += tokenizer.encode(
+                    text: seg.text,
+                    addSpecialTokens: false)
             } else {
                 let segNS = seg.text as NSString
                 let r = NSRange(location: 0, length: segNS.length)
@@ -1057,8 +1111,9 @@ public final class SopranoModel: @unchecked Sendable {
         var lastLogits: Tensor?
         for tokenId in promptIds {
             let cmd = device.makeCommandBuffer()
-            let (logits, _) = llm.forward(tokenId: tokenId, position: position,
-                                           caches: caches, cmd: cmd, device: device)
+            let (logits, _) = llm.forward(
+                tokenId: tokenId, position: position,
+                caches: caches, cmd: cmd, device: device)
             cmd.commit()
             cmd.waitUntilCompleted()
             lastLogits = logits
@@ -1069,8 +1124,9 @@ public final class SopranoModel: @unchecked Sendable {
         var currentToken: Int = {
             guard let lg = lastLogits else { return stopId }
             let logitsF = AudioMath.floats(lg)
-            return sopranoSample(logits: logitsF, temperature: temperature,
-                                 topP: topP, rng: &rng)
+            return sopranoSample(
+                logits: logitsF, temperature: temperature,
+                topP: topP, rng: &rng)
         }()
 
         // --- Decode loop ---
@@ -1078,7 +1134,7 @@ public final class SopranoModel: @unchecked Sendable {
         hiddenRows.reserveCapacity(maxTokens * hiddenDim)
         var tokenCount = 0
 
-        for _ in 0..<maxTokens {
+        for _ in 0 ..< maxTokens {
             if currentToken == stopId { break }
 
             let cmd = device.makeCommandBuffer()
@@ -1093,8 +1149,9 @@ public final class SopranoModel: @unchecked Sendable {
             position += 1
 
             let logitsF = AudioMath.floats(logits)
-            currentToken = sopranoSample(logits: logitsF, temperature: temperature,
-                                         topP: topP, rng: &rng)
+            currentToken = sopranoSample(
+                logits: logitsF, temperature: temperature,
+                topP: topP, rng: &rng)
         }
 
         return (hiddenRows, tokenCount)
@@ -1133,7 +1190,7 @@ private func sopranoSample(
     }
 
     // Categorical sample.
-    let draw = Float.random(in: 0..<1, using: &rng)
+    let draw = Float.random(in: 0 ..< 1, using: &rng)
     var cumulative: Float = 0
     for (i, p) in probs.enumerated() {
         cumulative += p
@@ -1184,13 +1241,13 @@ extension SopranoModel {
         let is80M = bundle.has("language_model.embed_tokens.weight")
         let llmPrefix = is80M ? "language_model" : "model"
 
-        let hidden      = config.hiddenSize
-        let nLayers     = config.numHiddenLayers
-        let nHeads      = config.numAttentionHeads
-        let nKVHeads    = config.numKeyValueHeads
-        let headDim     = config.headDim
+        let hidden = config.hiddenSize
+        let nLayers = config.numHiddenLayers
+        let nHeads = config.numAttentionHeads
+        let nKVHeads = config.numKeyValueHeads
+        let headDim = config.headDim
         let intermediate = config.intermediateSize
-        let eps         = config.rmsNormEps
+        let eps = config.rmsNormEps
 
         // Embedding
         let embedTokens = try loadEmbedding(
@@ -1200,29 +1257,38 @@ extension SopranoModel {
         // Transformer layers
         var layers: [SopranoLayer] = []
         layers.reserveCapacity(nLayers)
-        for i in 0..<nLayers {
+        for i in 0 ..< nLayers {
             let p = "\(llmPrefix).layers.\(i)"
-            let qProj  = try loadLinear(base: "\(p).self_attn.q_proj",  in: bundle, quantization: quant)
-            let kProj  = try loadLinear(base: "\(p).self_attn.k_proj",  in: bundle, quantization: quant)
-            let vProj  = try loadLinear(base: "\(p).self_attn.v_proj",  in: bundle, quantization: quant)
-            let oProj  = try loadLinear(base: "\(p).self_attn.o_proj",  in: bundle, quantization: quant)
-            let qNorm  = RMSNorm(weight: try bundle.tensor(named: "\(p).self_attn.q_norm.weight"), eps: eps)
-            let kNorm  = RMSNorm(weight: try bundle.tensor(named: "\(p).self_attn.k_norm.weight"), eps: eps)
-            let gateProj = try loadLinear(base: "\(p).mlp.gate_proj", in: bundle, quantization: quant)
-            let upProj   = try loadLinear(base: "\(p).mlp.up_proj",   in: bundle, quantization: quant)
-            let downProj = try loadLinear(base: "\(p).mlp.down_proj", in: bundle, quantization: quant)
-            let inputNorm    = RMSNorm(
+            let qProj = try loadLinear(
+                base: "\(p).self_attn.q_proj", in: bundle, quantization: quant)
+            let kProj = try loadLinear(
+                base: "\(p).self_attn.k_proj", in: bundle, quantization: quant)
+            let vProj = try loadLinear(
+                base: "\(p).self_attn.v_proj", in: bundle, quantization: quant)
+            let oProj = try loadLinear(
+                base: "\(p).self_attn.o_proj", in: bundle, quantization: quant)
+            let qNorm = RMSNorm(
+                weight: try bundle.tensor(named: "\(p).self_attn.q_norm.weight"), eps: eps)
+            let kNorm = RMSNorm(
+                weight: try bundle.tensor(named: "\(p).self_attn.k_norm.weight"), eps: eps)
+            let gateProj = try loadLinear(
+                base: "\(p).mlp.gate_proj", in: bundle, quantization: quant)
+            let upProj = try loadLinear(base: "\(p).mlp.up_proj", in: bundle, quantization: quant)
+            let downProj = try loadLinear(
+                base: "\(p).mlp.down_proj", in: bundle, quantization: quant)
+            let inputNorm = RMSNorm(
                 weight: try bundle.tensor(named: "\(p).input_layernorm.weight"), eps: eps)
             let postAttnNorm = RMSNorm(
                 weight: try bundle.tensor(named: "\(p).post_attention_layernorm.weight"), eps: eps)
-            layers.append(SopranoLayer(
-                qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
-                qNorm: qNorm, kNorm: kNorm,
-                gateProj: gateProj, upProj: upProj, downProj: downProj,
-                inputNorm: inputNorm, postAttnNorm: postAttnNorm,
-                hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
-                headDim: headDim, intermediate: intermediate,
-                ropeTheta: config.ropeTheta))
+            layers.append(
+                SopranoLayer(
+                    qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
+                    qNorm: qNorm, kNorm: kNorm,
+                    gateProj: gateProj, upProj: upProj, downProj: downProj,
+                    inputNorm: inputNorm, postAttnNorm: postAttnNorm,
+                    hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
+                    headDim: headDim, intermediate: intermediate,
+                    ropeTheta: config.ropeTheta))
         }
 
         // Final norm
@@ -1257,14 +1323,14 @@ extension SopranoModel {
         //   the config may not explicitly list input_kernel).
         let dec: SopranoDecoder?
         if is80M && config.hasDecoderConfig {
-            let decoderDim       = config.decoderDim ?? 512
-            let inputKernel      = config.inputKernel ?? 3
-            let dwKernel         = config.dwKernel ?? 3
-            let intermediateDim  = config.decoderIntermediateDim ?? (decoderDim * 3)
+            let decoderDim = config.decoderDim ?? 512
+            let inputKernel = config.inputKernel ?? 3
+            let dwKernel = config.dwKernel ?? 3
+            let intermediateDim = config.decoderIntermediateDim ?? (decoderDim * 3)
             let numDecoderLayers = config.decoderNumLayers ?? 8
-            let hopLength        = config.hopLength ?? 512
-            let nFft             = config.nFft ?? 2048
-            let upscale          = config.upscale ?? 4
+            let hopLength = config.hopLength ?? 512
+            let nFft = config.nFft ?? 2048
+            let upscale = config.upscale ?? 4
 
             dec = try SopranoDecoder.load(
                 from: bundle,

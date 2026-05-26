@@ -36,7 +36,7 @@ import Metal
 // ─── Family entry point ──────────────────────────────────────────────────────
 
 public enum Idefics3 {
-    public static let modelTypes: Set<String>    = ["idefics3"]
+    public static let modelTypes: Set<String> = ["idefics3"]
     public static let architectures: Set<String> = ["Idefics3ForConditionalGeneration"]
 
     public static func variant(for config: ModelConfig) throws -> Idefics3Dense.Type {
@@ -51,9 +51,9 @@ public enum Idefics3Error: Error, CustomStringConvertible {
 
     public var description: String {
         switch self {
-        case .missingConfig(let f):       return "Idefics3: missing top-level config field: \(f)"
+        case .missingConfig(let f): return "Idefics3: missing top-level config field: \(f)"
         case .missingVisionConfig(let f): return "Idefics3: missing vision_config.\(f)"
-        case .missingTextConfig(let f):   return "Idefics3: missing text_config.\(f)"
+        case .missingTextConfig(let f): return "Idefics3: missing text_config.\(f)"
         }
     }
 }
@@ -83,9 +83,9 @@ public struct Idefics3Dense {
         guard let tcRaw = config.nested("text_config") else {
             throw Idefics3Error.missingConfig("text_config")
         }
-        let vc       = try Idefics3VisionConfig(from: vcRaw)
-        let tc       = try Idefics3TextConfig(from: tcRaw)
-        let idefCfg  = try Idefics3Config(from: config.raw)
+        let vc = try Idefics3VisionConfig(from: vcRaw)
+        let tc = try Idefics3TextConfig(from: tcRaw)
+        let idefCfg = try Idefics3Config(from: config.raw)
 
         // ─── Remap weight prefixes ────────────────────────────────────────────
         // HF Idefics3 stores weights as:
@@ -101,7 +101,7 @@ public struct Idefics3Dense {
 
         // ─── Vision encoder & connector ──────────────────────────────────────
         let visionEncoder = try Idefics3VisionEncoder(cfg: vc, weights: remapped)
-        let connector     = try Idefics3Connector(cfg: idefCfg, weights: remapped)
+        let connector = try Idefics3Connector(cfg: idefCfg, weights: remapped)
 
         // ─── Language backbone (Llama-style) ─────────────────────────────────
         let quant = config.quantization
@@ -113,31 +113,39 @@ public struct Idefics3Dense {
 
         var llamaLayers: [LlamaLayer] = []
         llamaLayers.reserveCapacity(tc.numHiddenLayers)
-        for i in 0..<tc.numHiddenLayers {
+        for i in 0 ..< tc.numHiddenLayers {
             let p = "language_model.layers.\(i)"
-            let qProj    = try loadIdefics3Linear(base: "\(p).self_attn.q_proj", in: remapped, quantization: quant)
-            let kProj    = try loadIdefics3Linear(base: "\(p).self_attn.k_proj", in: remapped, quantization: quant)
-            let vProj    = try loadIdefics3Linear(base: "\(p).self_attn.v_proj", in: remapped, quantization: quant)
-            let oProj    = try loadIdefics3Linear(base: "\(p).self_attn.o_proj", in: remapped, quantization: quant)
-            let gateProj = try loadIdefics3Linear(base: "\(p).mlp.gate_proj",    in: remapped, quantization: quant)
-            let upProj   = try loadIdefics3Linear(base: "\(p).mlp.up_proj",      in: remapped, quantization: quant)
-            let downProj = try loadIdefics3Linear(base: "\(p).mlp.down_proj",    in: remapped, quantization: quant)
+            let qProj = try loadIdefics3Linear(
+                base: "\(p).self_attn.q_proj", in: remapped, quantization: quant)
+            let kProj = try loadIdefics3Linear(
+                base: "\(p).self_attn.k_proj", in: remapped, quantization: quant)
+            let vProj = try loadIdefics3Linear(
+                base: "\(p).self_attn.v_proj", in: remapped, quantization: quant)
+            let oProj = try loadIdefics3Linear(
+                base: "\(p).self_attn.o_proj", in: remapped, quantization: quant)
+            let gateProj = try loadIdefics3Linear(
+                base: "\(p).mlp.gate_proj", in: remapped, quantization: quant)
+            let upProj = try loadIdefics3Linear(
+                base: "\(p).mlp.up_proj", in: remapped, quantization: quant)
+            let downProj = try loadIdefics3Linear(
+                base: "\(p).mlp.down_proj", in: remapped, quantization: quant)
             let inputNorm = RMSNorm(
                 weight: try remapped.tensor(named: "\(p).input_layernorm.weight"),
                 eps: tc.rmsNormEps)
             let postAttnNorm = RMSNorm(
                 weight: try remapped.tensor(named: "\(p).post_attention_layernorm.weight"),
                 eps: tc.rmsNormEps)
-            llamaLayers.append(LlamaLayer(
-                qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
-                gateProj: gateProj, upProj: upProj, downProj: downProj,
-                inputNorm: inputNorm, postAttnNorm: postAttnNorm,
-                hidden: tc.hiddenSize,
-                nHeads: tc.numAttentionHeads, nKVHeads: tc.numKeyValueHeads,
-                headDim: tc.headDim, intermediate: tc.intermediateSize,
-                ropeTheta: tc.ropeTheta,
-                ropeScaling: .none
-            ))
+            llamaLayers.append(
+                LlamaLayer(
+                    qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
+                    gateProj: gateProj, upProj: upProj, downProj: downProj,
+                    inputNorm: inputNorm, postAttnNorm: postAttnNorm,
+                    hidden: tc.hiddenSize,
+                    nHeads: tc.numAttentionHeads, nKVHeads: tc.numKeyValueHeads,
+                    headDim: tc.headDim, intermediate: tc.intermediateSize,
+                    ropeTheta: tc.ropeTheta,
+                    ropeScaling: .none
+                ))
         }
 
         let finalNorm = RMSNorm(
@@ -147,13 +155,15 @@ public struct Idefics3Dense {
         // LM head — Idefics3-8B has tieWordEmbeddings == false and ships lm_head.weight.
         let lmHead: AnyLinear
         if !tc.tieWordEmbeddings, remapped.has("language_model.lm_head.weight") {
-            lmHead = try loadIdefics3Linear(base: "language_model.lm_head", in: remapped, quantization: quant)
+            lmHead = try loadIdefics3Linear(
+                base: "language_model.lm_head", in: remapped, quantization: quant)
         } else if let q = quant, remapped.isQuantized("language_model.embed_tokens") {
             let t = try remapped.quantizedTriplet("language_model.embed_tokens")
-            lmHead = AnyLinear(QuantizedLinear(
-                weight: t.weight, scales: t.scales, biases: t.biases,
-                bits: q.bits, groupSize: q.groupSize
-            ))
+            lmHead = AnyLinear(
+                QuantizedLinear(
+                    weight: t.weight, scales: t.scales, biases: t.biases,
+                    bits: q.bits, groupSize: q.groupSize
+                ))
         } else {
             lmHead = AnyLinear(Linear(weight: embedTokens.weight))
         }
@@ -161,7 +171,8 @@ public struct Idefics3Dense {
         // Activation dtype
         let activationDtype: DType
         if remapped.isQuantized("language_model.embed_tokens"),
-           let scales = try? remapped.tensor(named: "language_model.embed_tokens.scales") {
+            let scales = try? remapped.tensor(named: "language_model.embed_tokens.scales")
+        {
             activationDtype = scales.dtype
         } else {
             activationDtype = embedTokens.weight.dtype

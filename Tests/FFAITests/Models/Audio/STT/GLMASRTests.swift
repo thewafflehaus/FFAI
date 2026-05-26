@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // Unit tests for the GLMASR speech-to-text family.
@@ -29,14 +30,17 @@ struct GLMASRTests {
         let config = ModelConfig(
             architecture: "GlmasrModel",
             modelType: "glmasr",
-            raw: ["model_type": "glmasr",
-                  "architectures": ["GlmasrModel"],
-                  "merge_factor": 4,
-                  "use_rope": true,
-                  "max_whisper_length": 1500])
+            raw: [
+                "model_type": "glmasr",
+                "architectures": ["GlmasrModel"],
+                "merge_factor": 4,
+                "use_rope": true,
+                "max_whisper_length": 1500,
+            ])
         #expect(GLMASRModel.handles(config))
         #expect(AudioModelRegistry.handles(config))
-        #expect(AudioModelRegistry.capabilities(for: config)
+        #expect(
+            AudioModelRegistry.capabilities(for: config)
                 == Capability.speechToText)
     }
 
@@ -57,7 +61,8 @@ struct GLMASRTests {
         let config = ModelConfig(
             architecture: nil, modelType: "glmasr",
             raw: ["model_type": "glmasr"])
-        #expect(AudioModelRegistry.capabilities(for: config)
+        #expect(
+            AudioModelRegistry.capabilities(for: config)
                 == Capability.speechToText)
     }
 
@@ -87,14 +92,16 @@ struct GLMASRTests {
         let config = ModelConfig(
             architecture: "GlmasrModel",
             modelType: "glmasr",
-            raw: ["model_type": "glmasr",
-                  "architectures": ["GlmasrModel"],
-                  "adapter_type": "mlp",
-                  "merge_factor": 4,
-                  "max_whisper_length": 1500,
-                  "use_rope": true,
-                  "max_length": 65536,
-                  "quantization": ["group_size": 64, "bits": 4, "mode": "affine"]])
+            raw: [
+                "model_type": "glmasr",
+                "architectures": ["GlmasrModel"],
+                "adapter_type": "mlp",
+                "merge_factor": 4,
+                "max_whisper_length": 1500,
+                "use_rope": true,
+                "max_length": 65536,
+                "quantization": ["group_size": 64, "bits": 4, "mode": "affine"],
+            ])
         let gc = GLMASRConfig.from(config)
         #expect(gc != nil)
 
@@ -150,8 +157,10 @@ struct GLMASRTests {
     func configArrayEos() {
         let config = ModelConfig(
             architecture: nil, modelType: "glmasr",
-            raw: ["model_type": "glmasr",
-                  "eos_token_id": [59246, 59253, 59255]])
+            raw: [
+                "model_type": "glmasr",
+                "eos_token_id": [59246, 59253, 59255],
+            ])
         let gc = GLMASRConfig.from(config)
         #expect(gc?.eosTokenIds == [59246, 59253, 59255])
     }

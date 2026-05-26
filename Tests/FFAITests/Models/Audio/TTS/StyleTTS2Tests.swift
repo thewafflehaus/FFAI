@@ -17,6 +17,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("StyleTTS2")
@@ -30,8 +31,9 @@ struct StyleTTS2Tests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let json = kittenNanoConfigJSON
-        try json.write(to: dir.appendingPathComponent("config.json"),
-                       atomically: true, encoding: .utf8)
+        try json.write(
+            to: dir.appendingPathComponent("config.json"),
+            atomically: true, encoding: .utf8)
 
         let modelConfig = try ModelConfig.load(from: dir)
         guard let sc = StyleTTS2Config.from(modelConfig) else {
@@ -91,8 +93,9 @@ struct StyleTTS2Tests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try #"{"model_type": "kitten_tts", "n_token": 178, "hidden_dim": 128}"#
-            .write(to: dir.appendingPathComponent("config.json"),
-                   atomically: true, encoding: .utf8)
+            .write(
+                to: dir.appendingPathComponent("config.json"),
+                atomically: true, encoding: .utf8)
 
         let mc = try ModelConfig.load(from: dir)
         #expect(StyleTTS2Model.handles(mc) == true)
@@ -104,8 +107,9 @@ struct StyleTTS2Tests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try #"{"model_type": "style_tts2", "n_token": 50}"#
-            .write(to: dir.appendingPathComponent("config.json"),
-                   atomically: true, encoding: .utf8)
+            .write(
+                to: dir.appendingPathComponent("config.json"),
+                atomically: true, encoding: .utf8)
 
         let mc = try ModelConfig.load(from: dir)
         #expect(StyleTTS2Model.handles(mc) == true)
@@ -117,15 +121,16 @@ struct StyleTTS2Tests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let json = """
-        {
-            "n_token": 178,
-            "hidden_dim": 128,
-            "plbert": {"num_hidden_layers": 12},
-            "istftnet": {"gen_istft_n_fft": 20, "gen_istft_hop_size": 5}
-        }
-        """
-        try json.write(to: dir.appendingPathComponent("config.json"),
-                       atomically: true, encoding: .utf8)
+            {
+                "n_token": 178,
+                "hidden_dim": 128,
+                "plbert": {"num_hidden_layers": 12},
+                "istftnet": {"gen_istft_n_fft": 20, "gen_istft_hop_size": 5}
+            }
+            """
+        try json.write(
+            to: dir.appendingPathComponent("config.json"),
+            atomically: true, encoding: .utf8)
 
         let mc = try ModelConfig.load(from: dir)
         #expect(StyleTTS2Model.handles(mc) == true)
@@ -137,8 +142,9 @@ struct StyleTTS2Tests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try #"{"model_type": "llama", "architectures": ["LlamaForCausalLM"]}"#
-            .write(to: dir.appendingPathComponent("config.json"),
-                   atomically: true, encoding: .utf8)
+            .write(
+                to: dir.appendingPathComponent("config.json"),
+                atomically: true, encoding: .utf8)
 
         let mc = try ModelConfig.load(from: dir)
         #expect(StyleTTS2Model.handles(mc) == false)
@@ -152,8 +158,9 @@ struct StyleTTS2Tests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try #"{"model_type": "kitten_tts", "n_token": 100, "hidden_dim": 64}"#
-            .write(to: dir.appendingPathComponent("config.json"),
-                   atomically: true, encoding: .utf8)
+            .write(
+                to: dir.appendingPathComponent("config.json"),
+                atomically: true, encoding: .utf8)
 
         let mc = try ModelConfig.load(from: dir)
         #expect(AudioModelRegistry.handles(mc) == true)
@@ -165,8 +172,9 @@ struct StyleTTS2Tests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try #"{"model_type": "kitten_tts", "n_token": 100, "hidden_dim": 64}"#
-            .write(to: dir.appendingPathComponent("config.json"),
-                   atomically: true, encoding: .utf8)
+            .write(
+                to: dir.appendingPathComponent("config.json"),
+                atomically: true, encoding: .utf8)
 
         let mc = try ModelConfig.load(from: dir)
         let caps = AudioModelRegistry.capabilities(for: mc)
@@ -179,8 +187,9 @@ struct StyleTTS2Tests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try #"{"model_type": "kitten_tts", "n_token": 100, "hidden_dim": 64}"#
-            .write(to: dir.appendingPathComponent("config.json"),
-                   atomically: true, encoding: .utf8)
+            .write(
+                to: dir.appendingPathComponent("config.json"),
+                atomically: true, encoding: .utf8)
 
         let caps = AudioModelRegistry.capabilities(forConfigAt: dir)
         #expect(caps == Capability.textToSpeech)
@@ -311,8 +320,8 @@ struct StyleTTS2Tests {
         // spread energy across frequencies and produce audible amplitude.
         var re = [Float](repeating: 0, count: nFrames * nFreq)
         var im = [Float](repeating: 0, count: nFrames * nFreq)
-        for f in 0..<nFrames {
-            for k in 0..<nFreq {
+        for f in 0 ..< nFrames {
+            for k in 0 ..< nFreq {
                 let phase = Float(k) * .pi / Float(nFreq)
                 re[f * nFreq + k] = cos(phase)
                 im[f * nFreq + k] = sin(phase)
@@ -320,8 +329,9 @@ struct StyleTTS2Tests {
         }
 
         let vocoder = StyleTTS2Vocoder(nFFT: nFFT, hopLength: hop)
-        let waveform = vocoder.synthesize(specReFlat: re, specImFlat: im,
-                                          nFrames: nFrames)
+        let waveform = vocoder.synthesize(
+            specReFlat: re, specImFlat: im,
+            nFrames: nFrames)
         #expect(waveform.elementCount > 0)
         let samples = waveform.toArray(as: Float.self)
         // Verify output is finite and has at least some non-zero samples.
@@ -381,57 +391,58 @@ struct StyleTTS2Tests {
 private func makeTempDir() throws -> URL {
     let dir = FileManager.default.temporaryDirectory
         .appendingPathComponent("ffai-s2tts-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: dir,
-                                             withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(
+        at: dir,
+        withIntermediateDirectories: true)
     return dir
 }
 
 /// Inline kitten-tts-nano config.json (matches
 /// `mlx-community/kitten-tts-nano-0.8-fp16`).
 private let kittenNanoConfigJSON = """
-{
-    "asr_res_dim": 64,
-    "hidden_dim": 128,
-    "istftnet": {
-        "resblock_kernel_sizes": [3, 3],
-        "upsample_rates": [10, 6],
-        "upsample_initial_channel": 256,
-        "resblock_dilation_sizes": [[1, 3, 5], [1, 3, 5]],
-        "upsample_kernel_sizes": [20, 12],
-        "gen_istft_n_fft": 20,
-        "gen_istft_hop_size": 5
-    },
-    "max_conv_dim": 256,
-    "max_dur": 50,
-    "model_type": "kitten_tts",
-    "n_layer": 2,
-    "n_mels": 80,
-    "n_token": 178,
-    "plbert": {
-        "num_hidden_layers": 12,
-        "num_attention_heads": 12,
-        "hidden_size": 768,
-        "intermediate_size": 2048,
-        "max_position_embeddings": 512,
-        "embedding_size": 128,
-        "inner_group_num": 1,
-        "num_hidden_groups": 1,
-        "hidden_dropout_prob": 0.0,
-        "attention_probs_dropout_prob": 0.0,
-        "type_vocab_size": 2,
-        "layer_norm_eps": 1e-12
-    },
-    "sample_rate": 24000,
-    "speed_priors": {
-        "expr-voice-2-f": 0.8,
-        "expr-voice-5-m": 0.8
-    },
-    "style_dim": 128,
-    "text_encoder_kernel_size": 5,
-    "voice_aliases": {
-        "Bella": "expr-voice-2-f",
-        "Leo": "expr-voice-5-m"
-    },
-    "voices_path": "voices.npz"
-}
-"""
+    {
+        "asr_res_dim": 64,
+        "hidden_dim": 128,
+        "istftnet": {
+            "resblock_kernel_sizes": [3, 3],
+            "upsample_rates": [10, 6],
+            "upsample_initial_channel": 256,
+            "resblock_dilation_sizes": [[1, 3, 5], [1, 3, 5]],
+            "upsample_kernel_sizes": [20, 12],
+            "gen_istft_n_fft": 20,
+            "gen_istft_hop_size": 5
+        },
+        "max_conv_dim": 256,
+        "max_dur": 50,
+        "model_type": "kitten_tts",
+        "n_layer": 2,
+        "n_mels": 80,
+        "n_token": 178,
+        "plbert": {
+            "num_hidden_layers": 12,
+            "num_attention_heads": 12,
+            "hidden_size": 768,
+            "intermediate_size": 2048,
+            "max_position_embeddings": 512,
+            "embedding_size": 128,
+            "inner_group_num": 1,
+            "num_hidden_groups": 1,
+            "hidden_dropout_prob": 0.0,
+            "attention_probs_dropout_prob": 0.0,
+            "type_vocab_size": 2,
+            "layer_norm_eps": 1e-12
+        },
+        "sample_rate": 24000,
+        "speed_priors": {
+            "expr-voice-2-f": 0.8,
+            "expr-voice-5-m": 0.8
+        },
+        "style_dim": 128,
+        "text_encoder_kernel_size": 5,
+        "voice_aliases": {
+            "Bella": "expr-voice-2-f",
+            "Leo": "expr-voice-5-m"
+        },
+        "voices_path": "voices.npz"
+    }
+    """

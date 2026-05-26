@@ -34,9 +34,10 @@
 // load (see NemotronH.swift) and are 30B+ regardless.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("NemotronH Text Integration", .serialized)
 struct NemotronHTextIntegrationTests {

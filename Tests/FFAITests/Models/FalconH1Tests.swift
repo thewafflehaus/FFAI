@@ -20,6 +20,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("FalconH1 Family Root")
@@ -37,8 +38,9 @@ struct FalconH1RootTests {
 
     @Test("variant(for:) returns FalconH1Hybrid")
     func variantDispatch() throws {
-        let cfg = ModelConfig(architecture: "FalconH1ForCausalLM",
-                              modelType: "falcon_h1", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "FalconH1ForCausalLM",
+            modelType: "falcon_h1", raw: [:])
         let v = try FalconH1.variant(for: cfg)
         #expect(String(describing: v) == String(describing: FalconH1Hybrid.self))
     }

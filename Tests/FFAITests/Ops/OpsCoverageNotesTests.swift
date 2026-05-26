@@ -17,6 +17,7 @@
 // the Ops surface. Catches truncation regressions on edits.
 
 import Testing
+
 @testable import FFAI
 
 @Suite("OpsCoverageNotes — intentionally-unwrapped kernel inventory")
@@ -28,8 +29,9 @@ struct OpsCoverageNotesTests {
         #expect(!items.isEmpty)
         for item in items {
             #expect(!item.familyName.isEmpty)
-            #expect(!item.rationale.isEmpty,
-                    "kernel \(item.familyName) needs a rationale")
+            #expect(
+                !item.rationale.isEmpty,
+                "kernel \(item.familyName) needs a rationale")
         }
     }
 
@@ -44,17 +46,17 @@ struct OpsCoverageNotesTests {
         // Cheap sniff-test that the manifest covers the categories the
         // surface-parity README enumerates.
         let categories = [
-            "aura_flash",     // internal flash building blocks
-            "_record",        // dispatch_chain replay infra
-            "smoke",          // probe/test kernels
-            "fp4",            // dtype-blocked
-            "winograd",       // unused vision specializations
-            "scan",           // unused reduction primitives
+            "aura_flash",  // internal flash building blocks
+            "_record",  // dispatch_chain replay infra
+            "smoke",  // probe/test kernels
+            "fp4",  // dtype-blocked
+            "winograd",  // unused vision specializations
+            "scan",  // unused reduction primitives
         ]
         for needle in categories {
             let hit = items.contains { item in
-                item.familyName.lowercased().contains(needle) ||
-                item.rationale.lowercased().contains(needle)
+                item.familyName.lowercased().contains(needle)
+                    || item.rationale.lowercased().contains(needle)
             }
             #expect(hit, "no manifest entry mentions '\(needle)'")
         }

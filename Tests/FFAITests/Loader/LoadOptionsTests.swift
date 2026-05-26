@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("LoadOptions")
@@ -25,10 +26,12 @@ struct LoadOptionsTests {
         #expect(o.prewarm == true)
         #expect(o.lazyCapabilities == true)
         #expect(o.revision == "main")
-        if case .raw = o.kvCache { /* ok */ } else {
+        if case .raw = o.kvCache { /* ok */
+        } else {
             Issue.record("expected .raw KVCacheKind")
         }
-        if case .eager = o.dispatchMode { /* ok */ } else {
+        if case .eager = o.dispatchMode { /* ok */
+        } else {
             Issue.record("expected .eager DispatchMode")
         }
     }

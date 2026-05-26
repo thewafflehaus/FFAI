@@ -34,8 +34,8 @@ import Metal
 
 /// The two attention kinds a `layer_types` entry can name.
 public enum GPTOSSAttentionKind: Equatable, Sendable {
-    case sliding   // "sliding_attention" — capped at `sliding_window`
-    case full      // "full_attention"    — attends the whole context
+    case sliding  // "sliding_attention" — capped at `sliding_window`
+    case full  // "full_attention"    — attends the whole context
 
     init(from name: String) throws {
         switch name {
@@ -90,9 +90,9 @@ public struct GPTOSSMoEVariant: GPTOSSVariant, ReasoningCapable {
         device: Device
     ) throws -> GPTOSSModel {
         guard let hidden = config.hiddenSize,
-              let nLayers = config.numLayers,
-              let nHeads = config.numAttentionHeads,
-              let vocab = config.vocabSize
+            let nLayers = config.numLayers,
+            let nHeads = config.numAttentionHeads,
+            let vocab = config.vocabSize
         else {
             throw GPTOSSError.missingConfig(
                 "hidden_size / num_hidden_layers / num_attention_heads / vocab_size")
@@ -113,7 +113,7 @@ public struct GPTOSSMoEVariant: GPTOSSVariant, ReasoningCapable {
 
         // ── MoE geometry ──────────────────────────────────────────────
         guard let numExperts = config.int("num_local_experts"),
-              let topK = config.int("num_experts_per_tok") ?? config.int("experts_per_token")
+            let topK = config.int("num_experts_per_tok") ?? config.int("experts_per_token")
         else {
             throw GPTOSSError.missingConfig(
                 "num_local_experts / num_experts_per_tok")
@@ -125,7 +125,7 @@ public struct GPTOSSMoEVariant: GPTOSSVariant, ReasoningCapable {
         // heuristic. Acting on it (vs silently ignoring it) is the
         // Gemma-4 `num_kv_shared_layers` lesson.
         guard let layerTypeNames = config.raw["layer_types"] as? [String],
-              !layerTypeNames.isEmpty
+            !layerTypeNames.isEmpty
         else {
             throw GPTOSSError.missingConfig("layer_types")
         }
@@ -133,7 +133,7 @@ public struct GPTOSSMoEVariant: GPTOSSVariant, ReasoningCapable {
         guard attnKinds.count == nLayers else {
             throw GPTOSSError.unsupportedConfig(
                 "layer_types has \(attnKinds.count) entries, "
-                + "num_hidden_layers is \(nLayers)")
+                    + "num_hidden_layers is \(nLayers)")
         }
 
         // ── YaRN RoPE — context-extension scaling ─────────────────────
@@ -141,13 +141,14 @@ public struct GPTOSSMoEVariant: GPTOSSVariant, ReasoningCapable {
         // rope_scaling block) collapses ropeYaRN to plain RoPE.
         var yarn = Ops.RoPEYaRN.plain
         if let rs = config.nested("rope_scaling"),
-           ((rs["rope_type"] as? String) ?? (rs["type"] as? String)) == "yarn" {
+            ((rs["rope_type"] as? String) ?? (rs["type"] as? String)) == "yarn"
+        {
             let factor = Float((rs["factor"] as? Double) ?? 1)
             let betaFast = Float((rs["beta_fast"] as? Double) ?? 32)
             let betaSlow = Float((rs["beta_slow"] as? Double) ?? 1)
             let origMax = Float(
                 (rs["original_max_position_embeddings"] as? Int)
-                ?? config.int("initial_context_length") ?? 4096)
+                    ?? config.int("initial_context_length") ?? 4096)
             yarn = Ops.RoPEYaRN.from(
                 headDim: headDim, thetaBase: theta, factor: factor,
                 betaFast: betaFast, betaSlow: betaSlow,
@@ -174,14 +175,16 @@ public struct GPTOSSMoEVariant: GPTOSSVariant, ReasoningCapable {
         let activationDtype: DType
         if weights.has("model.embed_tokens.scales") {
             activationDtype = try weights.tensor(
-                named: "model.embed_tokens.scales").dtype
+                named: "model.embed_tokens.scales"
+            ).dtype
         } else {
             activationDtype = try weights.tensor(
-                named: "model.embed_tokens.weight").dtype
+                named: "model.embed_tokens.weight"
+            ).dtype
         }
         precondition(
             activationDtype == .f16 || activationDtype == .bf16
-            || activationDtype == .f32,
+                || activationDtype == .f32,
             "GPT-OSS: unexpected activation dtype \(activationDtype)")
 
         // ── Embedding — affine-quantized or raw ───────────────────────
@@ -212,9 +215,10 @@ public struct GPTOSSMoEVariant: GPTOSSVariant, ReasoningCapable {
 
             // Learned per-head sink logits — [nHeads], read to host.
             let sinkTensor = try weights.tensor(named: "\(p).self_attn.sinks")
-            precondition(sinkTensor.elementCount == nHeads,
-                         "GPT-OSS: self_attn.sinks expected [\(nHeads)], "
-                         + "got \(sinkTensor.shape)")
+            precondition(
+                sinkTensor.elementCount == nHeads,
+                "GPT-OSS: self_attn.sinks expected [\(nHeads)], "
+                    + "got \(sinkTensor.shape)")
             let sinks = readGPTOSSFloats(sinkTensor)
 
             let inputNorm = RMSNorm(
@@ -238,10 +242,11 @@ public struct GPTOSSMoEVariant: GPTOSSVariant, ReasoningCapable {
                 swigluLimit: swigluLimit,
                 dtype: activationDtype, device: device)
 
-            layers.append(GPTOSSLayer(
-                attention: attn, moe: moe,
-                inputNorm: inputNorm, postAttnNorm: postAttnNorm,
-                hidden: hidden))
+            layers.append(
+                GPTOSSLayer(
+                    attention: attn, moe: moe,
+                    inputNorm: inputNorm, postAttnNorm: postAttnNorm,
+                    hidden: hidden))
         }
 
         let finalNorm = RMSNorm(
@@ -253,12 +258,14 @@ public struct GPTOSSMoEVariant: GPTOSSVariant, ReasoningCapable {
                 base: "lm_head", in: weights,
                 quantization: quantMap.config(for: "lm_head"))
         } else if weights.isQuantized("model.embed_tokens"),
-                  let q = quantMap.config(for: "model.embed_tokens") {
+            let q = quantMap.config(for: "model.embed_tokens")
+        {
             // Tied + quantized — reuse the embedding triplet as lm_head.
             let t = try weights.quantizedTriplet("model.embed_tokens")
-            lmHead = AnyLinear(QuantizedLinear(
-                weight: t.weight, scales: t.scales, biases: t.biases,
-                bits: q.bits, groupSize: q.groupSize))
+            lmHead = AnyLinear(
+                QuantizedLinear(
+                    weight: t.weight, scales: t.scales, biases: t.biases,
+                    bits: q.bits, groupSize: q.groupSize))
         } else {
             lmHead = AnyLinear(Linear(weight: embedTokens.weight))
         }
@@ -292,9 +299,9 @@ struct GPTOSSQuantMap {
         if let q = config.nested("quantization") {
             for (key, value) in q {
                 guard let entry = value as? [String: Any],
-                      let bits = entry["bits"] as? Int,
-                      let group = (entry["group_size"] as? Int)
-                          ?? (q["group_size"] as? Int)
+                    let bits = entry["bits"] as? Int,
+                    let group = (entry["group_size"] as? Int)
+                        ?? (q["group_size"] as? Int)
                 else { continue }
                 map[key] = ModelConfig.QuantizationConfig(
                     bits: bits, groupSize: group)
@@ -308,7 +315,7 @@ struct GPTOSSQuantMap {
     /// Only mlx-supported bit widths (3/4/5/6/8) are returned.
     func config(for base: String) -> ModelConfig.QuantizationConfig? {
         guard let c = perTensor[base],
-              [3, 4, 5, 6, 8].contains(c.bits)
+            [3, 4, 5, 6, 8].contains(c.bits)
         else { return nil }
         return c
     }
@@ -356,12 +363,14 @@ private func loadGPTOSSBiasedLinear(
     let inner: AnyLinear
     if let q = quantMap.config(for: base), weights.isQuantized(base) {
         let t = try weights.quantizedTriplet(base)
-        inner = AnyLinear(QuantizedLinear(
-            weight: t.weight, scales: t.scales, biases: t.biases,
-            bits: q.bits, groupSize: q.groupSize))
+        inner = AnyLinear(
+            QuantizedLinear(
+                weight: t.weight, scales: t.scales, biases: t.biases,
+                bits: q.bits, groupSize: q.groupSize))
     } else {
-        inner = AnyLinear(Linear(
-            weight: try weights.tensor(named: "\(base).weight")))
+        inner = AnyLinear(
+            Linear(
+                weight: try weights.tensor(named: "\(base).weight")))
     }
 
     var bias: Tensor? = nil
@@ -413,16 +422,24 @@ public final class GPTOSSAttention: Module {
     let yarn: Ops.RoPEYaRN
     let scale: Float
 
-    init(qProj: GPTOSSBiasedLinear, kProj: GPTOSSBiasedLinear,
-         vProj: GPTOSSBiasedLinear, oProj: GPTOSSBiasedLinear,
-         sinks: [Float], kind: GPTOSSAttentionKind,
-         nHeads: Int, nKVHeads: Int, headDim: Int,
-         ropeTheta: Float, yarn: Ops.RoPEYaRN) {
-        self.qProj = qProj; self.kProj = kProj
-        self.vProj = vProj; self.oProj = oProj
-        self.sinks = sinks; self.kind = kind
-        self.nHeads = nHeads; self.nKVHeads = nKVHeads; self.headDim = headDim
-        self.ropeTheta = ropeTheta; self.yarn = yarn
+    init(
+        qProj: GPTOSSBiasedLinear, kProj: GPTOSSBiasedLinear,
+        vProj: GPTOSSBiasedLinear, oProj: GPTOSSBiasedLinear,
+        sinks: [Float], kind: GPTOSSAttentionKind,
+        nHeads: Int, nKVHeads: Int, headDim: Int,
+        ropeTheta: Float, yarn: Ops.RoPEYaRN
+    ) {
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
+        self.sinks = sinks
+        self.kind = kind
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.ropeTheta = ropeTheta
+        self.yarn = yarn
         self.scale = 1.0 / Float(Double(headDim).squareRoot())
     }
 
@@ -441,22 +458,27 @@ public final class GPTOSSAttention: Module {
     /// post-`o_proj` contribution on a fresh, locally-committed buffer
     /// so the result is fully resident (the residual add is the
     /// caller's job).
-    func forward(_ xNorm: Tensor, position: Int, cache: KVCache,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forward(
+        _ xNorm: Tensor, position: Int, cache: KVCache,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // ── GPU phase: project, RoPE, append, plain SDPA ──────────────
         let q = qProj(xNorm, on: cmd)
         let k = kProj(xNorm, on: cmd)
         let v = vProj(xNorm, on: cmd)
 
-        let qRot = Ops.ropeYaRN(q.reshaped(to: [nHeads * headDim]),
-                                position: position, headDim: headDim,
-                                thetaBase: ropeTheta, yarn: yarn, on: cmd)
-        let kRot = Ops.ropeYaRN(k.reshaped(to: [nKVHeads * headDim]),
-                                position: position, headDim: headDim,
-                                thetaBase: ropeTheta, yarn: yarn, on: cmd)
+        let qRot = Ops.ropeYaRN(
+            q.reshaped(to: [nHeads * headDim]),
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, yarn: yarn, on: cmd)
+        let kRot = Ops.ropeYaRN(
+            k.reshaped(to: [nKVHeads * headDim]),
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, yarn: yarn, on: cmd)
 
-        cache.appendOnGPU(kFlat: kRot.reshaped(to: [nKVHeads, headDim]),
-                          vFlat: v.reshaped(to: [nKVHeads, headDim]), on: cmd)
+        cache.appendOnGPU(
+            kFlat: kRot.reshaped(to: [nKVHeads, headDim]),
+            vFlat: v.reshaped(to: [nKVHeads, headDim]), on: cmd)
 
         let nKV = cache.length
         let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
@@ -481,13 +503,13 @@ public final class GPTOSSAttention: Module {
         // Only the LIVE [0, nKV) slice of each kv head is read back —
         // never the full maxSeq-capacity buffer (which can be 100k+
         // positions; copying it every token would dwarf the kernel).
-        let qHost = readGPTOSSFloats(qRot)              // [nHeads*headDim]
+        let qHost = readGPTOSSFloats(qRot)  // [nHeads*headDim]
         let headsPerGroup = nHeads / nKVHeads
         // Per-kv-head live K slice [nKV, headDim], read once and reused
         // across the headsPerGroup query heads that share it.
         var kLive = [[Float]](repeating: [], count: nKVHeads)
         if nKV > 0 {
-            for kvHead in 0..<nKVHeads {
+            for kvHead in 0 ..< nKVHeads {
                 // kBuffer is [nKVHeads, maxSeq, headDim]; slice head
                 // kvHead, then its first nKV timesteps.
                 let headSlab = cache.kBuffer
@@ -514,10 +536,10 @@ public final class GPTOSSAttention: Module {
                 let kHead = kLive[kvHead]
                 var m = sinks[h]
                 var z: Float = 0
-                for t in 0..<nKV {
+                for t in 0 ..< nKV {
                     let kBase = t * headDim
                     var dot: Float = 0
-                    for d in 0..<headDim {
+                    for d in 0 ..< headDim {
                         dot += qHost[qBase + d] * kHead[kBase + d]
                     }
                     let s = dot * scale
@@ -537,15 +559,17 @@ public final class GPTOSSAttention: Module {
         // ── GPU phase 2: rescale O per-head, then o_proj ──────────────
         let phase2 = device.makeCommandBuffer()
         // Broadcast the per-head scalar across each head's headDim slice.
-        let factorTensor = Tensor.empty(shape: [nHeads * headDim],
-                                        dtype: attnOut.dtype, device: device)
+        let factorTensor = Tensor.empty(
+            shape: [nHeads * headDim],
+            dtype: attnOut.dtype, device: device)
         var factorFlat = [Float](repeating: 0, count: nHeads * headDim)
-        for h in 0..<nHeads {
-            for d in 0..<headDim { factorFlat[h * headDim + d] = factors[h] }
+        for h in 0 ..< nHeads {
+            for d in 0 ..< headDim { factorFlat[h * headDim + d] = factors[h] }
         }
         writeGPTOSSFloats(factorFlat, into: factorTensor)
-        let corrected = Ops.mul(attnOut.reshaped(to: [nHeads * headDim]),
-                                factorTensor, on: phase2)
+        let corrected = Ops.mul(
+            attnOut.reshaped(to: [nHeads * headDim]),
+            factorTensor, on: phase2)
         let result = oProj(corrected, on: phase2)
         phase2.commit()
         phase2.waitUntilCompleted()
@@ -556,19 +580,21 @@ public final class GPTOSSAttention: Module {
 /// Write a host `[Float]` into an existing tensor, converting to its
 /// dtype. bf16 uses round-to-nearest before truncating the low bits.
 func writeGPTOSSFloats(_ values: [Float], into t: Tensor) {
-    precondition(values.count == t.elementCount,
-                 "GPT-OSS: writeFloats size mismatch")
+    precondition(
+        values.count == t.elementCount,
+        "GPT-OSS: writeFloats size mismatch")
     switch t.dtype {
     case .f32:
         t.copyIn(from: values)
     case .f16:
         t.copyIn(from: values.map { Float16($0) })
     case .bf16:
-        t.copyIn(from: values.map { v -> UInt16 in
-            let bits = v.bitPattern
-            let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
-            return UInt16(rounded >> 16)
-        })
+        t.copyIn(
+            from: values.map { v -> UInt16 in
+                let bits = v.bitPattern
+                let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
+                return UInt16(rounded >> 16)
+            })
     default:
         fatalError("GPT-OSS: unsupported dtype for host write: \(t.dtype)")
     }
@@ -597,8 +623,10 @@ public final class GPTOSSLayer: Module {
     let inputNorm, postAttnNorm: RMSNorm
     let hidden: Int
 
-    init(attention: GPTOSSAttention, moe: GPTOSSMoELayer,
-         inputNorm: RMSNorm, postAttnNorm: RMSNorm, hidden: Int) {
+    init(
+        attention: GPTOSSAttention, moe: GPTOSSMoELayer,
+        inputNorm: RMSNorm, postAttnNorm: RMSNorm, hidden: Int
+    ) {
         self.attention = attention
         self.moe = moe
         self.inputNorm = inputNorm
@@ -630,17 +658,21 @@ public final class GPTOSSLayer: Module {
     /// readback is free. The post-attention norm runs on the GPU
     /// because it is now fused into `mt_add_rms_norm`, whose row-
     /// width invariants (multiple of 4, ≤ 4096) GPT-OSS satisfies.
-    func decode(_ h: Tensor, position: Int, cache: KVCache,
-                cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func decode(
+        _ h: Tensor, position: Int, cache: KVCache,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // ── Attention half ────────────────────────────────────────────
         // `h` is resident on entry (the previous layer committed). The
         // input norm runs on the host and writes `xNorm` directly.
-        let xNorm = gptOSSHostRMSNorm(h, weight: inputNorm.weight,
-                                      eps: inputNorm.eps, device: device)
+        let xNorm = gptOSSHostRMSNorm(
+            h, weight: inputNorm.weight,
+            eps: inputNorm.eps, device: device)
         // attention.forward commits `cmd`; the returned tensor is
         // resident on a fresh buffer it owns.
-        let attnOut = attention.forward(xNorm, position: position,
-                                        cache: cache, cmd: cmd, device: device)
+        let attnOut = attention.forward(
+            xNorm, position: position,
+            cache: cache, cmd: cmd, device: device)
 
         // The residual add + post-attention RMSNorm run as ONE fused
         // GPU dispatch via mt_add_rms_norm — replaces the previous
@@ -649,9 +681,10 @@ public final class GPTOSSLayer: Module {
         // fused kernel's row-width invariants even though it does NOT
         // satisfy the legacy `mt_rms_norm`'s 128-element invariant
         // (which is why the standalone norm was on the host).
-        precondition(OpsValidation.validateAddRmsNorm(n: hidden) == nil,
-                     "GPTOSSLayer.decode: hidden=\(hidden) violates "
-                     + "mt_add_rms_norm invariants")
+        precondition(
+            OpsValidation.validateAddRmsNorm(n: hidden) == nil,
+            "GPTOSSLayer.decode: hidden=\(hidden) violates "
+                + "mt_add_rms_norm invariants")
         let addCmd = device.makeCommandBuffer()
         let fused = Ops.addAndRmsNorm(
             h, attnOut, weight: postAttnNorm.weight, eps: postAttnNorm.eps,
@@ -679,18 +712,21 @@ public final class GPTOSSLayer: Module {
 /// resident tensor in `x`'s dtype.
 ///
 /// `out[i] = x[i] / sqrt(mean(x²) + eps) · weight[i]`.
-func gptOSSHostRMSNorm(_ x: Tensor, weight: Tensor, eps: Float,
-                       device: Device) -> Tensor {
+func gptOSSHostRMSNorm(
+    _ x: Tensor, weight: Tensor, eps: Float,
+    device: Device
+) -> Tensor {
     let xs = readGPTOSSFloats(x)
     let ws = readGPTOSSFloats(weight)
-    precondition(xs.count == ws.count,
-                 "GPT-OSS RMSNorm: x (\(xs.count)) / weight (\(ws.count)) "
-                 + "size mismatch")
+    precondition(
+        xs.count == ws.count,
+        "GPT-OSS RMSNorm: x (\(xs.count)) / weight (\(ws.count)) "
+            + "size mismatch")
     var sumSq: Float = 0
     for v in xs { sumSq += v * v }
     let inv = 1.0 / (sumSq / Float(xs.count) + eps).squareRoot()
     var out = [Float](repeating: 0, count: xs.count)
-    for i in 0..<xs.count { out[i] = xs[i] * inv * ws[i] }
+    for i in 0 ..< xs.count { out[i] = xs[i] * inv * ws[i] }
     let result = Tensor.empty(shape: x.shape, dtype: x.dtype, device: device)
     writeGPTOSSFloats(out, into: result)
     return result
@@ -718,19 +754,26 @@ public final class GPTOSSModel: LanguageModel {
     /// (sliding layers get a `.window` eviction cache).
     public let attnKinds: [GPTOSSAttentionKind]
 
-    init(embedTokens: AnyEmbedding, layers: [GPTOSSLayer],
-         finalNorm: RMSNorm, lmHead: AnyLinear,
-         attnKinds: [GPTOSSAttentionKind],
-         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         vocab: Int, maxSeq: Int, slidingWindow: Int, dtype: DType) {
+    init(
+        embedTokens: AnyEmbedding, layers: [GPTOSSLayer],
+        finalNorm: RMSNorm, lmHead: AnyLinear,
+        attnKinds: [GPTOSSAttentionKind],
+        hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        vocab: Int, maxSeq: Int, slidingWindow: Int, dtype: DType
+    ) {
         self.embedTokens = embedTokens
         self.layers = layers
         self.finalNorm = finalNorm
         self.lmHead = lmHead
         self.attnKinds = attnKinds
-        self.hidden = hidden; self.nLayers = nLayers; self.nHeads = nHeads
-        self.nKVHeads = nKVHeads; self.headDim = headDim; self.vocab = vocab
-        self.maxSeq = maxSeq; self.slidingWindow = slidingWindow
+        self.hidden = hidden
+        self.nLayers = nLayers
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.vocab = vocab
+        self.maxSeq = maxSeq
+        self.slidingWindow = slidingWindow
         self.dtype = dtype
     }
 
@@ -787,9 +830,11 @@ public final class GPTOSSModel: LanguageModel {
     /// ONLY the final norm + lm_head queue onto the caller's pristine
     /// `cmd`. The hidden state handed to the final norm is resident
     /// (the last layer committed its buffer).
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let tokenBuf = device.makeBuffer(length: 4)
         var tid = UInt32(tokenId)
         memcpy(tokenBuf.contents(), &tid, 4)
@@ -805,22 +850,25 @@ public final class GPTOSSModel: LanguageModel {
 
         for (i, layer) in layers.enumerated() {
             guard let kv = caches[i] as? KVCache else {
-                fatalError("GPTOSSModel: expected KVCache at layer \(i), "
-                           + "got \(type(of: caches[i]))")
+                fatalError(
+                    "GPTOSSModel: expected KVCache at layer \(i), "
+                        + "got \(type(of: caches[i]))")
             }
             // Each layer runs on its own internal buffers (the attention
             // sink correction + the MoE router both commit), so it gets
             // a fresh buffer and returns a fully-resident `h`.
             let layerCmd = device.makeCommandBuffer()
-            h = layer.decode(h, position: position, cache: kv,
-                             cmd: layerCmd, device: device)
+            h = layer.decode(
+                h, position: position, cache: kv,
+                cmd: layerCmd, device: device)
         }
 
         // `h` is resident (the last layer committed). The final RMSNorm
         // runs host-side (hidden=2880 is not 128-aligned); lm_head
         // queues onto the caller's pristine `cmd`.
-        let normed = gptOSSHostRMSNorm(h, weight: finalNorm.weight,
-                                       eps: finalNorm.eps, device: device)
+        let normed = gptOSSHostRMSNorm(
+            h, weight: finalNorm.weight,
+            eps: finalNorm.eps, device: device)
         return lmHead(normed, on: cmd)
     }
 
@@ -841,15 +889,19 @@ public final class GPTOSSModel: LanguageModel {
     /// Until both land, this override is commit-count-batched only —
     /// the per-token forward stays as-is, with `Generate.driveGeneration`
     /// avoiding the per-token commit/wait on the outer prefill loop.
-    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                             caches: [any LayerCacheProtocol],
-                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(!tokenIds.isEmpty,
-                     "GPTOSSModel.forwardMulti: tokenIds must be non-empty")
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "GPTOSSModel.forwardMulti: tokenIds must be non-empty")
         var logits: Tensor!
         for (i, tok) in tokenIds.enumerated() {
-            logits = forward(tokenId: tok, position: position + i,
-                             caches: caches, on: cmd, device: device)
+            logits = forward(
+                tokenId: tok, position: position + i,
+                caches: caches, on: cmd, device: device)
         }
         return logits
     }
@@ -902,18 +954,23 @@ func buildGPTOSSMoE(
     let router: GPTOSSBiasedLinear = {
         let inner: AnyLinear
         if let q = quantMap.config(for: "\(p).router"),
-           weights.isQuantized("\(p).router"),
-           let t = try? weights.quantizedTriplet("\(p).router") {
-            inner = AnyLinear(QuantizedLinear(
-                weight: t.weight, scales: t.scales, biases: t.biases,
-                bits: q.bits, groupSize: q.groupSize))
+            weights.isQuantized("\(p).router"),
+            let t = try? weights.quantizedTriplet("\(p).router")
+        {
+            inner = AnyLinear(
+                QuantizedLinear(
+                    weight: t.weight, scales: t.scales, biases: t.biases,
+                    bits: q.bits, groupSize: q.groupSize))
         } else {
-            inner = AnyLinear(Linear(
-                weight: (try? weights.tensor(named: "\(p).router.weight"))!))
+            inner = AnyLinear(
+                Linear(
+                    weight: (try? weights.tensor(named: "\(p).router.weight"))!))
         }
-        let bias = weights.has("\(p).router.bias")
-            ? castGPTOSSTensor(try! weights.tensor(named: "\(p).router.bias"),
-                               to: dtype, device: device)
+        let bias =
+            weights.has("\(p).router.bias")
+            ? castGPTOSSTensor(
+                try! weights.tensor(named: "\(p).router.bias"),
+                to: dtype, device: device)
             : nil
         return GPTOSSBiasedLinear(linear: inner, bias: bias)
     }()
@@ -936,9 +993,10 @@ func buildGPTOSSMoE(
 
     var experts: [GPTOSSExpert] = []
     experts.reserveCapacity(numExperts)
-    for e in 0..<numExperts {
-        experts.append(GPTOSSExpert(
-            gateProj: gate[e], upProj: up[e], downProj: down[e]))
+    for e in 0 ..< numExperts {
+        experts.append(
+            GPTOSSExpert(
+                gateProj: gate[e], upProj: up[e], downProj: down[e]))
     }
 
     return GPTOSSMoELayer(
@@ -973,7 +1031,7 @@ func buildGPTOSSMoE(
 /// `2^(e8m0 − 127)` for every possible e8m0 byte — the MXFP4 group
 /// microscale. Precomputed so the transcode never calls `exp2`.
 private let mxfp4MicroScaleForByte: [Float] = {
-    (0..<256).map { e8m0 in
+    (0 ..< 256).map { e8m0 in
         Float(Foundation.exp2(Double(e8m0 - MXFP4.e8m0Bias)))
     }
 }()
@@ -994,21 +1052,24 @@ private func transcodeStackedExperts(
     numExperts: Int, outDim: Int, inDim: Int,
     dtype: DType, device: Device
 ) throws -> [GPTOSSExpertProjection] {
-    let packed = try weights.tensor(named: "\(base).weight")    // u32
-    let scales = try weights.tensor(named: "\(base).scales")    // u8
-    let biases = try weights.tensor(named: "\(base).bias")      // f16
+    let packed = try weights.tensor(named: "\(base).weight")  // u32
+    let scales = try weights.tensor(named: "\(base).scales")  // u8
+    let biases = try weights.tensor(named: "\(base).bias")  // f16
 
-    precondition(packed.dtype == .u32,
-                 "GPT-OSS MoE: \(base).weight expected u32, got \(packed.dtype)")
-    precondition(scales.dtype == .u8,
-                 "GPT-OSS MoE: \(base).scales expected u8, got \(scales.dtype)")
-    precondition(inDim % MXFP4.groupSize == 0,
-                 "GPT-OSS MoE: inDim \(inDim) must be a multiple of "
-                 + "MXFP4 group size \(MXFP4.groupSize)")
+    precondition(
+        packed.dtype == .u32,
+        "GPT-OSS MoE: \(base).weight expected u32, got \(packed.dtype)")
+    precondition(
+        scales.dtype == .u8,
+        "GPT-OSS MoE: \(base).scales expected u8, got \(scales.dtype)")
+    precondition(
+        inDim % MXFP4.groupSize == 0,
+        "GPT-OSS MoE: inDim \(inDim) must be a multiple of "
+            + "MXFP4 group size \(MXFP4.groupSize)")
 
-    let wordsPerRow = inDim / MXFP4.codesPerWord     // packed u32 / output row
-    let groupsPerRow = inDim / MXFP4.groupSize       // scale bytes / output row
-    let bytesPerRow = wordsPerRow * 4                // packed bytes / output row
+    let wordsPerRow = inDim / MXFP4.codesPerWord  // packed u32 / output row
+    let groupsPerRow = inDim / MXFP4.groupSize  // scale bytes / output row
+    let bytesPerRow = wordsPerRow * 4  // packed bytes / output row
     precondition(
         packed.elementCount == numExperts * outDim * wordsPerRow,
         "GPT-OSS MoE: \(base).weight count mismatch — got \(packed.shape)")
@@ -1017,8 +1078,9 @@ private func transcodeStackedExperts(
         "GPT-OSS MoE: \(base).scales count mismatch — got \(scales.shape)")
 
     let biasFloats = readGPTOSSFloats(biases)
-    precondition(biasFloats.count == numExperts * outDim,
-                 "GPT-OSS MoE: \(base).bias count mismatch")
+    precondition(
+        biasFloats.count == numExperts * outDim,
+        "GPT-OSS MoE: \(base).bias count mismatch")
 
     let rowWords = wordsPerRow
     let rowGroups = groupsPerRow
@@ -1029,13 +1091,13 @@ private func transcodeStackedExperts(
     // Pre-allocate every expert's device-resident affine triplet so the
     // transcode writes straight into GPU memory. Experts are
     // independent — the outer loop parallelizes across cores.
-    let weightTs = (0..<numExperts).map { _ in
+    let weightTs = (0 ..< numExperts).map { _ in
         Tensor.empty(shape: [outDim, rowWords], dtype: .u32, device: device)
     }
-    let scaleTs = (0..<numExperts).map { _ in
+    let scaleTs = (0 ..< numExperts).map { _ in
         Tensor.empty(shape: [outDim, rowGroups], dtype: dtype, device: device)
     }
-    let biasTs = (0..<numExperts).map { _ in
+    let biasTs = (0 ..< numExperts).map { _ in
         Tensor.empty(shape: [outDim, rowGroups], dtype: dtype, device: device)
     }
 
@@ -1066,89 +1128,94 @@ private func transcodeStackedExperts(
         let bDst = biasTs[e].buffer.contents().advanced(by: biasTs[e].offset)
 
         MXFP4.lut.withUnsafeBufferPointer { lut in
-        mxfp4MicroScaleForByte.withUnsafeBufferPointer { microTbl in
-            // Per-group affine fit. `g` indexes groups; each group is
-            // `bytesPerGroup` packed bytes (= 32 codes) and one e8m0
-            // scale byte. Output scale/bias dtype branches once.
-            let dt = dtype
-            var g = 0
-            while g < groupsPerExpert {
-                let mxScale = microTbl[Int(scaleHost[g])]
-                let byteBase = g * bytesPerGroup
+            mxfp4MicroScaleForByte.withUnsafeBufferPointer { microTbl in
+                // Per-group affine fit. `g` indexes groups; each group is
+                // `bytesPerGroup` packed bytes (= 32 codes) and one e8m0
+                // scale byte. Output scale/bias dtype branches once.
+                let dt = dtype
+                var g = 0
+                while g < groupsPerExpert {
+                    let mxScale = microTbl[Int(scaleHost[g])]
+                    let byteBase = g * bytesPerGroup
 
-                // Pass 1: min / max of the group's LUT values.
-                var lo: Float = 1e30
-                var hi: Float = -1e30
-                var b = 0
-                while b < bytesPerGroup {
-                    let byte = packedBytes[byteBase + b]
-                    let v0 = lut[Int(byte & 0x0F)]
-                    let v1 = lut[Int(byte >> 4)]
-                    if v0 < lo { lo = v0 }
-                    if v0 > hi { hi = v0 }
-                    if v1 < lo { lo = v1 }
-                    if v1 > hi { hi = v1 }
-                    b &+= 1
-                }
-                // Affine grid over [lo, hi]·mxScale, 16 levels.
-                let affBias = lo * mxScale
-                let span = (hi - lo) * mxScale
-                let affScale = span > 0 ? span / 15.0 : 0
-                let invScale: Float = affScale > 0 ? 1.0 / affScale : 0
+                    // Pass 1: min / max of the group's LUT values.
+                    var lo: Float = 1e30
+                    var hi: Float = -1e30
+                    var b = 0
+                    while b < bytesPerGroup {
+                        let byte = packedBytes[byteBase + b]
+                        let v0 = lut[Int(byte & 0x0F)]
+                        let v1 = lut[Int(byte >> 4)]
+                        if v0 < lo { lo = v0 }
+                        if v0 > hi { hi = v0 }
+                        if v1 < lo { lo = v1 }
+                        if v1 > hi { hi = v1 }
+                        b &+= 1
+                    }
+                    // Affine grid over [lo, hi]·mxScale, 16 levels.
+                    let affBias = lo * mxScale
+                    let span = (hi - lo) * mxScale
+                    let affScale = span > 0 ? span / 15.0 : 0
+                    let invScale: Float = affScale > 0 ? 1.0 / affScale : 0
 
-                // Write scale / bias in the activation dtype.
-                switch dt {
-                case .f16:
-                    sDst.assumingMemoryBound(to: Float16.self)[g] =
-                        Float16(affScale)
-                    bDst.assumingMemoryBound(to: Float16.self)[g] =
-                        Float16(affBias)
-                case .bf16:
-                    sDst.assumingMemoryBound(to: UInt16.self)[g] =
-                        bf16Bits(affScale)
-                    bDst.assumingMemoryBound(to: UInt16.self)[g] =
-                        bf16Bits(affBias)
-                case .f32:
-                    sDst.assumingMemoryBound(to: Float.self)[g] = affScale
-                    bDst.assumingMemoryBound(to: Float.self)[g] = affBias
-                default:
-                    fatalError("GPT-OSS MoE: unsupported dtype \(dt)")
-                }
+                    // Write scale / bias in the activation dtype.
+                    switch dt {
+                    case .f16:
+                        sDst.assumingMemoryBound(to: Float16.self)[g] =
+                            Float16(affScale)
+                        bDst.assumingMemoryBound(to: Float16.self)[g] =
+                            Float16(affBias)
+                    case .bf16:
+                        sDst.assumingMemoryBound(to: UInt16.self)[g] =
+                            bf16Bits(affScale)
+                        bDst.assumingMemoryBound(to: UInt16.self)[g] =
+                            bf16Bits(affBias)
+                    case .f32:
+                        sDst.assumingMemoryBound(to: Float.self)[g] = affScale
+                        bDst.assumingMemoryBound(to: Float.self)[g] = affBias
+                    default:
+                        fatalError("GPT-OSS MoE: unsupported dtype \(dt)")
+                    }
 
-                // Pass 2: remap each code to its affine int4 quantum.
-                // affine code  q = round((LUT[code]·mxScale − affBias)
-                //                         / affScale)
-                //                = round((LUT[code] − lo)·mxScale·invScale)
-                let codeScale = mxScale * invScale
-                b = 0
-                while b < bytesPerGroup {
-                    let byte = packedBytes[byteBase + b]
-                    var q0 = Int(((lut[Int(byte & 0x0F)] - lo) * codeScale)
-                        .rounded())
-                    var q1 = Int(((lut[Int(byte >> 4)] - lo) * codeScale)
-                        .rounded())
-                    if q0 < 0 { q0 = 0 }; if q0 > 15 { q0 = 15 }
-                    if q1 < 0 { q1 = 0 }; if q1 > 15 { q1 = 15 }
-                    wDstBytes[byteBase + b] = UInt8(q0 | (q1 << 4))
-                    b &+= 1
+                    // Pass 2: remap each code to its affine int4 quantum.
+                    // affine code  q = round((LUT[code]·mxScale − affBias)
+                    //                         / affScale)
+                    //                = round((LUT[code] − lo)·mxScale·invScale)
+                    let codeScale = mxScale * invScale
+                    b = 0
+                    while b < bytesPerGroup {
+                        let byte = packedBytes[byteBase + b]
+                        var q0 = Int(
+                            ((lut[Int(byte & 0x0F)] - lo) * codeScale)
+                                .rounded())
+                        var q1 = Int(
+                            ((lut[Int(byte >> 4)] - lo) * codeScale)
+                                .rounded())
+                        if q0 < 0 { q0 = 0 }
+                        if q0 > 15 { q0 = 15 }
+                        if q1 < 0 { q1 = 0 }
+                        if q1 > 15 { q1 = 15 }
+                        wDstBytes[byteBase + b] = UInt8(q0 | (q1 << 4))
+                        b &+= 1
+                    }
+                    g &+= 1
                 }
-                g &+= 1
             }
-        }
         }
     }
 
     var out: [GPTOSSExpertProjection] = []
     out.reserveCapacity(numExperts)
-    for e in 0..<numExperts {
+    for e in 0 ..< numExperts {
         let qlinear = QuantizedLinear(
             weight: weightTs[e], scales: scaleTs[e], biases: biasTs[e],
             bits: 4, groupSize: MXFP4.groupSize)
 
         // Per-output-row expert bias, in the activation dtype.
         let rowBias = Tensor.empty(shape: [outDim], dtype: dtype, device: device)
-        writeGPTOSSFloats(Array(biasFloats[(e * outDim)..<((e + 1) * outDim)]),
-                          into: rowBias)
+        writeGPTOSSFloats(
+            Array(biasFloats[(e * outDim) ..< ((e + 1) * outDim)]),
+            into: rowBias)
 
         out.append(GPTOSSExpertProjection(linear: qlinear, bias: rowBias))
     }
@@ -1173,9 +1240,11 @@ private func bf16Bits(_ v: Float) -> UInt16 {
 public final class GPTOSSExpert: Module {
     let gateProj, upProj, downProj: GPTOSSExpertProjection
 
-    init(gateProj: GPTOSSExpertProjection,
-         upProj: GPTOSSExpertProjection,
-         downProj: GPTOSSExpertProjection) {
+    init(
+        gateProj: GPTOSSExpertProjection,
+        upProj: GPTOSSExpertProjection,
+        downProj: GPTOSSExpertProjection
+    ) {
         self.gateProj = gateProj
         self.upProj = upProj
         self.downProj = downProj
@@ -1217,11 +1286,14 @@ public final class GPTOSSMoELayer: Module {
     public let swigluLimit: Float
     public let dtype: DType
 
-    init(router: GPTOSSBiasedLinear, experts: [GPTOSSExpert],
-         topK: Int, hidden: Int, swigluLimit: Float, dtype: DType) {
-        precondition(topK > 0 && topK <= experts.count,
-                     "GPTOSSMoELayer: topK \(topK) out of range "
-                     + "1…\(experts.count)")
+    init(
+        router: GPTOSSBiasedLinear, experts: [GPTOSSExpert],
+        topK: Int, hidden: Int, swigluLimit: Float, dtype: DType
+    ) {
+        precondition(
+            topK > 0 && topK <= experts.count,
+            "GPTOSSMoELayer: topK \(topK) out of range "
+                + "1…\(experts.count)")
         self.router = router
         self.experts = experts
         self.topK = topK
@@ -1245,9 +1317,10 @@ public final class GPTOSSMoELayer: Module {
     /// and returns a fully-resident `[hidden]` tensor produced on a
     /// fresh, locally-committed buffer.
     func decode(_ x: Tensor, cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(x.elementCount == hidden,
-                     "GPTOSSMoELayer.decode: input has \(x.elementCount) "
-                     + "elements, expected hidden \(hidden)")
+        precondition(
+            x.elementCount == hidden,
+            "GPTOSSMoELayer.decode: input has \(x.elementCount) "
+                + "elements, expected hidden \(hidden)")
 
         // ── Router GEMV on the caller's buffer, then CPU sync ─────────
         let logitsTensor = router(x, on: cmd)
@@ -1258,7 +1331,7 @@ public final class GPTOSSMoELayer: Module {
         // GPT-OSS routes top-K of the raw router logits then softmaxes
         // just those K (mlx-lm's `topK` then `softmax`).
         let logits = logitsTensor.toFloatArray()
-        let order = (0..<logits.count).sorted { a, b in
+        let order = (0 ..< logits.count).sorted { a, b in
             if logits[a] != logits[b] { return logits[a] > logits[b] }
             return a < b
         }
@@ -1273,21 +1346,25 @@ public final class GPTOSSMoELayer: Module {
         var expertOuts: [Tensor] = []
         expertOuts.reserveCapacity(idx.count)
         for expertId in idx {
-            expertOuts.append(runExpert(experts[expertId], x: x,
-                                        device: device))
+            expertOuts.append(
+                runExpert(
+                    experts[expertId], x: x,
+                    device: device))
         }
 
         let work = device.makeCommandBuffer()
         var accumulator: Tensor?
         for (slot, expertOut) in expertOuts.enumerated() {
-            let weightTensor = Tensor.filled(combineWeights[slot],
-                                             shape: [hidden], dtype: dtype,
-                                             device: device)
+            let weightTensor = Tensor.filled(
+                combineWeights[slot],
+                shape: [hidden], dtype: dtype,
+                device: device)
             let scaled = Ops.mul(expertOut, weightTensor, on: work)
-            accumulator = accumulator.map { Ops.add($0, scaled, on: work) }
+            accumulator =
+                accumulator.map { Ops.add($0, scaled, on: work) }
                 ?? scaled
         }
-        let result = accumulator!     // topK ≥ 1
+        let result = accumulator!  // topK ≥ 1
         work.commit()
         work.waitUntilCompleted()
         return result
@@ -1298,14 +1375,18 @@ public final class GPTOSSMoELayer: Module {
     /// no GPU op in FFAI and the activation vector is small, so the
     /// host fold is the simplest correct path (see the file header).
     /// Owns its command buffers; returns a fully-resident tensor.
-    private func runExpert(_ expert: GPTOSSExpert, x: Tensor,
-                           device: Device) -> Tensor {
+    private func runExpert(
+        _ expert: GPTOSSExpert, x: Tensor,
+        device: Device
+    ) -> Tensor {
         // ── GPU phase 1: gate / up GEMVs (+ per-row expert bias) ──────
         let cmd = device.makeCommandBuffer()
-        let gate = Ops.add(expert.gateProj.linear(x, on: cmd),
-                           expert.gateProj.bias, on: cmd)
-        let up = Ops.add(expert.upProj.linear(x, on: cmd),
-                         expert.upProj.bias, on: cmd)
+        let gate = Ops.add(
+            expert.gateProj.linear(x, on: cmd),
+            expert.gateProj.bias, on: cmd)
+        let up = Ops.add(
+            expert.upProj.linear(x, on: cmd),
+            expert.upProj.bias, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
 
@@ -1318,7 +1399,7 @@ public final class GPTOSSMoELayer: Module {
         let upHost = readGPTOSSFloats(up)
         let limit = swigluLimit
         var act = [Float](repeating: 0, count: gateHost.count)
-        for i in 0..<gateHost.count {
+        for i in 0 ..< gateHost.count {
             var g = gateHost[i]
             var u = upHost[i]
             if g > limit { g = limit }
@@ -1330,11 +1411,13 @@ public final class GPTOSSMoELayer: Module {
 
         // ── GPU phase 2: down GEMV (+ per-row bias) on a fresh buffer ─
         let phase2 = device.makeCommandBuffer()
-        let actTensor = Tensor.empty(shape: [act.count], dtype: dtype,
-                                     device: device)
+        let actTensor = Tensor.empty(
+            shape: [act.count], dtype: dtype,
+            device: device)
         writeGPTOSSFloats(act, into: actTensor)
-        let down = Ops.add(expert.downProj.linear(actTensor, on: phase2),
-                           expert.downProj.bias, on: phase2)
+        let down = Ops.add(
+            expert.downProj.linear(actTensor, on: phase2),
+            expert.downProj.bias, on: phase2)
         phase2.commit()
         phase2.waitUntilCompleted()
         return down

@@ -18,6 +18,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("ChatTemplate types")
@@ -39,8 +40,9 @@ struct ChatTemplateTests {
         #expect(dict1["content"] as? String == "Hi")
         #expect(dict1["thinking"] == nil)
 
-        let m2 = ChatMessage(role: .assistant, content: "Hello",
-                             thinking: "<reasoning here>")
+        let m2 = ChatMessage(
+            role: .assistant, content: "Hello",
+            thinking: "<reasoning here>")
         let dict2 = m2.asTemplateMessage
         #expect(dict2["thinking"] as? String == "<reasoning here>")
     }
@@ -86,8 +88,9 @@ struct ChatTemplateTests {
         )
         #expect(o == same)
 
-        let different = ChatTemplateOptions(enableThinking: true,
-                                            reasoningEffort: .low)
+        let different = ChatTemplateOptions(
+            enableThinking: true,
+            reasoningEffort: .low)
         #expect(o != different)
     }
 

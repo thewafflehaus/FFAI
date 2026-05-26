@@ -25,9 +25,10 @@
 // and actually detects the tone burst as speech".
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("SileroVAD Integration", .serialized)
 struct SileroVADIntegrationTests {
@@ -40,14 +41,16 @@ struct SileroVADIntegrationTests {
     /// is a 200 Hz sine at moderate amplitude — energetic enough to
     /// trip the speech detector, while the silence regions stay near
     /// zero.
-    private func syntheticClip(sampleRate: Int = 16000,
-                               silenceMs: Int = 600,
-                               burstMs: Int = 1200) -> [Float] {
+    private func syntheticClip(
+        sampleRate: Int = 16000,
+        silenceMs: Int = 600,
+        burstMs: Int = 1200
+    ) -> [Float] {
         let silenceN = sampleRate * silenceMs / 1000
         let burstN = sampleRate * burstMs / 1000
         var clip = [Float](repeating: 0, count: silenceN)
         let twoPiF = 2 * Float.pi * 200
-        for i in 0..<burstN {
+        for i in 0 ..< burstN {
             let t = Float(i) / Float(sampleRate)
             // Mix two tones so the spectrum is broadband-ish, like voice.
             clip.append(0.4 * sinf(twoPiF * t) + 0.2 * sinf(2 * twoPiF * t))
@@ -90,8 +93,9 @@ struct SileroVADIntegrationTests {
         // The tone burst should produce at least one speech segment, and
         // some frame should cross a generous probability floor.
         let maxProb = output.probabilities.max() ?? 0
-        #expect(maxProb > 0.3,
-                "max speech probability \(maxProb) — the forward pass should detect the tone burst")
+        #expect(
+            maxProb > 0.3,
+            "max speech probability \(maxProb) — the forward pass should detect the tone burst")
         #expect(!output.segments.isEmpty)
 
         // Detected speech should not span the whole clip — the leading

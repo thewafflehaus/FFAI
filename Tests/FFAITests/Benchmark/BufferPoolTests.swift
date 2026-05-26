@@ -13,6 +13,7 @@
 // limitations under the License.
 //
 import Testing
+
 @testable import FFAI
 
 @Suite("BufferPool")
@@ -83,7 +84,9 @@ struct BufferPoolTests {
         let c = pool.acquire(bytes: 64)
         #expect(a !== c, "third acquire should produce a fresh buffer")
         #expect(b !== c, "third acquire should produce a fresh buffer")
-        pool.release(a); pool.release(b); pool.release(c)
+        pool.release(a)
+        pool.release(b)
+        pool.release(c)
     }
 
     @Test("withScope reuses buffers across iterations (the dogfood case)")
@@ -100,7 +103,7 @@ struct BufferPoolTests {
         var firstBufferRef: AnyObject? = nil
         var reuseCount = 0
 
-        for _ in 0..<iterations {
+        for _ in 0 ..< iterations {
             pool.withScope { scope in
                 let buf = scope.acquire(bytes: bytes)
                 if firstBufferRef == nil {
@@ -115,8 +118,9 @@ struct BufferPoolTests {
         // iterations 2..N. So at minimum (iterations - 1) reuses.
         // We assert ≥ 1 to keep the test robust against an LRU-style
         // freelist scrambling order, but the typical case is N-1.
-        #expect(reuseCount >= 1,
-                "expected buffer reuse across iterations; got \(reuseCount)")
+        #expect(
+            reuseCount >= 1,
+            "expected buffer reuse across iterations; got \(reuseCount)")
     }
 
     @Test("withScope releases even on throw")
@@ -135,8 +139,9 @@ struct BufferPoolTests {
         } catch is LocalError {
             // Expected. After the throw, the scope's defer should have
             // run, releasing the buffer back to the pool.
-            #expect(capturedScope?.heldCount == 0,
-                    "scope should release acquired buffers even on throw")
+            #expect(
+                capturedScope?.heldCount == 0,
+                "scope should release acquired buffers even on throw")
         } catch {
             Issue.record("unexpected error type: \(error)")
         }

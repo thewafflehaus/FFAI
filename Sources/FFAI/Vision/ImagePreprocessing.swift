@@ -26,8 +26,8 @@
 // The output is a `Tensor` in the model's activation dtype, ready to
 // hand straight to `Ops.conv2d` / `Ops.patchEmbed`.
 
-import Foundation
 import CoreGraphics
+import Foundation
 import ImageIO
 
 /// Error decoding an image file into an `RGBImage`.
@@ -54,8 +54,9 @@ public struct RGBImage: Sendable {
     public let pixels: [Float]
 
     public init(width: Int, height: Int, pixels: [Float]) {
-        precondition(pixels.count == width * height * 3,
-                     "RGBImage: pixel count \(pixels.count) != w*h*3 \(width * height * 3)")
+        precondition(
+            pixels.count == width * height * 3,
+            "RGBImage: pixel count \(pixels.count) != w*h*3 \(width * height * 3)")
         self.width = width
         self.height = height
         self.pixels = pixels
@@ -63,11 +64,15 @@ public struct RGBImage: Sendable {
 
     /// A solid-color test image — handy for unit tests and as a
     /// deterministic stand-in when no real image is supplied.
-    public static func solid(width: Int, height: Int,
-                             r: Float, g: Float, b: Float) -> RGBImage {
+    public static func solid(
+        width: Int, height: Int,
+        r: Float, g: Float, b: Float
+    ) -> RGBImage {
         var px = [Float](repeating: 0, count: width * height * 3)
-        for i in 0..<(width * height) {
-            px[i * 3] = r; px[i * 3 + 1] = g; px[i * 3 + 2] = b
+        for i in 0 ..< (width * height) {
+            px[i * 3] = r
+            px[i * 3 + 1] = g
+            px[i * 3 + 2] = b
         }
         return RGBImage(width: width, height: height, pixels: px)
     }
@@ -85,14 +90,14 @@ public struct RGBImage: Sendable {
             throw RGBImageError.fileNotFound(url.path)
         }
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
+            let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
         else {
             throw RGBImageError.decodeFailed(url.path)
         }
 
         let width = cgImage.width
         let height = cgImage.height
-        let bytesPerPixel = 4                       // RGBA8
+        let bytesPerPixel = 4  // RGBA8
         let bytesPerRow = width * bytesPerPixel
         var rgba = [UInt8](repeating: 0, count: height * bytesPerRow)
 
@@ -104,13 +109,17 @@ public struct RGBImage: Sendable {
         }
         let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
         let ok: Bool = rgba.withUnsafeMutableBytes { raw -> Bool in
-            guard let ctx = CGContext(
-                data: raw.baseAddress, width: width, height: height,
-                bitsPerComponent: 8, bytesPerRow: bytesPerRow,
-                space: colorSpace, bitmapInfo: bitmapInfo)
+            guard
+                let ctx = CGContext(
+                    data: raw.baseAddress, width: width, height: height,
+                    bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+                    space: colorSpace, bitmapInfo: bitmapInfo)
             else { return false }
-            ctx.draw(cgImage, in: CGRect(x: 0, y: 0,
-                                         width: width, height: height))
+            ctx.draw(
+                cgImage,
+                in: CGRect(
+                    x: 0, y: 0,
+                    width: width, height: height))
             return true
         }
         guard ok else { throw RGBImageError.decodeFailed(url.path) }
@@ -118,8 +127,8 @@ public struct RGBImage: Sendable {
         // RGBA8 → interleaved-RGB float [0,1], dropping alpha.
         var pixels = [Float](repeating: 0, count: width * height * 3)
         let inv255: Float = 1.0 / 255.0
-        for i in 0..<(width * height) {
-            pixels[i * 3]     = Float(rgba[i * 4]) * inv255
+        for i in 0 ..< (width * height) {
+            pixels[i * 3] = Float(rgba[i * 4]) * inv255
             pixels[i * 3 + 1] = Float(rgba[i * 4 + 1]) * inv255
             pixels[i * 3 + 2] = Float(rgba[i * 4 + 2]) * inv255
         }
@@ -155,10 +164,13 @@ public enum ImagePreprocessing {
     /// Resize `image` to `targetW × targetH` with bilinear interpolation.
     /// Vision encoders expect a fixed input resolution (SigLIP 224 / 896,
     /// CLIP 336, …); this is the resampling step.
-    public static func resize(_ image: RGBImage,
-                              targetW: Int, targetH: Int) -> RGBImage {
-        precondition(targetW > 0 && targetH > 0,
-                     "ImagePreprocessing.resize: target dims must be positive")
+    public static func resize(
+        _ image: RGBImage,
+        targetW: Int, targetH: Int
+    ) -> RGBImage {
+        precondition(
+            targetW > 0 && targetH > 0,
+            "ImagePreprocessing.resize: target dims must be positive")
         if image.width == targetW && image.height == targetH { return image }
 
         var out = [Float](repeating: 0, count: targetW * targetH * 3)
@@ -167,17 +179,17 @@ public enum ImagePreprocessing {
         // `align_corners = false` convention HF image processors use.
         let scaleX = Float(image.width) / Float(targetW)
         let scaleY = Float(image.height) / Float(targetH)
-        for oy in 0..<targetH {
+        for oy in 0 ..< targetH {
             let srcY = (Float(oy) + 0.5) * scaleY - 0.5
             let y0 = max(0, min(image.height - 1, Int(srcY.rounded(.down))))
             let y1 = min(image.height - 1, y0 + 1)
             let wy = max(0, min(1, srcY - Float(y0)))
-            for ox in 0..<targetW {
+            for ox in 0 ..< targetW {
                 let srcX = (Float(ox) + 0.5) * scaleX - 0.5
                 let x0 = max(0, min(image.width - 1, Int(srcX.rounded(.down))))
                 let x1 = min(image.width - 1, x0 + 1)
                 let wx = max(0, min(1, srcX - Float(x0)))
-                for c in 0..<3 {
+                for c in 0 ..< 3 {
                     let p00 = image.pixels[(y0 * image.width + x0) * 3 + c]
                     let p01 = image.pixels[(y0 * image.width + x1) * 3 + c]
                     let p10 = image.pixels[(y1 * image.width + x0) * 3 + c]
@@ -212,17 +224,18 @@ public enum ImagePreprocessing {
         // Interleaved RGB → planar NCHW, normalizing in the same pass.
         var planar = [Float](repeating: 0, count: 3 * targetH * targetW)
         let plane = targetH * targetW
-        for y in 0..<targetH {
-            for x in 0..<targetW {
+        for y in 0 ..< targetH {
+            for x in 0 ..< targetW {
                 let srcBase = (y * targetW + x) * 3
-                for c in 0..<3 {
+                for c in 0 ..< 3 {
                     let v = (resized.pixels[srcBase + c] - means[c]) / stds[c]
                     planar[c * plane + y * targetW + x] = v
                 }
             }
         }
-        return makeTensor(from: planar, shape: [1, 3, targetH, targetW],
-                          dtype: dtype, device: device)
+        return makeTensor(
+            from: planar, shape: [1, 3, targetH, targetW],
+            dtype: dtype, device: device)
     }
 
     /// Patchify a normalized planar `[3, h, w]` float array into a flat
@@ -238,10 +251,12 @@ public enum ImagePreprocessing {
         planar: [Float], channels: Int, height: Int, width: Int,
         patchH: Int, patchW: Int, dtype: DType, device: Device = .shared
     ) -> Tensor {
-        precondition(planar.count == channels * height * width,
-                     "ImagePreprocessing.patchify: array size mismatch")
-        precondition(height % patchH == 0 && width % patchW == 0,
-                     "ImagePreprocessing.patchify: image not divisible by patch")
+        precondition(
+            planar.count == channels * height * width,
+            "ImagePreprocessing.patchify: array size mismatch")
+        precondition(
+            height % patchH == 0 && width % patchW == 0,
+            "ImagePreprocessing.patchify: image not divisible by patch")
         let patchesH = height / patchH
         let patchesW = width / patchW
         let numPatches = patchesH * patchesW
@@ -249,14 +264,14 @@ public enum ImagePreprocessing {
         let plane = height * width
 
         var out = [Float](repeating: 0, count: numPatches * patchDim)
-        for ph in 0..<patchesH {
-            for pw in 0..<patchesW {
+        for ph in 0 ..< patchesH {
+            for pw in 0 ..< patchesW {
                 let patch = ph * patchesW + pw
                 var col = 0
-                for c in 0..<channels {
-                    for py in 0..<patchH {
+                for c in 0 ..< channels {
+                    for py in 0 ..< patchH {
                         let row = (ph * patchH + py) * width + pw * patchW
-                        for px in 0..<patchW {
+                        for px in 0 ..< patchW {
                             out[patch * patchDim + col] = planar[c * plane + row + px]
                             col += 1
                         }
@@ -264,15 +279,18 @@ public enum ImagePreprocessing {
                 }
             }
         }
-        return makeTensor(from: out, shape: [numPatches, patchDim],
-                          dtype: dtype, device: device)
+        return makeTensor(
+            from: out, shape: [numPatches, patchDim],
+            dtype: dtype, device: device)
     }
 
     /// Build a `Tensor` of `shape` / `dtype` from a `[Float]` source,
     /// converting to the storage dtype. Centralizes the f32 / f16 / bf16
     /// host-side conversion every preprocessing path shares.
-    static func makeTensor(from values: [Float], shape: [Int],
-                           dtype: DType, device: Device) -> Tensor {
+    static func makeTensor(
+        from values: [Float], shape: [Int],
+        dtype: DType, device: Device
+    ) -> Tensor {
         let t = Tensor.empty(shape: shape, dtype: dtype, device: device)
         switch dtype {
         case .f32:
@@ -280,11 +298,12 @@ public enum ImagePreprocessing {
         case .f16:
             t.copyIn(from: values.map { Float16($0) })
         case .bf16:
-            t.copyIn(from: values.map { v -> UInt16 in
-                let bits = v.bitPattern
-                let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
-                return UInt16(rounded >> 16)
-            })
+            t.copyIn(
+                from: values.map { v -> UInt16 in
+                    let bits = v.bitPattern
+                    let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
+                    return UInt16(rounded >> 16)
+                })
         default:
             fatalError("ImagePreprocessing: unsupported dtype \(dtype)")
         }

@@ -30,6 +30,7 @@
 import Foundation
 import Metal
 import Testing
+
 @testable import FFAI
 
 @Suite("LanguageModel default extension")
@@ -58,9 +59,11 @@ final class LanguageModelDefaultsTests {
             []
         }
 
-        func forward(tokenId _: Int, position _: Int,
-                     caches _: [any LayerCacheProtocol],
-                     on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        func forward(
+            tokenId _: Int, position _: Int,
+            caches _: [any LayerCacheProtocol],
+            on cmd: MTLCommandBuffer, device: Device
+        ) -> Tensor {
             observedCmdbufs.append(ObjectIdentifier(cmd))
             // Return a tiny constant logits tensor. Argmax over [10, 1, 1, 1, …]
             // picks index 0 deterministically; softmax-categorical with
@@ -83,8 +86,9 @@ final class LanguageModelDefaultsTests {
         // The peaked logits guarantee idx 0 wins.
         #expect(token == 0)
         // The whole point of this test: forward + sampler share a cmdbuf.
-        #expect(model.observedCmdbufs.count == 1,
-                "forward should be invoked exactly once (got \(model.observedCmdbufs.count))")
+        #expect(
+            model.observedCmdbufs.count == 1,
+            "forward should be invoked exactly once (got \(model.observedCmdbufs.count))")
     }
 
     @Test("forwardSample uses exactly one command buffer")
@@ -92,8 +96,9 @@ final class LanguageModelDefaultsTests {
         let model = CountingModel()
         let token = model.forwardSample(tokenId: 0, position: 0, caches: [])
         #expect(token == 0)
-        #expect(model.observedCmdbufs.count == 1,
-                "forward should be invoked exactly once (got \(model.observedCmdbufs.count))")
+        #expect(
+            model.observedCmdbufs.count == 1,
+            "forward should be invoked exactly once (got \(model.observedCmdbufs.count))")
     }
 
     @Test("forward (default) wraps the primitive in one cmdbuf and waits")

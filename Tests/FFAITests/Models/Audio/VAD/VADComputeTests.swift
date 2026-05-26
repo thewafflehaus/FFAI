@@ -34,6 +34,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("VADCompute")
@@ -98,14 +99,14 @@ struct VADComputeTests {
     @Test("VADMath.softmaxInPlace — uniform input produces uniform distribution")
     func softmaxUniform() {
         var xs: [Float] = [1, 1, 1, 1]
-        VADMath.softmaxInPlace(&xs, range: 0..<4)
+        VADMath.softmaxInPlace(&xs, range: 0 ..< 4)
         for v in xs { #expect(abs(v - 0.25) < 1e-6) }
     }
 
     @Test("VADMath.softmaxInPlace — output sums to 1 over the range")
     func softmaxSumsToOne() {
         var xs: [Float] = [0, 1, 2, 3]
-        VADMath.softmaxInPlace(&xs, range: 0..<4)
+        VADMath.softmaxInPlace(&xs, range: 0 ..< 4)
         let s = xs.reduce(0, +)
         #expect(abs(s - 1.0) < 1e-5)
     }
@@ -116,7 +117,7 @@ struct VADComputeTests {
     func linearIdentity() {
         // Identity 3×3: weight[o, i] = 1 if o == i else 0.
         var w = [Float](repeating: 0, count: 9)
-        for i in 0..<3 { w[i * 3 + i] = 1 }
+        for i in 0 ..< 3 { w[i * 3 + i] = 1 }
         let lin = VADLinear(weight: w, bias: nil, inFeatures: 3, outFeatures: 3)
         let x: [Float] = [1, 2, 3]
         #expect(lin.apply(x) == x)
@@ -148,16 +149,18 @@ struct VADComputeTests {
     @Test("VADConv1d.outputLength — K=3, stride=1, pad=1 keeps length")
     func conv1dOutputLengthSame() {
         let w = [Float](repeating: 0, count: 1 * 1 * 3)
-        let c = VADConv1d(weight: w, bias: nil, inChannels: 1, outChannels: 1,
-                          kernelSize: 3, stride: 1, padding: 1)
+        let c = VADConv1d(
+            weight: w, bias: nil, inChannels: 1, outChannels: 1,
+            kernelSize: 3, stride: 1, padding: 1)
         #expect(c.outputLength(forInputLength: 10) == 10)
     }
 
     @Test("VADConv1d.outputLength — K=3, stride=2, pad=1 halves length")
     func conv1dOutputLengthStride2() {
         let w = [Float](repeating: 0, count: 1 * 1 * 3)
-        let c = VADConv1d(weight: w, bias: nil, inChannels: 1, outChannels: 1,
-                          kernelSize: 3, stride: 2, padding: 1)
+        let c = VADConv1d(
+            weight: w, bias: nil, inChannels: 1, outChannels: 1,
+            kernelSize: 3, stride: 2, padding: 1)
         // (10 + 2*1 - 3) / 2 + 1 = 9 / 2 + 1 = 4 + 1 = 5.
         #expect(c.outputLength(forInputLength: 10) == 5)
     }
@@ -166,8 +169,9 @@ struct VADComputeTests {
     func conv1dIdentity() {
         // 1 in, 1 out, kernel=1, weight=1 → output = input.
         let w: [Float] = [1]
-        let c = VADConv1d(weight: w, bias: nil, inChannels: 1, outChannels: 1,
-                          kernelSize: 1, stride: 1, padding: 0)
+        let c = VADConv1d(
+            weight: w, bias: nil, inChannels: 1, outChannels: 1,
+            kernelSize: 1, stride: 1, padding: 0)
         let (vals, len) = c.apply([1, 2, 3, 4], inLength: 4)
         #expect(len == 4)
         #expect(vals == [1, 2, 3, 4])
@@ -189,9 +193,10 @@ struct VADComputeTests {
     @Test("VADLayerNorm.applyRows — output has matching shape")
     func layerNormShape() {
         let dim = 4
-        let ln = VADLayerNorm(weight: [Float](repeating: 1, count: dim),
-                              bias: [Float](repeating: 0, count: dim),
-                              dim: dim)
+        let ln = VADLayerNorm(
+            weight: [Float](repeating: 1, count: dim),
+            bias: [Float](repeating: 0, count: dim),
+            dim: dim)
         let x = [Float](repeating: 1, count: 3 * dim)
         let y = ln.applyRows(x, rows: 3)
         #expect(y.count == 3 * dim)
@@ -205,8 +210,9 @@ struct VADComputeTests {
         let hidden = 4
         let wih = [Float](repeating: 0, count: 4 * hidden * inSize)
         let whh = [Float](repeating: 0, count: 4 * hidden * hidden)
-        let lstm = VADLSTM(weightIH: wih, weightHH: whh, biasIH: nil,
-                           biasHH: nil, inputSize: inSize, hiddenSize: hidden)
+        let lstm = VADLSTM(
+            weightIH: wih, weightHH: whh, biasIH: nil,
+            biasHH: nil, inputSize: inSize, hiddenSize: hidden)
         let x = [Float](repeating: 0.1, count: 5 * inSize)
         let (seq, h, c) = lstm.run(x, seqLen: 5)
         #expect(seq.count == 5 * hidden)
@@ -220,8 +226,9 @@ struct VADComputeTests {
         let hidden = 4
         let wih = [Float](repeating: 0, count: 4 * hidden * inSize)
         let whh = [Float](repeating: 0, count: 4 * hidden * hidden)
-        let lstm = VADLSTM(weightIH: wih, weightHH: whh, biasIH: nil,
-                           biasHH: nil, inputSize: inSize, hiddenSize: hidden)
+        let lstm = VADLSTM(
+            weightIH: wih, weightHH: whh, biasIH: nil,
+            biasHH: nil, inputSize: inSize, hiddenSize: hidden)
         let x = [Float](repeating: 0, count: 3 * inSize)
         let (seq, h, c) = lstm.run(x, seqLen: 3)
         for v in seq { #expect(abs(v) < 1e-6) }
@@ -250,8 +257,9 @@ struct VADComputeTests {
     func melFilterbankShape() {
         let nFft = 400
         let nMels = 80
-        let fb = VADAudioFrontend.melFilterbank(sampleRate: 16_000,
-                                                nFft: nFft, nMels: nMels)
+        let fb = VADAudioFrontend.melFilterbank(
+            sampleRate: 16_000,
+            nFft: nFft, nMels: nMels)
         // Shape: [nBins, nMels] where nBins = nFft/2 + 1.
         let nBins = nFft / 2 + 1
         #expect(fb.count == nBins * nMels)
@@ -264,10 +272,11 @@ struct VADComputeTests {
         let nFft = 64
         let hopLength = 16
         let window = VADAudioFrontend.hannWindow(size: nFft)
-        let audio = (0..<1024).map { Float(sin(Double($0) * 0.1)) }
+        let audio = (0 ..< 1024).map { Float(sin(Double($0) * 0.1)) }
         let (spec, nFrames, nBins) =
-            VADAudioFrontend.powerSpectrogram(audio, window: window,
-                                              nFft: nFft, hopLength: hopLength)
+            VADAudioFrontend.powerSpectrogram(
+                audio, window: window,
+                nFft: nFft, hopLength: hopLength)
         #expect(nBins == nFft / 2 + 1)
         #expect(nFrames > 0)
         #expect(spec.count == nFrames * nBins)
@@ -282,8 +291,9 @@ struct VADComputeTests {
         let nMels = 8
         let nFrames = 5
         let power = [Float](repeating: 0.5, count: nFrames * nBins)
-        let fb = VADAudioFrontend.melFilterbank(sampleRate: 16_000,
-                                                nFft: nFft, nMels: nMels)
+        let fb = VADAudioFrontend.melFilterbank(
+            sampleRate: 16_000,
+            nFft: nFft, nMels: nMels)
         let mel = VADAudioFrontend.applyMelFilterbank(
             power: power, numFrames: nFrames, nBins: nBins,
             filterbank: fb, nMels: nMels)
@@ -329,7 +339,7 @@ struct VADComputeTests {
             numHeads: numHeads, headDim: headDim,
             scale: Float(headDim).squareRoot())
         // Expected: each row equals the mean of V rows: [(0+2+4+6)/4, (1+3+5+7)/4] = [3, 4].
-        for r in 0..<seqLen {
+        for r in 0 ..< seqLen {
             #expect(abs(out[r * headDim + 0] - 3) < 1e-3)
             #expect(abs(out[r * headDim + 1] - 4) < 1e-3)
         }

@@ -102,15 +102,19 @@ public struct MoERouter: Sendable {
     /// for `.softmaxThenTopK`.
     public let expertBias: [Float]?
 
-    public init(nExperts: Int, topK: Int, gatingMode: MoEGatingMode,
-                normTopKProb: Bool = true, expertBias: [Float]? = nil) {
+    public init(
+        nExperts: Int, topK: Int, gatingMode: MoEGatingMode,
+        normTopKProb: Bool = true, expertBias: [Float]? = nil
+    ) {
         precondition(nExperts > 0, "MoERouter: nExperts must be positive")
-        precondition(topK > 0 && topK <= nExperts,
-                     "MoERouter: topK (\(topK)) must be in 1...nExperts (\(nExperts))")
+        precondition(
+            topK > 0 && topK <= nExperts,
+            "MoERouter: topK (\(topK)) must be in 1...nExperts (\(nExperts))")
         if let bias = expertBias {
-            precondition(bias.count == nExperts,
-                         "MoERouter: expertBias has \(bias.count) entries, "
-                         + "nExperts is \(nExperts)")
+            precondition(
+                bias.count == nExperts,
+                "MoERouter: expertBias has \(bias.count) entries, "
+                    + "nExperts is \(nExperts)")
         }
         self.nExperts = nExperts
         self.topK = topK
@@ -134,8 +138,9 @@ public struct MoERouter: Sendable {
     /// matches NumPy / PyTorch / MLX `argpartition` + `argmax`
     /// semantics, so output stays deterministic across runs.
     public func route(logits: [Float]) -> Routing {
-        precondition(logits.count == nExperts,
-                     "MoERouter.route: logits.count \(logits.count) ≠ nExperts \(nExperts)")
+        precondition(
+            logits.count == nExperts,
+            "MoERouter.route: logits.count \(logits.count) ≠ nExperts \(nExperts)")
 
         switch gatingMode {
         case .softmaxThenTopK where normTopKProb && expertBias == nil:
@@ -249,7 +254,9 @@ public struct MoERouter: Sendable {
                 if less(heap[i], heap[parent]) {
                     heap.swapAt(i, parent)
                     i = parent
-                } else { return }
+                } else {
+                    return
+                }
             }
         }
         @inline(__always) func siftDown(_ start: Int) {
@@ -266,7 +273,7 @@ public struct MoERouter: Sendable {
                 i = smallest
             }
         }
-        for i in 0..<x.count {
+        for i in 0 ..< x.count {
             let entry = (x[i], i)
             if heap.count < k {
                 heap.append(entry)
@@ -349,11 +356,13 @@ public final class MoELayer: Module, DecoderLayer {
         /// Activation dtype the scales / biases / activations all use.
         public let dtype: DType
 
-        public init(gateWeight: Tensor, gateScales: Tensor, gateBiases: Tensor,
-                    upWeight: Tensor, upScales: Tensor, upBiases: Tensor,
-                    downWeight: Tensor, downScales: Tensor, downBiases: Tensor,
-                    numExperts: Int, moeIntermediate: Int, hidden: Int,
-                    groupSize: Int, dtype: DType) {
+        public init(
+            gateWeight: Tensor, gateScales: Tensor, gateBiases: Tensor,
+            upWeight: Tensor, upScales: Tensor, upBiases: Tensor,
+            downWeight: Tensor, downScales: Tensor, downBiases: Tensor,
+            numExperts: Int, moeIntermediate: Int, hidden: Int,
+            groupSize: Int, dtype: DType
+        ) {
             self.gateWeight = gateWeight
             self.gateScales = gateScales
             self.gateBiases = gateBiases
@@ -391,23 +400,29 @@ public final class MoELayer: Module, DecoderLayer {
     /// - stackedInt4Experts: optional batched-BGEMM fast path. Per-expert
     ///   arrays above remain the source of truth for `parameters()`
     ///   (checkpoint binding) and the fallback decode path.
-    public init(gate: AnyLinear,
-                gateProj: [AnyLinear], upProj: [AnyLinear], downProj: [AnyLinear],
-                sharedGateProj: AnyLinear? = nil,
-                sharedUpProj: AnyLinear? = nil,
-                sharedDownProj: AnyLinear? = nil,
-                router: MoERouter, hidden: Int,
-                stackedInt4Experts: StackedInt4Experts? = nil) {
-        precondition(gateProj.count == router.nExperts,
-                     "MoELayer: gateProj has \(gateProj.count) experts, router expects \(router.nExperts)")
-        precondition(upProj.count == router.nExperts,
-                     "MoELayer: upProj has \(upProj.count) experts, router expects \(router.nExperts)")
-        precondition(downProj.count == router.nExperts,
-                     "MoELayer: downProj has \(downProj.count) experts, router expects \(router.nExperts)")
+    public init(
+        gate: AnyLinear,
+        gateProj: [AnyLinear], upProj: [AnyLinear], downProj: [AnyLinear],
+        sharedGateProj: AnyLinear? = nil,
+        sharedUpProj: AnyLinear? = nil,
+        sharedDownProj: AnyLinear? = nil,
+        router: MoERouter, hidden: Int,
+        stackedInt4Experts: StackedInt4Experts? = nil
+    ) {
+        precondition(
+            gateProj.count == router.nExperts,
+            "MoELayer: gateProj has \(gateProj.count) experts, router expects \(router.nExperts)")
+        precondition(
+            upProj.count == router.nExperts,
+            "MoELayer: upProj has \(upProj.count) experts, router expects \(router.nExperts)")
+        precondition(
+            downProj.count == router.nExperts,
+            "MoELayer: downProj has \(downProj.count) experts, router expects \(router.nExperts)")
         let sharedCount = [sharedGateProj, sharedUpProj, sharedDownProj]
             .filter { $0 != nil }.count
-        precondition(sharedCount == 0 || sharedCount == 3,
-                     "MoELayer: shared expert needs all three of gate/up/down or none")
+        precondition(
+            sharedCount == 0 || sharedCount == 3,
+            "MoELayer: shared expert needs all three of gate/up/down or none")
         self.gate = gate
         self.gateProj = gateProj
         self.upProj = upProj
@@ -418,12 +433,17 @@ public final class MoELayer: Module, DecoderLayer {
         self.router = router
         self.hidden = hidden
         if let s = stackedInt4Experts {
-            precondition(s.numExperts == router.nExperts,
-                         "MoELayer: stackedInt4Experts.numExperts \(s.numExperts) ≠ router.nExperts \(router.nExperts)")
-            precondition(s.hidden == hidden,
-                         "MoELayer: stackedInt4Experts.hidden \(s.hidden) ≠ MoELayer.hidden \(hidden)")
-            precondition(s.moeIntermediate % 32 == 0 && hidden % 32 == 0,
-                         "MoELayer: stackedInt4Experts shape (moeIntermediate=\(s.moeIntermediate), hidden=\(hidden)) violates bm16 N%32 / K%32 tile contract")
+            precondition(
+                s.numExperts == router.nExperts,
+                "MoELayer: stackedInt4Experts.numExperts \(s.numExperts) ≠ router.nExperts \(router.nExperts)"
+            )
+            precondition(
+                s.hidden == hidden,
+                "MoELayer: stackedInt4Experts.hidden \(s.hidden) ≠ MoELayer.hidden \(hidden)")
+            precondition(
+                s.moeIntermediate % 32 == 0 && hidden % 32 == 0,
+                "MoELayer: stackedInt4Experts shape (moeIntermediate=\(s.moeIntermediate), hidden=\(hidden)) violates bm16 N%32 / K%32 tile contract"
+            )
         }
         self.stackedInt4Experts = stackedInt4Experts
         let env = ProcessInfo.processInfo.environment
@@ -462,11 +482,14 @@ public final class MoELayer: Module, DecoderLayer {
     /// IMPORTANT: this commits the passed `cmd` (the router needs the
     /// gate logits on the CPU). The host model must obtain a fresh
     /// command buffer afterwards. See the file header.
-    public func decode(_ h: Tensor, position _: Int,
-                       cache _: any LayerCacheProtocol,
-                       cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(h.elementCount == hidden,
-                     "MoELayer.decode: input has \(h.elementCount) elements, expected hidden \(hidden)")
+    public func decode(
+        _ h: Tensor, position _: Int,
+        cache _: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            h.elementCount == hidden,
+            "MoELayer.decode: input has \(h.elementCount) elements, expected hidden \(hidden)")
 
         // ── 1. Gate gemv on the caller's command buffer ──────────────
         // Queued onto `cmd` so it runs after whatever produced `h`.
@@ -505,21 +528,24 @@ public final class MoELayer: Module, DecoderLayer {
             // sort the topK indices ascending and replicate `h` into the
             // gathered row order. The per-row expert assignment goes in
             // an int32 indices buffer.
-            accumulator = batchedSwiGLU(h, stacked: stacked, routing: routing,
-                                        on: work, device: device)
+            accumulator = batchedSwiGLU(
+                h, stacked: stacked, routing: routing,
+                on: work, device: device)
         } else {
             for (slot, expertId) in routing.indices.enumerated() {
                 // Broadcast the CPU combine weight into a [hidden] constant
                 // tensor so the element-wise `Ops.mul` can scale the expert
                 // output — avoids a dedicated scalar-multiply kernel.
-                let weightTensor = Tensor.filled(routing.weights[slot],
-                                                 shape: [hidden], dtype: h.dtype,
-                                                 device: device)
-                let expertOut = swiGLU(h,
-                                       gateProj: gateProj[expertId],
-                                       upProj: upProj[expertId],
-                                       downProj: downProj[expertId],
-                                       on: work)
+                let weightTensor = Tensor.filled(
+                    routing.weights[slot],
+                    shape: [hidden], dtype: h.dtype,
+                    device: device)
+                let expertOut = swiGLU(
+                    h,
+                    gateProj: gateProj[expertId],
+                    upProj: upProj[expertId],
+                    downProj: downProj[expertId],
+                    on: work)
                 let scaled = Ops.mul(expertOut, weightTensor, on: work)
                 accumulator = accumulator.map { Ops.add($0, scaled, on: work) } ?? scaled
             }
@@ -582,10 +608,13 @@ public final class MoELayer: Module, DecoderLayer {
     /// All work after the gate-readback runs on a fresh `work` cmd that
     /// commits once at the end. The caller's `cmd` is consumed by the
     /// gate gemv and the commit + wait.
-    public func decodeMany(_ hFlat: Tensor, t: Int,
-                           cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(hFlat.elementCount == t * hidden,
-                     "MoELayer.decodeMany: hFlat size \(hFlat.elementCount) ≠ T·hidden = \(t * hidden)")
+    public func decodeMany(
+        _ hFlat: Tensor, t: Int,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            hFlat.elementCount == t * hidden,
+            "MoELayer.decodeMany: hFlat size \(hFlat.elementCount) ≠ T·hidden = \(t * hidden)")
         precondition(t > 0, "MoELayer.decodeMany: T must be positive")
 
         let dt = hFlat.dtype
@@ -605,9 +634,9 @@ public final class MoELayer: Module, DecoderLayer {
         let logitsHost = gateLogitsAll.toFloatArray()  // [T·nExperts]
         var routings: [MoERouter.Routing] = []
         routings.reserveCapacity(t)
-        for r in 0..<t {
+        for r in 0 ..< t {
             let start = r * nExperts
-            let rowLogits = Array(logitsHost[start..<(start + nExperts)])
+            let rowLogits = Array(logitsHost[start ..< (start + nExperts)])
             routings.append(router.route(logits: rowLogits))
         }
 
@@ -616,16 +645,19 @@ public final class MoELayer: Module, DecoderLayer {
         // Tuple: (sortKey expertId, sourceToken, originalSlot, weight)
         var planTuples: [(Int, Int, Int, Float)] = []
         planTuples.reserveCapacity(mTotal)
-        for r in 0..<t {
+        for r in 0 ..< t {
             let routing = routings[r]
-            for slot in 0..<topK {
+            for slot in 0 ..< topK {
                 planTuples.append((routing.indices[slot], r, slot, routing.weights[slot]))
             }
         }
         planTuples.sort { $0.0 < $1.0 }
-        var sortedExpertsHost = [UInt32](); sortedExpertsHost.reserveCapacity(mTotal)
-        var sourceTokensHost = [UInt32](); sourceTokensHost.reserveCapacity(mTotal)
-        var sortedWeightsHost = [Float](); sortedWeightsHost.reserveCapacity(mTotal)
+        var sortedExpertsHost = [UInt32]()
+        sortedExpertsHost.reserveCapacity(mTotal)
+        var sourceTokensHost = [UInt32]()
+        sourceTokensHost.reserveCapacity(mTotal)
+        var sortedWeightsHost = [Float]()
+        sortedWeightsHost.reserveCapacity(mTotal)
         for tuple in planTuples {
             sortedExpertsHost.append(UInt32(tuple.0))
             sourceTokensHost.append(UInt32(tuple.1))
@@ -642,9 +674,10 @@ public final class MoELayer: Module, DecoderLayer {
             let slot = tuple.2
             invPermHost[r * topK + slot] = UInt32(sortedIdx)
         }
-        var weightsTokenOrderHost = [Float](); weightsTokenOrderHost.reserveCapacity(mTotal)
-        for r in 0..<t {
-            for slot in 0..<topK {
+        var weightsTokenOrderHost = [Float]()
+        weightsTokenOrderHost.reserveCapacity(mTotal)
+        for r in 0 ..< t {
+            for slot in 0 ..< topK {
                 weightsTokenOrderHost.append(routings[r].weights[slot])
             }
         }
@@ -654,16 +687,19 @@ public final class MoELayer: Module, DecoderLayer {
             let outFlat = Tensor.empty(shape: [t * hidden], dtype: dt, device: device)
             let dtBytes = dt.byteSize
             var workCmd = device.makeCommandBuffer()
-            for r in 0..<t {
-                let hRow = Tensor(buffer: hFlat.buffer,
-                                  offset: hFlat.offset + r * hidden * dtBytes,
-                                  shape: [hidden], dtype: dt)
-                let rowOut = decode(hRow, position: 0,
-                                    cache: StatelessLayerCache(),
-                                    cmd: workCmd, device: device)
-                let outRow = Tensor(buffer: outFlat.buffer,
-                                    offset: outFlat.offset + r * hidden * dtBytes,
-                                    shape: [hidden], dtype: dt)
+            for r in 0 ..< t {
+                let hRow = Tensor(
+                    buffer: hFlat.buffer,
+                    offset: hFlat.offset + r * hidden * dtBytes,
+                    shape: [hidden], dtype: dt)
+                let rowOut = decode(
+                    hRow, position: 0,
+                    cache: StatelessLayerCache(),
+                    cmd: workCmd, device: device)
+                let outRow = Tensor(
+                    buffer: outFlat.buffer,
+                    offset: outFlat.offset + r * hidden * dtBytes,
+                    shape: [hidden], dtype: dt)
                 let copyCmd = device.makeCommandBuffer()
                 Ops.copy(rowOut, into: outRow, on: copyCmd)
                 copyCmd.commit()
@@ -682,26 +718,31 @@ public final class MoELayer: Module, DecoderLayer {
         sourceTokensHost.withUnsafeBytes {
             _ = memcpy(gatherIdxBuf.contents(), $0.baseAddress!, mTotal * 4)
         }
-        let gatherIdxTensor = Tensor(buffer: gatherIdxBuf, offset: 0,
-                                     shape: [mTotal], dtype: .u32)
+        let gatherIdxTensor = Tensor(
+            buffer: gatherIdxBuf, offset: 0,
+            shape: [mTotal], dtype: .u32)
         let expertIdsBuf = device.makeBuffer(length: mTotal * 4)
         sortedExpertsHost.withUnsafeBytes {
             _ = memcpy(expertIdsBuf.contents(), $0.baseAddress!, mTotal * 4)
         }
-        let indices = Tensor(buffer: expertIdsBuf, offset: 0,
-                             shape: [mTotal], dtype: .u32)
+        let indices = Tensor(
+            buffer: expertIdsBuf, offset: 0,
+            shape: [mTotal], dtype: .u32)
 
         // ── 8. Gather activations: [mTotal, hidden] ──────────────────────
         // Source rows are picked from h[sourceToken] — one dispatch.
         let xGathered = Ops.gather(table: hRows, tokenIds: gatherIdxTensor, on: work)
-        precondition(xGathered.elementCount == mTotal * hidden,
-                     "MoELayer.decodeMany: gather output unexpected size")
+        precondition(
+            xGathered.elementCount == mTotal * hidden,
+            "MoELayer.decodeMany: gather output unexpected size")
 
         // ── 9. Gate / up BGEMM → [mTotal, moeIntermediate] ───────────────
-        let gateOut = Tensor.empty(shape: [mTotal, moeIntermediate], dtype: dt,
-                                   device: device)
-        let upOut = Tensor.empty(shape: [mTotal, moeIntermediate], dtype: dt,
-                                 device: device)
+        let gateOut = Tensor.empty(
+            shape: [mTotal, moeIntermediate], dtype: dt,
+            device: device)
+        let upOut = Tensor.empty(
+            shape: [mTotal, moeIntermediate], dtype: dt,
+            device: device)
         // Tile selection for the batched-prefill regime:
         //   - mTotal ≥ 64 + `FFAI_MOE_BGEMM_BM64=1` → bm64_mpp (NAX
         //     cooperative-tensor). Wrapper in tree but dispatch-shape
@@ -715,10 +756,13 @@ public final class MoELayer: Module, DecoderLayer {
         //     2.69× T=32 win.
         //   - mTotal ≤ 8 + `FFAI_MOE_BGEMM_BM8=1` → bm8 (decode T=1
         //     fallback).
-        let useBm64 = mTotal >= 64
+        let useBm64 =
+            mTotal >= 64
             && ProcessInfo.processInfo.environment["FFAI_MOE_BGEMM_BM64"] != nil
         let useBm8 = !useBm64 && topK <= 8 && useBm8Env && mTotal <= 8
-        let bgemm: (Tensor, Tensor, Tensor, Tensor, Tensor, Int, Int, Int, Int, MTLCommandBuffer, Tensor) -> Void
+        let bgemm:
+            (Tensor, Tensor, Tensor, Tensor, Tensor, Int, Int, Int, Int, MTLCommandBuffer, Tensor)
+                -> Void
         if useBm64 {
             bgemm = Ops.moeGatherDequantGemmInt4Bm64Mpp
         } else if useBm8 {
@@ -726,22 +770,26 @@ public final class MoELayer: Module, DecoderLayer {
         } else {
             bgemm = Ops.moeGatherDequantGemmInt4
         }
-        bgemm(xGathered,
-              stacked.gateWeight, stacked.gateScales, stacked.gateBiases,
-              indices, mTotal, moeIntermediate, hidden, groupSize, work, gateOut)
-        bgemm(xGathered,
-              stacked.upWeight, stacked.upScales, stacked.upBiases,
-              indices, mTotal, moeIntermediate, hidden, groupSize, work, upOut)
+        bgemm(
+            xGathered,
+            stacked.gateWeight, stacked.gateScales, stacked.gateBiases,
+            indices, mTotal, moeIntermediate, hidden, groupSize, work, gateOut)
+        bgemm(
+            xGathered,
+            stacked.upWeight, stacked.upScales, stacked.upBiases,
+            indices, mTotal, moeIntermediate, hidden, groupSize, work, upOut)
 
         // ── 10. SwiGLU fused: silu(gate) * up ────────────────────────────
         let inner = Ops.swiglu(gate: gateOut, up: upOut, on: work)
 
         // ── 11. Down BGEMM → [mTotal, hidden] ────────────────────────────
-        let downOut = Tensor.empty(shape: [mTotal, hidden], dtype: dt,
-                                   device: device)
-        bgemm(inner,
-              stacked.downWeight, stacked.downScales, stacked.downBiases,
-              indices, mTotal, hidden, moeIntermediate, groupSize, work, downOut)
+        let downOut = Tensor.empty(
+            shape: [mTotal, hidden], dtype: dt,
+            device: device)
+        bgemm(
+            inner,
+            stacked.downWeight, stacked.downScales, stacked.downBiases,
+            indices, mTotal, hidden, moeIntermediate, groupSize, work, downOut)
 
         // ── 12. Weighted scatter-sum back to [T, hidden] via fused
         // `mt_moe_unpermute` kernel — ONE dispatch over T·hidden
@@ -755,19 +803,21 @@ public final class MoELayer: Module, DecoderLayer {
         invPermHost.withUnsafeBytes {
             _ = memcpy(invPermBuf.contents(), $0.baseAddress!, mTotal * 4)
         }
-        let invPermTensor = Tensor(buffer: invPermBuf, offset: 0,
-                                   shape: [mTotal], dtype: .u32)
+        let invPermTensor = Tensor(
+            buffer: invPermBuf, offset: 0,
+            shape: [mTotal], dtype: .u32)
         let weightsTensor = Tensor.empty(shape: [mTotal], dtype: dt, device: device)
         // Host → GPU weights in dtype.
         switch dt {
         case .f32:
             weightsTensor.copyIn(from: weightsTokenOrderHost)
         case .bf16:
-            weightsTensor.copyIn(from: weightsTokenOrderHost.map { v -> UInt16 in
-                let bits = v.bitPattern
-                let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
-                return UInt16(rounded >> 16)
-            })
+            weightsTensor.copyIn(
+                from: weightsTokenOrderHost.map { v -> UInt16 in
+                    let bits = v.bitPattern
+                    let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
+                    return UInt16(rounded >> 16)
+                })
         case .f16:
             weightsTensor.copyIn(from: weightsTokenOrderHost.map { Float16($0) })
         default:
@@ -785,15 +835,18 @@ public final class MoELayer: Module, DecoderLayer {
         // shared-expert SwiGLU is a small follow-up (gate/up/down all
         // accept callMany inputs).
         if let sg = sharedGateProj, let su = sharedUpProj, let sd = sharedDownProj {
-            for r in 0..<t {
-                let hRow = Tensor(buffer: hFlat.buffer,
-                                  offset: hFlat.offset + r * hidden * dtBytes,
-                                  shape: [hidden], dtype: dt)
-                let sharedOut = swiGLU(hRow, gateProj: sg, upProj: su, downProj: sd,
-                                       on: work)
-                let outRow = Tensor(buffer: outFlat.buffer,
-                                    offset: outFlat.offset + r * hidden * dtBytes,
-                                    shape: [hidden], dtype: dt)
+            for r in 0 ..< t {
+                let hRow = Tensor(
+                    buffer: hFlat.buffer,
+                    offset: hFlat.offset + r * hidden * dtBytes,
+                    shape: [hidden], dtype: dt)
+                let sharedOut = swiGLU(
+                    hRow, gateProj: sg, upProj: su, downProj: sd,
+                    on: work)
+                let outRow = Tensor(
+                    buffer: outFlat.buffer,
+                    offset: outFlat.offset + r * hidden * dtBytes,
+                    shape: [hidden], dtype: dt)
                 _ = Ops.add(outRow, sharedOut, on: work, into: outRow)
             }
         }
@@ -826,11 +879,13 @@ public final class MoELayer: Module, DecoderLayer {
     ///   - otherwise → bm16 path (Ops.moeGatherDequantGemmInt4),
     ///     which itself respects `FFAI_MOE_BGEMM_MPP=1` for the
     ///     MPP/NAX variant at larger m_total.
-    private func batchedSwiGLU(_ h: Tensor,
-                               stacked: StackedInt4Experts,
-                               routing: MoERouter.Routing,
-                               on cmd: MTLCommandBuffer,
-                               device: Device) -> Tensor {
+    private func batchedSwiGLU(
+        _ h: Tensor,
+        stacked: StackedInt4Experts,
+        routing: MoERouter.Routing,
+        on cmd: MTLCommandBuffer,
+        device: Device
+    ) -> Tensor {
         let topK = routing.indices.count
         let moeIntermediate = stacked.moeIntermediate
         let groupSize = stacked.groupSize
@@ -860,7 +915,7 @@ public final class MoELayer: Module, DecoderLayer {
         // host backing — Tensors here are storage-shared.
         let src = h.buffer.contents().advanced(by: h.offset)
         let dst = xGathered.buffer.contents().advanced(by: xGathered.offset)
-        for r in 0..<topK {
+        for r in 0 ..< topK {
             dst.advanced(by: r * inputBytes)
                 .copyMemory(from: src, byteCount: inputBytes)
         }
@@ -881,7 +936,7 @@ public final class MoELayer: Module, DecoderLayer {
                 if firstRowForExpert[ei] == topK { firstRowForExpert[ei] = row }
             }
             var minOffset = topK
-            for e in (0...nExperts).reversed() {
+            for e in (0 ... nExperts).reversed() {
                 if e < nExperts && firstRowForExpert[e] < minOffset {
                     minOffset = firstRowForExpert[e]
                 }
@@ -961,8 +1016,9 @@ public final class MoELayer: Module, DecoderLayer {
                 buffer: downOut.buffer,
                 offset: downOut.offset + sortedIdx * hidden * dtype.byteSize,
                 shape: [hidden], dtype: dtype)
-            let w = Tensor.filled(routing.weights[originalSlot],
-                                  shape: [hidden], dtype: dtype, device: device)
+            let w = Tensor.filled(
+                routing.weights[originalSlot],
+                shape: [hidden], dtype: dtype, device: device)
             let scaled = Ops.mul(row, w, on: cmd)
             acc = acc.map { Ops.add($0, scaled, on: cmd) } ?? scaled
         }
@@ -977,9 +1033,11 @@ public final class MoELayer: Module, DecoderLayer {
     /// the per-expert intermediate is [moeIntermediate=768] so the win
     /// is small per dispatch, but the loop runs 8 experts × ≤40 MoE
     /// layers per token, so the per-token saving compounds.
-    private func swiGLU(_ x: Tensor,
-                        gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
-                        on cmd: MTLCommandBuffer) -> Tensor {
+    private func swiGLU(
+        _ x: Tensor,
+        gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
+        on cmd: MTLCommandBuffer
+    ) -> Tensor {
         let g = gateProj(x, on: cmd)
         let u = upProj(x, on: cmd)
         let inner = Ops.swiglu(gate: g, up: u, on: cmd)

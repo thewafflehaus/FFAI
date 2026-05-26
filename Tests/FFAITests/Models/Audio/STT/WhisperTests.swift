@@ -26,6 +26,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Whisper")
@@ -90,8 +91,9 @@ struct WhisperTests {
     @Test("WhisperConfig.from — returns nil for unrelated configs")
     func configReturnsNilForUnrelated() {
         let raw: [String: Any] = ["model_type": "llama", "hidden_size": 4096]
-        let config = ModelConfig(architecture: "LlamaForCausalLM",
-                                 modelType: "llama", raw: raw)
+        let config = ModelConfig(
+            architecture: "LlamaForCausalLM",
+            modelType: "llama", raw: raw)
         #expect(WhisperConfig.from(config) == nil)
     }
 
@@ -125,8 +127,9 @@ struct WhisperTests {
 
     @Test("WhisperModel.handles — true for whisper model_type")
     func handlesByModelType() {
-        let config = ModelConfig(architecture: nil, modelType: "whisper",
-                                 raw: ["model_type": "whisper"])
+        let config = ModelConfig(
+            architecture: nil, modelType: "whisper",
+            raw: ["model_type": "whisper"])
         #expect(WhisperModel.handles(config))
     }
 
@@ -140,9 +143,10 @@ struct WhisperTests {
 
     @Test("WhisperModel.handles — false for unrelated text model")
     func handlesFalseForTextModel() {
-        let config = ModelConfig(architecture: "LlamaForCausalLM",
-                                 modelType: "llama",
-                                 raw: ["model_type": "llama"])
+        let config = ModelConfig(
+            architecture: "LlamaForCausalLM",
+            modelType: "llama",
+            raw: ["model_type": "llama"])
         #expect(!WhisperModel.handles(config))
     }
 
@@ -150,8 +154,9 @@ struct WhisperTests {
 
     @Test("AudioModelRegistry.capabilities — Whisper maps to speechToText")
     func registryCapability() {
-        let config = ModelConfig(architecture: nil, modelType: "whisper",
-                                 raw: ["model_type": "whisper"])
+        let config = ModelConfig(
+            architecture: nil, modelType: "whisper",
+            raw: ["model_type": "whisper"])
         #expect(AudioModelRegistry.capabilities(for: config) == Capability.speechToText)
     }
 
@@ -172,7 +177,7 @@ struct WhisperTests {
 
     @Test("WhisperModel.padOrTrim — long clip is truncated to target length")
     func padOrTrimTrims() {
-        let clip = (0..<1000).map { Float($0) }
+        let clip = (0 ..< 1000).map { Float($0) }
         let trimmed = WhisperModel.padOrTrim(clip, to: 500)
         #expect(trimmed.count == 500)
         #expect(trimmed[0] == 0)
@@ -181,7 +186,7 @@ struct WhisperTests {
 
     @Test("WhisperModel.padOrTrim — exact-length clip is returned unchanged")
     func padOrTrimExact() {
-        let clip = (0..<500).map { Float($0) }
+        let clip = (0 ..< 500).map { Float($0) }
         let out = WhisperModel.padOrTrim(clip, to: 500)
         #expect(out.count == 500)
         #expect(out == clip)

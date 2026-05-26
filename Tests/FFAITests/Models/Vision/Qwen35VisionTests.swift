@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // Unit tests for the Qwen 3-VL-MoE family (the Qwen3-VL ViT
@@ -55,16 +56,18 @@ struct Qwen35VisionConfigTests {
             "vision_config": visionConfig,
             "text_config": textConfig,
         ]
-        return ModelConfig(architecture: "Qwen3VLMoeForConditionalGeneration",
-                           modelType: "qwen3_vl_moe", raw: raw)
+        return ModelConfig(
+            architecture: "Qwen3VLMoeForConditionalGeneration",
+            modelType: "qwen3_vl_moe", raw: raw)
     }
 
     @Test("routes as a vision-language checkpoint")
     func routesAsVisionLanguage() {
         let cfg = makeConfig()
         #expect(VisionLanguageArchitectures.isVisionLanguage(cfg))
-        #expect(VisionLanguageArchitectures.architectures
-            .contains("Qwen3VLMoeForConditionalGeneration"))
+        #expect(
+            VisionLanguageArchitectures.architectures
+                .contains("Qwen3VLMoeForConditionalGeneration"))
         #expect(Qwen3VLMoe.defaultImageTokenId == 151_655)
     }
 
@@ -77,8 +80,8 @@ struct Qwen35VisionConfigTests {
         #expect(parsed.numHeads == 16)
         #expect(parsed.patchSize == 16)
         #expect(parsed.spatialMergeSize == 2)
-        #expect(parsed.headDim == 72)           // 1152 / 16
-        #expect(parsed.mergeUnit == 4)          // 2 × 2 patches per token
+        #expect(parsed.headDim == 72)  // 1152 / 16
+        #expect(parsed.mergeUnit == 4)  // 2 × 2 patches per token
     }
 
     @Test("text_config carries the MoE expert geometry")

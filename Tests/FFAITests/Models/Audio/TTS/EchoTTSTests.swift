@@ -19,6 +19,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("EchoTTS")
@@ -209,9 +210,11 @@ struct EchoTTSTests {
     func handlesDetectsByModelType() {
         let config = ModelConfig(
             architecture: nil, modelType: "echo_tts",
-            raw: ["model_type": "echo_tts", "sample_rate": 44100,
-                  "dit": ["latent_size": 80, "speaker_patch_size": 4],
-                  "sampler": [:]])
+            raw: [
+                "model_type": "echo_tts", "sample_rate": 44100,
+                "dit": ["latent_size": 80, "speaker_patch_size": 4],
+                "sampler": [:],
+            ])
         #expect(EchoTTSModel.handles(config))
     }
 
@@ -221,8 +224,10 @@ struct EchoTTSTests {
         // detected structurally (latent_size + speaker_patch_size).
         let config = ModelConfig(
             architecture: nil, modelType: nil,
-            raw: ["dit": ["latent_size": 80, "speaker_patch_size": 4],
-                  "sample_rate": 44100])
+            raw: [
+                "dit": ["latent_size": 80, "speaker_patch_size": 4],
+                "sample_rate": 44100,
+            ])
         #expect(EchoTTSModel.handles(config))
     }
 
@@ -238,11 +243,14 @@ struct EchoTTSTests {
     func registryDetectsEchoTTS() {
         let config = ModelConfig(
             architecture: nil, modelType: "echo_tts",
-            raw: ["model_type": "echo_tts", "sample_rate": 44100,
-                  "dit": ["latent_size": 80, "speaker_patch_size": 4],
-                  "sampler": [:]])
+            raw: [
+                "model_type": "echo_tts", "sample_rate": 44100,
+                "dit": ["latent_size": 80, "speaker_patch_size": 4],
+                "sampler": [:],
+            ])
         #expect(AudioModelRegistry.handles(config))
-        #expect(AudioModelRegistry.capabilities(for: config)
+        #expect(
+            AudioModelRegistry.capabilities(for: config)
                 == Capability.textToSpeech)
     }
 

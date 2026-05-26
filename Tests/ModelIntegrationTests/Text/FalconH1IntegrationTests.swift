@@ -29,9 +29,10 @@
 // 0.5B / 1.5B / 3B / 7B variants — those are drop-in swaps.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("FalconH1 Integration", .serialized)
 struct FalconH1IntegrationTests {

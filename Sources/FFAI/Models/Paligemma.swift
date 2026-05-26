@@ -130,7 +130,8 @@ public struct PaligemmaStandard: PaligemmaVariant {
         // instead of trying to plain-`gather` a U32-packed weight.
         var mergedTextRaw = textRaw
         if let rootQuant = config.raw["quantization"],
-           mergedTextRaw["quantization"] == nil {
+            mergedTextRaw["quantization"] == nil
+        {
             mergedTextRaw["quantization"] = rootQuant
         }
         let textConfig = ModelConfig(
@@ -156,12 +157,12 @@ public struct PaligemmaStandard: PaligemmaVariant {
             if let v = visionRaw[key] as? Int { return Double(v) }
             return nil
         }
-        guard let visHidden    = visInt("hidden_size"),
-              let visNLayers   = visInt("num_hidden_layers"),
-              let visNHeads    = visInt("num_attention_heads"),
-              let visIntermed  = visInt("intermediate_size"),
-              let visPatchSize = visInt("patch_size"),
-              let visImgSize   = visInt("image_size")
+        guard let visHidden = visInt("hidden_size"),
+            let visNLayers = visInt("num_hidden_layers"),
+            let visNHeads = visInt("num_attention_heads"),
+            let visIntermed = visInt("intermediate_size"),
+            let visPatchSize = visInt("patch_size"),
+            let visImgSize = visInt("image_size")
         else {
             throw PaligemmaError.missingConfig("vision_config fields")
         }
@@ -204,7 +205,7 @@ public struct PaligemmaStandard: PaligemmaVariant {
         // Encoder layers.
         var visLayers: [SigLIPLayer] = []
         visLayers.reserveCapacity(visNLayers)
-        for i in 0..<visNLayers {
+        for i in 0 ..< visNLayers {
             let p = "\(visPrefix).encoder.layers.\(i)"
             let layer = try SigLIPLayer.load(
                 prefix: p, from: weights,

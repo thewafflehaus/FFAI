@@ -86,7 +86,7 @@ public enum SNACError: Error, CustomStringConvertible {
 /// A weight-normalized 1-D conv. Holds the *effective* (already
 /// reconstructed from `weight_g`/`weight_v`) weight as a flat array.
 struct SNACWNConv1d {
-    let weight: [Float]      // [Cout, Cin/groups, K]
+    let weight: [Float]  // [Cout, Cin/groups, K]
     let wShape: [Int]
     let bias: [Float]?
     let stride: Int
@@ -95,16 +95,17 @@ struct SNACWNConv1d {
     let groups: Int
 
     func callAsFunction(_ x: [Float], shape: [Int]) -> (data: [Float], shape: [Int]) {
-        AudioMath.conv1d(x: x, xShape: shape, weight: weight, wShape: wShape,
-                         bias: bias, stride: stride, padding: padding,
-                         dilation: dilation, groups: groups)
+        AudioMath.conv1d(
+            x: x, xShape: shape, weight: weight, wShape: wShape,
+            bias: bias, stride: stride, padding: padding,
+            dilation: dilation, groups: groups)
     }
 }
 
 /// A weight-normalized transposed 1-D conv (used for upsampling in the
 /// decoder).
 struct SNACWNConvTranspose1d {
-    let weight: [Float]      // [Cin, Cout/groups, K]
+    let weight: [Float]  // [Cin, Cout/groups, K]
     let wShape: [Int]
     let bias: [Float]?
     let stride: Int
@@ -113,10 +114,11 @@ struct SNACWNConvTranspose1d {
     let groups: Int
 
     func callAsFunction(_ x: [Float], shape: [Int]) -> (data: [Float], shape: [Int]) {
-        AudioMath.convTransposed1d(x: x, xShape: shape, weight: weight,
-                                   wShape: wShape, bias: bias, stride: stride,
-                                   padding: padding, dilation: 1,
-                                   outputPadding: outputPadding, groups: groups)
+        AudioMath.convTransposed1d(
+            x: x, xShape: shape, weight: weight,
+            wShape: wShape, bias: bias, stride: stride,
+            padding: padding, dilation: 1,
+            outputPadding: outputPadding, groups: groups)
     }
 }
 
@@ -141,8 +143,10 @@ struct SNACWeights {
 
     /// Reconstruct a weight-normalized conv at `prefix`.
     /// `transposed` selects which axis the magnitude `weight_g` reduces.
-    func wnConv1d(prefix: String, stride: Int, padding: Int,
-                  dilation: Int, groups: Int) throws -> SNACWNConv1d {
+    func wnConv1d(
+        prefix: String, stride: Int, padding: Int,
+        dilation: Int, groups: Int
+    ) throws -> SNACWNConv1d {
         let gKey = "\(prefix).weight_g"
         let vKey = "\(prefix).weight_v"
         guard has(gKey), has(vKey) else {
@@ -155,14 +159,17 @@ struct SNACWeights {
         // keeps the same shape for v. g broadcasts over dim 0.
         let weight = WeightNorm.effectiveWeight(g: g, v: v, shape: vShape, exceptDim: 0)
         let bias = has("\(prefix).bias") ? try floats("\(prefix).bias") : nil
-        return SNACWNConv1d(weight: weight, wShape: vShape, bias: bias,
-                            stride: stride, padding: padding,
-                            dilation: dilation, groups: groups)
+        return SNACWNConv1d(
+            weight: weight, wShape: vShape, bias: bias,
+            stride: stride, padding: padding,
+            dilation: dilation, groups: groups)
     }
 
     /// Reconstruct a weight-normalized transposed conv at `prefix`.
-    func wnConvTranspose1d(prefix: String, stride: Int, padding: Int,
-                           outputPadding: Int, groups: Int) throws -> SNACWNConvTranspose1d {
+    func wnConvTranspose1d(
+        prefix: String, stride: Int, padding: Int,
+        outputPadding: Int, groups: Int
+    ) throws -> SNACWNConvTranspose1d {
         let gKey = "\(prefix).weight_g"
         let vKey = "\(prefix).weight_v"
         guard has(gKey), has(vKey) else {
@@ -175,9 +182,10 @@ struct SNACWeights {
         // magnitude still reduces over all-but-dim-0.
         let weight = WeightNorm.effectiveWeight(g: g, v: v, shape: vShape, exceptDim: 0)
         let bias = has("\(prefix).bias") ? try floats("\(prefix).bias") : nil
-        return SNACWNConvTranspose1d(weight: weight, wShape: vShape, bias: bias,
-                                     stride: stride, padding: padding,
-                                     outputPadding: outputPadding, groups: groups)
+        return SNACWNConvTranspose1d(
+            weight: weight, wShape: vShape, bias: bias,
+            stride: stride, padding: padding,
+            outputPadding: outputPadding, groups: groups)
     }
 }
 
@@ -201,11 +209,11 @@ struct SNACResidualUnit {
         let pad = (shape[2] - s[2]) / 2
         let (n, c, lOut) = (s[0], s[1], s[2])
         var out = [Float](repeating: 0, count: y.count)
-        for b in 0..<n {
-            for ch in 0..<c {
+        for b in 0 ..< n {
+            for ch in 0 ..< c {
                 let xBase = (b * shape[1] + ch) * shape[2]
                 let yBase = (b * c + ch) * lOut
-                for t in 0..<lOut {
+                for t in 0 ..< lOut {
                     out[yBase + t] = y[yBase + t] + x[xBase + pad + t]
                 }
             }
@@ -260,8 +268,9 @@ public final class SNAC: @unchecked Sendable {
         guard FileManager.default.fileExists(atPath: configURL.path) else {
             throw SNACError.configNotFound(configURL.path)
         }
-        let config = try JSONDecoder().decode(SNACConfig.self,
-                                              from: Data(contentsOf: configURL))
+        let config = try JSONDecoder().decode(
+            SNACConfig.self,
+            from: Data(contentsOf: configURL))
         let bundle = try SafeTensorsBundle(directory: directory)
         return try SNAC(config: config, bundle: bundle)
     }
@@ -314,22 +323,26 @@ public final class SNAC: @unchecked Sendable {
         self.quantizers = qs
 
         // ─── Decoder ──────────────────────────────────────────────
-        let latentDim = config.latentDim
+        let latentDim =
+            config.latentDim
             ?? (config.encoderDim * (1 << config.encoderRates.count))
         var decConvsIn: [SNACWNConv1d] = []
         var decIdx = 0
         if config.depthwise {
-            decConvsIn.append(try w.wnConv1d(
-                prefix: "decoder.model.layers.0",
-                stride: 1, padding: 3, dilation: 1, groups: latentDim))
-            decConvsIn.append(try w.wnConv1d(
-                prefix: "decoder.model.layers.1",
-                stride: 1, padding: 0, dilation: 1, groups: 1))
+            decConvsIn.append(
+                try w.wnConv1d(
+                    prefix: "decoder.model.layers.0",
+                    stride: 1, padding: 3, dilation: 1, groups: latentDim))
+            decConvsIn.append(
+                try w.wnConv1d(
+                    prefix: "decoder.model.layers.1",
+                    stride: 1, padding: 0, dilation: 1, groups: 1))
             decIdx = 2
         } else {
-            decConvsIn.append(try w.wnConv1d(
-                prefix: "decoder.model.layers.0",
-                stride: 1, padding: 3, dilation: 1, groups: 1))
+            decConvsIn.append(
+                try w.wnConv1d(
+                    prefix: "decoder.model.layers.0",
+                    stride: 1, padding: 3, dilation: 1, groups: 1))
             decIdx = 1
         }
         self.decoderConvsIn = decConvsIn
@@ -414,8 +427,10 @@ public final class SNAC: @unchecked Sendable {
         return runEncoder(&data, shape: &shape)
     }
 
-    private func runEncoder(_ data: inout [Float],
-                            shape: inout [Int]) -> (data: [Float], shape: [Int]) {
+    private func runEncoder(
+        _ data: inout [Float],
+        shape: inout [Int]
+    ) -> (data: [Float], shape: [Int]) {
         var (d, s) = encoderConvIn(data, shape: shape)
         for block in encoderBlocks {
             (d, s) = block(d, shape: s)
@@ -431,7 +446,7 @@ public final class SNAC: @unchecked Sendable {
         for q in quantizers {
             let (zQ, _, indices) = try q.encode(residual, shape: residualShape)
             // residual = residual - zQ
-            for i in 0..<residual.count { residual[i] -= zQ[i] }
+            for i in 0 ..< residual.count { residual[i] -= zQ[i] }
             codes.append(indices)
         }
         return codes
@@ -454,9 +469,10 @@ public final class SNAC: @unchecked Sendable {
                 zQ = zQI
                 zShape = sI
             } else {
-                precondition(zQI.count == zQ.count,
-                             "SNAC.decode: quantizer latent length mismatch")
-                for j in 0..<zQ.count { zQ[j] += zQI[j] }
+                precondition(
+                    zQI.count == zQ.count,
+                    "SNAC.decode: quantizer latent length mismatch")
+                for j in 0 ..< zQ.count { zQ[j] += zQI[j] }
             }
         }
         let (audio, audioShape) = runDecoder(zQ, shape: zShape)
@@ -465,8 +481,10 @@ public final class SNAC: @unchecked Sendable {
         return out
     }
 
-    private func runDecoder(_ z: [Float],
-                            shape: [Int]) -> (data: [Float], shape: [Int]) {
+    private func runDecoder(
+        _ z: [Float],
+        shape: [Int]
+    ) -> (data: [Float], shape: [Int]) {
         var (d, s) = (z, shape)
         for conv in decoderConvsIn {
             (d, s) = conv(d, shape: s)

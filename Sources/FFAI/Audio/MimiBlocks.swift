@@ -37,7 +37,7 @@ import Foundation
 /// Mimi's `StreamableConv1d` collapsed to a single full-sequence call.
 /// Pads the time axis (causal: all padding on the left), then convolves.
 struct MimiStreamableConv1d {
-    let weight: [Float]      // [Cout, Cin/groups, K]
+    let weight: [Float]  // [Cout, Cin/groups, K]
     let wShape: [Int]
     let bias: [Float]?
     let stride: Int
@@ -48,12 +48,15 @@ struct MimiStreamableConv1d {
     var kEff: Int { (wShape[2] - 1) * dilation + 1 }
     var paddingTotal: Int { kEff - stride }
 
-    init(weights w: MimiWeights, prefix: String, stride: Int,
-         dilation: Int, groups: Int, padMode: MimiPadMode) throws {
+    init(
+        weights w: MimiWeights, prefix: String, stride: Int,
+        dilation: Int, groups: Int, padMode: MimiPadMode
+    ) throws {
         let (cw, cs) = try w.convWeight("\(prefix).conv.weight")
         self.weight = cw
         self.wShape = cs
-        self.bias = w.has("\(prefix).conv.bias")
+        self.bias =
+            w.has("\(prefix).conv.bias")
             ? try w.floats("\(prefix).conv.bias") : nil
         self.stride = stride
         self.dilation = dilation
@@ -76,8 +79,9 @@ struct MimiStreamableConv1d {
         let (left, right) = (paddingTotal, extra)
         var (padded, ps) = (x, shape)
         if left > 0 || right > 0 {
-            (padded, ps) = MimiPad.pad(x, shape: shape, left: left,
-                                       right: right, mode: padMode)
+            (padded, ps) = MimiPad.pad(
+                x, shape: shape, left: left,
+                right: right, mode: padMode)
         }
         return AudioMath.conv1d(
             x: padded, xShape: ps, weight: weight, wShape: wShape,
@@ -90,7 +94,7 @@ struct MimiStreamableConv1d {
 /// the transposed conv, trims the trailing `paddingTotal` samples
 /// (causal output trimming).
 struct MimiStreamableConvTranspose1d {
-    let weight: [Float]      // [Cin, Cout/groups, K]
+    let weight: [Float]  // [Cin, Cout/groups, K]
     let wShape: [Int]
     let bias: [Float]?
     let stride: Int
@@ -99,8 +103,10 @@ struct MimiStreamableConvTranspose1d {
     var ksize: Int { wShape[2] }
     var paddingTotal: Int { max(ksize - stride, 0) }
 
-    init(weights w: MimiWeights, prefix: String, stride: Int,
-         groups: Int) throws {
+    init(
+        weights w: MimiWeights, prefix: String, stride: Int,
+        groups: Int
+    ) throws {
         // Mimi stores transposed-conv weight as [Cout, K, Cin/groups]
         // (MLX NLC). convTransposed1d wants [Cin, Cout/groups, K].
         let raw = try w.floats("\(prefix).convtr.weight")
@@ -110,8 +116,8 @@ struct MimiStreamableConvTranspose1d {
             // Depthwise: weight ships as [C, K, 1]; effective per-group
             // weight is [Cin=C, Cout/groups=1, K].
             var out = [Float](repeating: 0, count: raw.count)
-            for c in 0..<cOut {
-                for kk in 0..<k {
+            for c in 0 ..< cOut {
+                for kk in 0 ..< k {
                     out[(c * 1 + 0) * k + kk] = raw[(c * k + kk) * 1 + 0]
                 }
             }
@@ -120,9 +126,9 @@ struct MimiStreamableConvTranspose1d {
         } else {
             // Regular: [Cout, K, Cin] -> [Cin, Cout, K].
             var out = [Float](repeating: 0, count: raw.count)
-            for o in 0..<cOut {
-                for kk in 0..<k {
-                    for ic in 0..<cInPerG {
+            for o in 0 ..< cOut {
+                for kk in 0 ..< k {
+                    for ic in 0 ..< cInPerG {
                         out[(ic * cOut + o) * k + kk] = raw[(o * k + kk) * cInPerG + ic]
                     }
                 }
@@ -130,7 +136,8 @@ struct MimiStreamableConvTranspose1d {
             self.weight = out
             self.wShape = [cInPerG, cOut, k]
         }
-        self.bias = w.has("\(prefix).convtr.bias")
+        self.bias =
+            w.has("\(prefix).convtr.bias")
             ? try w.floats("\(prefix).convtr.bias") : nil
         self.stride = stride
         self.groups = groups
@@ -143,8 +150,9 @@ struct MimiStreamableConvTranspose1d {
             outputPadding: 0, groups: groups)
         // Causal output trimming: drop the trailing paddingTotal samples.
         if paddingTotal > 0 {
-            (out, s) = MimiPad.sliceTime(out, shape: s, start: 0,
-                                         end: s[2] - paddingTotal)
+            (out, s) = MimiPad.sliceTime(
+                out, shape: s, start: 0,
+                end: s[2] - paddingTotal)
         }
         return (out, s)
     }
@@ -159,8 +167,10 @@ struct MimiSeanetResnetBlock {
     let conv1: MimiStreamableConv1d
     let shortcut: MimiStreamableConv1d?
 
-    init(weights w: MimiWeights, prefix: String, config: MimiConfig,
-         dilation: Int) throws {
+    init(
+        weights w: MimiWeights, prefix: String, config: MimiConfig,
+        dilation: Int
+    ) throws {
         // block.0 — Conv(residualKsize, dilation); block.1 — Conv(k=1).
         self.conv0 = try MimiStreamableConv1d(
             weights: w, prefix: "\(prefix).block.0", stride: 1,
@@ -183,10 +193,11 @@ struct MimiSeanetResnetBlock {
         h = AudioMath.elu(h)
         (h, s) = conv1(h, shape: s)
         let res = shortcut != nil ? shortcut!(x, shape: shape).data : x
-        precondition(res.count == h.count,
-                     "MimiSeanetResnetBlock: residual length mismatch")
+        precondition(
+            res.count == h.count,
+            "MimiSeanetResnetBlock: residual length mismatch")
         var out = h
-        for i in 0..<out.count { out[i] += res[i] }
+        for i in 0 ..< out.count { out[i] += res[i] }
         return (out, s)
     }
 }
@@ -204,72 +215,92 @@ struct MimiSeanet {
     }
     let ops: [Op]
 
-    init(weights w: MimiWeights, config c: MimiConfig,
-         prefix: String, isDecoder: Bool) throws {
+    init(
+        weights w: MimiWeights, config c: MimiConfig,
+        prefix: String, isDecoder: Bool
+    ) throws {
         var list: [Op] = []
         if !isDecoder {
             // ── Encoder ──
-            list.append(.conv(try MimiStreamableConv1d(
-                weights: w, prefix: "\(prefix).init_conv1d", stride: 1,
-                dilation: 1, groups: 1, padMode: .constant)))
+            list.append(
+                .conv(
+                    try MimiStreamableConv1d(
+                        weights: w, prefix: "\(prefix).init_conv1d", stride: 1,
+                        dilation: 1, groups: 1, padMode: .constant)))
             var mult = 1
             for (layerIdx, ratio) in c.ratios.reversed().enumerated() {
                 var dilation = 1
-                for _ in 0..<c.nresidualLayers {
-                    list.append(.resnet(try MimiSeanetResnetBlock(
-                        weights: w,
-                        prefix: "\(prefix).layers.\(layerIdx).residuals.0",
-                        config: c, dilation: dilation)))
+                for _ in 0 ..< c.nresidualLayers {
+                    list.append(
+                        .resnet(
+                            try MimiSeanetResnetBlock(
+                                weights: w,
+                                prefix: "\(prefix).layers.\(layerIdx).residuals.0",
+                                config: c, dilation: dilation)))
                     dilation *= c.dilationBase
                 }
                 list.append(.elu)
-                list.append(.conv(try MimiStreamableConv1d(
-                    weights: w,
-                    prefix: "\(prefix).layers.\(layerIdx).downsample",
-                    stride: ratio, dilation: 1, groups: 1, padMode: .constant)))
+                list.append(
+                    .conv(
+                        try MimiStreamableConv1d(
+                            weights: w,
+                            prefix: "\(prefix).layers.\(layerIdx).downsample",
+                            stride: ratio, dilation: 1, groups: 1, padMode: .constant)))
                 mult *= 2
             }
             list.append(.elu)
-            list.append(.conv(try MimiStreamableConv1d(
-                weights: w, prefix: "\(prefix).final_conv1d", stride: 1,
-                dilation: 1, groups: 1, padMode: .constant)))
+            list.append(
+                .conv(
+                    try MimiStreamableConv1d(
+                        weights: w, prefix: "\(prefix).final_conv1d", stride: 1,
+                        dilation: 1, groups: 1, padMode: .constant)))
         } else {
             // ── Decoder ──
-            list.append(.conv(try MimiStreamableConv1d(
-                weights: w, prefix: "\(prefix).init_conv1d", stride: 1,
-                dilation: 1, groups: 1, padMode: .constant)))
+            list.append(
+                .conv(
+                    try MimiStreamableConv1d(
+                        weights: w, prefix: "\(prefix).init_conv1d", stride: 1,
+                        dilation: 1, groups: 1, padMode: .constant)))
             for (layerIdx, ratio) in c.ratios.enumerated() {
                 list.append(.elu)
-                list.append(.convT(try MimiStreamableConvTranspose1d(
-                    weights: w,
-                    prefix: "\(prefix).layers.\(layerIdx).upsample",
-                    stride: ratio, groups: 1)))
+                list.append(
+                    .convT(
+                        try MimiStreamableConvTranspose1d(
+                            weights: w,
+                            prefix: "\(prefix).layers.\(layerIdx).upsample",
+                            stride: ratio, groups: 1)))
                 var dilation = 1
-                for _ in 0..<c.nresidualLayers {
-                    list.append(.resnet(try MimiSeanetResnetBlock(
-                        weights: w,
-                        prefix: "\(prefix).layers.\(layerIdx).residuals.0",
-                        config: c, dilation: dilation)))
+                for _ in 0 ..< c.nresidualLayers {
+                    list.append(
+                        .resnet(
+                            try MimiSeanetResnetBlock(
+                                weights: w,
+                                prefix: "\(prefix).layers.\(layerIdx).residuals.0",
+                                config: c, dilation: dilation)))
                     dilation *= c.dilationBase
                 }
             }
             list.append(.elu)
-            list.append(.conv(try MimiStreamableConv1d(
-                weights: w, prefix: "\(prefix).final_conv1d", stride: 1,
-                dilation: 1, groups: 1, padMode: .constant)))
+            list.append(
+                .conv(
+                    try MimiStreamableConv1d(
+                        weights: w, prefix: "\(prefix).final_conv1d", stride: 1,
+                        dilation: 1, groups: 1, padMode: .constant)))
         }
         self.ops = list
     }
 
-    func forward(_ data: inout [Float],
-                 shape: inout [Int]) -> (data: [Float], shape: [Int]) {
+    func forward(
+        _ data: inout [Float],
+        shape: inout [Int]
+    ) -> (data: [Float], shape: [Int]) {
         var (d, s) = (data, shape)
         for op in ops {
             switch op {
-            case .conv(let c):   (d, s) = c(d, shape: s)
-            case .convT(let c):  (d, s) = c(d, shape: s)
+            case .conv(let c): (d, s) = c(d, shape: s)
+            case .convT(let c): (d, s) = c(d, shape: s)
             case .resnet(let r): (d, s) = r(d, shape: s)
-            case .elu:           d = AudioMath.elu(d)
+            case .elu: d = AudioMath.elu(d)
             }
         }
         return (d, s)
@@ -284,8 +315,10 @@ struct MimiConvResample {
     private let conv: MimiStreamableConv1d?
     private let convT: MimiStreamableConvTranspose1d?
 
-    init(weights w: MimiWeights, prefix: String, config: MimiConfig,
-         stride: Int, transposed: Bool) throws {
+    init(
+        weights w: MimiWeights, prefix: String, config: MimiConfig,
+        stride: Int, transposed: Bool
+    ) throws {
         if transposed {
             // ConvTrUpsample uses a depthwise (groups=dim) transposed
             // conv with ksize 2*stride.
@@ -316,8 +349,10 @@ enum MimiPadMode { case constant, edge }
 enum MimiPad {
     /// Pad the time axis of an NCL tensor — zeros (`constant`) or
     /// edge-replication (`edge`).
-    static func pad(_ x: [Float], shape: [Int], left: Int, right: Int,
-                    mode: MimiPadMode) -> (data: [Float], shape: [Int]) {
+    static func pad(
+        _ x: [Float], shape: [Int], left: Int, right: Int,
+        mode: MimiPadMode
+    ) -> (data: [Float], shape: [Int]) {
         switch mode {
         case .constant:
             return AudioMath.zeroPad1d(x, shape: shape, left: left, right: right)
@@ -325,11 +360,11 @@ enum MimiPad {
             let (n, c, l) = (shape[0], shape[1], shape[2])
             let lOut = l + left + right
             var out = [Float](repeating: 0, count: n * c * lOut)
-            for b in 0..<n {
-                for ch in 0..<c {
+            for b in 0 ..< n {
+                for ch in 0 ..< c {
                     let inBase = (b * c + ch) * l
                     let outBase = (b * c + ch) * lOut
-                    for t in 0..<lOut {
+                    for t in 0 ..< lOut {
                         let src = min(max(t - left, 0), l - 1)
                         out[outBase + t] = x[inBase + src]
                     }
@@ -340,16 +375,18 @@ enum MimiPad {
     }
 
     /// Crop an NCL tensor to `[start, end)` on the time axis.
-    static func sliceTime(_ x: [Float], shape: [Int], start: Int,
-                          end: Int) -> (data: [Float], shape: [Int]) {
+    static func sliceTime(
+        _ x: [Float], shape: [Int], start: Int,
+        end: Int
+    ) -> (data: [Float], shape: [Int]) {
         let (n, c, l) = (shape[0], shape[1], shape[2])
         let lOut = max(end - start, 0)
         var out = [Float](repeating: 0, count: n * c * lOut)
-        for b in 0..<n {
-            for ch in 0..<c {
+        for b in 0 ..< n {
+            for ch in 0 ..< c {
                 let inBase = (b * c + ch) * l
                 let outBase = (b * c + ch) * lOut
-                for t in 0..<lOut { out[outBase + t] = x[inBase + start + t] }
+                for t in 0 ..< lOut { out[outBase + t] = x[inBase + start + t] }
             }
         }
         return (out, [n, c, lOut])

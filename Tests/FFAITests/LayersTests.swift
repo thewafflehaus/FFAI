@@ -14,9 +14,10 @@
 //
 import Foundation
 import Metal
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Layers")
 struct LayersTests {
@@ -46,7 +47,7 @@ struct LayersTests {
             let b = Tensor.empty(shape: [3], dtype: .f32)
             b.copyIn(from: [Float(0.5), -1, 100])
             let layer = Linear(weight: w, bias: b)
-            let x = Tensor.empty(shape: [3], dtype: .f32) // 3 elements; bias add reads matching shape
+            let x = Tensor.empty(shape: [3], dtype: .f32)  // 3 elements; bias add reads matching shape
             // gemv produces [3]; we want the layer to broadcast bias [3] over the output [3].
             x.copyIn(from: [Float(7), 8, 0])  // last element wasted (gemv reads only 2)
             // Use a 2-element x to match weight in_features=2.
@@ -81,15 +82,18 @@ struct LayersTests {
         // packs `weight` to `inFeatures * bits / 32` columns and
         // `scales` to `inFeatures / groupSize` columns.
         let groupSize = 64
-        for (inFeatures, bits) in [(256, 4), (256, 8), (4096, 4), (4096, 8),
-                                   (1024, 3), (1024, 6)] {
+        for (inFeatures, bits) in [
+            (256, 4), (256, 8), (4096, 4), (4096, 8),
+            (1024, 3), (1024, 6),
+        ] {
             let weightCols = inFeatures * bits / 32
             let scaleCols = inFeatures / groupSize
             let derived = deriveAffineQuantBits(
                 weightPackedCols: weightCols, scaleCols: scaleCols,
                 groupSize: groupSize)
-            #expect(derived == bits,
-                    "in=\(inFeatures) bits=\(bits): derived \(derived)")
+            #expect(
+                derived == bits,
+                "in=\(inFeatures) bits=\(bits): derived \(derived)")
         }
     }
 
@@ -100,7 +104,7 @@ struct LayersTests {
             // simdgroup × 4 elements/thread). n=128 is the smallest legal
             // size — see Ops.rmsNorm preconditions / mlx/rms_norm.rs.
             let n = 128
-            let xs: [Float] = (0..<n).map { Float($0 + 1) }
+            let xs: [Float] = (0 ..< n).map { Float($0 + 1) }
             let ws: [Float] = Array(repeating: Float(1), count: n)
             let w = Tensor.empty(shape: [n], dtype: .f32)
             w.copyIn(from: ws)
@@ -113,10 +117,11 @@ struct LayersTests {
             // CPU reference: rms = sqrt(mean(x²)); y = x / rms * weight.
             let ssq = xs.reduce(Float(0)) { $0 + $1 * $1 }
             let expectedRms = (ssq / Float(n)).squareRoot()
-            for i in 0..<n {
+            for i in 0 ..< n {
                 let expected = xs[i] / expectedRms
-                #expect(abs(r[i] - expected) < 1e-2,
-                        "i=\(i) got \(r[i]) expected \(expected)")
+                #expect(
+                    abs(r[i] - expected) < 1e-2,
+                    "i=\(i) got \(r[i]) expected \(expected)")
             }
             #expect(rms.parameters().map { $0.0 } == ["weight"])
         }

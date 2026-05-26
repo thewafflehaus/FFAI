@@ -111,10 +111,10 @@ struct Gemma4Params {
     let hidden: Int
     let nLayers: Int
     let nHeads: Int
-    let kvHeads: Int          // sliding-layer KV head count
-    let globalKvHeads: Int    // full-layer KV head count
-    let headDim: Int          // sliding-layer head dim
-    let globalHeadDim: Int    // full-layer head dim
+    let kvHeads: Int  // sliding-layer KV head count
+    let globalKvHeads: Int  // full-layer KV head count
+    let headDim: Int  // sliding-layer head dim
+    let globalHeadDim: Int  // full-layer head dim
     let intermediate: Int
     let eps: Double
     let vocab: Int
@@ -148,8 +148,12 @@ struct Gemma4Params {
         func b(_ k: String) -> Bool? { tc[k] as? Bool }
 
         guard let hidden = i("hidden_size") else { throw Gemma4Error.missingConfig("hidden_size") }
-        guard let nLayers = i("num_hidden_layers") else { throw Gemma4Error.missingConfig("num_hidden_layers") }
-        guard let nHeads = i("num_attention_heads") else { throw Gemma4Error.missingConfig("num_attention_heads") }
+        guard let nLayers = i("num_hidden_layers") else {
+            throw Gemma4Error.missingConfig("num_hidden_layers")
+        }
+        guard let nHeads = i("num_attention_heads") else {
+            throw Gemma4Error.missingConfig("num_attention_heads")
+        }
         guard let layerTypes = tc["layer_types"] as? [String] else {
             throw Gemma4Error.missingConfig("layer_types")
         }
@@ -184,7 +188,8 @@ struct Gemma4Params {
         var partial: Float = 0.25
         if let rp = tc["rope_parameters"] as? [String: Any] {
             if let s = rp["sliding_attention"] as? [String: Any],
-               let t = s["rope_theta"] as? Double {
+                let t = s["rope_theta"] as? Double
+            {
                 thetaSliding = Float(t)
             }
             if let g = rp["full_attention"] as? [String: Any] {
@@ -228,14 +233,14 @@ struct Gemma4Params {
     /// those dead weights instead of reusing the donor's cached K/V
     /// corrupts attention for every shared layer.
     var previousKVs: [Int] {
-        var mapping = Array(0..<nLayers)
+        var mapping = Array(0 ..< nLayers)
         guard numKvSharedLayers > 0 else { return mapping }
         // Last non-shared layer of each attention type.
         var lastDonorByType: [String: Int] = [:]
-        for i in 0..<firstKvSharedIdx {
+        for i in 0 ..< firstKvSharedIdx {
             lastDonorByType[layerTypes[i]] = i
         }
-        for j in firstKvSharedIdx..<nLayers {
+        for j in firstKvSharedIdx ..< nLayers {
             if let donor = lastDonorByType[layerTypes[j]] {
                 mapping[j] = donor
             }
@@ -252,8 +257,9 @@ public struct Gemma4Dense: Gemma4Variant {
         config: ModelConfig, weights: SafeTensorsBundle,
         options: LoadOptions, device: Device
     ) throws -> Gemma4Model {
-        try Gemma4Loader.load(config: config, weights: weights,
-                              options: options, device: device)
+        try Gemma4Loader.load(
+            config: config, weights: weights,
+            options: options, device: device)
     }
 }
 
@@ -263,8 +269,9 @@ public struct Gemma4E: Gemma4Variant {
         config: ModelConfig, weights: SafeTensorsBundle,
         options: LoadOptions, device: Device
     ) throws -> Gemma4Model {
-        try Gemma4Loader.load(config: config, weights: weights,
-                              options: options, device: device)
+        try Gemma4Loader.load(
+            config: config, weights: weights,
+            options: options, device: device)
     }
 }
 
@@ -274,8 +281,9 @@ public struct Gemma4MoE: Gemma4Variant {
         config: ModelConfig, weights: SafeTensorsBundle,
         options: LoadOptions, device: Device
     ) throws -> Gemma4Model {
-        try Gemma4Loader.load(config: config, weights: weights,
-                              options: options, device: device)
+        try Gemma4Loader.load(
+            config: config, weights: weights,
+            options: options, device: device)
     }
 }
 
@@ -348,24 +356,29 @@ enum Gemma4Loader {
         var layers: [Gemma4Layer] = []
         layers.reserveCapacity(p.nLayers)
         let firstKvSharedIdx = p.nLayers - p.numKvSharedLayers
-        for i in 0..<p.nLayers {
+        for i in 0 ..< p.nLayers {
             let lp = "\(prefix)layers.\(i)"
             let isGlobal = p.isGlobal(i)
             let isKvShared = p.numKvSharedLayers > 0 && i >= firstKvSharedIdx
             let isDoubleWide = p.useDoubleWideMlp && isKvShared
 
-            let qProj = try loadLinear(base: "\(lp).self_attn.q_proj",
-                                       in: weights, quantization: quant)
-            let kProj = try loadLinear(base: "\(lp).self_attn.k_proj",
-                                       in: weights, quantization: quant)
+            let qProj = try loadLinear(
+                base: "\(lp).self_attn.q_proj",
+                in: weights, quantization: quant)
+            let kProj = try loadLinear(
+                base: "\(lp).self_attn.k_proj",
+                in: weights, quantization: quant)
             // attention_k_eq_v drops v_proj on global layers (V := K).
             let kEqV = p.attentionKEqV && isGlobal
-            let vProj: AnyLinear? = kEqV
+            let vProj: AnyLinear? =
+                kEqV
                 ? nil
-                : try loadLinear(base: "\(lp).self_attn.v_proj",
-                                 in: weights, quantization: quant)
-            let oProj = try loadLinear(base: "\(lp).self_attn.o_proj",
-                                       in: weights, quantization: quant)
+                : try loadLinear(
+                    base: "\(lp).self_attn.v_proj",
+                    in: weights, quantization: quant)
+            let oProj = try loadLinear(
+                base: "\(lp).self_attn.o_proj",
+                in: weights, quantization: quant)
 
             let qNorm = try loadGemma4RMSNorm(
                 base: "\(lp).self_attn.q_norm.weight", in: weights, eps: p.eps)
@@ -384,19 +397,25 @@ enum Gemma4Loader {
             // FFN: MoE block or dense GELU MLP.
             let ffn: Gemma4FFN
             if p.numExperts > 0 {
-                ffn = .moe(try buildMoE(prefix: lp, weights: weights, p: p,
-                                        quant: quant))
+                ffn = .moe(
+                    try buildMoE(
+                        prefix: lp, weights: weights, p: p,
+                        quant: quant))
             } else {
                 let effInter = isDoubleWide ? p.intermediate * 2 : p.intermediate
-                let gateProj = try loadLinear(base: "\(lp).mlp.gate_proj",
-                                              in: weights, quantization: quant)
-                let upProj = try loadLinear(base: "\(lp).mlp.up_proj",
-                                            in: weights, quantization: quant)
-                let downProj = try loadLinear(base: "\(lp).mlp.down_proj",
-                                              in: weights, quantization: quant)
-                ffn = .dense(Gemma4DenseMLP(
-                    gateProj: gateProj, upProj: upProj, downProj: downProj,
-                    intermediate: effInter))
+                let gateProj = try loadLinear(
+                    base: "\(lp).mlp.gate_proj",
+                    in: weights, quantization: quant)
+                let upProj = try loadLinear(
+                    base: "\(lp).mlp.up_proj",
+                    in: weights, quantization: quant)
+                let downProj = try loadLinear(
+                    base: "\(lp).mlp.down_proj",
+                    in: weights, quantization: quant)
+                ffn = .dense(
+                    Gemma4DenseMLP(
+                        gateProj: gateProj, upProj: upProj, downProj: downProj,
+                        intermediate: effInter))
             }
 
             // Per-layer scalar [1].
@@ -421,21 +440,23 @@ enum Gemma4Loader {
             let layerHeadDim = isGlobal ? p.globalHeadDim : p.headDim
             let layerKVHeads = isGlobal ? p.globalKvHeads : p.kvHeads
             // ProportionalRoPE rotated-dim count for global layers.
-            let rotatedDim = isGlobal
+            let rotatedDim =
+                isGlobal
                 ? evenFloor(Int(Float(p.globalHeadDim) * p.partialRotaryFactor))
                 : layerHeadDim
 
-            layers.append(Gemma4Layer(
-                qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
-                qNorm: qNorm, kNorm: kNorm,
-                inputNorm: inputNorm, postAttnNorm: postAttnNorm,
-                preFFNorm: preFFNorm, postFFNorm: postFFNorm,
-                ffn: ffn, layerScalar: layerScalar, ple: plePerLayer,
-                hidden: p.hidden, nHeads: p.nHeads, nKVHeads: layerKVHeads,
-                headDim: layerHeadDim, isGlobal: isGlobal, kEqV: kEqV,
-                isKvShared: isKvShared,
-                ropeTheta: ropeTheta, rotatedDim: rotatedDim, eps: Float(p.eps),
-                device: device))
+            layers.append(
+                Gemma4Layer(
+                    qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
+                    qNorm: qNorm, kNorm: kNorm,
+                    inputNorm: inputNorm, postAttnNorm: postAttnNorm,
+                    preFFNorm: preFFNorm, postFFNorm: postFFNorm,
+                    ffn: ffn, layerScalar: layerScalar, ple: plePerLayer,
+                    hidden: p.hidden, nHeads: p.nHeads, nKVHeads: layerKVHeads,
+                    headDim: layerHeadDim, isGlobal: isGlobal, kEqV: kEqV,
+                    isKvShared: isKvShared,
+                    ropeTheta: ropeTheta, rotatedDim: rotatedDim, eps: Float(p.eps),
+                    device: device))
         }
 
         let finalNorm = try loadGemma4RMSNorm(
@@ -451,9 +472,10 @@ enum Gemma4Loader {
                 weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
                 scaleCols: t.scales.shape[t.scales.shape.count - 1],
                 groupSize: q.groupSize)
-            lmHead = AnyLinear(QuantizedLinear(
-                weight: t.weight, scales: t.scales, biases: t.biases,
-                bits: bits, groupSize: q.groupSize))
+            lmHead = AnyLinear(
+                QuantizedLinear(
+                    weight: t.weight, scales: t.scales, biases: t.biases,
+                    bits: bits, groupSize: q.groupSize))
         } else {
             lmHead = AnyLinear(Linear(weight: embedTokens.weight))
         }
@@ -462,7 +484,8 @@ enum Gemma4Loader {
         // quantized table, the raw weight otherwise).
         let activationDtype: DType
         if weights.isQuantized("\(prefix)embed_tokens"),
-           let scales = try? weights.tensor(named: "\(prefix)embed_tokens.scales") {
+            let scales = try? weights.tensor(named: "\(prefix)embed_tokens.scales")
+        {
             activationDtype = scales.dtype
         } else {
             activationDtype = embedTokens.weight.dtype
@@ -471,8 +494,9 @@ enum Gemma4Loader {
         // Pre-baked sqrt(hidden) embed-scale tensor (original Gemma
         // normalization, applied to the embedded row each forward).
         let embedScale = Tensor.empty(shape: [p.hidden], dtype: activationDtype, device: device)
-        gemma4FillScalar(embedScale, scalar: Float(Double(p.hidden).squareRoot()),
-                         dtype: activationDtype)
+        gemma4FillScalar(
+            embedScale, scalar: Float(Double(p.hidden).squareRoot()),
+            dtype: activationDtype)
 
         return Gemma4Model(
             embedTokens: embedTokens, layers: layers,
@@ -490,20 +514,24 @@ enum Gemma4Loader {
         quant: ModelConfig.QuantizationConfig?
     ) throws -> Gemma4MoEFFN {
         // Shared dense GELU MLP — the `h1` branch, runs every token.
-        let sharedGate = try loadLinear(base: "\(lp).mlp.gate_proj",
-                                        in: weights, quantization: quant)
-        let sharedUp = try loadLinear(base: "\(lp).mlp.up_proj",
-                                      in: weights, quantization: quant)
-        let sharedDown = try loadLinear(base: "\(lp).mlp.down_proj",
-                                        in: weights, quantization: quant)
+        let sharedGate = try loadLinear(
+            base: "\(lp).mlp.gate_proj",
+            in: weights, quantization: quant)
+        let sharedUp = try loadLinear(
+            base: "\(lp).mlp.up_proj",
+            in: weights, quantization: quant)
+        let sharedDown = try loadLinear(
+            base: "\(lp).mlp.down_proj",
+            in: weights, quantization: quant)
         let sharedMLP = Gemma4DenseMLP(
             gateProj: sharedGate, upProj: sharedUp, downProj: sharedDown,
             intermediate: p.intermediate)
 
         // Router: logit projection + the learned input-norm scale +
         // the per-expert combine-weight scale.
-        let routerProj = try loadLinear(base: "\(lp).router.proj",
-                                        in: weights, quantization: quant)
+        let routerProj = try loadLinear(
+            base: "\(lp).router.proj",
+            in: weights, quantization: quant)
         let routerScale = try weights.tensor(named: "\(lp).router.scale")
         let perExpertScale = try weights.tensor(named: "\(lp).router.per_expert_scale")
 
@@ -570,25 +598,31 @@ enum Gemma4Loader {
             let bits = deriveAffineQuantBits(
                 weightPackedCols: packedCols, scaleCols: groupCols,
                 groupSize: q.groupSize)
-            precondition([3, 4, 5, 6, 8].contains(bits),
-                         "sliceStacked: derived \(bits)-bit for \(base) — "
-                         + "unsupported quantization bit-width")
-            for e in 0..<numExperts {
-                out.append(AnyLinear(QuantizedLinear(
-                    weight: w.slicedRows(start: e, count: 1)
-                        .reshaped(to: [outDim, packedCols]),
-                    scales: s.slicedRows(start: e, count: 1)
-                        .reshaped(to: [outDim, groupCols]),
-                    biases: b.slicedRows(start: e, count: 1)
-                        .reshaped(to: [outDim, groupCols]),
-                    bits: bits, groupSize: q.groupSize)))
+            precondition(
+                [3, 4, 5, 6, 8].contains(bits),
+                "sliceStacked: derived \(bits)-bit for \(base) — "
+                    + "unsupported quantization bit-width")
+            for e in 0 ..< numExperts {
+                out.append(
+                    AnyLinear(
+                        QuantizedLinear(
+                            weight: w.slicedRows(start: e, count: 1)
+                                .reshaped(to: [outDim, packedCols]),
+                            scales: s.slicedRows(start: e, count: 1)
+                                .reshaped(to: [outDim, groupCols]),
+                            biases: b.slicedRows(start: e, count: 1)
+                                .reshaped(to: [outDim, groupCols]),
+                            bits: bits, groupSize: q.groupSize)))
             }
         } else {
             let stacked = try weights.tensor(named: "\(base).weight")
-            for e in 0..<numExperts {
-                out.append(AnyLinear(Linear(weight:
-                    stacked.slicedRows(start: e, count: 1)
-                        .reshaped(to: [outDim, inDim]))))
+            for e in 0 ..< numExperts {
+                out.append(
+                    AnyLinear(
+                        Linear(
+                            weight:
+                                stacked.slicedRows(start: e, count: 1)
+                                .reshaped(to: [outDim, inDim]))))
             }
         }
         return out
@@ -647,8 +681,10 @@ public final class Gemma4PLE: Module {
     /// 2^(-0.5) ≈ 0.707 — combine scaling.
     let combineScaleVec: Tensor
 
-    init(embed: AnyEmbedding, projection: AnyLinear, projectionNorm: RMSNorm,
-         hiddenSizePerLayerInput: Int, hidden: Int, nLayers: Int, device: Device) {
+    init(
+        embed: AnyEmbedding, projection: AnyLinear, projectionNorm: RMSNorm,
+        hiddenSizePerLayerInput: Int, hidden: Int, nLayers: Int, device: Device
+    ) {
         self.embed = embed
         self.projection = projection
         self.projectionNorm = projectionNorm
@@ -678,7 +714,9 @@ public final class Gemma4PLE: Module {
         var out: [(String, Tensor)] = []
         for (k, v) in embed.parameters() { out.append(("embed_tokens_per_layer.\(k)", v)) }
         for (k, v) in projection.parameters() { out.append(("per_layer_model_projection.\(k)", v)) }
-        for (k, v) in projectionNorm.parameters() { out.append(("per_layer_projection_norm.\(k)", v)) }
+        for (k, v) in projectionNorm.parameters() {
+            out.append(("per_layer_projection_norm.\(k)", v))
+        }
         return out
     }
 
@@ -686,8 +724,10 @@ public final class Gemma4PLE: Module {
     /// `tokenTensor` is the [1] u32 token id; `h` is the scaled
     /// embedding `[hidden]`. Returns a `[nLayers, hiddenSizePerLayerInput]`
     /// tensor (one row per decoder layer).
-    func perLayerInputs(tokenTensor: Tensor, h: Tensor,
-                        on cmd: MTLCommandBuffer) -> Tensor {
+    func perLayerInputs(
+        tokenTensor: Tensor, h: Tensor,
+        on cmd: MTLCommandBuffer
+    ) -> Tensor {
         let tap = InspectTap.fromEnvironment
         // 1. Embed token through the per-layer table, scale by
         //    sqrt(hiddenSizePerLayerInput).
@@ -729,7 +769,7 @@ public final class Gemma4PLE: Module {
 
 /// Per-layer PLE modules held on each decoder block (Gemma4E).
 public final class Gemma4LayerPLE: Module {
-    let gate: AnyLinear        // hidden → hiddenSizePerLayerInput
+    let gate: AnyLinear  // hidden → hiddenSizePerLayerInput
     let projection: AnyLinear  // hiddenSizePerLayerInput → hidden
     let norm: RMSNorm
 
@@ -761,8 +801,10 @@ public final class Gemma4DenseMLP: Module {
     let gateProj, upProj, downProj: AnyLinear
     let intermediate: Int
 
-    init(gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
-         intermediate: Int) {
+    init(
+        gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
+        intermediate: Int
+    ) {
         self.gateProj = gateProj
         self.upProj = upProj
         self.downProj = downProj
@@ -824,19 +866,28 @@ public final class Gemma4MoEFFN: Module {
     let preNorm2, postNorm1, postNorm2: RMSNorm
     let hidden: Int
 
-    init(sharedMLP: Gemma4DenseMLP,
-         gateProj: [AnyLinear], upProj: [AnyLinear], downProj: [AnyLinear],
-         routerProj: AnyLinear, routerScale: Tensor, rootSize: Float,
-         routerEps: Float, perExpertScale: Tensor, router: MoERouter,
-         preNorm2: RMSNorm, postNorm1: RMSNorm, postNorm2: RMSNorm,
-         hidden: Int) {
+    init(
+        sharedMLP: Gemma4DenseMLP,
+        gateProj: [AnyLinear], upProj: [AnyLinear], downProj: [AnyLinear],
+        routerProj: AnyLinear, routerScale: Tensor, rootSize: Float,
+        routerEps: Float, perExpertScale: Tensor, router: MoERouter,
+        preNorm2: RMSNorm, postNorm1: RMSNorm, postNorm2: RMSNorm,
+        hidden: Int
+    ) {
         self.sharedMLP = sharedMLP
-        self.gateProj = gateProj; self.upProj = upProj; self.downProj = downProj
-        self.routerProj = routerProj; self.routerScale = routerScale
-        self.rootSize = rootSize; self.routerEps = routerEps
-        self.perExpertScale = perExpertScale; self.router = router
-        self.preNorm2 = preNorm2; self.postNorm1 = postNorm1
-        self.postNorm2 = postNorm2; self.hidden = hidden
+        self.gateProj = gateProj
+        self.upProj = upProj
+        self.downProj = downProj
+        self.routerProj = routerProj
+        self.routerScale = routerScale
+        self.rootSize = rootSize
+        self.routerEps = routerEps
+        self.perExpertScale = perExpertScale
+        self.router = router
+        self.preNorm2 = preNorm2
+        self.postNorm1 = postNorm1
+        self.postNorm2 = postNorm2
+        self.hidden = hidden
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -874,11 +925,14 @@ public final class Gemma4MoEFFN: Module {
     /// Returns `ffnOut = h1 + h2`; the caller adds `postFeedforwardLayerNorm`
     /// + the residual. Commits internally, so the caller must refresh its
     /// command buffer.
-    func forward(preFFNormed: Tensor, h: Tensor,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forward(
+        preFFNormed: Tensor, h: Tensor,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // ── Router: rmsNorm(h, router.scale) → proj → logits ─────────
-        let routerNormed = Ops.rmsNorm(h, weight: routerScale,
-                                       eps: routerEps, on: cmd)
+        let routerNormed = Ops.rmsNorm(
+            h, weight: routerScale,
+            eps: routerEps, on: cmd)
         let logitsTensor = routerProj(routerNormed, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
@@ -910,8 +964,9 @@ public final class Gemma4MoEFFN: Module {
             let u = upProj[expertId](expertInput, on: work)
             let inner = Ops.mul(Ops.gelu(g, on: work), u, on: work)
             let expertOut = downProj[expertId](inner, on: work)
-            let wTensor = Tensor.filled(weights[slot], shape: [hidden],
-                                        dtype: h.dtype, device: device)
+            let wTensor = Tensor.filled(
+                weights[slot], shape: [hidden],
+                dtype: h.dtype, device: device)
             let scaled = Ops.mul(expertOut, wTensor, on: work)
             h2acc = h2acc.map { Ops.add($0, scaled, on: work) } ?? scaled
         }
@@ -958,32 +1013,49 @@ public final class Gemma4Layer: Module {
     /// True if this layer's FFN commits the command buffer (MoE).
     public let commitsCommandBuffer: Bool
 
-    init(qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear?, oProj: AnyLinear,
-         qNorm: RMSNorm, kNorm: RMSNorm,
-         inputNorm: RMSNorm, postAttnNorm: RMSNorm,
-         preFFNorm: RMSNorm, postFFNorm: RMSNorm,
-         ffn: Gemma4FFN, layerScalar: Tensor?, ple: Gemma4LayerPLE?,
-         hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         isGlobal: Bool, kEqV: Bool, isKvShared: Bool,
-         ropeTheta: Float, rotatedDim: Int,
-         eps: Float, device: Device) {
-        self.qProj = qProj; self.kProj = kProj; self.vProj = vProj
+    init(
+        qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear?, oProj: AnyLinear,
+        qNorm: RMSNorm, kNorm: RMSNorm,
+        inputNorm: RMSNorm, postAttnNorm: RMSNorm,
+        preFFNorm: RMSNorm, postFFNorm: RMSNorm,
+        ffn: Gemma4FFN, layerScalar: Tensor?, ple: Gemma4LayerPLE?,
+        hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        isGlobal: Bool, kEqV: Bool, isKvShared: Bool,
+        ropeTheta: Float, rotatedDim: Int,
+        eps: Float, device: Device
+    ) {
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
         self.oProj = oProj
-        self.qNorm = qNorm; self.kNorm = kNorm
-        self.inputNorm = inputNorm; self.postAttnNorm = postAttnNorm
-        self.preFFNorm = preFFNorm; self.postFFNorm = postFFNorm
+        self.qNorm = qNorm
+        self.kNorm = kNorm
+        self.inputNorm = inputNorm
+        self.postAttnNorm = postAttnNorm
+        self.preFFNorm = preFFNorm
+        self.postFFNorm = postFFNorm
         self.ffn = ffn
         self.layerScalar = layerScalar
         self.ple = ple
-        self.hidden = hidden; self.nHeads = nHeads; self.nKVHeads = nKVHeads
-        self.headDim = headDim; self.isGlobal = isGlobal; self.kEqV = kEqV
+        self.hidden = hidden
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.isGlobal = isGlobal
+        self.kEqV = kEqV
         self.isKvShared = isKvShared
-        self.ropeTheta = ropeTheta; self.rotatedDim = rotatedDim; self.eps = eps
+        self.ropeTheta = ropeTheta
+        self.rotatedDim = rotatedDim
+        self.eps = eps
         // Value RMSNorm uses a unit weight (scale-free).
-        self.vNormWeight = Tensor.filled(1.0, shape: [headDim],
-                                         dtype: qNorm.weight.dtype, device: device)
-        if case .moe = ffn { self.commitsCommandBuffer = true }
-        else { self.commitsCommandBuffer = false }
+        self.vNormWeight = Tensor.filled(
+            1.0, shape: [headDim],
+            dtype: qNorm.weight.dtype, device: device)
+        if case .moe = ffn {
+            self.commitsCommandBuffer = true
+        } else {
+            self.commitsCommandBuffer = false
+        }
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -1033,39 +1105,54 @@ public final class Gemma4Layer: Module {
     /// and returns `committed == false` — the caller keeps batching.
     /// A global / MoE layer commits internally (host readback) and
     /// returns `committed == true` — the caller must refresh its buffer.
-    func forward(_ h: Tensor, position: Int, cache: any KVCacheProtocol,
-                 perLayerInput: Tensor?, cmd: MTLCommandBuffer,
-                 device: Device,
-                 donorCache: (any KVCacheProtocol)? = nil)
-        -> (h: Tensor, committed: Bool) {
+    func forward(
+        _ h: Tensor, position: Int, cache: any KVCacheProtocol,
+        perLayerInput: Tensor?, cmd: MTLCommandBuffer,
+        device: Device,
+        donorCache: (any KVCacheProtocol)? = nil
+    )
+        -> (h: Tensor, committed: Bool)
+    {
         if batchable {
-            return (forwardBatched(h, position: position, cache: cache,
-                                   perLayerInput: perLayerInput, cmd: cmd,
-                                   donorCache: donorCache),
-                    false)
+            return (
+                forwardBatched(
+                    h, position: position, cache: cache,
+                    perLayerInput: perLayerInput, cmd: cmd,
+                    donorCache: donorCache),
+                false
+            )
         }
-        return (forwardCommitting(h, position: position, cache: cache,
-                                  perLayerInput: perLayerInput, device: device,
-                                  donorCache: donorCache),
-                true)
+        return (
+            forwardCommitting(
+                h, position: position, cache: cache,
+                perLayerInput: perLayerInput, device: device,
+                donorCache: donorCache),
+            true
+        )
     }
 
     /// Sliding + dense path — all work queues onto the shared `cmd`,
     /// nothing is committed. The caller commits the batch.
-    private func forwardBatched(_ h: Tensor, position: Int,
-                                cache: any KVCacheProtocol,
-                                perLayerInput: Tensor?,
-                                cmd: MTLCommandBuffer,
-                                donorCache: (any KVCacheProtocol)? = nil)
-        -> Tensor {
+    private func forwardBatched(
+        _ h: Tensor, position: Int,
+        cache: any KVCacheProtocol,
+        perLayerInput: Tensor?,
+        cmd: MTLCommandBuffer,
+        donorCache: (any KVCacheProtocol)? = nil
+    )
+        -> Tensor
+    {
         let xNorm = inputNorm(h, on: cmd)
-        let attnOut = isGlobal
-            ? globalAttentionBatched(xNorm, position: position,
-                                     cache: cache, cmd: cmd,
-                                     donorCache: donorCache)
-            : slidingAttentionBatched(xNorm, position: position,
-                                      cache: cache, cmd: cmd,
-                                      donorCache: donorCache)
+        let attnOut =
+            isGlobal
+            ? globalAttentionBatched(
+                xNorm, position: position,
+                cache: cache, cmd: cmd,
+                donorCache: donorCache)
+            : slidingAttentionBatched(
+                xNorm, position: position,
+                cache: cache, cmd: cmd,
+                donorCache: donorCache)
         let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
         let normedAttn = postAttnNorm(oOut, on: cmd)
 
@@ -1096,25 +1183,30 @@ public final class Gemma4Layer: Module {
 
     /// Global / MoE path — needs a mid-layer host readback, so it runs
     /// on private buffers and commits before returning resident `h`.
-    private func forwardCommitting(_ h: Tensor, position: Int,
-                                   cache: any KVCacheProtocol,
-                                   perLayerInput: Tensor?,
-                                   device: Device,
-                                   donorCache: (any KVCacheProtocol)? = nil)
-        -> Tensor {
+    private func forwardCommitting(
+        _ h: Tensor, position: Int,
+        cache: any KVCacheProtocol,
+        perLayerInput: Tensor?,
+        device: Device,
+        donorCache: (any KVCacheProtocol)? = nil
+    )
+        -> Tensor
+    {
         let attnCmd = device.makeCommandBuffer()
         let xNorm = inputNorm(h, on: attnCmd)
         let attnOut: Tensor
         if isGlobal {
-            attnOut = globalAttention(xNorm, position: position, cache: cache,
-                                      cmd: attnCmd, device: device,
-                                      donorCache: donorCache)
+            attnOut = globalAttention(
+                xNorm, position: position, cache: cache,
+                cmd: attnCmd, device: device,
+                donorCache: donorCache)
             // `globalAttention` already committed `attnCmd`.
         } else {
             // MoE layer with a sliding attention: run attention on its
             // own buffer (committed here) so the MoE FFN can sync.
-            attnOut = slidingAttention(xNorm, position: position, cache: cache,
-                                       cmd: attnCmd, donorCache: donorCache)
+            attnOut = slidingAttention(
+                xNorm, position: position, cache: cache,
+                cmd: attnCmd, donorCache: donorCache)
         }
 
         let postCmd = device.makeCommandBuffer()
@@ -1156,8 +1248,9 @@ public final class Gemma4Layer: Module {
             postCmd.commit()
             postCmd.waitUntilCompleted()
             let moeCmd = device.makeCommandBuffer()
-            let ffnOut = moe.forward(preFFNormed: ffnNorm, h: hOut,
-                                     cmd: moeCmd, device: device)
+            let ffnOut = moe.forward(
+                preFFNormed: ffnNorm, h: hOut,
+                cmd: moeCmd, device: device)
             let addCmd = device.makeCommandBuffer()
             let normedFFN = postFFNorm(ffnOut, on: addCmd)
             hOut = Ops.add(hOut, normedFFN, on: addCmd)
@@ -1169,13 +1262,16 @@ public final class Gemma4Layer: Module {
     }
 
     /// Per-Layer Embedding mix + learned per-layer output scalar.
-    private func applyPLEAndScalar(_ h: Tensor, perLayerInput: Tensor?,
-                                   on cmd: MTLCommandBuffer) -> Tensor {
+    private func applyPLEAndScalar(
+        _ h: Tensor, perLayerInput: Tensor?,
+        on cmd: MTLCommandBuffer
+    ) -> Tensor {
         var hOut = h
         if let ple, let pli = perLayerInput {
             // h + post_norm(projection(gelu(gate(h)) * per_layer_input))
-            let gated = Ops.mul(Ops.gelu(ple.gate(hOut, on: cmd), on: cmd),
-                                pli, on: cmd)
+            let gated = Ops.mul(
+                Ops.gelu(ple.gate(hOut, on: cmd), on: cmd),
+                pli, on: cmd)
             let projected = ple.projection(gated, on: cmd)
             let normed = ple.norm(projected, on: cmd)
             hOut = Ops.add(hOut, normed, on: cmd)
@@ -1185,8 +1281,9 @@ public final class Gemma4Layer: Module {
             // [hidden] tensor — materialise it once from the scalar.
             let scalar = ls.toFloatArray().first ?? 1.0
             if scalar != 1.0 {
-                let scaleVec = Tensor.filled(scalar, shape: [hidden],
-                                             dtype: hOut.dtype, device: .shared)
+                let scaleVec = Tensor.filled(
+                    scalar, shape: [hidden],
+                    dtype: hOut.dtype, device: .shared)
                 hOut = Ops.mul(hOut, scaleVec, on: cmd)
             }
         }
@@ -1197,7 +1294,8 @@ public final class Gemma4Layer: Module {
     /// `[…, headDim]` tensors (q `[nHeads,headDim]`, k/v `[nKVHeads,headDim]`).
     /// The value RMSNorm is scale-free; q/k norms carry the Gemma fold.
     private func projectAndNorm(_ xNorm: Tensor, on cmd: MTLCommandBuffer)
-        -> (q: Tensor, k: Tensor, v: Tensor) {
+        -> (q: Tensor, k: Tensor, v: Tensor)
+    {
         let q = qProj(xNorm, on: cmd)
         let k = kProj(xNorm, on: cmd)
         let v: Tensor = kEqV ? k : vProj!(xNorm, on: cmd)
@@ -1220,7 +1318,8 @@ public final class Gemma4Layer: Module {
     /// KV-shared layers, which reuse a donor's cached K/V and so never
     /// project their own. Returns `[nHeads, headDim]`.
     private func projectAndNormQuery(_ xNorm: Tensor, on cmd: MTLCommandBuffer)
-        -> Tensor {
+        -> Tensor
+    {
         let q = qProj(xNorm, on: cmd)
         return Ops.rmsNormRows(
             q, weight: qNorm.weight, eps: eps,
@@ -1237,16 +1336,20 @@ public final class Gemma4Layer: Module {
     /// `donorCache`, so the shared layer only projects Q, applies RoPE
     /// to it, and runs SDPA against the donor's slab — no K/V projection
     /// and no cache append.
-    private func slidingAttentionBatched(_ xNorm: Tensor, position: Int,
-                                         cache: any KVCacheProtocol,
-                                         cmd: MTLCommandBuffer,
-                                         donorCache: (any KVCacheProtocol)? = nil)
-        -> Tensor {
+    private func slidingAttentionBatched(
+        _ xNorm: Tensor, position: Int,
+        cache: any KVCacheProtocol,
+        cmd: MTLCommandBuffer,
+        donorCache: (any KVCacheProtocol)? = nil
+    )
+        -> Tensor
+    {
         if let donorCache {
             // KV-shared layer: reuse the donor's already-updated slab.
             let q = projectAndNormQuery(xNorm, on: cmd)
-            let qRotated = Ops.rope(q, position: position, headDim: headDim,
-                                    thetaBase: ropeTheta, scaling: .none, on: cmd)
+            let qRotated = Ops.rope(
+                q, position: position, headDim: headDim,
+                thetaBase: ropeTheta, scaling: .none, on: cmd)
             let (cacheK, cacheV) = donorCache.prepareForAttention(on: cmd)
             return Ops.sdpaDecode(
                 q: qRotated, k: cacheK, v: cacheV,
@@ -1255,10 +1358,12 @@ public final class Gemma4Layer: Module {
                 scale: 1.0, on: cmd)
         }
         let (q, k, v) = projectAndNorm(xNorm, on: cmd)
-        let qRotated = Ops.rope(q, position: position, headDim: headDim,
-                                thetaBase: ropeTheta, scaling: .none, on: cmd)
-        let kRotated = Ops.rope(k, position: position, headDim: headDim,
-                                thetaBase: ropeTheta, scaling: .none, on: cmd)
+        let qRotated = Ops.rope(
+            q, position: position, headDim: headDim,
+            thetaBase: ropeTheta, scaling: .none, on: cmd)
+        let kRotated = Ops.rope(
+            k, position: position, headDim: headDim,
+            thetaBase: ropeTheta, scaling: .none, on: cmd)
         cache.appendOnGPU(kFlat: kRotated, vFlat: v, on: cmd)
         let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
         // Gemma 4 uses SDPA scale = 1.0 (pre-scaling lives in q_norm).
@@ -1272,14 +1377,18 @@ public final class Gemma4Layer: Module {
     /// Sliding attention that commits `cmd` and returns resident output
     /// — used by a MoE layer whose attention is sliding (the MoE FFN
     /// needs the attention result resident before its own host sync).
-    private func slidingAttention(_ xNorm: Tensor, position: Int,
-                                  cache: any KVCacheProtocol,
-                                  cmd: MTLCommandBuffer,
-                                  donorCache: (any KVCacheProtocol)? = nil)
-        -> Tensor {
-        let out = slidingAttentionBatched(xNorm, position: position,
-                                          cache: cache, cmd: cmd,
-                                          donorCache: donorCache)
+    private func slidingAttention(
+        _ xNorm: Tensor, position: Int,
+        cache: any KVCacheProtocol,
+        cmd: MTLCommandBuffer,
+        donorCache: (any KVCacheProtocol)? = nil
+    )
+        -> Tensor
+    {
+        let out = slidingAttentionBatched(
+            xNorm, position: position,
+            cache: cache, cmd: cmd,
+            donorCache: donorCache)
         cmd.commit()
         cmd.waitUntilCompleted()
         return out
@@ -1292,11 +1401,14 @@ public final class Gemma4Layer: Module {
     /// `donorCache` is non-nil for a KV-shared global layer: it projects
     /// + RoPEs only Q and runs SDPA against the donor's already-updated
     /// slab — no K/V projection, no cache append.
-    private func globalAttentionBatched(_ xNorm: Tensor, position: Int,
-                                        cache: any KVCacheProtocol,
-                                        cmd: MTLCommandBuffer,
-                                        donorCache: (any KVCacheProtocol)? = nil)
-        -> Tensor {
+    private func globalAttentionBatched(
+        _ xNorm: Tensor, position: Int,
+        cache: any KVCacheProtocol,
+        cmd: MTLCommandBuffer,
+        donorCache: (any KVCacheProtocol)? = nil
+    )
+        -> Tensor
+    {
         let q: Tensor
         let attnCache: any KVCacheProtocol
         if let donorCache {
@@ -1340,9 +1452,10 @@ public final class Gemma4Layer: Module {
         cache: any KVCacheProtocol, cmd: MTLCommandBuffer, device _: Device,
         donorCache: (any KVCacheProtocol)? = nil
     ) -> Tensor {
-        let out = globalAttentionBatched(xNorm, position: position,
-                                         cache: cache, cmd: cmd,
-                                         donorCache: donorCache)
+        let out = globalAttentionBatched(
+            xNorm, position: position,
+            cache: cache, cmd: cmd,
+            donorCache: donorCache)
         cmd.commit()
         cmd.waitUntilCompleted()
         return out
@@ -1366,15 +1479,19 @@ enum Gemma4Ops {
     /// Driving it with `head_dim = headDim`, `half_dim = headDim/2`
     /// (true rotate-half offset + freq denominator) and a grid height of
     /// `rotatedDim/2` rotates exactly the proportional subset.
-    static func ropeProportional(_ qk: Tensor, position: Int,
-                                 headDim: Int, rotatedDim: Int,
-                                 thetaBase: Float, on cmd: MTLCommandBuffer) {
-        precondition(qk.elementCount % headDim == 0,
-                     "ropeProportional: qk size must be a multiple of headDim")
-        precondition(rotatedDim > 0 && rotatedDim <= headDim && rotatedDim % 2 == 0,
-                     "ropeProportional: rotatedDim must be even and ≤ headDim")
+    static func ropeProportional(
+        _ qk: Tensor, position: Int,
+        headDim: Int, rotatedDim: Int,
+        thetaBase: Float, on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            qk.elementCount % headDim == 0,
+            "ropeProportional: qk size must be a multiple of headDim")
+        precondition(
+            rotatedDim > 0 && rotatedDim <= headDim && rotatedDim % 2 == 0,
+            "ropeProportional: rotatedDim must be even and ≤ headDim")
         let nHeads = qk.elementCount / headDim
-        let halfDim = headDim / 2          // pairing offset + freq denominator
+        let halfDim = headDim / 2  // pairing offset + freq denominator
         let rotatedPairs = rotatedDim / 2  // grid height — only these rotate
         let grid = MTLSize(width: nHeads, height: rotatedPairs, depth: 1)
         let tg = MTLSize(width: 1, height: 1, depth: 1)
@@ -1448,10 +1565,12 @@ public final class Gemma4Model: LanguageModel {
     /// Soft-cap value for the final logits; nil ⇒ no capping.
     let finalLogitSoftcapping: Float?
 
-    init(embedTokens: AnyEmbedding, layers: [Gemma4Layer],
-         finalNorm: RMSNorm, lmHead: AnyLinear, embedScale: Tensor,
-         ple: Gemma4PLE?, params: Gemma4Params, dtype: DType,
-         kvCacheKind: KVCacheKind, device: Device) {
+    init(
+        embedTokens: AnyEmbedding, layers: [Gemma4Layer],
+        finalNorm: RMSNorm, lmHead: AnyLinear, embedScale: Tensor,
+        ple: Gemma4PLE?, params: Gemma4Params, dtype: DType,
+        kvCacheKind: KVCacheKind, device: Device
+    ) {
         self.embedTokens = embedTokens
         self.layers = layers
         self.finalNorm = finalNorm
@@ -1513,20 +1632,24 @@ public final class Gemma4Model: LanguageModel {
             // a 1-slot placeholder so the array stays index-aligned
             // without allocating a full unused slab.
             let layerCap = layer.isKvShared ? 1 : cap
-            let eviction: KVEviction = layer.isGlobal
+            let eviction: KVEviction =
+                layer.isGlobal
                 ? .unbounded
                 : .window(maxSize: min(params.slidingWindow, layerCap), keep: 0)
-            caches.append(KVCache(
-                nKVHeads: layer.nKVHeads, headDim: layer.headDim, maxSeq: layerCap,
-                dtype: dtype, eviction: eviction, device: device))
+            caches.append(
+                KVCache(
+                    nKVHeads: layer.nKVHeads, headDim: layer.headDim, maxSeq: layerCap,
+                    dtype: dtype, eviction: eviction, device: device))
             _ = i
         }
         return caches
     }
 
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // Each `Gemma4Layer.forward` is self-contained — it runs on its
         // own command buffers and commits before returning resident `h`.
         // The caller's pristine `cmd` is touched only by the embedding +
@@ -1552,15 +1675,18 @@ public final class Gemma4Model: LanguageModel {
         prepCmd.commit()
         prepCmd.waitUntilCompleted()
         if tap.active {
-            _ = tap.dumpLayerBoundary(h, label: "embed*scale", layer: -1,
-                                      cmd: device.makeCommandBuffer(), device: device)
+            _ = tap.dumpLayerBoundary(
+                h, label: "embed*scale", layer: -1,
+                cmd: device.makeCommandBuffer(), device: device)
             for (label, t) in ple?.inspectSubsteps ?? [] {
-                _ = tap.dumpLayerBoundary(t, label: label, layer: -1,
-                                          cmd: device.makeCommandBuffer(), device: device)
+                _ = tap.dumpLayerBoundary(
+                    t, label: label, layer: -1,
+                    cmd: device.makeCommandBuffer(), device: device)
             }
             if let pli = perLayerInputs {
-                _ = tap.dumpLayerBoundary(pli, label: "pli", layer: -1,
-                                          cmd: device.makeCommandBuffer(), device: device)
+                _ = tap.dumpLayerBoundary(
+                    pli, label: "pli", layer: -1,
+                    cmd: device.makeCommandBuffer(), device: device)
             }
         }
 
@@ -1619,8 +1745,9 @@ public final class Gemma4Model: LanguageModel {
                     workCmd = device.makeCommandBuffer()
                     batchPending = false
                 }
-                _ = tap.dumpLayerBoundary(h, label: "layer_out", layer: i,
-                                          cmd: device.makeCommandBuffer(), device: device)
+                _ = tap.dumpLayerBoundary(
+                    h, label: "layer_out", layer: i,
+                    cmd: device.makeCommandBuffer(), device: device)
             }
         }
         // Flush any trailing batched work so `h` is resident.
@@ -1629,8 +1756,9 @@ public final class Gemma4Model: LanguageModel {
             workCmd.waitUntilCompleted()
         }
         if tap.active {
-            _ = tap.dumpLayerBoundary(h, label: "h_pre_finalnorm", layer: -1,
-                                      cmd: device.makeCommandBuffer(), device: device)
+            _ = tap.dumpLayerBoundary(
+                h, label: "h_pre_finalnorm", layer: -1,
+                cmd: device.makeCommandBuffer(), device: device)
         }
 
         // Final norm + lm_head. Soft-capping needs the logits on the
@@ -1663,15 +1791,19 @@ public final class Gemma4Model: LanguageModel {
     /// activation flow for Gemma4E. Pending that work, this override
     /// is commit-count-batched only — same correctness as the
     /// protocol default, no new SDPA dispatch savings yet.
-    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                             caches: [any LayerCacheProtocol],
-                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(!tokenIds.isEmpty,
-                     "Gemma4Model.forwardMulti: tokenIds must be non-empty")
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "Gemma4Model.forwardMulti: tokenIds must be non-empty")
         var logits: Tensor!
         for (i, tok) in tokenIds.enumerated() {
-            logits = forward(tokenId: tok, position: position + i,
-                             caches: caches, on: cmd, device: device)
+            logits = forward(
+                tokenId: tok, position: position + i,
+                caches: caches, on: cmd, device: device)
         }
         return logits
     }
@@ -1693,17 +1825,21 @@ public final class Gemma4Model: LanguageModel {
 
     public var supportsEmbeddingInput: Bool { true }
 
-    public func forward(inputEmbedding: Tensor, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(inputEmbedding.elementCount == hidden,
-                     "Gemma4Model.forward(inputEmbedding:): expected [\(hidden)], "
-                     + "got \(inputEmbedding.shape)")
+    public func forward(
+        inputEmbedding: Tensor, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            inputEmbedding.elementCount == hidden,
+            "Gemma4Model.forward(inputEmbedding:): expected [\(hidden)], "
+                + "got \(inputEmbedding.shape)")
 
         // Embedding-scale on a private buffer (mirrors the token path).
         let prepCmd = device.makeCommandBuffer()
-        var h = Ops.mul(inputEmbedding.reshaped(to: [hidden]), embedScale,
-                        on: prepCmd)
+        var h = Ops.mul(
+            inputEmbedding.reshaped(to: [hidden]), embedScale,
+            on: prepCmd)
         prepCmd.commit()
         prepCmd.waitUntilCompleted()
 
@@ -1779,8 +1915,10 @@ extension Gemma4Ops {
     /// This commits + waits on `cmd`: it is the terminal op of
     /// `forward`, so the caller's commit becomes a no-op and the
     /// returned tensor is resident.
-    static func softcap(_ logits: Tensor, cap: Float,
-                        on cmd: MTLCommandBuffer) -> Tensor {
+    static func softcap(
+        _ logits: Tensor, cap: Float,
+        on cmd: MTLCommandBuffer
+    ) -> Tensor {
         cmd.commit()
         cmd.waitUntilCompleted()
         let n = logits.elementCount
@@ -1788,16 +1926,16 @@ extension Gemma4Ops {
         switch logits.dtype {
         case .f32:
             let p = ptr.bindMemory(to: Float.self, capacity: n)
-            for i in 0..<n { p[i] = cap * tanh(p[i] / cap) }
+            for i in 0 ..< n { p[i] = cap * tanh(p[i] / cap) }
         case .f16:
             let p = ptr.bindMemory(to: UInt16.self, capacity: n)
-            for i in 0..<n {
+            for i in 0 ..< n {
                 let f = halfBitsToFloatForTest(p[i])
                 p[i] = floatToHalfBitsForTest(cap * tanh(f / cap))
             }
         case .bf16:
             let p = ptr.bindMemory(to: UInt16.self, capacity: n)
-            for i in 0..<n {
+            for i in 0 ..< n {
                 let f = bf16BitsToFloatForTest(p[i])
                 p[i] = floatToBf16BitsForTest(cap * tanh(f / cap))
             }

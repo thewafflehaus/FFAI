@@ -85,9 +85,10 @@ public struct ModelConfig: @unchecked Sendable {
     /// exactly as it loads a stand-alone text config.
     public func subConfig(_ key: String) -> ModelConfig? {
         guard let sub = nested(key) else { return nil }
-        return ModelConfig(architecture: architecture,
-                           modelType: sub["model_type"] as? String ?? modelType,
-                           raw: sub)
+        return ModelConfig(
+            architecture: architecture,
+            modelType: sub["model_type"] as? String ?? modelType,
+            raw: sub)
     }
 
     /// `vocab_size`
@@ -146,8 +147,8 @@ public struct ModelConfig: @unchecked Sendable {
 
     public var quantization: QuantizationConfig? {
         guard let q = nested("quantization"),
-              let bits = q["bits"] as? Int,
-              let group = q["group_size"] as? Int
+            let bits = q["bits"] as? Int,
+            let group = q["group_size"] as? Int
         else { return nil }
         return QuantizationConfig(bits: bits, groupSize: group)
     }

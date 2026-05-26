@@ -18,6 +18,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("GenerationStats")
@@ -53,8 +54,9 @@ struct GenerationStatsTests {
 
     @Test("Throughput derivations from time + token counts")
     func throughput() {
-        let s = makeStats(promptTokens: 100, generatedTokens: 50,
-                          prefillS: 1.0, decodeS: 2.0)
+        let s = makeStats(
+            promptTokens: 100, generatedTokens: 50,
+            prefillS: 1.0, decodeS: 2.0)
         #expect(s.prefillTokensPerSecond == 100.0)
         #expect(s.decodeTokensPerSecond == 25.0)
     }
@@ -79,10 +81,12 @@ struct GenerationStatsTests {
         let s = makeStats()
         let out = s.formatted()
         #expect(out.hasPrefix("[STATS]"))
-        for needle in ["prompt:", "generated:", "ttft:", "prefill:",
-                       "decode:", "baseline GPU:", "weights:",
-                       "KV cache (alloc):", "KV cache (used):",
-                       "wired ticket:"] {
+        for needle in [
+            "prompt:", "generated:", "ttft:", "prefill:",
+            "decode:", "baseline GPU:", "weights:",
+            "KV cache (alloc):", "KV cache (used):",
+            "wired ticket:",
+        ] {
             #expect(out.contains(needle), "missing \(needle) in formatted output")
         }
     }

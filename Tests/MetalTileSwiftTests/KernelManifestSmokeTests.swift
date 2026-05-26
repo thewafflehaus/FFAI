@@ -39,6 +39,7 @@
 import Foundation
 import Metal
 import Testing
+
 @testable import MetalTileSwift
 
 @Suite("Kernel manifest PSO smoke")
@@ -63,8 +64,10 @@ struct KernelManifestSmokeTests {
         else {
             throw NSError(
                 domain: "KernelManifestSmoke", code: 1,
-                userInfo: [NSLocalizedDescriptionKey:
-                    "manifest.json not bundled into MetalTileSwift"]
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "manifest.json not bundled into MetalTileSwift"
+                ]
             )
         }
         let data = try Data(contentsOf: url)
@@ -81,25 +84,31 @@ struct KernelManifestSmokeTests {
         // caught here, the manifest would still have its kernels listed
         // even with empty bodies — but the count is also a smoke for
         // "manifest didn't accidentally truncate."
-        #expect(manifest.kernels.count > 80,
-                "manifest.json has \(manifest.kernels.count) kernels — expected the metaltile-std surface (~200+)")
+        #expect(
+            manifest.kernels.count > 80,
+            "manifest.json has \(manifest.kernels.count) kernels — expected the metaltile-std surface (~200+)"
+        )
 
         var failures: [String] = []
         for entry in manifest.kernels {
             do {
                 let pso = try cache.pipelineStateThrowing(for: entry.name)
-                #expect(pso.maxTotalThreadsPerThreadgroup > 0,
-                        "kernel \(entry.name) reports zero maxTotalThreadsPerThreadgroup — Metal refused to instantiate")
+                #expect(
+                    pso.maxTotalThreadsPerThreadgroup > 0,
+                    "kernel \(entry.name) reports zero maxTotalThreadsPerThreadgroup — Metal refused to instantiate"
+                )
             } catch {
                 failures.append("\(entry.name): \(error)")
             }
         }
         if !failures.isEmpty {
-            Issue.record(Comment(rawValue:
-                "PSO creation failed for \(failures.count) kernel(s):\n"
-                + failures.prefix(10).joined(separator: "\n")
-                + (failures.count > 10 ? "\n  …(+\(failures.count - 10) more)" : "")
-            ))
+            Issue.record(
+                Comment(
+                    rawValue:
+                        "PSO creation failed for \(failures.count) kernel(s):\n"
+                        + failures.prefix(10).joined(separator: "\n")
+                        + (failures.count > 10 ? "\n  …(+\(failures.count - 10) more)" : "")
+                ))
         }
     }
 

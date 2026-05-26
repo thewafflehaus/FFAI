@@ -99,27 +99,27 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
     // (`rotation` / `rotationT` are per-layer; the codebooks are shared
     // across layers because Lloyd-Max levels are dim-only — no layer
     // statistics are baked in yet.)
-    public let rotation: Tensor       // [headDim, headDim] f32 — Π, encode kernel input
-    public let rotationT: Tensor      // [headDim, headDim] f32 — Π^T, for un-rotation kernels / future use
+    public let rotation: Tensor  // [headDim, headDim] f32 — Π, encode kernel input
+    public let rotationT: Tensor  // [headDim, headDim] f32 — Π^T, for un-rotation kernels / future use
     /// Π in the activation dtype, used by `Ops.auraRotatePerHead` on the
     /// Q post-RoPE side. Aliases `rotation` when `dtype == .f32`.
     public let rotationDtype: Tensor
     /// Π^T in the activation dtype, used to un-rotate the SDPA output
     /// before `oProj`. Aliases `rotationT` when `dtype == .f32`.
     public let rotationDtypeT: Tensor
-    public let kCodebook: Tensor      // [2^keyBits]   f32
-    public let kBoundaries: Tensor    // [2^keyBits-1] f32
-    public let vCodebook: Tensor      // [2^valueBits] f32
-    public let vBoundaries: Tensor    // [2^valueBits-1] f32
+    public let kCodebook: Tensor  // [2^keyBits]   f32
+    public let kBoundaries: Tensor  // [2^keyBits-1] f32
+    public let vCodebook: Tensor  // [2^valueBits] f32
+    public let vBoundaries: Tensor  // [2^valueBits-1] f32
 
     // Per-cache compressed storage.
-    public let kPacked: Tensor        // [nKVHeads, maxSeq, kPackedWidth] u32
-    public let vPacked: Tensor        // [nKVHeads, maxSeq, vPackedWidth] u32
-    public let kNorms: Tensor         // [nKVHeads, maxSeq] f32
-    public let vNorms: Tensor         // [nKVHeads, maxSeq] f32
+    public let kPacked: Tensor  // [nKVHeads, maxSeq, kPackedWidth] u32
+    public let vPacked: Tensor  // [nKVHeads, maxSeq, vPackedWidth] u32
+    public let kNorms: Tensor  // [nKVHeads, maxSeq] f32
+    public let vNorms: Tensor  // [nKVHeads, maxSeq] f32
 
     // Shared working buffers — bulk-dequant target; reused across layers.
-    public let sharedWorkingK: Tensor // [nKVHeads, maxSeq, headDim] dtype
+    public let sharedWorkingK: Tensor  // [nKVHeads, maxSeq, headDim] dtype
     public let sharedWorkingV: Tensor
 
     /// Lock-protected fill state. Same Phase-8 concurrent-decode prep
@@ -147,15 +147,16 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         decodePath: AURADecodePath = .compressed,
         device: Device = .shared
     ) {
-        self.init(nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
-                  dtype: dtype, scheme: scheme,
-                  rotation: rotation, rotationT: rotationT,
-                  rotationDtype: rotationDtype, rotationDtypeT: rotationDtypeT,
-                  kCodebook: kCodebook, kBoundaries: kBoundaries,
-                  vCodebook: vCodebook, vBoundaries: vBoundaries,
-                  sharedWorkingK: sharedWorkingK, sharedWorkingV: sharedWorkingV,
-                  eviction: .unbounded, decodePath: decodePath,
-                  device: device)
+        self.init(
+            nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+            dtype: dtype, scheme: scheme,
+            rotation: rotation, rotationT: rotationT,
+            rotationDtype: rotationDtype, rotationDtypeT: rotationDtypeT,
+            kCodebook: kCodebook, kBoundaries: kBoundaries,
+            vCodebook: vCodebook, vBoundaries: vBoundaries,
+            sharedWorkingK: sharedWorkingK, sharedWorkingV: sharedWorkingV,
+            eviction: .unbounded, decodePath: decodePath,
+            device: device)
     }
 
     public init(
@@ -170,29 +171,41 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         decodePath: AURADecodePath = .compressed,
         device: Device = .shared
     ) {
-        precondition(rotation.shape == [headDim, headDim],
-                     "AURAQuantizedKVCache: rotation must be [headDim, headDim]")
-        precondition(rotation.dtype == .f32,
-                     "AURAQuantizedKVCache: rotation must be f32")
-        precondition(rotationT.shape == [headDim, headDim],
-                     "AURAQuantizedKVCache: rotationT must be [headDim, headDim]")
-        precondition(rotationT.dtype == .f32,
-                     "AURAQuantizedKVCache: rotationT must be f32")
-        precondition(rotationDtype.shape == [headDim, headDim] &&
-                     rotationDtypeT.shape == [headDim, headDim],
-                     "AURAQuantizedKVCache: rotationDtype/rotationDtypeT must be [headDim, headDim]")
-        precondition(rotationDtype.dtype == dtype && rotationDtypeT.dtype == dtype,
-                     "AURAQuantizedKVCache: rotationDtype/rotationDtypeT dtype must match cache dtype \(dtype)")
-        precondition(kCodebook.dtype == .f32 && kBoundaries.dtype == .f32,
-                     "AURAQuantizedKVCache: K codebook/boundaries must be f32")
-        precondition(vCodebook.dtype == .f32 && vBoundaries.dtype == .f32,
-                     "AURAQuantizedKVCache: V codebook/boundaries must be f32")
-        precondition(sharedWorkingK.shape == [nKVHeads, maxSeq, headDim],
-                     "AURAQuantizedKVCache: sharedWorkingK shape mismatch")
-        precondition(sharedWorkingV.shape == [nKVHeads, maxSeq, headDim],
-                     "AURAQuantizedKVCache: sharedWorkingV shape mismatch")
-        precondition(sharedWorkingK.dtype == dtype && sharedWorkingV.dtype == dtype,
-                     "AURAQuantizedKVCache: sharedWorking dtype mismatch")
+        precondition(
+            rotation.shape == [headDim, headDim],
+            "AURAQuantizedKVCache: rotation must be [headDim, headDim]")
+        precondition(
+            rotation.dtype == .f32,
+            "AURAQuantizedKVCache: rotation must be f32")
+        precondition(
+            rotationT.shape == [headDim, headDim],
+            "AURAQuantizedKVCache: rotationT must be [headDim, headDim]")
+        precondition(
+            rotationT.dtype == .f32,
+            "AURAQuantizedKVCache: rotationT must be f32")
+        precondition(
+            rotationDtype.shape == [headDim, headDim]
+                && rotationDtypeT.shape == [headDim, headDim],
+            "AURAQuantizedKVCache: rotationDtype/rotationDtypeT must be [headDim, headDim]")
+        precondition(
+            rotationDtype.dtype == dtype && rotationDtypeT.dtype == dtype,
+            "AURAQuantizedKVCache: rotationDtype/rotationDtypeT dtype must match cache dtype \(dtype)"
+        )
+        precondition(
+            kCodebook.dtype == .f32 && kBoundaries.dtype == .f32,
+            "AURAQuantizedKVCache: K codebook/boundaries must be f32")
+        precondition(
+            vCodebook.dtype == .f32 && vBoundaries.dtype == .f32,
+            "AURAQuantizedKVCache: V codebook/boundaries must be f32")
+        precondition(
+            sharedWorkingK.shape == [nKVHeads, maxSeq, headDim],
+            "AURAQuantizedKVCache: sharedWorkingK shape mismatch")
+        precondition(
+            sharedWorkingV.shape == [nKVHeads, maxSeq, headDim],
+            "AURAQuantizedKVCache: sharedWorkingV shape mismatch")
+        precondition(
+            sharedWorkingK.dtype == dtype && sharedWorkingV.dtype == dtype,
+            "AURAQuantizedKVCache: sharedWorking dtype mismatch")
 
         self.nKVHeads = nKVHeads
         self.headDim = headDim
@@ -226,8 +239,10 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         // Codec is purely additive in atomic_or terms, so packed slots
         // MUST start zeroed. Norms slots get overwritten per encode but
         // zero is a safe default.
-        kPacked.zero(); vPacked.zero()
-        kNorms.zero();  vNorms.zero()
+        kPacked.zero()
+        vPacked.zero()
+        kNorms.zero()
+        vNorms.zero()
 
         self._evictionState = KVEvictionState(policy: eviction, bufferCapacity: maxSeq)
     }
@@ -242,14 +257,19 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
     /// `kFlat` and `vFlat` come in as [nKVHeads, headDim] in the model's
     /// dtype (bf16/f16/f32) — the encode kernel is dtype-generic, so no
     /// upcast is needed.
-    public func appendOnGPU(kFlat: Tensor, vFlat: Tensor,
-                            on cmd: MTLCommandBuffer) {
-        precondition(kFlat.dtype == dtype && vFlat.dtype == dtype,
-                     "AURAQuantizedKVCache: kFlat/vFlat dtype must match cache dtype")
-        precondition(kFlat.elementCount == nKVHeads * headDim,
-                     "AURAQuantizedKVCache: kFlat shape mismatch")
-        precondition(vFlat.elementCount == nKVHeads * headDim,
-                     "AURAQuantizedKVCache: vFlat shape mismatch")
+    public func appendOnGPU(
+        kFlat: Tensor, vFlat: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            kFlat.dtype == dtype && vFlat.dtype == dtype,
+            "AURAQuantizedKVCache: kFlat/vFlat dtype must match cache dtype")
+        precondition(
+            kFlat.elementCount == nKVHeads * headDim,
+            "AURAQuantizedKVCache: kFlat shape mismatch")
+        precondition(
+            vFlat.elementCount == nKVHeads * headDim,
+            "AURAQuantizedKVCache: vFlat shape mismatch")
 
         lengthLock.withLock {
             let pos = _evictionState.reserveNextSlot()
@@ -258,7 +278,8 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
             // before the encode runs, or stale bits will OR through.
             // Cheap (one packed_width × u32 row per head per cache).
             if case .window = _evictionState.policy,
-               _evictionState.absolutePosition > _evictionState.length {
+                _evictionState.absolutePosition > _evictionState.length
+            {
                 zeroPackedSlot(packed: kPacked, packedWidth: kPackedWidth, pos: pos, on: cmd)
                 zeroPackedSlot(packed: vPacked, packedWidth: vPackedWidth, pos: pos, on: cmd)
             }
@@ -285,11 +306,12 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         let packedBytesPerSlot = packedWidth * 4
         let packedBytesPerHead = maxSeq * packedBytesPerSlot
         guard let blit = cmd.makeBlitCommandEncoder() else { return }
-        for h in 0..<nKVHeads {
+        for h in 0 ..< nKVHeads {
             let off = packed.offset + h * packedBytesPerHead + pos * packedBytesPerSlot
-            blit.fill(buffer: packed.buffer,
-                      range: off..<(off + packedBytesPerSlot),
-                      value: 0)
+            blit.fill(
+                buffer: packed.buffer,
+                range: off ..< (off + packedBytesPerSlot),
+                value: 0)
         }
         blit.endEncoding()
     }
@@ -353,11 +375,11 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         on cmd: MTLCommandBuffer
     ) {
         let inputBytesPerHead = headDim * dtype.byteSize
-        let packedBytesPerSlot = packedWidth * 4         // u32
+        let packedBytesPerSlot = packedWidth * 4  // u32
         let packedBytesPerHead = maxSeq * packedBytesPerSlot
-        let normBytesPerHead = maxSeq * 4                // f32
+        let normBytesPerHead = maxSeq * 4  // f32
 
-        for h in 0..<nKVHeads {
+        for h in 0 ..< nKVHeads {
             let inputView = Tensor(
                 buffer: inputFlat.buffer,
                 offset: inputFlat.offset + h * inputBytesPerHead,
@@ -392,10 +414,10 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
 /// per-layer rotations the same way.
 public enum AURAQuantizedKVCacheRotations {
     public struct Bundle {
-        public let rotation: Tensor       // [headDim, headDim] f32
-        public let rotationT: Tensor      // [headDim, headDim] f32
+        public let rotation: Tensor  // [headDim, headDim] f32
+        public let rotationT: Tensor  // [headDim, headDim] f32
         public let rotationDtype: Tensor  // [headDim, headDim] activationDtype
-        public let rotationDtypeT: Tensor // [headDim, headDim] activationDtype
+        public let rotationDtypeT: Tensor  // [headDim, headDim] activationDtype
     }
 
     public static func build(
@@ -406,8 +428,8 @@ public enum AURAQuantizedKVCacheRotations {
         // is a straightforward row/column swap of the row-major buffer.
         let piData = AURARotation.srhtMatrix(dim: headDim, seed: UInt64(layerIndex))
         var piTData = [Float](repeating: 0, count: headDim * headDim)
-        for i in 0..<headDim {
-            for j in 0..<headDim {
+        for i in 0 ..< headDim {
+            for j in 0 ..< headDim {
                 piTData[j * headDim + i] = piData[i * headDim + j]
             }
         }
@@ -437,14 +459,18 @@ public enum AURAQuantizedKVCacheRotations {
         case .bf16:
             // bf16 is the top 16 bits of fp32 — truncating cast.
             rotationDtype = Tensor.empty(shape: [headDim, headDim], dtype: .bf16, device: device)
-            rotationDtype.copyIn(from: piData.map { UInt16(truncatingIfNeeded: $0.bitPattern >> 16) })
+            rotationDtype.copyIn(
+                from: piData.map { UInt16(truncatingIfNeeded: $0.bitPattern >> 16) })
             rotationDtypeT = Tensor.empty(shape: [headDim, headDim], dtype: .bf16, device: device)
-            rotationDtypeT.copyIn(from: piTData.map { UInt16(truncatingIfNeeded: $0.bitPattern >> 16) })
+            rotationDtypeT.copyIn(
+                from: piTData.map { UInt16(truncatingIfNeeded: $0.bitPattern >> 16) })
         default:
-            preconditionFailure("AURAQuantizedKVCacheRotations: unsupported activation dtype \(activationDtype)")
+            preconditionFailure(
+                "AURAQuantizedKVCacheRotations: unsupported activation dtype \(activationDtype)")
         }
 
-        return Bundle(rotation: rotation, rotationT: rotationT,
-                      rotationDtype: rotationDtype, rotationDtypeT: rotationDtypeT)
+        return Bundle(
+            rotation: rotation, rotationT: rotationT,
+            rotationDtype: rotationDtype, rotationDtypeT: rotationDtypeT)
     }
 }

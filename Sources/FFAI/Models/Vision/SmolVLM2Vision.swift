@@ -45,15 +45,15 @@ import Metal
 
 /// Vision (SigLIP-style ViT) configuration decoded from "vision_config" sub-object.
 public struct SmolVLM2VisionConfig: Sendable {
-    public let hiddenSize: Int          // 768
-    public let intermediateSize: Int    // 3072
-    public let numHiddenLayers: Int     // 12
-    public let numAttentionHeads: Int   // 12
-    public let numChannels: Int         // 3
-    public let patchSize: Int           // 16
-    public let imageSize: Int           // 512
-    public let layerNormEps: Float      // 1e-6
-    public let headDim: Int             // hiddenSize / numAttentionHeads
+    public let hiddenSize: Int  // 768
+    public let intermediateSize: Int  // 3072
+    public let numHiddenLayers: Int  // 12
+    public let numAttentionHeads: Int  // 12
+    public let numChannels: Int  // 3
+    public let patchSize: Int  // 16
+    public let imageSize: Int  // 512
+    public let layerNormEps: Float  // 1e-6
+    public let headDim: Int  // hiddenSize / numAttentionHeads
 
     public init(from raw: [String: Any]) throws {
         guard let hs = raw["hidden_size"] as? Int else {
@@ -75,30 +75,30 @@ public struct SmolVLM2VisionConfig: Sendable {
         let nCh = raw["num_channels"] as? Int ?? 3
         let eps = (raw["layer_norm_eps"] as? Double).map(Float.init) ?? 1e-6
 
-        self.hiddenSize         = hs
-        self.intermediateSize   = intermediate
-        self.numHiddenLayers    = nLayers
-        self.numAttentionHeads  = nHeads
-        self.numChannels        = nCh
-        self.patchSize          = ps
-        self.imageSize          = imgSz
-        self.layerNormEps       = eps
-        self.headDim            = hs / nHeads
+        self.hiddenSize = hs
+        self.intermediateSize = intermediate
+        self.numHiddenLayers = nLayers
+        self.numAttentionHeads = nHeads
+        self.numChannels = nCh
+        self.patchSize = ps
+        self.imageSize = imgSz
+        self.layerNormEps = eps
+        self.headDim = hs / nHeads
     }
 }
 
 /// Text (Llama-style) configuration decoded from "text_config" sub-object.
 public struct SmolVLM2TextConfig: Sendable {
-    public let hiddenSize: Int          // 960
-    public let intermediateSize: Int    // 2560
-    public let numHiddenLayers: Int     // 32
-    public let numAttentionHeads: Int   // 15
-    public let numKeyValueHeads: Int    // 5
-    public let headDim: Int             // 64
-    public let vocabSize: Int           // 49280
-    public let maxPositionEmbeddings: Int // 8192
-    public let rmsNormEps: Float        // 1e-5
-    public let ropeTheta: Float         // 100000
+    public let hiddenSize: Int  // 960
+    public let intermediateSize: Int  // 2560
+    public let numHiddenLayers: Int  // 32
+    public let numAttentionHeads: Int  // 15
+    public let numKeyValueHeads: Int  // 5
+    public let headDim: Int  // 64
+    public let vocabSize: Int  // 49280
+    public let maxPositionEmbeddings: Int  // 8192
+    public let rmsNormEps: Float  // 1e-5
+    public let ropeTheta: Float  // 100000
     public let tieWordEmbeddings: Bool
 
     public init(from raw: [String: Any]) throws {
@@ -114,7 +114,7 @@ public struct SmolVLM2TextConfig: Sendable {
         guard let nHeads = raw["num_attention_heads"] as? Int else {
             throw SmolVLM2Error.missingTextConfig("num_attention_heads")
         }
-        let nKV  = raw["num_key_value_heads"] as? Int ?? nHeads
+        let nKV = raw["num_key_value_heads"] as? Int ?? nHeads
         let hDim = raw["head_dim"] as? Int ?? (hs / nHeads)
         let inter = raw["intermediate_size"] as? Int ?? 2560
         let maxPos = raw["max_position_embeddings"] as? Int ?? 8192
@@ -122,17 +122,17 @@ public struct SmolVLM2TextConfig: Sendable {
         let theta = (raw["rope_theta"] as? Double).map(Float.init) ?? 100_000
         let tieEmbed = raw["tie_word_embeddings"] as? Bool ?? false
 
-        self.hiddenSize             = hs
-        self.intermediateSize       = inter
-        self.numHiddenLayers        = nLayers
-        self.numAttentionHeads      = nHeads
-        self.numKeyValueHeads       = nKV
-        self.headDim                = hDim
-        self.vocabSize              = vocab
-        self.maxPositionEmbeddings  = maxPos
-        self.rmsNormEps             = eps
-        self.ropeTheta              = theta
-        self.tieWordEmbeddings      = tieEmbed
+        self.hiddenSize = hs
+        self.intermediateSize = inter
+        self.numHiddenLayers = nLayers
+        self.numAttentionHeads = nHeads
+        self.numKeyValueHeads = nKV
+        self.headDim = hDim
+        self.vocabSize = vocab
+        self.maxPositionEmbeddings = maxPos
+        self.rmsNormEps = eps
+        self.ropeTheta = theta
+        self.tieWordEmbeddings = tieEmbed
     }
 }
 
@@ -142,10 +142,10 @@ public struct SmolVLM2Config: Sendable {
     public let textConfig: SmolVLM2TextConfig
     /// `scale_factor` controls pixel-shuffle downsampling of vision features
     /// before projection into text embedding space.
-    public let scaleFactor: Int         // 4
+    public let scaleFactor: Int  // 4
     /// Token id used as placeholder for image patches in the input sequence.
-    public let imageTokenId: Int        // 49190
-    public let vocabSize: Int           // 49280
+    public let imageTokenId: Int  // 49190
+    public let vocabSize: Int  // 49280
 
     public init(from raw: [String: Any]) throws {
         guard let vcRaw = raw["vision_config"] as? [String: Any] else {
@@ -154,11 +154,11 @@ public struct SmolVLM2Config: Sendable {
         guard let tcRaw = raw["text_config"] as? [String: Any] else {
             throw SmolVLM2Error.missingConfig("text_config")
         }
-        self.visionConfig  = try SmolVLM2VisionConfig(from: vcRaw)
-        self.textConfig    = try SmolVLM2TextConfig(from: tcRaw)
-        self.scaleFactor   = raw["scale_factor"] as? Int ?? 4
-        self.imageTokenId  = raw["image_token_id"] as? Int ?? 49190
-        self.vocabSize     = raw["vocab_size"] as? Int ?? 49280
+        self.visionConfig = try SmolVLM2VisionConfig(from: vcRaw)
+        self.textConfig = try SmolVLM2TextConfig(from: tcRaw)
+        self.scaleFactor = raw["scale_factor"] as? Int ?? 4
+        self.imageTokenId = raw["image_token_id"] as? Int ?? 49190
+        self.vocabSize = raw["vocab_size"] as? Int ?? 49280
     }
 }
 
@@ -211,7 +211,10 @@ private enum F16 {
             if mant == 0 { return Float(bitPattern: sign) }
             var m = mant
             var e: UInt32 = 0
-            while (m & 0x400) == 0 { m <<= 1; e += 1 }
+            while (m & 0x400) == 0 {
+                m <<= 1
+                e += 1
+            }
             exp32 = (127 - 15 - e + 1) << 23
             let bits = sign | exp32 | ((m & 0x3FF) << 13)
             return Float(bitPattern: bits)
@@ -233,11 +236,11 @@ private func tensorToFloats(_ t: Tensor) -> [Float] {
     switch t.dtype {
     case .f32:
         let p = ptr.bindMemory(to: Float.self, capacity: n)
-        for i in 0..<n { out[i] = p[i] }
+        for i in 0 ..< n { out[i] = p[i] }
     case .bf16:
-        for i in 0..<n { out[i] = BF16.load(ptr, at: i) }
+        for i in 0 ..< n { out[i] = BF16.load(ptr, at: i) }
     case .f16:
-        for i in 0..<n { out[i] = F16.load(ptr, at: i) }
+        for i in 0 ..< n { out[i] = F16.load(ptr, at: i) }
     default:
         fatalError("tensorToFloats: unsupported dtype \(t.dtype)")
     }
@@ -245,8 +248,10 @@ private func tensorToFloats(_ t: Tensor) -> [Float] {
 }
 
 /// Write Float array back to a Tensor (CPU-side), respecting the target dtype.
-private func floatsToTensor(_ values: [Float], shape: [Int], dtype: DType,
-                             device: Device = .shared) -> Tensor {
+private func floatsToTensor(
+    _ values: [Float], shape: [Int], dtype: DType,
+    device: Device = .shared
+) -> Tensor {
     let n = shape.reduce(1, *)
     precondition(values.count == n, "floatsToTensor: count mismatch")
     let t = Tensor.empty(shape: shape, dtype: dtype, device: device)
@@ -254,14 +259,14 @@ private func floatsToTensor(_ values: [Float], shape: [Int], dtype: DType,
     switch dtype {
     case .f32:
         let p = ptr.bindMemory(to: Float.self, capacity: n)
-        for i in 0..<n { p[i] = values[i] }
+        for i in 0 ..< n { p[i] = values[i] }
     case .bf16:
-        for i in 0..<n { BF16.store(values[i], to: ptr, at: i) }
+        for i in 0 ..< n { BF16.store(values[i], to: ptr, at: i) }
     case .f16:
         // F16 write: convert Float → half via a round-trip through BF16 is not correct;
         // use truncation. For simplicity we store as BF16 bits using Float16 bitPattern
         // workaround: use bitPattern of the rounded 16-bit representation.
-        for i in 0..<n {
+        for i in 0 ..< n {
             let f = values[i]
             // Swift does not expose Float16 directly before Swift 5.9 on macOS 13+.
             // Encode via UInt16 using the f32-to-f16 algorithm.
@@ -271,14 +276,14 @@ private func floatsToTensor(_ values: [Float], shape: [Int], dtype: DType,
             let mant: UInt32 = bits & 0x7FFFFF
             let word: UInt16
             if exp32 < -24 {
-                word = sign              // underflow → zero
+                word = sign  // underflow → zero
             } else if exp32 < -14 {
                 // Subnormal
                 let shift = UInt32(-14 - exp32)
                 let m = (0x800000 | mant) >> shift
                 word = sign | UInt16(m >> 13)
             } else if exp32 > 15 {
-                word = sign | 0x7C00   // overflow → inf
+                word = sign | 0x7C00  // overflow → inf
             } else {
                 let exp16 = UInt16(exp32 + 15) << 10
                 word = sign | exp16 | UInt16(mant >> 13)
@@ -301,9 +306,9 @@ private func layerNorm1D(_ x: [Float], weight: [Float], bias: [Float]?, eps: Flo
     let std = (variance + eps).squareRoot()
     var out = [Float](repeating: 0, count: n)
     if let bias = bias {
-        for i in 0..<n { out[i] = ((x[i] - mean) / std) * weight[i] + bias[i] }
+        for i in 0 ..< n { out[i] = ((x[i] - mean) / std) * weight[i] + bias[i] }
     } else {
-        for i in 0..<n { out[i] = ((x[i] - mean) / std) * weight[i] }
+        for i in 0 ..< n { out[i] = ((x[i] - mean) / std) * weight[i] }
     }
     return out
 }
@@ -331,27 +336,32 @@ private func geluTanh(_ x: Float) -> Float {
 /// from `[nHeads, seqLen, headDim]` → `[seqLen, nHeads, headDim]` to
 /// match the kernel's Q layout. Output `[seqLen, nHeads, headDim]` is
 /// reinterpreted flat as `[seqLen, nHeads*headDim]` for the caller.
-private func visionSDPA(q: [Float], k: [Float], v: [Float],
-                         nHeads: Int, seqLen: Int, headDim: Int) -> [Float] {
+private func visionSDPA(
+    q: [Float], k: [Float], v: [Float],
+    nHeads: Int, seqLen: Int, headDim: Int
+) -> [Float] {
     let scale = 1.0 / Float(headDim).squareRoot()
     let device = Device.shared
 
     // Transpose Q from [nHeads, seqLen, headDim] → [seqLen, nHeads, headDim].
     var qSeqMajor = [Float](repeating: 0, count: seqLen * nHeads * headDim)
-    for h in 0..<nHeads {
-        for s in 0..<seqLen {
+    for h in 0 ..< nHeads {
+        for s in 0 ..< seqLen {
             let src = (h * seqLen + s) * headDim
             let dst = (s * nHeads + h) * headDim
-            for d in 0..<headDim { qSeqMajor[dst + d] = q[src + d] }
+            for d in 0 ..< headDim { qSeqMajor[dst + d] = q[src + d] }
         }
     }
 
-    let qT = floatsToTensor(qSeqMajor, shape: [seqLen, nHeads, headDim],
-                            dtype: .f32, device: device)
-    let kT = floatsToTensor(k, shape: [nHeads, seqLen, headDim],
-                            dtype: .f32, device: device)
-    let vT = floatsToTensor(v, shape: [nHeads, seqLen, headDim],
-                            dtype: .f32, device: device)
+    let qT = floatsToTensor(
+        qSeqMajor, shape: [seqLen, nHeads, headDim],
+        dtype: .f32, device: device)
+    let kT = floatsToTensor(
+        k, shape: [nHeads, seqLen, headDim],
+        dtype: .f32, device: device)
+    let vT = floatsToTensor(
+        v, shape: [nHeads, seqLen, headDim],
+        dtype: .f32, device: device)
     let cmd = device.makeCommandBuffer()
     let outT = Ops.sdpaBidirectional(
         q: qT, k: kT, v: vT,
@@ -375,16 +385,24 @@ private func visionSDPA(q: [Float], k: [Float], v: [Float],
 struct SmolVLM2EncoderLayer {
     // Self-attention projections (weight: [dim, dim], bias: [dim])
     // Stored as f32 GPU tensors after the 2026-05-24 GEMM migration.
-    let qW: Tensor; let qB: Tensor
-    let kW: Tensor; let kB: Tensor
-    let vW: Tensor; let vB: Tensor
-    let oW: Tensor; let oB: Tensor
+    let qW: Tensor
+    let qB: Tensor
+    let kW: Tensor
+    let kB: Tensor
+    let vW: Tensor
+    let vB: Tensor
+    let oW: Tensor
+    let oB: Tensor
     // MLP: fc1 [intermediate, dim], fc2 [dim, intermediate]
-    let fc1W: Tensor; let fc1B: Tensor
-    let fc2W: Tensor; let fc2B: Tensor
+    let fc1W: Tensor
+    let fc1B: Tensor
+    let fc2W: Tensor
+    let fc2B: Tensor
     // Layer norms (still CPU — applied per row before the GEMMs)
-    let ln1W: [Float]; let ln1B: [Float]
-    let ln2W: [Float]; let ln2B: [Float]
+    let ln1W: [Float]
+    let ln1B: [Float]
+    let ln2W: [Float]
+    let ln2B: [Float]
 
     let dim: Int
     let intermediate: Int
@@ -399,10 +417,10 @@ struct SmolVLM2EncoderLayer {
         let nHeads = cfg.numAttentionHeads
         let headDim = cfg.headDim
 
-        self.dim        = dim
+        self.dim = dim
         self.intermediate = inter
-        self.nHeads     = nHeads
-        self.headDim    = headDim
+        self.nHeads = nHeads
+        self.headDim = headDim
 
         // Re-host each projection weight + bias as an f32 GPU Tensor.
         func upW(_ key: String, shape: [Int]) throws -> Tensor {
@@ -444,26 +462,30 @@ struct SmolVLM2EncoderLayer {
         var h = x
         // Layer norm 1: apply per-row (cheap CPU pass).
         var normed1 = [Float](repeating: 0, count: seqLen * dim)
-        for row in 0..<seqLen {
+        for row in 0 ..< seqLen {
             let start = row * dim
-            let rowSlice = Array(h[start..<start + dim])
+            let rowSlice = Array(h[start ..< start + dim])
             let normRow = layerNorm1D(rowSlice, weight: ln1W, bias: ln1B, eps: eps)
-            normed1.replaceSubrange(start..<start + dim, with: normRow)
+            normed1.replaceSubrange(start ..< start + dim, with: normRow)
         }
 
         // Upload normed input once, dispatch Q/K/V on a shared command buffer.
-        let normedT = floatsToTensor(normed1, shape: [seqLen, dim],
-                                      dtype: .f32, device: device)
+        let normedT = floatsToTensor(
+            normed1, shape: [seqLen, dim],
+            dtype: .f32, device: device)
         let cmd = device.makeCommandBuffer()
-        let qT = smolVLM2GemmBiased(input: normedT, weight: qW, bias: qB,
-                                     nRows: seqLen, outDim: dim,
-                                     device: device, on: cmd)
-        let kT = smolVLM2GemmBiased(input: normedT, weight: kW, bias: kB,
-                                     nRows: seqLen, outDim: dim,
-                                     device: device, on: cmd)
-        let vT = smolVLM2GemmBiased(input: normedT, weight: vW, bias: vB,
-                                     nRows: seqLen, outDim: dim,
-                                     device: device, on: cmd)
+        let qT = smolVLM2GemmBiased(
+            input: normedT, weight: qW, bias: qB,
+            nRows: seqLen, outDim: dim,
+            device: device, on: cmd)
+        let kT = smolVLM2GemmBiased(
+            input: normedT, weight: kW, bias: kB,
+            nRows: seqLen, outDim: dim,
+            device: device, on: cmd)
+        let vT = smolVLM2GemmBiased(
+            input: normedT, weight: vW, bias: vB,
+            nRows: seqLen, outDim: dim,
+            device: device, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
         let q = qT.toFloatArray()
@@ -475,9 +497,9 @@ struct SmolVLM2EncoderLayer {
         var qHeads = [Float](repeating: 0, count: nHeads * seqLen * headDim)
         var kHeads = [Float](repeating: 0, count: nHeads * seqLen * headDim)
         var vHeads = [Float](repeating: 0, count: nHeads * seqLen * headDim)
-        for s in 0..<seqLen {
-            for nh in 0..<nHeads {
-                for d in 0..<headDim {
+        for s in 0 ..< seqLen {
+            for nh in 0 ..< nHeads {
+                for d in 0 ..< headDim {
                     let srcIdx = s * dim + nh * headDim + d
                     let dstIdx = nh * seqLen * headDim + s * headDim + d
                     qHeads[dstIdx] = q[srcIdx]
@@ -487,55 +509,62 @@ struct SmolVLM2EncoderLayer {
             }
         }
 
-        let attnOut = visionSDPA(q: qHeads, k: kHeads, v: vHeads,
-                                  nHeads: nHeads, seqLen: seqLen, headDim: headDim)
+        let attnOut = visionSDPA(
+            q: qHeads, k: kHeads, v: vHeads,
+            nHeads: nHeads, seqLen: seqLen, headDim: headDim)
         // attnOut: [seqLen, dim]
-        let attnT = floatsToTensor(attnOut, shape: [seqLen, dim],
-                                    dtype: .f32, device: device)
+        let attnT = floatsToTensor(
+            attnOut, shape: [seqLen, dim],
+            dtype: .f32, device: device)
         let cmd2 = device.makeCommandBuffer()
-        let oTgpu = smolVLM2GemmBiased(input: attnT, weight: oW, bias: oB,
-                                        nRows: seqLen, outDim: dim,
-                                        device: device, on: cmd2)
+        let oTgpu = smolVLM2GemmBiased(
+            input: attnT, weight: oW, bias: oB,
+            nRows: seqLen, outDim: dim,
+            device: device, on: cmd2)
         cmd2.commit()
         cmd2.waitUntilCompleted()
         let oOut = oTgpu.toFloatArray()
 
         // Residual
-        for i in 0..<h.count { h[i] += oOut[i] }
+        for i in 0 ..< h.count { h[i] += oOut[i] }
 
         // ─── MLP ─────────────────────────────────────────────────
         var normed2 = [Float](repeating: 0, count: seqLen * dim)
-        for row in 0..<seqLen {
+        for row in 0 ..< seqLen {
             let start = row * dim
-            let rowSlice = Array(h[start..<start + dim])
+            let rowSlice = Array(h[start ..< start + dim])
             let normRow = layerNorm1D(rowSlice, weight: ln2W, bias: ln2B, eps: eps)
-            normed2.replaceSubrange(start..<start + dim, with: normRow)
+            normed2.replaceSubrange(start ..< start + dim, with: normRow)
         }
 
-        let normed2T = floatsToTensor(normed2, shape: [seqLen, dim],
-                                       dtype: .f32, device: device)
+        let normed2T = floatsToTensor(
+            normed2, shape: [seqLen, dim],
+            dtype: .f32, device: device)
         let cmd3 = device.makeCommandBuffer()
-        let fc1Tgpu = smolVLM2GemmBiased(input: normed2T, weight: fc1W, bias: fc1B,
-                                          nRows: seqLen, outDim: intermediate,
-                                          device: device, on: cmd3)
+        let fc1Tgpu = smolVLM2GemmBiased(
+            input: normed2T, weight: fc1W, bias: fc1B,
+            nRows: seqLen, outDim: intermediate,
+            device: device, on: cmd3)
         cmd3.commit()
         cmd3.waitUntilCompleted()
         var fc1Out = fc1Tgpu.toFloatArray()
         // GELU tanh approximation (SigLIP / Idefics3 uses gelu_pytorch_tanh)
-        for i in 0..<fc1Out.count { fc1Out[i] = geluTanh(fc1Out[i]) }
+        for i in 0 ..< fc1Out.count { fc1Out[i] = geluTanh(fc1Out[i]) }
 
-        let fc1OutT = floatsToTensor(fc1Out, shape: [seqLen, intermediate],
-                                      dtype: .f32, device: device)
+        let fc1OutT = floatsToTensor(
+            fc1Out, shape: [seqLen, intermediate],
+            dtype: .f32, device: device)
         let cmd4 = device.makeCommandBuffer()
-        let fc2Tgpu = smolVLM2GemmBiased(input: fc1OutT, weight: fc2W, bias: fc2B,
-                                          nRows: seqLen, outDim: dim,
-                                          device: device, on: cmd4)
+        let fc2Tgpu = smolVLM2GemmBiased(
+            input: fc1OutT, weight: fc2W, bias: fc2B,
+            nRows: seqLen, outDim: dim,
+            device: device, on: cmd4)
         cmd4.commit()
         cmd4.waitUntilCompleted()
         let fc2Out = fc2Tgpu.toFloatArray()
 
         // Residual
-        for i in 0..<h.count { h[i] += fc2Out[i] }
+        for i in 0 ..< h.count { h[i] += fc2Out[i] }
         return h
     }
 }
@@ -544,18 +573,21 @@ struct SmolVLM2EncoderLayer {
 /// `Ops.gemm` + `Ops.add` on the supplied command buffer. Bias tile is
 /// staged CPU-side and uploaded once per call. Caller commits and reads
 /// back.
-private func smolVLM2GemmBiased(input: Tensor, weight: Tensor, bias: Tensor,
-                                 nRows: Int, outDim: Int, device: Device,
-                                 on cmd: MTLCommandBuffer) -> Tensor {
+private func smolVLM2GemmBiased(
+    input: Tensor, weight: Tensor, bias: Tensor,
+    nRows: Int, outDim: Int, device: Device,
+    on cmd: MTLCommandBuffer
+) -> Tensor {
     let out = Ops.gemm(weight: weight, input: input, nRows: nRows, on: cmd)
     let biasVals = bias.toFloatArray()
     var tiled = [Float](repeating: 0, count: nRows * outDim)
-    for r in 0..<nRows {
+    for r in 0 ..< nRows {
         let base = r * outDim
-        for c in 0..<outDim { tiled[base + c] = biasVals[c] }
+        for c in 0 ..< outDim { tiled[base + c] = biasVals[c] }
     }
-    let tiledT = floatsToTensor(tiled, shape: [nRows, outDim],
-                                 dtype: .f32, device: device)
+    let tiledT = floatsToTensor(
+        tiled, shape: [nRows, outDim],
+        dtype: .f32, device: device)
     return Ops.add(out, tiledT, on: cmd)
 }
 
@@ -590,19 +622,20 @@ public final class SmolVLM2VisionEncoder: Module {
         // Patch embedding weight shape: [hiddenSize, numChannels, patchSize, patchSize]
         let patchWTens = try weights.tensor(named: "vision_model.embeddings.patch_embedding.weight")
         let patchBTens = try weights.tensor(named: "vision_model.embeddings.patch_embedding.bias")
-        let posEmbedTens = try weights.tensor(named: "vision_model.embeddings.position_embedding.weight")
+        let posEmbedTens = try weights.tensor(
+            named: "vision_model.embeddings.position_embedding.weight")
         let postLnWTens = try weights.tensor(named: "vision_model.post_layernorm.weight")
         let postLnBTens = try weights.tensor(named: "vision_model.post_layernorm.bias")
 
-        self.patchWTensor     = patchWTens
-        self.patchBTensor     = patchBTens
-        self.posEmbedTensor   = posEmbedTens
-        self.postLnWTensor    = postLnWTens
-        self.postLnBTensor    = postLnBTens
+        self.patchWTensor = patchWTens
+        self.patchBTensor = patchBTens
+        self.posEmbedTensor = posEmbedTens
+        self.postLnWTensor = postLnWTens
+        self.postLnBTensor = postLnBTens
 
-        self.patchW    = tensorToFloats(patchWTens)
-        self.patchB    = tensorToFloats(patchBTens)
-        self.posEmbed  = tensorToFloats(posEmbedTens)
+        self.patchW = tensorToFloats(patchWTens)
+        self.patchB = tensorToFloats(patchBTens)
+        self.posEmbed = tensorToFloats(posEmbedTens)
 
         let n = (cfg.imageSize / cfg.patchSize) * (cfg.imageSize / cfg.patchSize)
         self.numPatches = n
@@ -612,7 +645,7 @@ public final class SmolVLM2VisionEncoder: Module {
 
         var layers: [SmolVLM2EncoderLayer] = []
         layers.reserveCapacity(cfg.numHiddenLayers)
-        for i in 0..<cfg.numHiddenLayers {
+        for i in 0 ..< cfg.numHiddenLayers {
             layers.append(try SmolVLM2EncoderLayer(index: i, weights: weights, cfg: cfg))
         }
         self.layers = layers
@@ -621,10 +654,10 @@ public final class SmolVLM2VisionEncoder: Module {
     public func parameters() -> [(String, Tensor)] {
         var out: [(String, Tensor)] = []
         out.append(("vision_model.embeddings.patch_embedding.weight", patchWTensor))
-        out.append(("vision_model.embeddings.patch_embedding.bias",   patchBTensor))
+        out.append(("vision_model.embeddings.patch_embedding.bias", patchBTensor))
         out.append(("vision_model.embeddings.position_embedding.weight", posEmbedTensor))
         out.append(("vision_model.post_layernorm.weight", postLnWTensor))
-        out.append(("vision_model.post_layernorm.bias",   postLnBTensor))
+        out.append(("vision_model.post_layernorm.bias", postLnBTensor))
         // Layer weights are not exposed here (already loaded into Float arrays)
         return out
     }
@@ -637,46 +670,47 @@ public final class SmolVLM2VisionEncoder: Module {
     /// Conv2d with stride == kernel (patch extraction) is equivalent to slicing
     /// non-overlapping windows and projecting each through the patch weight matrix.
     func patchEmbeddings(pixels: [Float], height: Int, width: Int) -> [Float] {
-        let ps  = cfg.patchSize
+        let ps = cfg.patchSize
         let dim = cfg.hiddenSize
-        let nC  = cfg.numChannels
+        let nC = cfg.numChannels
         let nRows = height / ps
-        let nCols = width  / ps
+        let nCols = width / ps
         let nPatch = nRows * nCols
         // patchW shape: [dim, nC, ps, ps] — each row is a filter of size nC*ps*ps
         let filterSize = nC * ps * ps
 
         var out = [Float](repeating: 0, count: nPatch * dim)
 
-        for pr in 0..<nRows {
-            for pc in 0..<nCols {
+        for pr in 0 ..< nRows {
+            for pc in 0 ..< nCols {
                 let pIdx = pr * nCols + pc
                 // Extract one patch: [ps, ps, nC]
                 var patch = [Float](repeating: 0, count: filterSize)
-                for r in 0..<ps {
-                    for c in 0..<ps {
+                for r in 0 ..< ps {
+                    for c in 0 ..< ps {
                         let pixRow = pr * ps + r
                         let pixCol = pc * ps + c
-                        for ch in 0..<nC {
+                        for ch in 0 ..< nC {
                             // pixels layout: [height, width, nC] row-major
-                            patch[r * ps * nC + c * nC + ch] = pixels[pixRow * width * nC + pixCol * nC + ch]
+                            patch[r * ps * nC + c * nC + ch] =
+                                pixels[pixRow * width * nC + pixCol * nC + ch]
                         }
                     }
                 }
                 // Rearrange patch to [nC, ps, ps] to match filter layout
                 var patchCHW = [Float](repeating: 0, count: filterSize)
-                for ch in 0..<nC {
-                    for r in 0..<ps {
-                        for c in 0..<ps {
+                for ch in 0 ..< nC {
+                    for r in 0 ..< ps {
+                        for c in 0 ..< ps {
                             patchCHW[ch * ps * ps + r * ps + c] = patch[r * ps * nC + c * nC + ch]
                         }
                     }
                 }
                 // Dot patchCHW [filterSize] with each filter row [filterSize] → [dim]
-                for d in 0..<dim {
+                for d in 0 ..< dim {
                     var dot: Float = 0
                     let fRow = d * filterSize
-                    for j in 0..<filterSize { dot += patchW[fRow + j] * patchCHW[j] }
+                    for j in 0 ..< filterSize { dot += patchW[fRow + j] * patchCHW[j] }
                     out[pIdx * dim + d] = dot + patchB[d]
                 }
             }
@@ -695,8 +729,8 @@ public final class SmolVLM2VisionEncoder: Module {
         // Patch embeddings + position embeddings
         var x = patchEmbeddings(pixels: pixels, height: height, width: width)
         // x: [nPatch, dim]
-        for i in 0..<nPatch {
-            for d in 0..<dim {
+        for i in 0 ..< nPatch {
+            for d in 0 ..< dim {
                 x[i * dim + d] += posEmbed[i * dim + d]
             }
         }
@@ -708,12 +742,13 @@ public final class SmolVLM2VisionEncoder: Module {
 
         // Post layer norm (applied per patch)
         var postNormed = [Float](repeating: 0, count: nPatch * dim)
-        for row in 0..<nPatch {
+        for row in 0 ..< nPatch {
             let start = row * dim
-            let rowSlice = Array(x[start..<start + dim])
-            let normRow = layerNorm1D(rowSlice, weight: postLnW, bias: postLnB,
-                                      eps: cfg.layerNormEps)
-            postNormed.replaceSubrange(start..<start + dim, with: normRow)
+            let rowSlice = Array(x[start ..< start + dim])
+            let normRow = layerNorm1D(
+                rowSlice, weight: postLnW, bias: postLnB,
+                eps: cfg.layerNormEps)
+            postNormed.replaceSubrange(start ..< start + dim, with: normRow)
         }
         return postNormed
     }
@@ -755,8 +790,11 @@ public final class SmolVLM2Connector: Module {
         // Pixel-shuffle: interpret [nPatches, visionHidden] as [side, side, visionHidden]
         // and reorganize to [side/sf, side/sf, visionHidden * sf²]
         let side = Int(Double(nPatches).squareRoot())
-        precondition(side * side == nPatches, "SmolVLM2 connector: nPatches must be a perfect square")
-        precondition(side % sf == 0, "SmolVLM2 connector: side (\(side)) must be divisible by scale_factor (\(sf))")
+        precondition(
+            side * side == nPatches, "SmolVLM2 connector: nPatches must be a perfect square")
+        precondition(
+            side % sf == 0,
+            "SmolVLM2 connector: side (\(side)) must be divisible by scale_factor (\(sf))")
 
         let newSide = side / sf
         let newHidden = visionHidden * sf2
@@ -774,14 +812,15 @@ public final class SmolVLM2Connector: Module {
         // Step 1: [side, side, visionHidden]
         // Step 2: [side, side/sf, visionHidden*sf]
         var step2 = [Float](repeating: 0, count: side * newSide * visionHidden * sf)
-        for r in 0..<side {
-            for c2 in 0..<newSide {
-                for e in 0..<visionHidden {
-                    for s in 0..<sf {
+        for r in 0 ..< side {
+            for c2 in 0 ..< newSide {
+                for e in 0 ..< visionHidden {
+                    for s in 0 ..< sf {
                         let srcRow = r
                         let srcCol = c2 * sf + s
                         let srcIdx = srcRow * side * visionHidden + srcCol * visionHidden + e
-                        let dstIdx = r * newSide * visionHidden * sf + c2 * visionHidden * sf + e * sf + s
+                        let dstIdx =
+                            r * newSide * visionHidden * sf + c2 * visionHidden * sf + e * sf + s
                         step2[dstIdx] = visionOut[srcIdx]
                     }
                 }
@@ -790,9 +829,9 @@ public final class SmolVLM2Connector: Module {
 
         // Step 3: transpose(0, 2, 1, 3) → [side/sf, side, visionHidden*sf]
         var step3 = [Float](repeating: 0, count: newSide * side * visionHidden * sf)
-        for c2 in 0..<newSide {
-            for r in 0..<side {
-                for d in 0..<(visionHidden * sf) {
+        for c2 in 0 ..< newSide {
+            for r in 0 ..< side {
+                for d in 0 ..< (visionHidden * sf) {
                     let srcIdx = r * newSide * visionHidden * sf + c2 * visionHidden * sf + d
                     let dstIdx = c2 * side * visionHidden * sf + r * visionHidden * sf + d
                     step3[dstIdx] = step2[srcIdx]
@@ -803,14 +842,16 @@ public final class SmolVLM2Connector: Module {
         // Step 4: reshape to [side/sf, side/sf, visionHidden*sf²]
         // = further reshape of side dim: [side/sf, side/sf, sf, visionHidden*sf] then last two merged
         var step4 = [Float](repeating: 0, count: newSide * newSide * newHidden)
-        for r2 in 0..<newSide {
-            for c2 in 0..<newSide {
-                for s in 0..<sf {
-                    for e in 0..<(visionHidden * sf) {
+        for r2 in 0 ..< newSide {
+            for c2 in 0 ..< newSide {
+                for s in 0 ..< sf {
+                    for e in 0 ..< (visionHidden * sf) {
                         let srcRow = r2
                         let srcInnerRow = c2 * sf + s
-                        let srcIdx = srcRow * side * visionHidden * sf + srcInnerRow * visionHidden * sf + e
-                        let dstIdx = r2 * newSide * newHidden + c2 * newHidden + s * visionHidden * sf + e
+                        let srcIdx =
+                            srcRow * side * visionHidden * sf + srcInnerRow * visionHidden * sf + e
+                        let dstIdx =
+                            r2 * newSide * newHidden + c2 * newHidden + s * visionHidden * sf + e
                         step4[dstIdx] = step3[srcIdx]
                     }
                 }
@@ -827,11 +868,13 @@ public final class SmolVLM2Connector: Module {
         // Linear projection: [newNPatches, newHidden] × projWGpu^T → [newNPatches, textHidden]
         // One GPU GEMM dispatch instead of the nested-loop CPU matmul.
         let device = Device.shared
-        let inputT = floatsToTensor(step4, shape: [newNPatches, newHidden],
-                                     dtype: .f32, device: device)
+        let inputT = floatsToTensor(
+            step4, shape: [newNPatches, newHidden],
+            dtype: .f32, device: device)
         let cmd = device.makeCommandBuffer()
-        let outT = Ops.gemm(weight: projWGpu, input: inputT,
-                            nRows: newNPatches, on: cmd)
+        let outT = Ops.gemm(
+            weight: projWGpu, input: inputT,
+            nRows: newNPatches, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
         _ = textHidden  // textHidden is encoded in projWGpu.shape[0]
@@ -853,25 +896,27 @@ public final class SmolVLM2Model: LanguageModel {
     public let device: Device
 
     // LanguageModel conformance — delegate to the Llama backbone
-    public var hidden:    Int { llamaModel.hidden }
-    public var nLayers:   Int { llamaModel.nLayers }
-    public var nHeads:    Int { llamaModel.nHeads }
-    public var nKVHeads:  Int { llamaModel.nKVHeads }
-    public var headDim:   Int { llamaModel.headDim }
-    public var vocab:     Int { llamaModel.vocab }
-    public var maxSeq:    Int { llamaModel.maxSeq }
-    public var dtype:     DType { llamaModel.dtype }
+    public var hidden: Int { llamaModel.hidden }
+    public var nLayers: Int { llamaModel.nLayers }
+    public var nHeads: Int { llamaModel.nHeads }
+    public var nKVHeads: Int { llamaModel.nKVHeads }
+    public var headDim: Int { llamaModel.headDim }
+    public var vocab: Int { llamaModel.vocab }
+    public var maxSeq: Int { llamaModel.maxSeq }
+    public var dtype: DType { llamaModel.dtype }
 
-    public init(llamaModel: LlamaModel,
-                visionEncoder: SmolVLM2VisionEncoder,
-                connector: SmolVLM2Connector,
-                cfg: SmolVLM2Config,
-                device: Device) {
-        self.llamaModel    = llamaModel
+    public init(
+        llamaModel: LlamaModel,
+        visionEncoder: SmolVLM2VisionEncoder,
+        connector: SmolVLM2Connector,
+        cfg: SmolVLM2Config,
+        device: Device
+    ) {
+        self.llamaModel = llamaModel
         self.visionEncoder = visionEncoder
-        self.connector     = connector
-        self.cfg           = cfg
-        self.device        = device
+        self.connector = connector
+        self.cfg = cfg
+        self.device = device
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -886,17 +931,23 @@ public final class SmolVLM2Model: LanguageModel {
         llamaModel.makeLayerCaches(maxSeq: maxSeq, device: device)
     }
 
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        llamaModel.forward(tokenId: tokenId, position: position,
-                           caches: caches, on: cmd, device: device)
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        llamaModel.forward(
+            tokenId: tokenId, position: position,
+            caches: caches, on: cmd, device: device)
     }
 
-    public func forwardSample(tokenId: Int, position: Int,
-                              caches: [any LayerCacheProtocol], device: Device) -> Int {
-        llamaModel.forwardSample(tokenId: tokenId, position: position,
-                                  caches: caches, device: device)
+    public func forwardSample(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol], device: Device
+    ) -> Int {
+        llamaModel.forwardSample(
+            tokenId: tokenId, position: position,
+            caches: caches, device: device)
     }
 
     public func forwardSampleCategorical(
@@ -920,16 +971,19 @@ public final class SmolVLM2Model: LanguageModel {
     ///
     /// The number of image tokens equals nPatches / scaleFactor² where nPatches
     /// is (imageSize / patchSize)².
-    public func encodeImage(pixels: [Float],
-                             height: Int, width: Int) -> [Float] {
+    public func encodeImage(
+        pixels: [Float],
+        height: Int, width: Int
+    ) -> [Float] {
         let vc = cfg.visionConfig
         let nPatches = (height / vc.patchSize) * (width / vc.patchSize)
         let sf2 = cfg.scaleFactor * cfg.scaleFactor
         let nImageTokens = nPatches / sf2
 
         // Run vision encoder
-        let visionFeatures = visionEncoder.encode(pixels: pixels,
-                                                   height: height, width: width)
+        let visionFeatures = visionEncoder.encode(
+            pixels: pixels,
+            height: height, width: width)
         // Run connector: pixel-shuffle + projection
         let imageEmbeds = connector.forward(
             visionOut: visionFeatures,
@@ -937,8 +991,9 @@ public final class SmolVLM2Model: LanguageModel {
             visionHidden: vc.hiddenSize,
             textHidden: cfg.textConfig.hiddenSize
         )
-        precondition(imageEmbeds.count == nImageTokens * cfg.textConfig.hiddenSize,
-                     "SmolVLM2: image embeds shape mismatch")
+        precondition(
+            imageEmbeds.count == nImageTokens * cfg.textConfig.hiddenSize,
+            "SmolVLM2: image embeds shape mismatch")
         return imageEmbeds
     }
 
@@ -974,8 +1029,9 @@ public final class SmolVLM2Model: LanguageModel {
         frames: [[Float]],
         height: Int, width: Int
     ) -> [Float] {
-        precondition(!frames.isEmpty,
-                     "SmolVLM2Model.encodeVideoFrames: expected at least one frame")
+        precondition(
+            !frames.isEmpty,
+            "SmolVLM2Model.encodeVideoFrames: expected at least one frame")
         // Encode each frame independently — reuse the single-image path.
         var allEmbeds: [Float] = []
         allEmbeds.reserveCapacity(frames.count * imageTokensPerFrame * cfg.textConfig.hiddenSize)
@@ -1017,11 +1073,12 @@ public final class SmolVLM2Model: LanguageModel {
             if tokenId == imageTokenId && imageIdx < (imageEmbeds.count / textHidden) {
                 // Substitute image embedding for this position
                 let embedStart = imageIdx * textHidden
-                let embedSlice = Array(imageEmbeds[embedStart..<embedStart + textHidden])
+                let embedSlice = Array(imageEmbeds[embedStart ..< embedStart + textHidden])
                 imageIdx += 1
 
                 // Write the float embedding into a GPU tensor then run layers
-                let h = floatsToTensor(embedSlice, shape: [textHidden], dtype: dtype, device: device)
+                let h = floatsToTensor(
+                    embedSlice, shape: [textHidden], dtype: dtype, device: device)
                 // Run the Llama layer stack on this embedding directly
                 lastLogits = forwardFromEmbedding(h, position: pos, caches: caches, device: device)
             } else {
@@ -1044,9 +1101,11 @@ public final class SmolVLM2Model: LanguageModel {
     ///
     /// Used during VL prefill to process image-feature tokens that bypass the
     /// normal embedding table lookup.
-    public func forwardFromEmbedding(_ embedding: Tensor, position: Int,
-                                      caches: [any LayerCacheProtocol],
-                                      device: Device) -> Tensor {
+    public func forwardFromEmbedding(
+        _ embedding: Tensor, position: Int,
+        caches: [any LayerCacheProtocol],
+        device: Device
+    ) -> Tensor {
         let cmd = device.makeCommandBuffer()
         var h = embedding.reshaped(to: [llamaModel.hidden])
 
@@ -1054,13 +1113,14 @@ public final class SmolVLM2Model: LanguageModel {
         // (the floatsToTensor call above writes in self.dtype, so this is usually a no-op)
 
         for (i, layer) in llamaModel.layers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              cmd: cmd, device: device)
+            h = layer.forward(
+                h, position: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                cmd: cmd, device: device)
         }
 
-        let normed  = llamaModel.finalNorm(h, on: cmd)
-        let logits  = llamaModel.lmHead(normed, on: cmd)
+        let normed = llamaModel.finalNorm(h, on: cmd)
+        let logits = llamaModel.lmHead(normed, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
         return logits
@@ -1072,10 +1132,13 @@ public final class SmolVLM2Model: LanguageModel {
     /// (batched Ops.gemm projections + one Ops.sdpaMulti per layer)
     /// for free. The vision-prefill image-substitution path stays as
     /// its own per-token routine.
-    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                             caches: [any LayerCacheProtocol],
-                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        llamaModel.forwardMulti(tokenIds: tokenIds, startingAt: position,
-                                caches: caches, on: cmd, device: device)
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        llamaModel.forwardMulti(
+            tokenIds: tokenIds, startingAt: position,
+            caches: caches, on: cmd, device: device)
     }
 }

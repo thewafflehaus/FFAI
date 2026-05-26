@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // Unit tests for FireRedVAD — config decoding, CMVN parameters, the
@@ -46,7 +47,7 @@ struct FireRedVADTests {
         // Audio front-end.
         #expect(c.numMelBins == 80)
         #expect(c.frameLengthSamples == 400)  // 25 ms at 16 kHz
-        #expect(c.frameShiftSamples == 160)   // 10 ms at 16 kHz
+        #expect(c.frameShiftSamples == 160)  // 10 ms at 16 kHz
         // Post-processing defaults (from FireRedVadConfig dataclass).
         #expect(c.smoothWindowSize == 5)
         #expect(c.speechThreshold == 0.4)
@@ -120,8 +121,9 @@ struct FireRedVADTests {
         // computed over a large corpus.
         let mean = FireRedCMVN.defaultMean
         for (i, m) in mean.enumerated() {
-            #expect(m > 8 && m < 18,
-                    "mean[\(i)] = \(m) — expected Kaldi log-fbank range (8, 18)")
+            #expect(
+                m > 8 && m < 18,
+                "mean[\(i)] = \(m) — expected Kaldi log-fbank range (8, 18)")
         }
     }
 
@@ -164,8 +166,8 @@ struct FireRedVADTests {
         // Frame 4: [1.0, 1.0, 1.0] → 1.0
         #expect(abs(smoothed[0] - 0.0) < 1e-4)
         #expect(abs(smoothed[1] - 0.0) < 1e-4)
-        #expect(abs(smoothed[2] - 1.0/3.0) < 1e-4)
-        #expect(abs(smoothed[3] - 2.0/3.0) < 1e-4)
+        #expect(abs(smoothed[2] - 1.0 / 3.0) < 1e-4)
+        #expect(abs(smoothed[3] - 2.0 / 3.0) < 1e-4)
         #expect(abs(smoothed[4] - 1.0) < 1e-4)
     }
 
@@ -174,7 +176,7 @@ struct FireRedVADTests {
         // 60 frames: 5 silence, 30 speech (> minSpeechFrame=20), 25 silence.
         // The 30-frame burst exceeds minSpeechFrame so it trips SPEECH state.
         var binary = [Int](repeating: 0, count: 60)
-        for i in 5..<35 { binary[i] = 1 }
+        for i in 5 ..< 35 { binary[i] = 1 }
         let decisions = FireRedVADPostprocessor.stateMachineDecisions(
             binary, minSpeechFrame: 20, minSilenceFrame: 20)
         // At least some frames should be marked speech.
@@ -182,11 +184,13 @@ struct FireRedVADTests {
         #expect(speechCount > 0)
     }
 
-    @Test("FireRedVADPostprocessor.stateMachineDecisions — short burst below minSpeechFrame is rejected")
+    @Test(
+        "FireRedVADPostprocessor.stateMachineDecisions — short burst below minSpeechFrame is rejected"
+    )
     func stateMachineShortBurstRejected() {
         // 20 frames: 5 silence, 5 speech, 10 silence.
         var binary = [Int](repeating: 0, count: 20)
-        for i in 5..<10 { binary[i] = 1 }
+        for i in 5 ..< 10 { binary[i] = 1 }
         let decisions = FireRedVADPostprocessor.stateMachineDecisions(
             binary, minSpeechFrame: 20, minSilenceFrame: 20)
         // 5-frame burst < minSpeechFrame=20 → no speech.
@@ -209,7 +213,7 @@ struct FireRedVADTests {
         // 400 frames @ 10ms = 4s audio. Frames 50..350 (3s) are speech —
         // well above minSpeechFrame=20, so the burst clears the state machine.
         var probs = [Float](repeating: 0.05, count: 400)
-        for i in 50..<350 { probs[i] = 0.95 }
+        for i in 50 ..< 350 { probs[i] = 0.95 }
         let config = FireRedVADConfig()
         let segments = FireRedVADPostprocessor.process(
             probs: probs, config: config,
@@ -243,16 +247,18 @@ struct FireRedVADTests {
 
     @Test("VADModelRegistry.detectKind — recognizes firered_vad model_type")
     func registryDetectKindFireRedVAD() throws {
-        let dir = try writeTempConfig(["model_type": "firered_vad"],
-                                      named: "firered-vad-checkpoint")
+        let dir = try writeTempConfig(
+            ["model_type": "firered_vad"],
+            named: "firered-vad-checkpoint")
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(try VADModelRegistry.detectKind(in: dir) == .fireRedVAD)
     }
 
     @Test("VADModelRegistry.detectKind — recognizes firered-vad model_type (dash variant)")
     func registryDetectKindFireRedVADDash() throws {
-        let dir = try writeTempConfig(["model_type": "firered-vad"],
-                                      named: "firered-vad-checkpoint-2")
+        let dir = try writeTempConfig(
+            ["model_type": "firered-vad"],
+            named: "firered-vad-checkpoint-2")
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(try VADModelRegistry.detectKind(in: dir) == .fireRedVAD)
     }
@@ -285,26 +291,35 @@ struct FireRedVADTests {
     func fsmnZeroWeights() {
         // With all-zero filter weights, the FSMN memory is exactly the
         // residual input — so forward should return the input unchanged.
-        let P = 4; let N1 = 3; let N2 = 3; let T = 10
+        let P = 4
+        let N1 = 3
+        let N2 = 3
+        let T = 10
         let zeros = [Float](repeating: 0, count: P * N1)
-        let fsmn = FireRedFSMN(lookbackWeight: zeros, lookaheadWeight: zeros,
-                               P: P, N1: N1, S1: 1, N2: N2, S2: 1)
-        let input = (0..<(T * P)).map { Float($0) * 0.1 }
+        let fsmn = FireRedFSMN(
+            lookbackWeight: zeros, lookaheadWeight: zeros,
+            P: P, N1: N1, S1: 1, N2: N2, S2: 1)
+        let input = (0 ..< (T * P)).map { Float($0) * 0.1 }
         let output = fsmn.forward(input, T: T)
         // Output should equal input (zero filters → zero convolution → residual only).
         for i in input.indices {
-            #expect(abs(output[i] - input[i]) < 1e-5,
-                    "FSMN zero-weight: output[\(i)] \(output[i]) != input \(input[i])")
+            #expect(
+                abs(output[i] - input[i]) < 1e-5,
+                "FSMN zero-weight: output[\(i)] \(output[i]) != input \(input[i])")
         }
     }
 
     @Test("FireRedFSMN — output shape matches input shape")
     func fsmnOutputShape() {
-        let P = 8; let N1 = 5; let N2 = 5; let T = 20
+        let P = 8
+        let N1 = 5
+        let N2 = 5
+        let T = 20
         let lb = [Float](repeating: 0.01, count: P * N1)
         let la = [Float](repeating: 0.01, count: P * N2)
-        let fsmn = FireRedFSMN(lookbackWeight: lb, lookaheadWeight: la,
-                               P: P, N1: N1, S1: 1, N2: N2, S2: 1)
+        let fsmn = FireRedFSMN(
+            lookbackWeight: lb, lookaheadWeight: la,
+            P: P, N1: N1, S1: 1, N2: N2, S2: 1)
         let input = [Float](repeating: 1.0, count: T * P)
         let output = fsmn.forward(input, T: T)
         #expect(output.count == T * P)
@@ -313,8 +328,10 @@ struct FireRedVADTests {
     // ─── Helpers ─────────────────────────────────────────────────────
 
     /// Write a minimal `config.json` into a fresh temp directory.
-    private func writeTempConfig(_ config: [String: Any],
-                                 named: String) throws -> URL {
+    private func writeTempConfig(
+        _ config: [String: Any],
+        named: String
+    ) throws -> URL {
         let base = FileManager.default.temporaryDirectory
         let dir = base.appendingPathComponent("\(named)-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

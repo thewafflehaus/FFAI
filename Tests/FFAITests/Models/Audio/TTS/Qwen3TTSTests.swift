@@ -22,6 +22,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Qwen3TTS")
@@ -56,7 +57,7 @@ struct Qwen3TTSTests {
                 ] as [String: Any],
             ] as [String: Any],
             "speaker_encoder_config": [
-                "channels": 512,
+                "channels": 512
             ] as [String: Any],
         ]
     }
@@ -94,8 +95,9 @@ struct Qwen3TTSTests {
 
     @Test("Qwen3TTSConfig.from — decodes talker, sample rate, and special tokens")
     func configDecodesCanonical() {
-        let config = ModelConfig(architecture: nil, modelType: "qwen3_tts",
-                                 raw: Self.canonicalRaw())
+        let config = ModelConfig(
+            architecture: nil, modelType: "qwen3_tts",
+            raw: Self.canonicalRaw())
         let qc = Qwen3TTSConfig.from(config)
         #expect(qc != nil)
         #expect(qc?.sampleRate == 24_000)
@@ -135,14 +137,16 @@ struct Qwen3TTSTests {
 
     @Test("Qwen3TTSModel.architectures — contains canonical entry")
     func architecturesContents() {
-        #expect(Qwen3TTSModel.architectures.contains(
-            "Qwen3TTSForConditionalGeneration"))
+        #expect(
+            Qwen3TTSModel.architectures.contains(
+                "Qwen3TTSForConditionalGeneration"))
     }
 
     @Test("Qwen3TTSModel.handles — true for qwen3_tts model_type")
     func handlesByModelType() {
-        let config = ModelConfig(architecture: nil, modelType: "qwen3_tts",
-                                 raw: ["model_type": "qwen3_tts"])
+        let config = ModelConfig(
+            architecture: nil, modelType: "qwen3_tts",
+            raw: ["model_type": "qwen3_tts"])
         #expect(Qwen3TTSModel.handles(config))
     }
 
@@ -166,9 +170,10 @@ struct Qwen3TTSTests {
 
     @Test("Qwen3TTSModel.handles — false for unrelated text model")
     func handlesFalseForTextModel() {
-        let config = ModelConfig(architecture: "LlamaForCausalLM",
-                                 modelType: "llama",
-                                 raw: ["model_type": "llama"])
+        let config = ModelConfig(
+            architecture: "LlamaForCausalLM",
+            modelType: "llama",
+            raw: ["model_type": "llama"])
         #expect(!Qwen3TTSModel.handles(config))
     }
 
@@ -176,8 +181,9 @@ struct Qwen3TTSTests {
 
     @Test("AudioModelRegistry.capabilities — Qwen3TTS maps to textToSpeech")
     func registryCapability() {
-        let config = ModelConfig(architecture: nil, modelType: "qwen3_tts",
-                                 raw: Self.canonicalRaw())
+        let config = ModelConfig(
+            architecture: nil, modelType: "qwen3_tts",
+            raw: Self.canonicalRaw())
         #expect(AudioModelRegistry.capabilities(for: config) == Capability.textToSpeech)
     }
 

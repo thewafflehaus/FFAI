@@ -57,7 +57,8 @@ public struct VocosConfig: Sendable {
 
 extension VocosConfig: Decodable {
     enum TopKeys: String, CodingKey {
-        case backbone, head, featureExtractor = "feature_extractor"
+        case backbone, head
+        case featureExtractor = "feature_extractor"
         // flat fallbacks
         case inputChannels = "input_channels"
         case dim
@@ -154,9 +155,9 @@ struct VocosWeights {
         let s = try shape(key)
         let (cOut, k, cIn) = (s[0], s[1], s[2])
         var out = [Float](repeating: 0, count: raw.count)
-        for o in 0..<cOut {
-            for kk in 0..<k {
-                for ic in 0..<cIn {
+        for o in 0 ..< cOut {
+            for kk in 0 ..< k {
+                for ic in 0 ..< cIn {
                     out[(o * cIn + ic) * k + kk] = raw[(o * k + kk) * cIn + ic]
                 }
             }
@@ -181,8 +182,9 @@ public final class Vocos: @unchecked Sendable {
         guard FileManager.default.fileExists(atPath: configURL.path) else {
             throw VocosError.configNotFound(configURL.path)
         }
-        let config = try JSONDecoder().decode(VocosConfig.self,
-                                              from: Data(contentsOf: configURL))
+        let config = try JSONDecoder().decode(
+            VocosConfig.self,
+            from: Data(contentsOf: configURL))
         let bundle = try SafeTensorsBundle(directory: directory)
         return try Vocos(config: config, bundle: bundle)
     }

@@ -81,7 +81,7 @@ public enum GlmOcr {
     public static let modelTypes: Set<String> = ["glm_ocr"]
     /// Architecture string for GLM-OCR HF conversions.
     public static let architectures: Set<String> = [
-        "GlmOcrForConditionalGeneration",
+        "GlmOcrForConditionalGeneration"
     ]
     /// Default `image_token_id` for GLM-OCR checkpoints.
     public static let defaultImageTokenId = 59280
@@ -96,39 +96,41 @@ public enum GlmOcr {
         options: LoadOptions, device: Device
     ) throws -> GlmOcrModel {
         guard let textCfgRaw = config.nested("text_config"),
-              let visCfgRaw = config.nested("vision_config")
+            let visCfgRaw = config.nested("vision_config")
         else {
             throw GlmOcrError.missingConfig
         }
-        let textCfg = ModelConfig(architecture: nil, modelType: "glm_ocr_text",
-                                  raw: textCfgRaw)
-        let visCfg = ModelConfig(architecture: nil, modelType: "glm_ocr_vision",
-                                 raw: visCfgRaw)
+        let textCfg = ModelConfig(
+            architecture: nil, modelType: "glm_ocr_text",
+            raw: textCfgRaw)
+        let visCfg = ModelConfig(
+            architecture: nil, modelType: "glm_ocr_vision",
+            raw: visCfgRaw)
 
         // ── Text hyper-parameters ──
-        guard let hidden   = textCfg.hiddenSize,
-              let nLayers  = textCfg.numLayers,
-              let nHeads   = textCfg.numAttentionHeads,
-              let headDim  = textCfg.headDim,
-              let vocab    = textCfg.vocabSize,
-              let intermed = textCfg.intermediateSize,
-              let eps      = textCfg.rmsNormEps
+        guard let hidden = textCfg.hiddenSize,
+            let nLayers = textCfg.numLayers,
+            let nHeads = textCfg.numAttentionHeads,
+            let headDim = textCfg.headDim,
+            let vocab = textCfg.vocabSize,
+            let intermed = textCfg.intermediateSize,
+            let eps = textCfg.rmsNormEps
         else {
             throw GlmOcrError.missingConfig
         }
-        let nKVHeads   = textCfg.numKeyValueHeads ?? nHeads
-        let tieEmbed   = textCfg.tieWordEmbeddings
+        let nKVHeads = textCfg.numKeyValueHeads ?? nHeads
+        let tieEmbed = textCfg.tieWordEmbeddings
         let ropeTheta: Float = {
             if let p = textCfg.nested("rope_parameters") {
                 return Float((p["rope_theta"] as? Double) ?? 10_000)
             }
             return 10_000
         }()
-        let maxSeq     = textCfg.int("max_position_embeddings") ?? 131_072
+        let maxSeq = textCfg.int("max_position_embeddings") ?? 131_072
         // The checkpoint ships one extra "nextn-predict" layer at index
         // `nLayers`. Skip it during loading.
         let nextNLayers = textCfg.int("num_nextn_predict_layers") ?? 0
-        let quant      = config.quantization
+        let quant = config.quantization
 
         // Text weights sit under the `language_model.` prefix.
         let tw = weights.glmOcrPrefixed("language_model.")
@@ -140,32 +142,37 @@ public enum GlmOcr {
         // Decoder layers
         var layers: [GlmOcrTextLayer] = []
         layers.reserveCapacity(nLayers)
-        for i in 0..<nLayers {
+        for i in 0 ..< nLayers {
             let p = "model.layers.\(i)"
             let qProj = try loadLinear(base: "\(p).self_attn.q_proj", in: tw, quantization: quant)
             let kProj = try loadLinear(base: "\(p).self_attn.k_proj", in: tw, quantization: quant)
             let vProj = try loadLinear(base: "\(p).self_attn.v_proj", in: tw, quantization: quant)
             let oProj = try loadLinear(base: "\(p).self_attn.o_proj", in: tw, quantization: quant)
             let gateProj = try loadLinear(base: "\(p).mlp.gate_proj", in: tw, quantization: quant)
-            let upProj   = try loadLinear(base: "\(p).mlp.up_proj",   in: tw, quantization: quant)
-            let downProj = try loadLinear(base: "\(p).mlp.down_proj",  in: tw, quantization: quant)
+            let upProj = try loadLinear(base: "\(p).mlp.up_proj", in: tw, quantization: quant)
+            let downProj = try loadLinear(base: "\(p).mlp.down_proj", in: tw, quantization: quant)
             // Sandwiched pre-post-norm: 4 RMSNorm weights per layer.
-            let inputNorm     = RMSNorm(weight: try tw.tensor(named: "\(p).input_layernorm.weight"),
-                                        eps: Float(eps))
-            let postAttnNorm  = RMSNorm(weight: try tw.tensor(named: "\(p).post_self_attn_layernorm.weight"),
-                                        eps: Float(eps))
-            let postAttnLN2   = RMSNorm(weight: try tw.tensor(named: "\(p).post_attention_layernorm.weight"),
-                                        eps: Float(eps))
-            let postMlpNorm   = RMSNorm(weight: try tw.tensor(named: "\(p).post_mlp_layernorm.weight"),
-                                        eps: Float(eps))
-            layers.append(GlmOcrTextLayer(
-                qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
-                gateProj: gateProj, upProj: upProj, downProj: downProj,
-                inputNorm: inputNorm, postAttnNorm: postAttnNorm,
-                postAttnLN2: postAttnLN2, postMlpNorm: postMlpNorm,
-                hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
-                headDim: headDim, intermediate: intermed,
-                ropeTheta: ropeTheta))
+            let inputNorm = RMSNorm(
+                weight: try tw.tensor(named: "\(p).input_layernorm.weight"),
+                eps: Float(eps))
+            let postAttnNorm = RMSNorm(
+                weight: try tw.tensor(named: "\(p).post_self_attn_layernorm.weight"),
+                eps: Float(eps))
+            let postAttnLN2 = RMSNorm(
+                weight: try tw.tensor(named: "\(p).post_attention_layernorm.weight"),
+                eps: Float(eps))
+            let postMlpNorm = RMSNorm(
+                weight: try tw.tensor(named: "\(p).post_mlp_layernorm.weight"),
+                eps: Float(eps))
+            layers.append(
+                GlmOcrTextLayer(
+                    qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
+                    gateProj: gateProj, upProj: upProj, downProj: downProj,
+                    inputNorm: inputNorm, postAttnNorm: postAttnNorm,
+                    postAttnLN2: postAttnLN2, postMlpNorm: postMlpNorm,
+                    hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
+                    headDim: headDim, intermediate: intermed,
+                    ropeTheta: ropeTheta))
         }
         // Skip the nextn-predict layer(s) — they are not needed for inference.
         _ = nextNLayers
@@ -178,19 +185,22 @@ public enum GlmOcr {
         let lmHead: AnyLinear
         if !tieEmbed, tw.has("lm_head.weight") {
             lmHead = try loadLinear(base: "lm_head", in: tw, quantization: quant)
-        } else if let q = quant, [3,4,5,6,8].contains(q.bits),
-                  tw.isQuantized("model.embed_tokens") {
+        } else if let q = quant, [3, 4, 5, 6, 8].contains(q.bits),
+            tw.isQuantized("model.embed_tokens")
+        {
             let t = try tw.quantizedTriplet("model.embed_tokens")
-            lmHead = AnyLinear(QuantizedLinear(
-                weight: t.weight, scales: t.scales, biases: t.biases,
-                bits: q.bits, groupSize: q.groupSize))
+            lmHead = AnyLinear(
+                QuantizedLinear(
+                    weight: t.weight, scales: t.scales, biases: t.biases,
+                    bits: q.bits, groupSize: q.groupSize))
         } else {
             lmHead = AnyLinear(Linear(weight: embedTokens.weight))
         }
 
         let activationDtype: DType
         if tw.isQuantized("model.embed_tokens"),
-           let scales = try? tw.tensor(named: "model.embed_tokens.scales") {
+            let scales = try? tw.tensor(named: "model.embed_tokens.scales")
+        {
             activationDtype = scales.dtype
         } else {
             activationDtype = embedTokens.weight.dtype
@@ -205,7 +215,7 @@ public enum GlmOcr {
             weights: vw, dtype: activationDtype, device: device)
 
         let imageTokenId = config.int("image_token_id") ?? GlmOcr.defaultImageTokenId
-        let eosTokenId   = config.eosTokenId ?? GlmOcr.defaultEosTokenId
+        let eosTokenId = config.eosTokenId ?? GlmOcr.defaultEosTokenId
 
         return GlmOcrModel(
             embedTokens: embedTokens, layers: layers,

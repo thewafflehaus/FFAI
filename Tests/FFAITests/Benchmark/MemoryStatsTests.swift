@@ -18,6 +18,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("MemoryStats")
@@ -71,7 +72,7 @@ struct MemoryStatsTests {
         let prefillGrowth = t.prefillGrowthBytes
         let decodeGrowth = t.decodeGrowthBytes
         // Both should be defined (zero is fine if no allocations happened).
-        #expect(prefillGrowth + decodeGrowth >= -t.baseline.gpuBytes)   // sanity bound
+        #expect(prefillGrowth + decodeGrowth >= -t.baseline.gpuBytes)  // sanity bound
         #expect(t.peakGPUBytes >= t.baseline.gpuBytes)
     }
 }

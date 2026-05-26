@@ -123,15 +123,16 @@ public func inspectTokenizer(
     if let atd = tokenizerCfg?["added_tokens_decoder"] as? [String: Any] {
         for (key, value) in atd {
             guard let id = Int(key),
-                  let entry = value as? [String: Any],
-                  let content = entry["content"] as? String
+                let entry = value as? [String: Any],
+                let content = entry["content"] as? String
             else { continue }
             let isSpecial = (entry["special"] as? Bool) ?? false
             // Even non-special tokens get included if they smell
             // like a control marker (some checkpoints use
             // special=false for chat-turn tokens — Gemma 3's
             // `<start_of_image>` for example).
-            let category = categorize(content: content, id: id, eosIds: eosIds, bosId: bosId, padId: padId)
+            let category = categorize(
+                content: content, id: id, eosIds: eosIds, bosId: bosId, padId: padId)
             if isSpecial || category != .other {
                 tokens.append(SpecialTokenInfo(id: id, content: content, category: category))
             }
@@ -157,7 +158,7 @@ public func inspectTokenizer(
 
 private func loadJSON(_ url: URL) -> [String: Any]? {
     guard let data = try? Data(contentsOf: url),
-          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     else { return nil }
     return obj
 }
@@ -175,54 +176,61 @@ private func categorize(
     // Tool calling — most specific, evaluated first so a token
     // like `[/TOOL_CALLS]` doesn't get mis-bucketed as EOS.
     if lc.contains("tool") || lc.contains("function_call")
-       || lc.contains("python_tag") || lc.contains("/call")
-       || lc == "<function>" || lc == "</function>" {
+        || lc.contains("python_tag") || lc.contains("/call")
+        || lc == "<function>" || lc == "</function>"
+    {
         return .toolCall
     }
 
     // Reasoning / thinking — Qwen 3 `<think>`, DeepSeek
     // `<scratchpad>`, Claude-style `<thinking>`.
     if lc == "<think>" || lc == "</think>"
-       || lc.contains("scratchpad") || lc.contains("reasoning")
-       || lc == "<thinking>" || lc == "</thinking>" {
+        || lc.contains("scratchpad") || lc.contains("reasoning")
+        || lc == "<thinking>" || lc == "</thinking>"
+    {
         return .reasoning
     }
 
     // Multimodal placeholders.
     if lc.contains("image") || lc.contains("vision") || lc.contains("video")
-       || lc.contains("audio") || lc.contains("box") || lc.contains("quad")
-       || lc.contains("object_ref") {
+        || lc.contains("audio") || lc.contains("box") || lc.contains("quad")
+        || lc.contains("object_ref")
+    {
         return .multimodal
     }
 
     // BOS — explicit id match wins over name match.
     if let b = bosId, id == b { return .bos }
     if lc.contains("begin_of_text") || lc == "<bos>" || lc == "<s>"
-       || lc.contains("start_of_text") {
+        || lc.contains("start_of_text")
+    {
         return .bos
     }
 
     // EOS / end-of-turn — id matches first.
     if eosIds.contains(id) { return .eos }
     if lc.contains("end_of_text") || lc.contains("eot")
-       || lc.contains("eom") || lc.contains("im_end")
-       || lc.contains("end_of_turn") || lc == "</s>"
-       || lc.contains("endoftext") || lc == "<eos>" {
+        || lc.contains("eom") || lc.contains("im_end")
+        || lc.contains("end_of_turn") || lc == "</s>"
+        || lc.contains("endoftext") || lc == "<eos>"
+    {
         return .eos
     }
 
     // Chat-turn markers (user / assistant / system role + start/header).
     if lc.contains("im_start") || lc.contains("start_header")
-       || lc.contains("end_header") || lc.contains("start_of_turn")
-       || lc == "<|user|>" || lc == "<|assistant|>" || lc == "<|system|>"
-       || lc.contains("user_role") || lc.contains("assistant_role") {
+        || lc.contains("end_header") || lc.contains("start_of_turn")
+        || lc == "<|user|>" || lc == "<|assistant|>" || lc == "<|system|>"
+        || lc.contains("user_role") || lc.contains("assistant_role")
+    {
         return .chatTurn
     }
 
     // Utility tokens.
     if let p = padId, id == p { return .utility }
     if lc.contains("pad") || lc == "<unk>" || lc == "<mask>"
-       || lc.contains("right_pad") {
+        || lc.contains("right_pad")
+    {
         return .utility
     }
 

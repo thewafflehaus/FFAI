@@ -55,24 +55,31 @@ public enum Ops {
     /// row updated). Prefer `Ops.add(into:)` when an arithmetic
     /// combine is what's wanted; reach for `copy` for the pure-move
     /// case.
-    public static func copy(_ src: Tensor, into dst: Tensor,
-                            on cmd: MTLCommandBuffer) {
-        precondition(src.elementCount == dst.elementCount,
-                     "Ops.copy: src/dst element-count mismatch (\(src.elementCount) vs \(dst.elementCount))")
-        precondition(src.dtype == dst.dtype,
-                     "Ops.copy: src/dst dtype mismatch (\(src.dtype) vs \(dst.dtype))")
+    public static func copy(
+        _ src: Tensor, into dst: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            src.elementCount == dst.elementCount,
+            "Ops.copy: src/dst element-count mismatch (\(src.elementCount) vs \(dst.elementCount))")
+        precondition(
+            src.dtype == dst.dtype,
+            "Ops.copy: src/dst dtype mismatch (\(src.dtype) vs \(dst.dtype))")
         let bytes = src.elementCount * src.dtype.byteSize
         let blit = cmd.makeBlitCommandEncoder()!
-        blit.copy(from: src.buffer, sourceOffset: src.offset,
-                  to: dst.buffer, destinationOffset: dst.offset,
-                  size: bytes)
+        blit.copy(
+            from: src.buffer, sourceOffset: src.offset,
+            to: dst.buffer, destinationOffset: dst.offset,
+            size: bytes)
         blit.endEncoding()
     }
 
     // ─── Element-wise binary: add ────────────────────────────────────
 
-    public static func add(_ a: Tensor, _ b: Tensor, on cmd: MTLCommandBuffer,
-                           into out: Tensor? = nil) -> Tensor {
+    public static func add(
+        _ a: Tensor, _ b: Tensor, on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         precondition(a.shape == b.shape, "add: shape mismatch \(a.shape) vs \(b.shape)")
         precondition(a.dtype == b.dtype, "add: dtype mismatch")
         let result = out ?? Tensor.empty(shape: a.shape, dtype: a.dtype)
@@ -103,8 +110,10 @@ public enum Ops {
         return result
     }
 
-    public static func mul(_ a: Tensor, _ b: Tensor, on cmd: MTLCommandBuffer,
-                           into out: Tensor? = nil) -> Tensor {
+    public static func mul(
+        _ a: Tensor, _ b: Tensor, on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         precondition(a.shape == b.shape, "mul: shape mismatch")
         precondition(a.dtype == b.dtype, "mul: dtype mismatch")
         let result = out ?? Tensor.empty(shape: a.shape, dtype: a.dtype)
@@ -135,8 +144,10 @@ public enum Ops {
         return result
     }
 
-    public static func silu(_ x: Tensor, on cmd: MTLCommandBuffer,
-                            into out: Tensor? = nil) -> Tensor {
+    public static func silu(
+        _ x: Tensor, on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         let result = out ?? Tensor.empty(shape: x.shape, dtype: x.dtype)
         let n = x.elementCount
         let (grid, tg) = elementwiseGrid(n)
@@ -166,8 +177,10 @@ public enum Ops {
     /// `mt_sigmoid_*` element-wise kernel. Qwen3.5's gated attention
     /// output (`attn_output_gate`) multiplies the SDPA result by
     /// `sigmoid(gate)` before `o_proj`.
-    public static func sigmoid(_ x: Tensor, on cmd: MTLCommandBuffer,
-                               into out: Tensor? = nil) -> Tensor {
+    public static func sigmoid(
+        _ x: Tensor, on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         let result = out ?? Tensor.empty(shape: x.shape, dtype: x.dtype)
         let n = x.elementCount
         let (grid, tg) = elementwiseGrid(n)
@@ -197,8 +210,10 @@ public enum Ops {
     /// element-wise kernel. NemotronH's MLP / MoE feed-forward blocks
     /// use squared-ReLU (`relu(x)^2`) as their activation; the squaring
     /// is a follow-up `Ops.mul(relu, relu)` on the caller side.
-    public static func relu(_ x: Tensor, on cmd: MTLCommandBuffer,
-                            into out: Tensor? = nil) -> Tensor {
+    public static func relu(
+        _ x: Tensor, on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         let result = out ?? Tensor.empty(shape: x.shape, dtype: x.dtype)
         let n = x.elementCount
         let (grid, tg) = elementwiseGrid(n)
@@ -227,8 +242,10 @@ public enum Ops {
     /// GELU (tanh-approximate, matching the math used by Gemma 3 / GPT-2
     /// / etc.). out[i] = 0.5 * x[i] * (1 + tanh(sqrt(2/π) * (x[i] + 0.044715 * x[i]³))).
     /// Wraps metaltile's `mt_gelu_*` element-wise kernel.
-    public static func gelu(_ x: Tensor, on cmd: MTLCommandBuffer,
-                            into out: Tensor? = nil) -> Tensor {
+    public static func gelu(
+        _ x: Tensor, on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         let result = out ?? Tensor.empty(shape: x.shape, dtype: x.dtype)
         let n = x.elementCount
         let (grid, tg) = elementwiseGrid(n)
@@ -257,8 +274,10 @@ public enum Ops {
     /// Softplus: out[i] = log(1 + exp(x[i])). Numerically stable across
     /// the full input range. Used by Mamba 2's `dt = softplus(dt_raw +
     /// dt_bias)` per-head time-step computation.
-    public static func softplus(_ x: Tensor, on cmd: MTLCommandBuffer,
-                                into out: Tensor? = nil) -> Tensor {
+    public static func softplus(
+        _ x: Tensor, on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         let result = out ?? Tensor.empty(shape: x.shape, dtype: x.dtype)
         let n = x.elementCount
         let (grid, tg) = elementwiseGrid(n)
@@ -286,9 +305,11 @@ public enum Ops {
 
     /// Embedding lookup. `table` is [vocab, dim], `tokenIds` is [n_tokens]
     /// (u32), output is [n_tokens, dim].
-    public static func gather(table: Tensor, tokenIds: Tensor,
-                              on cmd: MTLCommandBuffer,
-                              into out: Tensor? = nil) -> Tensor {
+    public static func gather(
+        table: Tensor, tokenIds: Tensor,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         precondition(table.shape.count == 2, "gather: table must be 2D")
         precondition(tokenIds.dtype == .u32, "gather: tokenIds must be u32")
         let dim = table.shape[1]
@@ -327,13 +348,16 @@ public enum Ops {
     /// Cooperative-thread matrix-vector multiply. weight: [out_dim, in_dim],
     /// input: [in_dim], output: [out_dim]. One threadgroup per output row;
     /// threads cooperate on the dot-product reduction.
-    public static func gemv(weight: Tensor, input: Tensor,
-                            on cmd: MTLCommandBuffer,
-                            into out: Tensor? = nil) -> Tensor {
+    public static func gemv(
+        weight: Tensor, input: Tensor,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         precondition(weight.shape.count == 2, "gemv: weight must be 2D")
         precondition(input.shape.count == 1, "gemv: input must be 1D")
-        precondition(weight.shape[1] == input.shape[0],
-                     "gemv: in_dim mismatch \(weight.shape[1]) vs \(input.shape[0])")
+        precondition(
+            weight.shape[1] == input.shape[0],
+            "gemv: in_dim mismatch \(weight.shape[1]) vs \(input.shape[0])")
         precondition(weight.dtype == input.dtype, "gemv: dtype mismatch")
         let outDim = weight.shape[0]
         let inDim = weight.shape[1]
@@ -385,18 +409,21 @@ public enum Ops {
     /// reused across the block's rows — the projection-bandwidth win
     /// the diffusion / self-speculation block forward depends on.
     /// Reduction-mode kernel; the 1024-thread dispatch is hard.
-    public static func gemm(weight: Tensor, input: Tensor, nRows: Int,
-                            on cmd: MTLCommandBuffer,
-                            into out: Tensor? = nil) -> Tensor {
+    public static func gemm(
+        weight: Tensor, input: Tensor, nRows: Int,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         precondition(weight.shape.count == 2, "Ops.gemm: weight must be 2D")
         let outDim = weight.shape[0]
         let inDim = weight.shape[1]
         if let reason = OpsValidation.validateGemm(inDim: inDim, outDim: outDim, nRows: nRows) {
             preconditionFailure("Ops.gemm: \(reason)")
         }
-        precondition(input.elementCount == nRows * inDim,
-                     "Ops.gemm: input has \(input.elementCount) elements, expected "
-                     + "nRows*inDim = \(nRows * inDim)")
+        precondition(
+            input.elementCount == nRows * inDim,
+            "Ops.gemm: input has \(input.elementCount) elements, expected "
+                + "nRows*inDim = \(nRows * inDim)")
         precondition(weight.dtype == input.dtype, "Ops.gemm: weight/input dtype mismatch")
         let result = out ?? Tensor.empty(shape: [nRows, outDim], dtype: weight.dtype)
         // 32×32 output tiles, TPG = 1024. 1-D thread grid that Metal
@@ -437,9 +464,11 @@ public enum Ops {
     /// RMSNorm. x: [n], weight: [n], eps: scalar.
     /// Internally bound as a 1-element f32 buffer.
     /// Reduction kernel — one threadgroup per row.
-    public static func rmsNorm(_ x: Tensor, weight: Tensor, eps: Float,
-                               on cmd: MTLCommandBuffer,
-                               into out: Tensor? = nil) -> Tensor {
+    public static func rmsNorm(
+        _ x: Tensor, weight: Tensor, eps: Float,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         precondition(x.shape == weight.shape, "rmsNorm: weight/x shape mismatch")
         precondition(x.dtype == weight.dtype, "rmsNorm: dtype mismatch")
         let result = out ?? Tensor.empty(shape: x.shape, dtype: x.dtype)
@@ -450,8 +479,9 @@ public enum Ops {
         if let reason = OpsValidation.validateRmsNorm(n: n) {
             preconditionFailure("Ops.rmsNorm: \(reason)")
         }
-        dispatchRmsNorm(x: x, weight: weight, result: result,
-                        eps: eps, n: n, nRows: 1, on: cmd)
+        dispatchRmsNorm(
+            x: x, weight: weight, result: result,
+            eps: eps, n: n, nRows: 1, on: cmd)
         return result
     }
 
@@ -459,12 +489,15 @@ public enum Ops {
     /// across all rows). Each row gets its own threadgroup. Used by
     /// Qwen3 to dispatch all per-head q_norm / k_norm in one call
     /// instead of one per head.
-    public static func rmsNormRows(_ x: Tensor, weight: Tensor, eps: Float,
-                                   nRows: Int, rowSize: Int,
-                                   on cmd: MTLCommandBuffer,
-                                   into out: Tensor? = nil) -> Tensor {
-        precondition(x.elementCount == nRows * rowSize,
-                     "rmsNormRows: x size \(x.elementCount) ≠ nRows*rowSize")
+    public static func rmsNormRows(
+        _ x: Tensor, weight: Tensor, eps: Float,
+        nRows: Int, rowSize: Int,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
+        precondition(
+            x.elementCount == nRows * rowSize,
+            "rmsNormRows: x size \(x.elementCount) ≠ nRows*rowSize")
         precondition(weight.elementCount == rowSize, "rmsNormRows: weight must be [rowSize]")
         precondition(x.dtype == weight.dtype, "rmsNormRows: dtype mismatch")
         let result = out ?? Tensor.empty(shape: x.shape, dtype: x.dtype)
@@ -475,8 +508,9 @@ public enum Ops {
         if let reason = OpsValidation.validateRmsNorm(n: rowSize) {
             preconditionFailure("Ops.rmsNormRows: \(reason)")
         }
-        dispatchRmsNorm(x: x, weight: weight, result: result,
-                        eps: eps, n: rowSize, nRows: nRows, on: cmd)
+        dispatchRmsNorm(
+            x: x, weight: weight, result: result,
+            eps: eps, n: rowSize, nRows: nRows, on: cmd)
         return result
     }
 
@@ -503,14 +537,18 @@ public enum Ops {
         nRows: Int, rowSize: Int, on cmd: MTLCommandBuffer,
         residualOut: Tensor? = nil, normedOut: Tensor? = nil
     ) -> (residual: Tensor, normed: Tensor) {
-        precondition(a.elementCount == nRows * rowSize,
-                     "Ops.addAndRmsNorm: a size \(a.elementCount) ≠ nRows*rowSize")
-        precondition(b.elementCount == nRows * rowSize,
-                     "Ops.addAndRmsNorm: b size \(b.elementCount) ≠ nRows*rowSize")
-        precondition(weight.elementCount == rowSize,
-                     "Ops.addAndRmsNorm: weight must be [rowSize]")
-        precondition(a.dtype == b.dtype && a.dtype == weight.dtype,
-                     "Ops.addAndRmsNorm: dtype mismatch")
+        precondition(
+            a.elementCount == nRows * rowSize,
+            "Ops.addAndRmsNorm: a size \(a.elementCount) ≠ nRows*rowSize")
+        precondition(
+            b.elementCount == nRows * rowSize,
+            "Ops.addAndRmsNorm: b size \(b.elementCount) ≠ nRows*rowSize")
+        precondition(
+            weight.elementCount == rowSize,
+            "Ops.addAndRmsNorm: weight must be [rowSize]")
+        precondition(
+            a.dtype == b.dtype && a.dtype == weight.dtype,
+            "Ops.addAndRmsNorm: dtype mismatch")
 
         // Kernel-invariant validation. See OpsValidation.swift.
         if let reason = OpsValidation.validateAddRmsNorm(n: rowSize) {
@@ -645,9 +683,11 @@ public enum Ops {
         public var highFreqFactor: Float
         public var originalMaxPosition: Float
 
-        public init(scaleFactor: Float = 1, lowFreqFactor: Float = 1,
-                    highFreqFactor: Float = 4,
-                    originalMaxPosition: Float = 1e9) {
+        public init(
+            scaleFactor: Float = 1, lowFreqFactor: Float = 1,
+            highFreqFactor: Float = 4,
+            originalMaxPosition: Float = 1e9
+        ) {
             self.scaleFactor = scaleFactor
             self.lowFreqFactor = lowFreqFactor
             self.highFreqFactor = highFreqFactor
@@ -657,11 +697,13 @@ public enum Ops {
         public static let none = RoPEScaling()
     }
 
-    public static func rope(_ qk: Tensor, position: Int, headDim: Int,
-                            thetaBase: Float,
-                            scaling: RoPEScaling = .none,
-                            on cmd: MTLCommandBuffer,
-                            into out: Tensor? = nil) -> Tensor {
+    public static func rope(
+        _ qk: Tensor, position: Int, headDim: Int,
+        thetaBase: Float,
+        scaling: RoPEScaling = .none,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         precondition(qk.elementCount % headDim == 0, "rope: qk size must be multiple of headDim")
         let nHeads = qk.elementCount / headDim
         let halfDim = headDim / 2
@@ -732,17 +774,22 @@ public enum Ops {
     ///
     /// `rotaryDim` must be even and ≤ `headDim`; `qk` must be a flat
     /// `[nHeads * headDim]` tensor.
-    public static func ropePartial(_ qk: Tensor, position: Int,
-                                   headDim: Int, rotaryDim: Int,
-                                   thetaBase: Float,
-                                   scaling: RoPEScaling = .none,
-                                   on cmd: MTLCommandBuffer) {
-        precondition(qk.elementCount % headDim == 0,
-                     "ropePartial: qk size must be a multiple of headDim")
-        precondition(rotaryDim > 0 && rotaryDim <= headDim,
-                     "ropePartial: rotaryDim (\(rotaryDim)) must be in 1...headDim (\(headDim))")
-        precondition(rotaryDim % 2 == 0,
-                     "ropePartial: rotaryDim (\(rotaryDim)) must be even (rotate-half pairs)")
+    public static func ropePartial(
+        _ qk: Tensor, position: Int,
+        headDim: Int, rotaryDim: Int,
+        thetaBase: Float,
+        scaling: RoPEScaling = .none,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            qk.elementCount % headDim == 0,
+            "ropePartial: qk size must be a multiple of headDim")
+        precondition(
+            rotaryDim > 0 && rotaryDim <= headDim,
+            "ropePartial: rotaryDim (\(rotaryDim)) must be in 1...headDim (\(headDim))")
+        precondition(
+            rotaryDim % 2 == 0,
+            "ropePartial: rotaryDim (\(rotaryDim)) must be even (rotate-half pairs)")
         let nHeads = qk.elementCount / headDim
         let halfRotary = rotaryDim / 2
         // Grid: one thread per (head, rotary-pair). Writes in-place.
@@ -818,10 +865,12 @@ public enum Ops {
         /// block. Computes the correction-range bounds (`low` / `high`)
         /// from `beta_fast` / `beta_slow` and the YaRN mscale attention
         /// factor from `mscale` / `mscale_all_dim`.
-        public static func from(headDim: Int, thetaBase: Float, factor: Float,
-                                betaFast: Float, betaSlow: Float,
-                                originalMaxPosition: Float,
-                                mscale: Float = 1, mscaleAllDim: Float = 1) -> RoPEYaRN {
+        public static func from(
+            headDim: Int, thetaBase: Float, factor: Float,
+            betaFast: Float, betaSlow: Float,
+            originalMaxPosition: Float,
+            mscale: Float = 1, mscaleAllDim: Float = 1
+        ) -> RoPEYaRN {
             // find_correction_dim — the dimension index at which a given
             // number of rotations occurs over the original context.
             func correctionDim(_ numRotations: Float) -> Float {
@@ -832,7 +881,7 @@ public enum Ops {
             var high = correctionDim(betaSlow).rounded(.up)
             low = max(low, 0)
             high = min(high, Float(headDim - 1))
-            if high <= low { high = low + 0.001 }   // avoid a zero-width ramp
+            if high <= low { high = low + 0.001 }  // avoid a zero-width ramp
 
             // YaRN mscale attention factor. When mscale == mscale_all_dim
             // (the common case) the ratio is exactly 1.
@@ -847,12 +896,15 @@ public enum Ops {
     /// YaRN RoPE — context-extended rotary embedding. Same Grid3D
     /// dispatch shape as `rope`: one threadgroup per (head, half-dim
     /// index). `factor == 1` reproduces plain RoPE bit-for-bit.
-    public static func ropeYaRN(_ qk: Tensor, position: Int, headDim: Int,
-                                thetaBase: Float, yarn: RoPEYaRN,
-                                on cmd: MTLCommandBuffer,
-                                into out: Tensor? = nil) -> Tensor {
-        precondition(qk.elementCount % headDim == 0,
-                     "ropeYaRN: qk size must be a multiple of headDim")
+    public static func ropeYaRN(
+        _ qk: Tensor, position: Int, headDim: Int,
+        thetaBase: Float, yarn: RoPEYaRN,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
+        precondition(
+            qk.elementCount % headDim == 0,
+            "ropeYaRN: qk size must be a multiple of headDim")
         let nHeads = qk.elementCount / headDim
         let halfDim = headDim / 2
         let result = out ?? Tensor.empty(shape: qk.shape, dtype: qk.dtype)
@@ -1063,9 +1115,10 @@ public enum Ops {
         tokenIds: Tensor, hidden: Int, groupSize: Int,
         on cmd: MTLCommandBuffer, into out: Tensor? = nil
     ) -> Tensor {
-        dequantGather(weight: weight, scales: scales, biases: biases,
-                      tokenIds: tokenIds, hidden: hidden, bits: 4,
-                      groupSize: groupSize, on: cmd, into: out)
+        dequantGather(
+            weight: weight, scales: scales, biases: biases,
+            tokenIds: tokenIds, hidden: hidden, bits: 4,
+            groupSize: groupSize, on: cmd, into: out)
     }
 
     /// MLX-format dequantizing GEMV. Weight is packed uint32; either 8
@@ -1082,16 +1135,18 @@ public enum Ops {
     ) -> Tensor {
         precondition(weight.shape.count == 2, "dequantGemv: weight must be 2D")
         precondition(weight.dtype == .u32, "dequantGemv: weight must be u32 (packed)")
-        precondition(scales.dtype == input.dtype && biases.dtype == input.dtype,
-                     "dequantGemv: scales/biases dtype must match input")
+        precondition(
+            scales.dtype == input.dtype && biases.dtype == input.dtype,
+            "dequantGemv: scales/biases dtype must match input")
         let outDim = weight.shape[0]
         let packedPerRow = weight.shape[1]
         // Storage layout: bytes per row = in_dim * bits / 8.
         // packedPerRow uint32 = (in_dim * bits / 8) / 4 bytes, so:
         //   in_dim = packedPerRow * 32 / bits
         let inDim = packedPerRow * 32 / bits
-        precondition(input.elementCount == inDim,
-                     "dequantGemv: input \(input.elementCount) ≠ in_dim \(inDim)")
+        precondition(
+            input.elementCount == inDim,
+            "dequantGemv: input \(input.elementCount) ≠ in_dim \(inDim)")
         // Kernel-invariant validation (silent-miscompute footguns:
         // partial trailing group, unaligned pack tail, undersized
         // scales/biases). See OpsValidation.validateDequantGemv.
@@ -1258,9 +1313,10 @@ public enum Ops {
         on cmd: MTLCommandBuffer,
         into out: Tensor? = nil
     ) -> Tensor {
-        dequantGemv(weight: weight, scales: scales, biases: biases,
-                    input: input, bits: 4, groupSize: groupSize,
-                    on: cmd, into: out)
+        dequantGemv(
+            weight: weight, scales: scales, biases: biases,
+            input: input, bits: 4, groupSize: groupSize,
+            on: cmd, into: out)
     }
 
     /// GPU argmax over a 1D logits tensor. Caller supplies a 1-element
@@ -1278,9 +1334,10 @@ public enum Ops {
         nChannels: Int, kernelSize: Int,
         on cmd: MTLCommandBuffer
     ) {
-        precondition(w.dtype == x.dtype && b.dtype == x.dtype
-                     && state.dtype == x.dtype && y.dtype == x.dtype,
-                     "Ops.conv1dCausalStep: every tensor must share dtype")
+        precondition(
+            w.dtype == x.dtype && b.dtype == x.dtype
+                && state.dtype == x.dtype && y.dtype == x.dtype,
+            "Ops.conv1dCausalStep: every tensor must share dtype")
         let grid = MTLSize(width: nChannels, height: 1, depth: 1)
         let tg = MTLSize(width: 1, height: 1, depth: 1)
         switch x.dtype {
@@ -1333,9 +1390,10 @@ public enum Ops {
     ) {
         precondition(h.dtype == .f32, "Ops.ssmStep: state h must be f32")
         precondition(x.dtype == y.dtype, "Ops.ssmStep: x and y dtype must match")
-        precondition(a.dtype == x.dtype && b.dtype == x.dtype
-                     && c.dtype == x.dtype && dt.dtype == x.dtype,
-                     "Ops.ssmStep: a/b/c/dt dtype must match x")
+        precondition(
+            a.dtype == x.dtype && b.dtype == x.dtype
+                && c.dtype == x.dtype && dt.dtype == x.dtype,
+            "Ops.ssmStep: a/b/c/dt dtype must match x")
         let grid = MTLSize(width: nHeads * headDim, height: 1, depth: 1)
         let tg = MTLSize(width: 1, height: 1, depth: 1)
         switch x.dtype {
@@ -1419,12 +1477,14 @@ public enum Ops {
         ) {
             preconditionFailure("Ops.gatedDeltaStep: \(reason)")
         }
-        precondition(q.dtype == .f32 && k.dtype == .f32 && v.dtype == .f32
-                     && g.dtype == .f32 && beta.dtype == .f32,
-                     "Ops.gatedDeltaStep: q/k/v/g/beta must be f32")
-        precondition(stateIn.dtype == .f32 && stateOut.dtype == .f32
-                     && y.dtype == .f32,
-                     "Ops.gatedDeltaStep: state + output tensors must be f32")
+        precondition(
+            q.dtype == .f32 && k.dtype == .f32 && v.dtype == .f32
+                && g.dtype == .f32 && beta.dtype == .f32,
+            "Ops.gatedDeltaStep: q/k/v/g/beta must be f32")
+        precondition(
+            stateIn.dtype == .f32 && stateOut.dtype == .f32
+                && y.dtype == .f32,
+            "Ops.gatedDeltaStep: state + output tensors must be f32")
 
         // Dispatch derived from the invariants: 32 threads per group
         // (one simdgroup), one group per (dv_idx, n) pair. The kernel
@@ -1433,8 +1493,9 @@ public enum Ops {
         // Generated bindings use `dispatchThreads`, so the grid is
         // counted in THREADS: width = Dv · 32, height = Hv.
         let lanesPerGroup = 32
-        let grid = MTLSize(width: valueHeadDim * lanesPerGroup,
-                           height: numValueHeads, depth: 1)
+        let grid = MTLSize(
+            width: valueHeadDim * lanesPerGroup,
+            height: numValueHeads, depth: 1)
         let tg = MTLSize(width: lanesPerGroup, height: 1, depth: 1)
 
         // `mt_gated_delta_step` is a single PSO: the (Dk, Dv, Hv, Hk)
@@ -1453,8 +1514,10 @@ public enum Ops {
             gridSize: grid, threadgroupSize: tg, on: cmd)
     }
 
-    public static func argmax(_ logits: Tensor, into out: Tensor,
-                              on cmd: MTLCommandBuffer) {
+    public static func argmax(
+        _ logits: Tensor, into out: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
         precondition(out.dtype == .u32, "Ops.argmax: output must be u32")
         precondition(out.elementCount == 1, "Ops.argmax: output must be a single element")
         let n = logits.elementCount
@@ -1503,11 +1566,14 @@ public enum Ops {
         on cmd: MTLCommandBuffer
     ) {
         precondition(out.dtype == .u32, "Ops.softmaxCategoricalSample: output must be u32")
-        precondition(out.elementCount == 1, "Ops.softmaxCategoricalSample: output must be a single element")
-        precondition(temperature.dtype == .f32 && temperature.elementCount == 1,
-                     "Ops.softmaxCategoricalSample: temperature must be a 1-element f32 tensor")
-        precondition(uniform.dtype == .f32 && uniform.elementCount == 1,
-                     "Ops.softmaxCategoricalSample: uniform must be a 1-element f32 tensor")
+        precondition(
+            out.elementCount == 1, "Ops.softmaxCategoricalSample: output must be a single element")
+        precondition(
+            temperature.dtype == .f32 && temperature.elementCount == 1,
+            "Ops.softmaxCategoricalSample: temperature must be a 1-element f32 tensor")
+        precondition(
+            uniform.dtype == .f32 && uniform.elementCount == 1,
+            "Ops.softmaxCategoricalSample: uniform must be a 1-element f32 tensor")
         let n = logits.elementCount
         let tg = MTLSize(width: 256, height: 1, depth: 1)
         let grid = MTLSize(width: 256, height: 1, depth: 1)
@@ -1550,13 +1616,15 @@ public enum Ops {
     ) {
         switch bits {
         case 4:
-            quantizeKVInt4(src: src, weights: weights, scales: scales, biases: biases,
-                           nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
-                           groupSize: groupSize, position: position, on: cmd)
+            quantizeKVInt4(
+                src: src, weights: weights, scales: scales, biases: biases,
+                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                groupSize: groupSize, position: position, on: cmd)
         case 8:
-            quantizeKVInt8(src: src, weights: weights, scales: scales, biases: biases,
-                           nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
-                           groupSize: groupSize, position: position, on: cmd)
+            quantizeKVInt8(
+                src: src, weights: weights, scales: scales, biases: biases,
+                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                groupSize: groupSize, position: position, on: cmd)
         default:
             fatalError("Ops.quantizeKVAffine: unsupported bits=\(bits) (use 4 or 8)")
         }
@@ -1573,15 +1641,17 @@ public enum Ops {
     ) {
         switch bits {
         case 4:
-            bulkDequantKVInt4(weights: weights, scales: scales, biases: biases,
-                              into: out, nKVHeads: nKVHeads, headDim: headDim,
-                              maxSeq: maxSeq, groupSize: groupSize,
-                              nPositions: nPositions, on: cmd)
+            bulkDequantKVInt4(
+                weights: weights, scales: scales, biases: biases,
+                into: out, nKVHeads: nKVHeads, headDim: headDim,
+                maxSeq: maxSeq, groupSize: groupSize,
+                nPositions: nPositions, on: cmd)
         case 8:
-            bulkDequantKVInt8(weights: weights, scales: scales, biases: biases,
-                              into: out, nKVHeads: nKVHeads, headDim: headDim,
-                              maxSeq: maxSeq, groupSize: groupSize,
-                              nPositions: nPositions, on: cmd)
+            bulkDequantKVInt8(
+                weights: weights, scales: scales, biases: biases,
+                into: out, nKVHeads: nKVHeads, headDim: headDim,
+                maxSeq: maxSeq, groupSize: groupSize,
+                nPositions: nPositions, on: cmd)
         default:
             fatalError("Ops.bulkDequantKVAffine: unsupported bits=\(bits) (use 4 or 8)")
         }
@@ -1597,8 +1667,9 @@ public enum Ops {
         on cmd: MTLCommandBuffer
     ) {
         precondition(weights.dtype == .u32, "quantizeKVInt4: weights must be u32")
-        precondition(scales.dtype == src.dtype && biases.dtype == src.dtype,
-                     "quantizeKVInt4: scales/biases dtype must match src")
+        precondition(
+            scales.dtype == src.dtype && biases.dtype == src.dtype,
+            "quantizeKVInt4: scales/biases dtype must match src")
         // Kernel-invariant validation (silent-miscompute footguns:
         // partial trailing group, unaligned pack stride). See
         // OpsValidation.validateQuantizeKV.
@@ -1653,8 +1724,9 @@ public enum Ops {
         on cmd: MTLCommandBuffer
     ) {
         precondition(weights.dtype == .u32, "bulkDequantKVInt4: weights must be u32")
-        precondition(scales.dtype == out.dtype && biases.dtype == out.dtype,
-                     "bulkDequantKVInt4: scales/biases dtype must match output")
+        precondition(
+            scales.dtype == out.dtype && biases.dtype == out.dtype,
+            "bulkDequantKVInt4: scales/biases dtype must match output")
         // Kernel-invariant validation — shares the int4 group/pack
         // alignment contract with quantizeKVInt4. See
         // OpsValidation.validateQuantizeKV.
@@ -1711,8 +1783,9 @@ public enum Ops {
         on cmd: MTLCommandBuffer
     ) {
         precondition(weights.dtype == .u32, "quantizeKVInt8: weights must be u32")
-        precondition(scales.dtype == src.dtype && biases.dtype == src.dtype,
-                     "quantizeKVInt8: scales/biases dtype must match src")
+        precondition(
+            scales.dtype == src.dtype && biases.dtype == src.dtype,
+            "quantizeKVInt8: scales/biases dtype must match src")
         // Kernel-invariant validation (silent-miscompute footguns:
         // partial trailing group, unaligned pack stride). See
         // OpsValidation.validateQuantizeKV.
@@ -1769,8 +1842,9 @@ public enum Ops {
         on cmd: MTLCommandBuffer
     ) {
         precondition(weights.dtype == .u32, "bulkDequantKVInt8: weights must be u32")
-        precondition(scales.dtype == out.dtype && biases.dtype == out.dtype,
-                     "bulkDequantKVInt8: scales/biases dtype must match output")
+        precondition(
+            scales.dtype == out.dtype && biases.dtype == out.dtype,
+            "bulkDequantKVInt8: scales/biases dtype must match output")
         // Kernel-invariant validation — shares the int8 group/pack
         // alignment contract with quantizeKVInt8. See
         // OpsValidation.validateQuantizeKV.
@@ -1884,12 +1958,14 @@ public enum Ops {
     /// `windowStart = max(0, nKV - W)` and `sinkEnd = S`. The d64 /
     /// d256 kernel variants are dense-only — passing non-zero sink /
     /// window with those head dims is a precondition failure.
-    public static func sdpaDecode(q: Tensor, k: Tensor, v: Tensor,
-                                  nQHeads: Int, nKVHeads: Int, headDim: Int,
-                                  nKV: Int, kvStride: Int,
-                                  scale: Float, on cmd: MTLCommandBuffer,
-                                  sinkEnd: Int = 0, windowStart: Int = 0,
-                                  into out: Tensor? = nil) -> Tensor {
+    public static func sdpaDecode(
+        q: Tensor, k: Tensor, v: Tensor,
+        nQHeads: Int, nKVHeads: Int, headDim: Int,
+        nKV: Int, kvStride: Int,
+        scale: Float, on cmd: MTLCommandBuffer,
+        sinkEnd: Int = 0, windowStart: Int = 0,
+        into out: Tensor? = nil
+    ) -> Tensor {
         // Kernel-invariant validation — see OpsValidation.swift for the
         // full reasoning + CI-runnable tests. The 2026-05-19 GPU freeze
         // came from this wrapper accepting head_dim=4 with no check.
@@ -2111,12 +2187,14 @@ public enum Ops {
     /// sdpa_multi.rs`. The 1024-thread dispatch is hard: a smaller TPG
     /// makes the kernel's `n_simd` zero and the K walk an infinite GPU
     /// loop (the documented machine-freeze hazard).
-    public static func sdpaMulti(q: Tensor, k: Tensor, v: Tensor,
-                                 nQHeads: Int, nKVHeads: Int, headDim: Int,
-                                 baseKV: Int, nQuery: Int, kvStride: Int,
-                                 causal: Bool, scale: Float,
-                                 on cmd: MTLCommandBuffer,
-                                 into out: Tensor? = nil) -> Tensor {
+    public static func sdpaMulti(
+        q: Tensor, k: Tensor, v: Tensor,
+        nQHeads: Int, nKVHeads: Int, headDim: Int,
+        baseKV: Int, nQuery: Int, kvStride: Int,
+        causal: Bool, scale: Float,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         // ## DISPATCH INVARIANTS — ffai/sdpa_multi.rs. See
         // OpsValidation.validateSdpaMulti for the full reasoning +
         // CI-runnable tests.
@@ -2186,12 +2264,14 @@ public enum Ops {
     /// is hard. See `OpsValidation.validateSdpaBidirectional` for the
     /// invariant list and `metaltile/crates/metaltile-std/src/ffai/
     /// sdpa_bidirectional.rs` for the dispatch contract.
-    public static func sdpaBidirectional(q: Tensor, k: Tensor, v: Tensor,
-                                         nQHeads: Int, nKVHeads: Int, headDim: Int,
-                                         baseKV: Int, nQuery: Int, kvStride: Int,
-                                         scale: Float,
-                                         on cmd: MTLCommandBuffer,
-                                         into out: Tensor? = nil) -> Tensor {
+    public static func sdpaBidirectional(
+        q: Tensor, k: Tensor, v: Tensor,
+        nQHeads: Int, nKVHeads: Int, headDim: Int,
+        baseKV: Int, nQuery: Int, kvStride: Int,
+        scale: Float,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
         if let reason = OpsValidation.validateSdpaBidirectional(
             headDim: headDim, nQHeads: nQHeads, nKVHeads: nKVHeads,
             baseKV: baseKV, nQuery: nQuery, kvStride: kvStride
@@ -2346,8 +2426,9 @@ public enum Ops {
         rows: Int, dim: Int, packedWidth: Int, bits: Int,
         on cmd: MTLCommandBuffer
     ) {
-        precondition(rotation.dtype == .f32 && boundaries.dtype == .f32 && codebook.dtype == .f32,
-                     "Ops.auraEncode: rotation/boundaries/codebook must be f32")
+        precondition(
+            rotation.dtype == .f32 && boundaries.dtype == .f32 && codebook.dtype == .f32,
+            "Ops.auraEncode: rotation/boundaries/codebook must be f32")
         precondition(packedOut.dtype == .u32, "Ops.auraEncode: packed_out must be u32")
         precondition(normsOut.dtype == .f32, "Ops.auraEncode: norms_out must be f32")
         // Kernel-invariant validation — see OpsValidation.swift.
@@ -2376,9 +2457,11 @@ public enum Ops {
         // switch readable.
         @inline(__always)
         func dispatchEncode(
-            _ kernel: (MTLBuffer, Int, MTLBuffer, Int, MTLBuffer, Int,
-                       MTLBuffer, Int, MTLBuffer, Int, MTLBuffer, Int,
-                       UInt32, UInt32, MTLSize, MTLSize, MTLCommandBuffer) -> Void
+            _ kernel: (
+                MTLBuffer, Int, MTLBuffer, Int, MTLBuffer, Int,
+                MTLBuffer, Int, MTLBuffer, Int, MTLBuffer, Int,
+                UInt32, UInt32, MTLSize, MTLSize, MTLCommandBuffer
+            ) -> Void
         ) {
             kernel(
                 input.buffer, input.offset,
@@ -2392,30 +2475,102 @@ public enum Ops {
         }
 
         switch (bits, input.dtype) {
-        case (2, .f32):  dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
-            MetalTileKernels.aura_encode_int2_f32(input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b, boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p, packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d, packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd) }
-        case (2, .f16):  dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
-            MetalTileKernels.aura_encode_int2_f16(input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b, boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p, packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d, packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd) }
-        case (2, .bf16): dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
-            MetalTileKernels.aura_encode_int2_bf16(input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b, boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p, packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d, packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd) }
-        case (3, .f32):  dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
-            MetalTileKernels.aura_encode_int3_f32(input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b, boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p, packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d, packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd) }
-        case (3, .f16):  dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
-            MetalTileKernels.aura_encode_int3_f16(input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b, boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p, packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d, packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd) }
-        case (3, .bf16): dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
-            MetalTileKernels.aura_encode_int3_bf16(input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b, boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p, packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d, packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd) }
-        case (4, .f32):  dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
-            MetalTileKernels.aura_encode_int4_f32(input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b, boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p, packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d, packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd) }
-        case (4, .f16):  dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
-            MetalTileKernels.aura_encode_int4_f16(input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b, boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p, packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d, packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd) }
-        case (4, .bf16): dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
-            MetalTileKernels.aura_encode_int4_bf16(input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b, boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p, packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d, packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd) }
-        case (8, .f32):  dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
-            MetalTileKernels.aura_encode_int8_f32(input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b, boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p, packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d, packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd) }
-        case (8, .f16):  dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
-            MetalTileKernels.aura_encode_int8_f16(input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b, boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p, packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d, packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd) }
-        case (8, .bf16): dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
-            MetalTileKernels.aura_encode_int8_bf16(input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b, boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p, packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d, packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd) }
+        case (2, .f32):
+            dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
+                MetalTileKernels.aura_encode_int2_f32(
+                    input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b,
+                    boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p,
+                    packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d,
+                    packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd)
+            }
+        case (2, .f16):
+            dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
+                MetalTileKernels.aura_encode_int2_f16(
+                    input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b,
+                    boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p,
+                    packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d,
+                    packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd)
+            }
+        case (2, .bf16):
+            dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
+                MetalTileKernels.aura_encode_int2_bf16(
+                    input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b,
+                    boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p,
+                    packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d,
+                    packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd)
+            }
+        case (3, .f32):
+            dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
+                MetalTileKernels.aura_encode_int3_f32(
+                    input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b,
+                    boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p,
+                    packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d,
+                    packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd)
+            }
+        case (3, .f16):
+            dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
+                MetalTileKernels.aura_encode_int3_f16(
+                    input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b,
+                    boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p,
+                    packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d,
+                    packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd)
+            }
+        case (3, .bf16):
+            dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
+                MetalTileKernels.aura_encode_int3_bf16(
+                    input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b,
+                    boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p,
+                    packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d,
+                    packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd)
+            }
+        case (4, .f32):
+            dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
+                MetalTileKernels.aura_encode_int4_f32(
+                    input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b,
+                    boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p,
+                    packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d,
+                    packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd)
+            }
+        case (4, .f16):
+            dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
+                MetalTileKernels.aura_encode_int4_f16(
+                    input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b,
+                    boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p,
+                    packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d,
+                    packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd)
+            }
+        case (4, .bf16):
+            dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
+                MetalTileKernels.aura_encode_int4_bf16(
+                    input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b,
+                    boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p,
+                    packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d,
+                    packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd)
+            }
+        case (8, .f32):
+            dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
+                MetalTileKernels.aura_encode_int8_f32(
+                    input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b,
+                    boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p,
+                    packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d,
+                    packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd)
+            }
+        case (8, .f16):
+            dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
+                MetalTileKernels.aura_encode_int8_f16(
+                    input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b,
+                    boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p,
+                    packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d,
+                    packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd)
+            }
+        case (8, .bf16):
+            dispatchEncode { i, io, r, ro, b, bo, c, co, p, po, n, no, d, pw, g, t, cmd in
+                MetalTileKernels.aura_encode_int8_bf16(
+                    input: i, inputOffset: io, rotation: r, rotationOffset: ro, boundaries: b,
+                    boundariesOffset: bo, codebook: c, codebookOffset: co, packed_out: p,
+                    packed_outOffset: po, norms_out: n, norms_outOffset: no, dim: d,
+                    packed_width: pw, gridSize: g, threadgroupSize: t, on: cmd)
+            }
         default:
             fatalError("Ops.auraEncode: unsupported (bits=\(bits), input.dtype=\(input.dtype))")
         }
@@ -2449,8 +2604,9 @@ public enum Ops {
         on cmd: MTLCommandBuffer
     ) {
         precondition(packed.dtype == .u32, "Ops.auraDequantRotated: packed must be u32")
-        precondition(norms.dtype == .f32 && codebook.dtype == .f32,
-                     "Ops.auraDequantRotated: norms/codebook must be f32")
+        precondition(
+            norms.dtype == .f32 && codebook.dtype == .f32,
+            "Ops.auraDequantRotated: norms/codebook must be f32")
         let stride = cacheStride ?? tokens
         // Kernel-invariant validation (cacheStride row-stride contract,
         // packedWidth dim coverage, bit-width). See
@@ -2605,7 +2761,7 @@ public enum Ops {
         let result = Tensor.empty(shape: [nHeads * headDim], dtype: x.dtype)
         let bytesPerHead = headDim * x.dtype.byteSize
 
-        for h in 0..<nHeads {
+        for h in 0 ..< nHeads {
             let xView = Tensor(
                 buffer: x.buffer,
                 offset: x.offset + h * bytesPerHead,
@@ -2655,22 +2811,33 @@ public enum Ops {
         // Shape / dtype invariants. The kernel itself does no validation
         // so any mismatch silently produces garbage.
         precondition(weight.dtype == .u32, "moeGatherDequantGemmInt4: weight must be u32 packed")
-        precondition(indices.dtype == .u32,
-                     "moeGatherDequantGemmInt4: indices must be u32 (\(indices.dtype))")
-        precondition(input.dtype == scales.dtype && scales.dtype == biases.dtype,
-                     "moeGatherDequantGemmInt4: input/scales/biases dtype must match")
-        precondition(out.dtype == input.dtype,
-                     "moeGatherDequantGemmInt4: out dtype must match input")
-        precondition(input.elementCount == mTotal * kIn,
-                     "moeGatherDequantGemmInt4: input has \(input.elementCount) elements, expected \(mTotal * kIn) (mTotal=\(mTotal) * kIn=\(kIn))")
-        precondition(out.elementCount == mTotal * nOut,
-                     "moeGatherDequantGemmInt4: out has \(out.elementCount) elements, expected \(mTotal * nOut)")
-        precondition(indices.elementCount == mTotal,
-                     "moeGatherDequantGemmInt4: indices has \(indices.elementCount) elements, expected mTotal=\(mTotal)")
-        precondition(nOut % 32 == 0,
-                     "moeGatherDequantGemmInt4: nOut (\(nOut)) must be multiple of 32 for bm16 kernel")
-        precondition(kIn % 32 == 0,
-                     "moeGatherDequantGemmInt4: kIn (\(kIn)) must be multiple of 32 for bm16 kernel")
+        precondition(
+            indices.dtype == .u32,
+            "moeGatherDequantGemmInt4: indices must be u32 (\(indices.dtype))")
+        precondition(
+            input.dtype == scales.dtype && scales.dtype == biases.dtype,
+            "moeGatherDequantGemmInt4: input/scales/biases dtype must match")
+        precondition(
+            out.dtype == input.dtype,
+            "moeGatherDequantGemmInt4: out dtype must match input")
+        precondition(
+            input.elementCount == mTotal * kIn,
+            "moeGatherDequantGemmInt4: input has \(input.elementCount) elements, expected \(mTotal * kIn) (mTotal=\(mTotal) * kIn=\(kIn))"
+        )
+        precondition(
+            out.elementCount == mTotal * nOut,
+            "moeGatherDequantGemmInt4: out has \(out.elementCount) elements, expected \(mTotal * nOut)"
+        )
+        precondition(
+            indices.elementCount == mTotal,
+            "moeGatherDequantGemmInt4: indices has \(indices.elementCount) elements, expected mTotal=\(mTotal)"
+        )
+        precondition(
+            nOut % 32 == 0,
+            "moeGatherDequantGemmInt4: nOut (\(nOut)) must be multiple of 32 for bm16 kernel")
+        precondition(
+            kIn % 32 == 0,
+            "moeGatherDequantGemmInt4: kIn (\(kIn)) must be multiple of 32 for bm16 kernel")
 
         // BM=16, BN=32. The simdgroup-matrix variant uses 64 threads
         // (2 SGs); the MPP / NAX cooperative-tensor variant uses 32
@@ -2684,9 +2851,10 @@ public enum Ops {
         // path — macOS 26.2+ on gen-≥17 GPU silicon only (M5 Max yes).
         let useMpp = ProcessInfo.processInfo.environment["FFAI_MOE_BGEMM_MPP"] != nil
         let tgWidth = useMpp ? 32 : 64
-        let grid = MTLSize(width: (nOut / 32) * tgWidth,
-                           height: (mTotal + 15) / 16,
-                           depth: 1)
+        let grid = MTLSize(
+            width: (nOut / 32) * tgWidth,
+            height: (mTotal + 15) / 16,
+            depth: 1)
         let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
         let mTotalU = UInt32(mTotal)
         let nOutU = UInt32(nOut)
@@ -2718,7 +2886,9 @@ public enum Ops {
                     group_size: groupSizeU,
                     gridSize: grid, threadgroupSize: tg, on: cmd)
             default:
-                fatalError("Ops.moeGatherDequantGemmInt4: MPP variant only emits f32/f16 (got \(input.dtype))")
+                fatalError(
+                    "Ops.moeGatherDequantGemmInt4: MPP variant only emits f32/f16 (got \(input.dtype))"
+                )
             }
             return
         }
@@ -2806,17 +2976,20 @@ public enum Ops {
         ) {
             preconditionFailure("Ops.gatedDeltaChunk: \(reason)")
         }
-        precondition(q.dtype == k.dtype && k.dtype == v.dtype
-                     && v.dtype == g.dtype && g.dtype == beta.dtype
-                     && beta.dtype == stateIn.dtype && stateIn.dtype == stateOut.dtype
-                     && stateOut.dtype == y.dtype,
-                     "Ops.gatedDeltaChunk: every tensor must share dtype")
-        precondition(tLen.dtype == .u32 && tLen.elementCount == 1,
-                     "Ops.gatedDeltaChunk: tLen must be a [1] u32 scalar buffer")
+        precondition(
+            q.dtype == k.dtype && k.dtype == v.dtype
+                && v.dtype == g.dtype && g.dtype == beta.dtype
+                && beta.dtype == stateIn.dtype && stateIn.dtype == stateOut.dtype
+                && stateOut.dtype == y.dtype,
+            "Ops.gatedDeltaChunk: every tensor must share dtype")
+        precondition(
+            tLen.dtype == .u32 && tLen.elementCount == 1,
+            "Ops.gatedDeltaChunk: tLen must be a [1] u32 scalar buffer")
 
         let lanesPerGroup = 32
-        let grid = MTLSize(width: valueHeadDim * lanesPerGroup,
-                           height: numValueHeads, depth: 1)
+        let grid = MTLSize(
+            width: valueHeadDim * lanesPerGroup,
+            height: numValueHeads, depth: 1)
         let tg = MTLSize(width: lanesPerGroup, height: 1, depth: 1)
 
         switch q.dtype {
@@ -2888,22 +3061,27 @@ public enum Ops {
         on cmd: MTLCommandBuffer,
         into out: Tensor? = nil
     ) -> Tensor {
-        precondition(qLen > 0 && qLen % 32 == 0,
-                     "Ops.sdpaPrefillMma: qLen \(qLen) must be a positive multiple of 32")
-        precondition(kLen >= qLen,
-                     "Ops.sdpaPrefillMma: kLen \(kLen) must be >= qLen \(qLen)")
-        precondition(nQHeads % nKVHeads == 0,
-                     "Ops.sdpaPrefillMma: nQHeads \(nQHeads) must be a multiple of nKVHeads \(nKVHeads)")
-        precondition(q.dtype == k.dtype && k.dtype == v.dtype,
-                     "Ops.sdpaPrefillMma: q/k/v must share dtype")
+        precondition(
+            qLen > 0 && qLen % 32 == 0,
+            "Ops.sdpaPrefillMma: qLen \(qLen) must be a positive multiple of 32")
+        precondition(
+            kLen >= qLen,
+            "Ops.sdpaPrefillMma: kLen \(kLen) must be >= qLen \(qLen)")
+        precondition(
+            nQHeads % nKVHeads == 0,
+            "Ops.sdpaPrefillMma: nQHeads \(nQHeads) must be a multiple of nKVHeads \(nKVHeads)")
+        precondition(
+            q.dtype == k.dtype && k.dtype == v.dtype,
+            "Ops.sdpaPrefillMma: q/k/v must share dtype")
         let result = out ?? Tensor.empty(shape: [nQHeads, qLen, headDim], dtype: q.dtype)
         // Grid: (qLen/BQ, n_q_heads, 1) threadgroups, 128 threads per
         // group (4 simdgroups). dispatchThreads counts threads, so width
         // = (qLen/32) * 128, height = n_q_heads.
         let threadsPerGroup = 128
         let bq = 32
-        let grid = MTLSize(width: (qLen / bq) * threadsPerGroup,
-                           height: nQHeads, depth: 1)
+        let grid = MTLSize(
+            width: (qLen / bq) * threadsPerGroup,
+            height: nQHeads, depth: 1)
         let tg = MTLSize(width: threadsPerGroup, height: 1, depth: 1)
         let gqaFactor = nQHeads / nKVHeads
 
@@ -2989,33 +3167,46 @@ public enum Ops {
         on cmd: MTLCommandBuffer,
         into out: Tensor
     ) {
-        precondition(weight.dtype == .u32,
-                     "moeGatherDequantGemmInt4Bm64Mpp: weight must be u32 packed")
-        precondition(indices.dtype == .u32,
-                     "moeGatherDequantGemmInt4Bm64Mpp: indices must be u32")
-        precondition(input.dtype == scales.dtype && scales.dtype == biases.dtype,
-                     "moeGatherDequantGemmInt4Bm64Mpp: input/scales/biases dtype must match")
-        precondition(out.dtype == input.dtype,
-                     "moeGatherDequantGemmInt4Bm64Mpp: out dtype must match input")
-        precondition(input.elementCount == mTotal * kIn,
-                     "moeGatherDequantGemmInt4Bm64Mpp: input elements \(input.elementCount) ≠ mTotal·kIn \(mTotal * kIn)")
-        precondition(out.elementCount == mTotal * nOut,
-                     "moeGatherDequantGemmInt4Bm64Mpp: out elements \(out.elementCount) ≠ mTotal·nOut \(mTotal * nOut)")
-        precondition(indices.elementCount == mTotal,
-                     "moeGatherDequantGemmInt4Bm64Mpp: indices elements \(indices.elementCount) ≠ mTotal \(mTotal)")
-        precondition(nOut % 64 == 0,
-                     "moeGatherDequantGemmInt4Bm64Mpp: nOut (\(nOut)) must be multiple of 64 (BN tile)")
-        precondition(kIn % 32 == 0,
-                     "moeGatherDequantGemmInt4Bm64Mpp: kIn (\(kIn)) must be multiple of 32 (BK tile)")
+        precondition(
+            weight.dtype == .u32,
+            "moeGatherDequantGemmInt4Bm64Mpp: weight must be u32 packed")
+        precondition(
+            indices.dtype == .u32,
+            "moeGatherDequantGemmInt4Bm64Mpp: indices must be u32")
+        precondition(
+            input.dtype == scales.dtype && scales.dtype == biases.dtype,
+            "moeGatherDequantGemmInt4Bm64Mpp: input/scales/biases dtype must match")
+        precondition(
+            out.dtype == input.dtype,
+            "moeGatherDequantGemmInt4Bm64Mpp: out dtype must match input")
+        precondition(
+            input.elementCount == mTotal * kIn,
+            "moeGatherDequantGemmInt4Bm64Mpp: input elements \(input.elementCount) ≠ mTotal·kIn \(mTotal * kIn)"
+        )
+        precondition(
+            out.elementCount == mTotal * nOut,
+            "moeGatherDequantGemmInt4Bm64Mpp: out elements \(out.elementCount) ≠ mTotal·nOut \(mTotal * nOut)"
+        )
+        precondition(
+            indices.elementCount == mTotal,
+            "moeGatherDequantGemmInt4Bm64Mpp: indices elements \(indices.elementCount) ≠ mTotal \(mTotal)"
+        )
+        precondition(
+            nOut % 64 == 0,
+            "moeGatherDequantGemmInt4Bm64Mpp: nOut (\(nOut)) must be multiple of 64 (BN tile)")
+        precondition(
+            kIn % 32 == 0,
+            "moeGatherDequantGemmInt4Bm64Mpp: kIn (\(kIn)) must be multiple of 32 (BK tile)")
 
         // Per `metaltile-std/src/ffai/moe_mpp_bm64.rs`:
         //   BM = BN = 64, BK = 32. 4 SGs per TG, WM = WN = 2.
         //   Threadgroup size [128, 1, 1]. Grid [N/64, ceil(M/64), 1].
         // dispatchThreads (total threads): width = (N/64)·128.
         let tgWidth = 128
-        let grid = MTLSize(width: (nOut / 64) * tgWidth,
-                           height: (mTotal + 63) / 64,
-                           depth: 1)
+        let grid = MTLSize(
+            width: (nOut / 64) * tgWidth,
+            height: (mTotal + 63) / 64,
+            depth: 1)
         let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
         let mTotalU = UInt32(mTotal)
         let nOutU = UInt32(nOut)
@@ -3085,18 +3276,28 @@ public enum Ops {
         nRows: Int, hidden: Int, k: Int,
         on cmd: MTLCommandBuffer
     ) {
-        precondition(invPerm.dtype == .u32,
-                     "Ops.moeUnpermute: invPerm must be u32 (got \(invPerm.dtype))")
-        precondition(expertOutputs.dtype == topKWeights.dtype && topKWeights.dtype == out.dtype,
-                     "Ops.moeUnpermute: expertOutputs/topKWeights/out must share dtype")
-        precondition(expertOutputs.elementCount == nRows * k * hidden,
-                     "Ops.moeUnpermute: expertOutputs has \(expertOutputs.elementCount) elements, expected nRows·k·hidden = \(nRows * k * hidden)")
-        precondition(invPerm.elementCount == nRows * k,
-                     "Ops.moeUnpermute: invPerm has \(invPerm.elementCount) elements, expected nRows·k = \(nRows * k)")
-        precondition(topKWeights.elementCount == nRows * k,
-                     "Ops.moeUnpermute: topKWeights has \(topKWeights.elementCount) elements, expected nRows·k = \(nRows * k)")
-        precondition(out.elementCount == nRows * hidden,
-                     "Ops.moeUnpermute: out has \(out.elementCount) elements, expected nRows·hidden = \(nRows * hidden)")
+        precondition(
+            invPerm.dtype == .u32,
+            "Ops.moeUnpermute: invPerm must be u32 (got \(invPerm.dtype))")
+        precondition(
+            expertOutputs.dtype == topKWeights.dtype && topKWeights.dtype == out.dtype,
+            "Ops.moeUnpermute: expertOutputs/topKWeights/out must share dtype")
+        precondition(
+            expertOutputs.elementCount == nRows * k * hidden,
+            "Ops.moeUnpermute: expertOutputs has \(expertOutputs.elementCount) elements, expected nRows·k·hidden = \(nRows * k * hidden)"
+        )
+        precondition(
+            invPerm.elementCount == nRows * k,
+            "Ops.moeUnpermute: invPerm has \(invPerm.elementCount) elements, expected nRows·k = \(nRows * k)"
+        )
+        precondition(
+            topKWeights.elementCount == nRows * k,
+            "Ops.moeUnpermute: topKWeights has \(topKWeights.elementCount) elements, expected nRows·k = \(nRows * k)"
+        )
+        precondition(
+            out.elementCount == nRows * hidden,
+            "Ops.moeUnpermute: out has \(out.elementCount) elements, expected nRows·hidden = \(nRows * hidden)"
+        )
 
         let tgWidth = 128
         let grid = MTLSize(width: nRows * tgWidth, height: 1, depth: 1)
@@ -3142,30 +3343,43 @@ public enum Ops {
         on cmd: MTLCommandBuffer,
         into out: Tensor
     ) {
-        precondition(weight.dtype == .u32,
-                     "moeGatherDequantGemmInt4Bm8: weight must be u32 packed")
-        precondition(indices.dtype == .u32,
-                     "moeGatherDequantGemmInt4Bm8: indices must be u32")
-        precondition(input.dtype == scales.dtype && scales.dtype == biases.dtype,
-                     "moeGatherDequantGemmInt4Bm8: input/scales/biases dtype must match")
-        precondition(out.dtype == input.dtype,
-                     "moeGatherDequantGemmInt4Bm8: out dtype must match input")
-        precondition(input.elementCount == mTotal * kIn,
-                     "moeGatherDequantGemmInt4Bm8: input elements \(input.elementCount) != mTotal*kIn \(mTotal*kIn)")
-        precondition(out.elementCount == mTotal * nOut,
-                     "moeGatherDequantGemmInt4Bm8: out elements \(out.elementCount) != mTotal*nOut \(mTotal*nOut)")
-        precondition(indices.elementCount == mTotal,
-                     "moeGatherDequantGemmInt4Bm8: indices elements \(indices.elementCount) != mTotal \(mTotal)")
-        precondition(nOut % 32 == 0,
-                     "moeGatherDequantGemmInt4Bm8: nOut \(nOut) must be multiple of 32")
-        precondition(kIn % 32 == 0,
-                     "moeGatherDequantGemmInt4Bm8: kIn \(kIn) must be multiple of 32")
+        precondition(
+            weight.dtype == .u32,
+            "moeGatherDequantGemmInt4Bm8: weight must be u32 packed")
+        precondition(
+            indices.dtype == .u32,
+            "moeGatherDequantGemmInt4Bm8: indices must be u32")
+        precondition(
+            input.dtype == scales.dtype && scales.dtype == biases.dtype,
+            "moeGatherDequantGemmInt4Bm8: input/scales/biases dtype must match")
+        precondition(
+            out.dtype == input.dtype,
+            "moeGatherDequantGemmInt4Bm8: out dtype must match input")
+        precondition(
+            input.elementCount == mTotal * kIn,
+            "moeGatherDequantGemmInt4Bm8: input elements \(input.elementCount) != mTotal*kIn \(mTotal*kIn)"
+        )
+        precondition(
+            out.elementCount == mTotal * nOut,
+            "moeGatherDequantGemmInt4Bm8: out elements \(out.elementCount) != mTotal*nOut \(mTotal*nOut)"
+        )
+        precondition(
+            indices.elementCount == mTotal,
+            "moeGatherDequantGemmInt4Bm8: indices elements \(indices.elementCount) != mTotal \(mTotal)"
+        )
+        precondition(
+            nOut % 32 == 0,
+            "moeGatherDequantGemmInt4Bm8: nOut \(nOut) must be multiple of 32")
+        precondition(
+            kIn % 32 == 0,
+            "moeGatherDequantGemmInt4Bm8: kIn \(kIn) must be multiple of 32")
 
         // 1 simdgroup per TG, BM=8 → grid Y = ceil(m/8).
         let tgWidth = 32
-        let grid = MTLSize(width: (nOut / 32) * tgWidth,
-                           height: (mTotal + 7) / 8,
-                           depth: 1)
+        let grid = MTLSize(
+            width: (nOut / 32) * tgWidth,
+            height: (mTotal + 7) / 8,
+            depth: 1)
         let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
         let mTotalU = UInt32(mTotal)
         let nOutU = UInt32(nOut)
@@ -3231,18 +3445,22 @@ public enum Ops {
         batchSize: Int, dk: Int, dv: Int, hv: Int, hk: Int,
         on cmd: MTLCommandBuffer
     ) {
-        precondition(convOut.dtype == aLog.dtype && aLog.dtype == dtBias.dtype
-                     && dtBias.dtype == aRaw.dtype && aRaw.dtype == bRaw.dtype
-                     && bRaw.dtype == qNormWeight.dtype && qNormWeight.dtype == kNormWeight.dtype
-                     && kNormWeight.dtype == stateIn.dtype && stateIn.dtype == stateOut.dtype
-                     && stateOut.dtype == y.dtype,
-                     "Ops.gatedDeltaPrepStep: every tensor must share dtype")
-        precondition(dk % 32 == 0,
-                     "Ops.gatedDeltaPrepStep: dk \(dk) must be multiple of 32")
-        precondition(dv % 32 == 0,
-                     "Ops.gatedDeltaPrepStep: dv \(dv) must be multiple of 32")
-        precondition(hv % hk == 0,
-                     "Ops.gatedDeltaPrepStep: hv \(hv) must be a multiple of hk \(hk) (GQA)")
+        precondition(
+            convOut.dtype == aLog.dtype && aLog.dtype == dtBias.dtype
+                && dtBias.dtype == aRaw.dtype && aRaw.dtype == bRaw.dtype
+                && bRaw.dtype == qNormWeight.dtype && qNormWeight.dtype == kNormWeight.dtype
+                && kNormWeight.dtype == stateIn.dtype && stateIn.dtype == stateOut.dtype
+                && stateOut.dtype == y.dtype,
+            "Ops.gatedDeltaPrepStep: every tensor must share dtype")
+        precondition(
+            dk % 32 == 0,
+            "Ops.gatedDeltaPrepStep: dk \(dk) must be multiple of 32")
+        precondition(
+            dv % 32 == 0,
+            "Ops.gatedDeltaPrepStep: dv \(dv) must be multiple of 32")
+        precondition(
+            hv % hk == 0,
+            "Ops.gatedDeltaPrepStep: hv \(hv) must be a multiple of hk \(hk) (GQA)")
 
         // `dispatchThreads` counts TOTAL threads per axis, so the
         // X axis is `dv` (TGs along X) × `tgWidth` (threads per TG).
@@ -3250,9 +3468,10 @@ public enum Ops {
         // the kernel's `dv_idx = tgid_x` contract. Y axis is one TG
         // per (batch · Hv) slab.
         let tgWidth = 32
-        let grid = MTLSize(width: dv * tgWidth,
-                           height: batchSize * hv,
-                           depth: 1)
+        let grid = MTLSize(
+            width: dv * tgWidth,
+            height: batchSize * hv,
+            depth: 1)
         let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
         let dkU = UInt32(dk)
         let dvU = UInt32(dv)
@@ -3336,20 +3555,30 @@ public enum Ops {
         device: Device,
         into out: Tensor
     ) {
-        precondition(weight.dtype == .u32,
-                     "Ops.dequantGemmDynamicM: weight must be u32 packed (got \(weight.dtype))")
-        precondition(input.dtype == scales.dtype && scales.dtype == biases.dtype,
-                     "Ops.dequantGemmDynamicM: input/scales/biases must share dtype")
-        precondition(out.dtype == input.dtype,
-                     "Ops.dequantGemmDynamicM: out dtype must match input (got \(out.dtype) vs \(input.dtype))")
-        precondition(input.elementCount == t * kIn,
-                     "Ops.dequantGemmDynamicM: input has \(input.elementCount) elements, expected t*kIn = \(t * kIn)")
-        precondition(out.elementCount == t * nOut,
-                     "Ops.dequantGemmDynamicM: out has \(out.elementCount) elements, expected t*nOut = \(t * nOut)")
-        precondition(nOut % 32 == 0,
-                     "Ops.dequantGemmDynamicM: nOut (\(nOut)) must be multiple of 32 (BN tile)")
-        precondition(kIn % 32 == 0,
-                     "Ops.dequantGemmDynamicM: kIn (\(kIn)) must be multiple of 32 (BK tile)")
+        precondition(
+            weight.dtype == .u32,
+            "Ops.dequantGemmDynamicM: weight must be u32 packed (got \(weight.dtype))")
+        precondition(
+            input.dtype == scales.dtype && scales.dtype == biases.dtype,
+            "Ops.dequantGemmDynamicM: input/scales/biases must share dtype")
+        precondition(
+            out.dtype == input.dtype,
+            "Ops.dequantGemmDynamicM: out dtype must match input (got \(out.dtype) vs \(input.dtype))"
+        )
+        precondition(
+            input.elementCount == t * kIn,
+            "Ops.dequantGemmDynamicM: input has \(input.elementCount) elements, expected t*kIn = \(t * kIn)"
+        )
+        precondition(
+            out.elementCount == t * nOut,
+            "Ops.dequantGemmDynamicM: out has \(out.elementCount) elements, expected t*nOut = \(t * nOut)"
+        )
+        precondition(
+            nOut % 32 == 0,
+            "Ops.dequantGemmDynamicM: nOut (\(nOut)) must be multiple of 32 (BN tile)")
+        precondition(
+            kIn % 32 == 0,
+            "Ops.dequantGemmDynamicM: kIn (\(kIn)) must be multiple of 32 (BK tile)")
 
         let mPadded = ((t + 31) / 32) * 32
         let gsPerRow = kIn / groupSize
@@ -3358,10 +3587,11 @@ public enum Ops {
         // padding. The hot-loop case for Qwen3.6 prefill (T = 32, 256, 1024,
         // 4096, 32768 are all naturally aligned).
         if t == mPadded {
-            dispatchQmmMma(weight: weight, scales: scales, biases: biases,
-                           input: input, output: out,
-                           m: mPadded, n: nOut, k: kIn, gsPerRow: gsPerRow,
-                           on: cmd)
+            dispatchQmmMma(
+                weight: weight, scales: scales, biases: biases,
+                input: input, output: out,
+                m: mPadded, n: nOut, k: kIn, gsPerRow: gsPerRow,
+                on: cmd)
             return
         }
 
@@ -3379,34 +3609,41 @@ public enum Ops {
         // memory and silently produces garbage projections. Blits on
         // `cmd` get Metal hazard-tracking between the prior write and
         // the copy.
-        let xPadded = Tensor.empty(shape: [mPadded, kIn], dtype: input.dtype,
-                                   device: device)
+        let xPadded = Tensor.empty(
+            shape: [mPadded, kIn], dtype: input.dtype,
+            device: device)
         let validInBytes = t * kIn * input.dtype.byteSize
         let tailZeroBytes = (mPadded - t) * kIn * input.dtype.byteSize
         let blit = cmd.makeBlitCommandEncoder()!
-        blit.copy(from: input.buffer, sourceOffset: input.offset,
-                  to: xPadded.buffer, destinationOffset: xPadded.offset,
-                  size: validInBytes)
+        blit.copy(
+            from: input.buffer, sourceOffset: input.offset,
+            to: xPadded.buffer, destinationOffset: xPadded.offset,
+            size: validInBytes)
         if tailZeroBytes > 0 {
-            blit.fill(buffer: xPadded.buffer,
-                      range: (xPadded.offset + validInBytes)..<(xPadded.offset + validInBytes + tailZeroBytes),
-                      value: 0)
+            blit.fill(
+                buffer: xPadded.buffer,
+                range: (xPadded.offset + validInBytes)
+                    ..< (xPadded.offset + validInBytes + tailZeroBytes),
+                value: 0)
         }
         blit.endEncoding()
 
-        let outPadded = Tensor.empty(shape: [mPadded, nOut], dtype: input.dtype,
-                                     device: device)
-        dispatchQmmMma(weight: weight, scales: scales, biases: biases,
-                       input: xPadded, output: outPadded,
-                       m: mPadded, n: nOut, k: kIn, gsPerRow: gsPerRow,
-                       on: cmd)
+        let outPadded = Tensor.empty(
+            shape: [mPadded, nOut], dtype: input.dtype,
+            device: device)
+        dispatchQmmMma(
+            weight: weight, scales: scales, biases: biases,
+            input: xPadded, output: outPadded,
+            m: mPadded, n: nOut, k: kIn, gsPerRow: gsPerRow,
+            on: cmd)
 
         // Slice first T rows of outPadded → out (MTLBlit on `cmd`).
         let validOutBytes = t * nOut * input.dtype.byteSize
         let outBlit = cmd.makeBlitCommandEncoder()!
-        outBlit.copy(from: outPadded.buffer, sourceOffset: outPadded.offset,
-                     to: out.buffer, destinationOffset: out.offset,
-                     size: validOutBytes)
+        outBlit.copy(
+            from: outPadded.buffer, sourceOffset: outPadded.offset,
+            to: out.buffer, destinationOffset: out.offset,
+            size: validOutBytes)
         outBlit.endEncoding()
     }
 
@@ -3420,9 +3657,10 @@ public enum Ops {
         on cmd: MTLCommandBuffer
     ) {
         let tgWidth = 128
-        let grid = MTLSize(width: (n / 32) * tgWidth,
-                           height: m / 32,
-                           depth: 1)
+        let grid = MTLSize(
+            width: (n / 32) * tgWidth,
+            height: m / 32,
+            depth: 1)
         let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
         let kU = UInt32(k)
         let nU = UInt32(n)
@@ -3473,12 +3711,17 @@ public enum Ops {
     /// FFAI's batched-prefill GDN inner loop into one. At Qwen3.6-A3B
     /// T=512 × 30 GDN layers = 15360 dispatches removed per prefill.
     /// Input is bf16 or f16; output must be f32.
-    public static func siluCastToF32(_ input: Tensor, into output: Tensor,
-                                     on cmd: MTLCommandBuffer) {
-        precondition(output.dtype == .f32,
-                     "Ops.siluCastToF32: output dtype must be f32, got \(output.dtype)")
-        precondition(input.elementCount == output.elementCount,
-                     "Ops.siluCastToF32: element count mismatch (\(input.elementCount) vs \(output.elementCount))")
+    public static func siluCastToF32(
+        _ input: Tensor, into output: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            output.dtype == .f32,
+            "Ops.siluCastToF32: output dtype must be f32, got \(output.dtype)")
+        precondition(
+            input.elementCount == output.elementCount,
+            "Ops.siluCastToF32: element count mismatch (\(input.elementCount) vs \(output.elementCount))"
+        )
         let n = input.elementCount
         let tgWidth = min(n, 256)
         let grid = MTLSize(width: n, height: 1, depth: 1)
@@ -3495,16 +3738,22 @@ public enum Ops {
                 out: output.buffer, outOffset: output.offset,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         default:
-            fatalError("Ops.siluCastToF32: unsupported input dtype \(input.dtype) — bf16 / f16 only")
+            fatalError(
+                "Ops.siluCastToF32: unsupported input dtype \(input.dtype) — bf16 / f16 only")
         }
     }
 
-    public static func castToF32(_ input: Tensor, into output: Tensor,
-                                 on cmd: MTLCommandBuffer) {
-        precondition(output.dtype == .f32,
-                     "Ops.castToF32: output dtype must be f32, got \(output.dtype)")
-        precondition(input.elementCount == output.elementCount,
-                     "Ops.castToF32: element count mismatch (\(input.elementCount) vs \(output.elementCount))")
+    public static func castToF32(
+        _ input: Tensor, into output: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            output.dtype == .f32,
+            "Ops.castToF32: output dtype must be f32, got \(output.dtype)")
+        precondition(
+            input.elementCount == output.elementCount,
+            "Ops.castToF32: element count mismatch (\(input.elementCount) vs \(output.elementCount))"
+        )
         let n = input.elementCount
         // Pick a TG width that divides n evenly when possible; cap at
         // 256 (well under the Apple TG limit of 1024).
@@ -3559,22 +3808,34 @@ public enum Ops {
         numValueHeads: Int, valueHeadDim: Int,
         on cmd: MTLCommandBuffer
     ) {
-        precondition(y.dtype == .f32,
-                     "Ops.gatedMixerNorm: y must be f32 (got \(y.dtype))")
-        precondition(z.dtype == weight.dtype && weight.dtype == out.dtype,
-                     "Ops.gatedMixerNorm: z / weight / out must share dtype")
-        precondition(epsBuf.dtype == .f32,
-                     "Ops.gatedMixerNorm: epsBuf must be f32")
-        precondition(valueHeadDim.isMultiple(of: 4),
-                     "Ops.gatedMixerNorm: valueHeadDim (\(valueHeadDim)) must be multiple of 4")
-        precondition(y.elementCount == numValueHeads * valueHeadDim,
-                     "Ops.gatedMixerNorm: y has \(y.elementCount) elements, expected \(numValueHeads * valueHeadDim)")
-        precondition(z.elementCount == numValueHeads * valueHeadDim,
-                     "Ops.gatedMixerNorm: z has \(z.elementCount) elements, expected \(numValueHeads * valueHeadDim)")
-        precondition(weight.elementCount == valueHeadDim,
-                     "Ops.gatedMixerNorm: weight has \(weight.elementCount) elements, expected \(valueHeadDim)")
-        precondition(out.elementCount == numValueHeads * valueHeadDim,
-                     "Ops.gatedMixerNorm: out has \(out.elementCount) elements, expected \(numValueHeads * valueHeadDim)")
+        precondition(
+            y.dtype == .f32,
+            "Ops.gatedMixerNorm: y must be f32 (got \(y.dtype))")
+        precondition(
+            z.dtype == weight.dtype && weight.dtype == out.dtype,
+            "Ops.gatedMixerNorm: z / weight / out must share dtype")
+        precondition(
+            epsBuf.dtype == .f32,
+            "Ops.gatedMixerNorm: epsBuf must be f32")
+        precondition(
+            valueHeadDim.isMultiple(of: 4),
+            "Ops.gatedMixerNorm: valueHeadDim (\(valueHeadDim)) must be multiple of 4")
+        precondition(
+            y.elementCount == numValueHeads * valueHeadDim,
+            "Ops.gatedMixerNorm: y has \(y.elementCount) elements, expected \(numValueHeads * valueHeadDim)"
+        )
+        precondition(
+            z.elementCount == numValueHeads * valueHeadDim,
+            "Ops.gatedMixerNorm: z has \(z.elementCount) elements, expected \(numValueHeads * valueHeadDim)"
+        )
+        precondition(
+            weight.elementCount == valueHeadDim,
+            "Ops.gatedMixerNorm: weight has \(weight.elementCount) elements, expected \(valueHeadDim)"
+        )
+        precondition(
+            out.elementCount == numValueHeads * valueHeadDim,
+            "Ops.gatedMixerNorm: out has \(out.elementCount) elements, expected \(numValueHeads * valueHeadDim)"
+        )
 
         // One thread per 4 consecutive Dv elements → tpg = Dv / 4.
         // `dispatchThreads` counts total threads per axis, so grid.x =
@@ -3635,12 +3896,15 @@ public enum Ops {
         gate: Tensor, value: Tensor, base: Tensor,
         into out: Tensor, on cmd: MTLCommandBuffer
     ) {
-        precondition(gate.dtype == value.dtype && value.dtype == base.dtype && base.dtype == out.dtype,
-                     "Ops.sigmoidScalarFMA: all tensors must share dtype")
-        precondition(gate.elementCount == 1,
-                     "Ops.sigmoidScalarFMA: gate must be [1] (got \(gate.elementCount))")
-        precondition(value.elementCount == base.elementCount && base.elementCount == out.elementCount,
-                     "Ops.sigmoidScalarFMA: value / base / out must have matching elementCount")
+        precondition(
+            gate.dtype == value.dtype && value.dtype == base.dtype && base.dtype == out.dtype,
+            "Ops.sigmoidScalarFMA: all tensors must share dtype")
+        precondition(
+            gate.elementCount == 1,
+            "Ops.sigmoidScalarFMA: gate must be [1] (got \(gate.elementCount))")
+        precondition(
+            value.elementCount == base.elementCount && base.elementCount == out.elementCount,
+            "Ops.sigmoidScalarFMA: value / base / out must have matching elementCount")
 
         let n = value.elementCount
         let tgWidth = min(n, 256)
@@ -3697,21 +3961,26 @@ public enum Ops {
         on cmd: MTLCommandBuffer,
         into out: Tensor
     ) {
-        precondition(bits == 4,
-                     "Ops.dequantGemvIndirect: only 4-bit weights have indirect variants (got bits=\(bits))")
+        precondition(
+            bits == 4,
+            "Ops.dequantGemvIndirect: only 4-bit weights have indirect variants (got bits=\(bits))")
         precondition(weight.shape.count == 2, "dequantGemvIndirect: weight must be 2D")
         precondition(weight.dtype == .u32, "dequantGemvIndirect: weight must be u32 (packed)")
-        precondition(scales.dtype == input.dtype && biases.dtype == input.dtype,
-                     "dequantGemvIndirect: scales/biases dtype must match input")
-        precondition(out.dtype == input.dtype,
-                     "dequantGemvIndirect: out dtype must match input")
+        precondition(
+            scales.dtype == input.dtype && biases.dtype == input.dtype,
+            "dequantGemvIndirect: scales/biases dtype must match input")
+        precondition(
+            out.dtype == input.dtype,
+            "dequantGemvIndirect: out dtype must match input")
         let outDim = weight.shape[0]
         let packedPerRow = weight.shape[1]
         let inDim = packedPerRow * 32 / bits
-        precondition(input.elementCount == inDim,
-                     "dequantGemvIndirect: input \(input.elementCount) ≠ in_dim \(inDim)")
-        precondition(out.elementCount == outDim,
-                     "dequantGemvIndirect: out \(out.elementCount) ≠ outDim \(outDim)")
+        precondition(
+            input.elementCount == inDim,
+            "dequantGemvIndirect: input \(input.elementCount) ≠ in_dim \(inDim)")
+        precondition(
+            out.elementCount == outDim,
+            "dequantGemvIndirect: out \(out.elementCount) ≠ outDim \(outDim)")
         if let reason = OpsValidation.validateDequantGemv(
             outDim: outDim, inDim: inDim, bits: bits, groupSize: groupSize,
             scalesCount: scales.elementCount, biasesCount: biases.elementCount
@@ -3764,13 +4033,16 @@ public enum Ops {
         gate: Tensor, up: Tensor, on cmd: MTLCommandBuffer,
         into out: Tensor? = nil
     ) -> Tensor {
-        precondition(gate.dtype == up.dtype,
-                     "Ops.swiglu: gate / up dtype mismatch")
-        precondition(gate.elementCount == up.elementCount,
-                     "Ops.swiglu: gate / up size mismatch")
+        precondition(
+            gate.dtype == up.dtype,
+            "Ops.swiglu: gate / up dtype mismatch")
+        precondition(
+            gate.elementCount == up.elementCount,
+            "Ops.swiglu: gate / up size mismatch")
         let result = out ?? Tensor.empty(shape: gate.shape, dtype: gate.dtype)
-        precondition(result.dtype == gate.dtype && result.elementCount == gate.elementCount,
-                     "Ops.swiglu: out dtype / size mismatch")
+        precondition(
+            result.dtype == gate.dtype && result.elementCount == gate.elementCount,
+            "Ops.swiglu: out dtype / size mismatch")
         let n = gate.elementCount
         let tgWidth = min(n, 256)
         let grid = MTLSize(width: n, height: 1, depth: 1)
@@ -3829,13 +4101,19 @@ public enum Ops {
         _ cmd: MTLCommandBuffer, _ out: Tensor
     ) {
         precondition(weight.dtype == .u32, "moeGatherDequantGemmInt4M1: weight must be u32 packed")
-        precondition(expertOffsets.dtype == .u32, "moeGatherDequantGemmInt4M1: expertOffsets must be u32")
-        precondition(scales.dtype == x.dtype && biases.dtype == x.dtype && out.dtype == x.dtype,
-                     "moeGatherDequantGemmInt4M1: dtype mismatch")
-        precondition(kIn.isMultiple(of: 32), "moeGatherDequantGemmInt4M1: k_in must be multiple of 32")
-        precondition(kIn.isMultiple(of: groupSize), "moeGatherDequantGemmInt4M1: group_size must divide k_in")
-        precondition(expertOffsets.elementCount == nExperts + 1,
-                     "moeGatherDequantGemmInt4M1: expertOffsets must have n_experts+1 entries")
+        precondition(
+            expertOffsets.dtype == .u32, "moeGatherDequantGemmInt4M1: expertOffsets must be u32")
+        precondition(
+            scales.dtype == x.dtype && biases.dtype == x.dtype && out.dtype == x.dtype,
+            "moeGatherDequantGemmInt4M1: dtype mismatch")
+        precondition(
+            kIn.isMultiple(of: 32), "moeGatherDequantGemmInt4M1: k_in must be multiple of 32")
+        precondition(
+            kIn.isMultiple(of: groupSize), "moeGatherDequantGemmInt4M1: group_size must divide k_in"
+        )
+        precondition(
+            expertOffsets.elementCount == nExperts + 1,
+            "moeGatherDequantGemmInt4M1: expertOffsets must have n_experts+1 entries")
         // Swift binding uses dispatchThreads — total-thread semantics.
         // Kernel wants ONE TG per (output col m, input row t). With TG
         // width 32, grid.x = mOut * 32 gives mOut threadgroups in x; the
@@ -3887,18 +4165,24 @@ public enum Ops {
     /// vision-transformer encoders (SigLIP / CLIP) and audio frontends —
     /// not on the Qwen3.5/3.6 hot path, but kept here so VLM/audio
     /// models in this package compile against `Ops`.
-    public static func layerNorm(_ x: Tensor, weight: Tensor, bias: Tensor,
-                                 eps: Float, nRows: Int, rowSize: Int,
-                                 on cmd: MTLCommandBuffer,
-                                 into out: Tensor? = nil) -> Tensor {
-        precondition(x.elementCount == nRows * rowSize,
-                     "Ops.layerNorm: x size \(x.elementCount) ≠ nRows*rowSize \(nRows * rowSize)")
-        precondition(weight.elementCount == rowSize,
-                     "Ops.layerNorm: weight must be [rowSize]")
-        precondition(bias.elementCount == rowSize,
-                     "Ops.layerNorm: bias must be [rowSize]")
-        precondition(x.dtype == weight.dtype && weight.dtype == bias.dtype,
-                     "Ops.layerNorm: x/weight/bias dtype mismatch")
+    public static func layerNorm(
+        _ x: Tensor, weight: Tensor, bias: Tensor,
+        eps: Float, nRows: Int, rowSize: Int,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
+        precondition(
+            x.elementCount == nRows * rowSize,
+            "Ops.layerNorm: x size \(x.elementCount) ≠ nRows*rowSize \(nRows * rowSize)")
+        precondition(
+            weight.elementCount == rowSize,
+            "Ops.layerNorm: weight must be [rowSize]")
+        precondition(
+            bias.elementCount == rowSize,
+            "Ops.layerNorm: bias must be [rowSize]")
+        precondition(
+            x.dtype == weight.dtype && weight.dtype == bias.dtype,
+            "Ops.layerNorm: x/weight/bias dtype mismatch")
         let result = out ?? Tensor.empty(shape: x.shape, dtype: x.dtype)
         var epsValue = eps
         let epsBuf = device.makeBuffer(length: 4)
@@ -3966,16 +4250,21 @@ public enum Ops {
         on cmd: MTLCommandBuffer,
         into out: Tensor? = nil
     ) -> Tensor {
-        precondition(input.shape.count == 4,
-                     "Ops.conv2d: input must be 4D [batch,in_ch,in_h,in_w] (conv2d.rs)")
-        precondition(weight.shape.count == 4,
-                     "Ops.conv2d: weight must be 4D [out_ch,in_ch,kh,kw] (conv2d.rs)")
-        precondition(bias.shape.count == 1,
-                     "Ops.conv2d: bias must be 1D [out_ch] (conv2d.rs)")
-        precondition(input.dtype == weight.dtype && weight.dtype == bias.dtype,
-                     "Ops.conv2d: input/weight/bias dtype mismatch (conv2d.rs)")
-        precondition(strideH > 0 && strideW > 0,
-                     "Ops.conv2d: stride must be positive (conv2d.rs)")
+        precondition(
+            input.shape.count == 4,
+            "Ops.conv2d: input must be 4D [batch,in_ch,in_h,in_w] (conv2d.rs)")
+        precondition(
+            weight.shape.count == 4,
+            "Ops.conv2d: weight must be 4D [out_ch,in_ch,kh,kw] (conv2d.rs)")
+        precondition(
+            bias.shape.count == 1,
+            "Ops.conv2d: bias must be 1D [out_ch] (conv2d.rs)")
+        precondition(
+            input.dtype == weight.dtype && weight.dtype == bias.dtype,
+            "Ops.conv2d: input/weight/bias dtype mismatch (conv2d.rs)")
+        precondition(
+            strideH > 0 && strideW > 0,
+            "Ops.conv2d: stride must be positive (conv2d.rs)")
 
         let batch = input.shape[0]
         let inCh = input.shape[1]
@@ -3984,69 +4273,85 @@ public enum Ops {
         let outCh = weight.shape[0]
         let kh = weight.shape[2]
         let kw = weight.shape[3]
-        precondition(weight.shape[1] == inCh,
-                     "Ops.conv2d: weight in_ch \(weight.shape[1]) != input in_ch \(inCh) (conv2d.rs)")
-        precondition(bias.shape[0] == outCh,
-                     "Ops.conv2d: bias \(bias.shape[0]) != out_ch \(outCh) (conv2d.rs)")
+        precondition(
+            weight.shape[1] == inCh,
+            "Ops.conv2d: weight in_ch \(weight.shape[1]) != input in_ch \(inCh) (conv2d.rs)")
+        precondition(
+            bias.shape[0] == outCh,
+            "Ops.conv2d: bias \(bias.shape[0]) != out_ch \(outCh) (conv2d.rs)")
 
         // Output spatial dims — the conv2d.rs DISPATCH INVARIANT.
         let outH = (inH + 2 * padH - kh) / strideH + 1
         let outW = (inW + 2 * padW - kw) / strideW + 1
-        precondition(outH > 0 && outW > 0,
-                     "Ops.conv2d: degenerate output \(outH)x\(outW) — kernel "
-                     + "larger than padded input (conv2d.rs)")
+        precondition(
+            outH > 0 && outW > 0,
+            "Ops.conv2d: degenerate output \(outH)x\(outW) — kernel "
+                + "larger than padded input (conv2d.rs)")
 
-        let result = out ?? Tensor.empty(shape: [batch, outCh, outH, outW],
-                                         dtype: input.dtype)
-        precondition(result.shape == [batch, outCh, outH, outW],
-                     "Ops.conv2d: out shape \(result.shape) != expected "
-                     + "\([batch, outCh, outH, outW]) (conv2d.rs)")
+        let result =
+            out
+            ?? Tensor.empty(
+                shape: [batch, outCh, outH, outW],
+                dtype: input.dtype)
+        precondition(
+            result.shape == [batch, outCh, outH, outW],
+            "Ops.conv2d: out shape \(result.shape) != expected "
+                + "\([batch, outCh, outH, outW]) (conv2d.rs)")
 
         // Grid3D — one thread per output element, dispatched flat.
         let totalThreads = batch * outCh * outH * outW
         let (grid, tg) = elementwiseGrid(totalThreads)
 
         func dispatch(
-            _ fn: (MTLBuffer, Int, MTLBuffer, Int, MTLBuffer, Int, MTLBuffer, Int,
-                   UInt32, UInt32, UInt32, UInt32, UInt32, UInt32, UInt32,
-                   UInt32, UInt32, UInt32, UInt32, UInt32, UInt32,
-                   MTLSize, MTLSize, MTLCommandBuffer) -> Void
+            _ fn: (
+                MTLBuffer, Int, MTLBuffer, Int, MTLBuffer, Int, MTLBuffer, Int,
+                UInt32, UInt32, UInt32, UInt32, UInt32, UInt32, UInt32,
+                UInt32, UInt32, UInt32, UInt32, UInt32, UInt32,
+                MTLSize, MTLSize, MTLCommandBuffer
+            ) -> Void
         ) {
-            fn(input.buffer, input.offset, weight.buffer, weight.offset,
-               bias.buffer, bias.offset, result.buffer, result.offset,
-               UInt32(batch), UInt32(inCh), UInt32(inH), UInt32(inW),
-               UInt32(outCh), UInt32(outH), UInt32(outW),
-               UInt32(kh), UInt32(kw), UInt32(strideH), UInt32(strideW),
-               UInt32(padH), UInt32(padW), grid, tg, cmd)
+            fn(
+                input.buffer, input.offset, weight.buffer, weight.offset,
+                bias.buffer, bias.offset, result.buffer, result.offset,
+                UInt32(batch), UInt32(inCh), UInt32(inH), UInt32(inW),
+                UInt32(outCh), UInt32(outH), UInt32(outW),
+                UInt32(kh), UInt32(kw), UInt32(strideH), UInt32(strideW),
+                UInt32(padH), UInt32(padW), grid, tg, cmd)
         }
         switch input.dtype {
         case .f32:
-            dispatch { MetalTileKernels.conv2d_generic_f32(
-                input: $0, inputOffset: $1, weight: $2, weightOffset: $3,
-                bias: $4, biasOffset: $5, out: $6, outOffset: $7,
-                batch: $8, in_ch: $9, in_h: $10, in_w: $11,
-                out_ch: $12, out_h: $13, out_w: $14,
-                kh: $15, kw: $16, stride_h: $17, stride_w: $18,
-                pad_h: $19, pad_w: $20, gridSize: $21, threadgroupSize: $22,
-                on: $23) }
+            dispatch {
+                MetalTileKernels.conv2d_generic_f32(
+                    input: $0, inputOffset: $1, weight: $2, weightOffset: $3,
+                    bias: $4, biasOffset: $5, out: $6, outOffset: $7,
+                    batch: $8, in_ch: $9, in_h: $10, in_w: $11,
+                    out_ch: $12, out_h: $13, out_w: $14,
+                    kh: $15, kw: $16, stride_h: $17, stride_w: $18,
+                    pad_h: $19, pad_w: $20, gridSize: $21, threadgroupSize: $22,
+                    on: $23)
+            }
         case .f16:
-            dispatch { MetalTileKernels.conv2d_generic_f16(
-                input: $0, inputOffset: $1, weight: $2, weightOffset: $3,
-                bias: $4, biasOffset: $5, out: $6, outOffset: $7,
-                batch: $8, in_ch: $9, in_h: $10, in_w: $11,
-                out_ch: $12, out_h: $13, out_w: $14,
-                kh: $15, kw: $16, stride_h: $17, stride_w: $18,
-                pad_h: $19, pad_w: $20, gridSize: $21, threadgroupSize: $22,
-                on: $23) }
+            dispatch {
+                MetalTileKernels.conv2d_generic_f16(
+                    input: $0, inputOffset: $1, weight: $2, weightOffset: $3,
+                    bias: $4, biasOffset: $5, out: $6, outOffset: $7,
+                    batch: $8, in_ch: $9, in_h: $10, in_w: $11,
+                    out_ch: $12, out_h: $13, out_w: $14,
+                    kh: $15, kw: $16, stride_h: $17, stride_w: $18,
+                    pad_h: $19, pad_w: $20, gridSize: $21, threadgroupSize: $22,
+                    on: $23)
+            }
         case .bf16:
-            dispatch { MetalTileKernels.conv2d_generic_bf16(
-                input: $0, inputOffset: $1, weight: $2, weightOffset: $3,
-                bias: $4, biasOffset: $5, out: $6, outOffset: $7,
-                batch: $8, in_ch: $9, in_h: $10, in_w: $11,
-                out_ch: $12, out_h: $13, out_w: $14,
-                kh: $15, kw: $16, stride_h: $17, stride_w: $18,
-                pad_h: $19, pad_w: $20, gridSize: $21, threadgroupSize: $22,
-                on: $23) }
+            dispatch {
+                MetalTileKernels.conv2d_generic_bf16(
+                    input: $0, inputOffset: $1, weight: $2, weightOffset: $3,
+                    bias: $4, biasOffset: $5, out: $6, outOffset: $7,
+                    batch: $8, in_ch: $9, in_h: $10, in_w: $11,
+                    out_ch: $12, out_h: $13, out_w: $14,
+                    kh: $15, kw: $16, stride_h: $17, stride_w: $18,
+                    pad_h: $19, pad_w: $20, gridSize: $21, threadgroupSize: $22,
+                    on: $23)
+            }
         default:
             fatalError("Ops.conv2d: unsupported dtype \(input.dtype)")
         }
@@ -4079,35 +4384,46 @@ public enum Ops {
         on cmd: MTLCommandBuffer,
         into out: Tensor? = nil
     ) -> Tensor {
-        precondition(image.shape.count == 3,
-                     "Ops.patchEmbed: image must be 3D [in_ch,in_h,in_w] (patch_embed.rs)")
-        precondition(weight.shape.count == 2,
-                     "Ops.patchEmbed: weight must be 2D [hidden,patch_dim] (patch_embed.rs)")
-        precondition(bias.shape.count == 1,
-                     "Ops.patchEmbed: bias must be 1D [hidden] (patch_embed.rs)")
-        precondition(image.dtype == weight.dtype && weight.dtype == bias.dtype,
-                     "Ops.patchEmbed: image/weight/bias dtype mismatch (patch_embed.rs)")
+        precondition(
+            image.shape.count == 3,
+            "Ops.patchEmbed: image must be 3D [in_ch,in_h,in_w] (patch_embed.rs)")
+        precondition(
+            weight.shape.count == 2,
+            "Ops.patchEmbed: weight must be 2D [hidden,patch_dim] (patch_embed.rs)")
+        precondition(
+            bias.shape.count == 1,
+            "Ops.patchEmbed: bias must be 1D [hidden] (patch_embed.rs)")
+        precondition(
+            image.dtype == weight.dtype && weight.dtype == bias.dtype,
+            "Ops.patchEmbed: image/weight/bias dtype mismatch (patch_embed.rs)")
 
         let inCh = image.shape[0]
         let inH = image.shape[1]
         let inW = image.shape[2]
         let hidden = weight.shape[0]
-        precondition(inH % patchH == 0 && inW % patchW == 0,
-                     "Ops.patchEmbed: image \(inH)x\(inW) not divisible by patch "
-                     + "\(patchH)x\(patchW) (patch_embed.rs)")
+        precondition(
+            inH % patchH == 0 && inW % patchW == 0,
+            "Ops.patchEmbed: image \(inH)x\(inW) not divisible by patch "
+                + "\(patchH)x\(patchW) (patch_embed.rs)")
         let patchDim = inCh * patchH * patchW
-        precondition(weight.shape[1] == patchDim,
-                     "Ops.patchEmbed: weight patch_dim \(weight.shape[1]) != "
-                     + "in_ch*patch_h*patch_w \(patchDim) (patch_embed.rs)")
-        precondition(bias.shape[0] == hidden,
-                     "Ops.patchEmbed: bias \(bias.shape[0]) != hidden \(hidden) (patch_embed.rs)")
+        precondition(
+            weight.shape[1] == patchDim,
+            "Ops.patchEmbed: weight patch_dim \(weight.shape[1]) != "
+                + "in_ch*patch_h*patch_w \(patchDim) (patch_embed.rs)")
+        precondition(
+            bias.shape[0] == hidden,
+            "Ops.patchEmbed: bias \(bias.shape[0]) != hidden \(hidden) (patch_embed.rs)")
 
         let numPatches = (inH / patchH) * (inW / patchW)
-        let result = out ?? Tensor.empty(shape: [numPatches, hidden],
-                                         dtype: image.dtype)
-        precondition(result.shape == [numPatches, hidden],
-                     "Ops.patchEmbed: out shape \(result.shape) != expected "
-                     + "\([numPatches, hidden]) (patch_embed.rs)")
+        let result =
+            out
+            ?? Tensor.empty(
+                shape: [numPatches, hidden],
+                dtype: image.dtype)
+        precondition(
+            result.shape == [numPatches, hidden],
+            "Ops.patchEmbed: out shape \(result.shape) != expected "
+                + "\([numPatches, hidden]) (patch_embed.rs)")
 
         let totalThreads = numPatches * hidden
         let (grid, tg) = elementwiseGrid(totalThreads)
@@ -4174,16 +4490,20 @@ public enum Ops {
         on cmd: MTLCommandBuffer,
         into out: Tensor? = nil
     ) -> Tensor {
-        precondition(headDim % 4 == 0,
-                     "Ops.rope2D: head_dim \(headDim) must be a multiple of 4 (rope_2d.rs)")
-        precondition(positions.dtype == .u32,
-                     "Ops.rope2D: positions must be u32 (rope_2d.rs)")
-        precondition(positions.elementCount == nTokens * 2,
-                     "Ops.rope2D: positions count \(positions.elementCount) != "
-                     + "n_tokens*2 \(nTokens * 2) (rope_2d.rs)")
-        precondition(qk.elementCount == nTokens * nHeads * headDim,
-                     "Ops.rope2D: qk count \(qk.elementCount) != "
-                     + "n_tokens*n_heads*head_dim \(nTokens * nHeads * headDim) (rope_2d.rs)")
+        precondition(
+            headDim % 4 == 0,
+            "Ops.rope2D: head_dim \(headDim) must be a multiple of 4 (rope_2d.rs)")
+        precondition(
+            positions.dtype == .u32,
+            "Ops.rope2D: positions must be u32 (rope_2d.rs)")
+        precondition(
+            positions.elementCount == nTokens * 2,
+            "Ops.rope2D: positions count \(positions.elementCount) != "
+                + "n_tokens*2 \(nTokens * 2) (rope_2d.rs)")
+        precondition(
+            qk.elementCount == nTokens * nHeads * headDim,
+            "Ops.rope2D: qk count \(qk.elementCount) != "
+                + "n_tokens*n_heads*head_dim \(nTokens * nHeads * headDim) (rope_2d.rs)")
 
         let halfDim = headDim / 2
         let quarterDim = headDim / 4
@@ -4255,23 +4575,28 @@ public enum Ops {
         nFrames: Int, logEps: Float = 1e-10,
         on cmd: MTLCommandBuffer, into out: Tensor? = nil
     ) -> Tensor {
-        precondition(audio.dtype == window.dtype && audio.dtype == melWeight.dtype,
-                     "Ops.melSpectrogram: audio/window/melWeight must share dtype")
-        precondition(audio.dtype == .f32 || audio.dtype == .f16,
-                     "Ops.melSpectrogram: dtype must be f32 or f16")
+        precondition(
+            audio.dtype == window.dtype && audio.dtype == melWeight.dtype,
+            "Ops.melSpectrogram: audio/window/melWeight must share dtype")
+        precondition(
+            audio.dtype == .f32 || audio.dtype == .f16,
+            "Ops.melSpectrogram: dtype must be f32 or f16")
         let nFreq = nFFT / 2 + 1
         // Invariants cited from ffai/mel_spectrogram.rs §"Layouts".
-        precondition(window.elementCount == nFFT,
-                     "Ops.melSpectrogram: window must be [nFFT=\(nFFT)] "
-                     + "(ffai/mel_spectrogram.rs)")
-        precondition(melWeight.elementCount == nMels * nFreq,
-                     "Ops.melSpectrogram: melWeight must be [nMels, nFreq] "
-                     + "= [\(nMels), \(nFreq)] (ffai/mel_spectrogram.rs)")
-        precondition(audio.elementCount >= (nFrames - 1) * hopLength + nFFT,
-                     "Ops.melSpectrogram: audio too short — kernel does no "
-                     + "bounds check on the frame walk; pre-pad so "
-                     + "nSamples >= (nFrames-1)*hop + nFFT "
-                     + "(ffai/mel_spectrogram.rs)")
+        precondition(
+            window.elementCount == nFFT,
+            "Ops.melSpectrogram: window must be [nFFT=\(nFFT)] "
+                + "(ffai/mel_spectrogram.rs)")
+        precondition(
+            melWeight.elementCount == nMels * nFreq,
+            "Ops.melSpectrogram: melWeight must be [nMels, nFreq] "
+                + "= [\(nMels), \(nFreq)] (ffai/mel_spectrogram.rs)")
+        precondition(
+            audio.elementCount >= (nFrames - 1) * hopLength + nFFT,
+            "Ops.melSpectrogram: audio too short — kernel does no "
+                + "bounds check on the frame walk; pre-pad so "
+                + "nSamples >= (nFrames-1)*hop + nFFT "
+                + "(ffai/mel_spectrogram.rs)")
         let result = out ?? Tensor.empty(shape: [nFrames, nMels], dtype: audio.dtype)
         // One thread per output element (frame, mel_bin).
         let (grid, tg) = elementwiseGrid(nFrames * nMels)
@@ -4326,23 +4651,32 @@ public enum Ops {
         k: Int, stride: Int, pad: Int,
         on cmd: MTLCommandBuffer, into out: Tensor? = nil
     ) -> Tensor {
-        precondition(input.dtype == weight.dtype && input.dtype == bias.dtype,
-                     "Ops.audioConv1d: input/weight/bias must share dtype")
-        precondition(stride >= 1 && k >= 1,
-                     "Ops.audioConv1d: stride and k must be >= 1 "
-                     + "(ffai/audio_conv1d.rs)")
-        precondition(input.elementCount == batch * inCh * inLen,
-                     "Ops.audioConv1d: input must be [batch, inCh, inLen]")
-        precondition(weight.elementCount == outCh * inCh * k,
-                     "Ops.audioConv1d: weight must be [outCh, inCh, k]")
-        precondition(bias.elementCount == outCh,
-                     "Ops.audioConv1d: bias must be [outCh]")
+        precondition(
+            input.dtype == weight.dtype && input.dtype == bias.dtype,
+            "Ops.audioConv1d: input/weight/bias must share dtype")
+        precondition(
+            stride >= 1 && k >= 1,
+            "Ops.audioConv1d: stride and k must be >= 1 "
+                + "(ffai/audio_conv1d.rs)")
+        precondition(
+            input.elementCount == batch * inCh * inLen,
+            "Ops.audioConv1d: input must be [batch, inCh, inLen]")
+        precondition(
+            weight.elementCount == outCh * inCh * k,
+            "Ops.audioConv1d: weight must be [outCh, inCh, k]")
+        precondition(
+            bias.elementCount == outCh,
+            "Ops.audioConv1d: bias must be [outCh]")
         let outLen = (inLen + 2 * pad - k) / stride + 1
-        precondition(outLen >= 1,
-                     "Ops.audioConv1d: degenerate outLen=\(outLen) "
-                     + "(ffai/audio_conv1d.rs)")
-        let result = out ?? Tensor.empty(shape: [batch, outCh, outLen],
-                                         dtype: input.dtype)
+        precondition(
+            outLen >= 1,
+            "Ops.audioConv1d: degenerate outLen=\(outLen) "
+                + "(ffai/audio_conv1d.rs)")
+        let result =
+            out
+            ?? Tensor.empty(
+                shape: [batch, outCh, outLen],
+                dtype: input.dtype)
         // One thread per output element (n, oc, op).
         let (grid, tg) = elementwiseGrid(batch * outCh * outLen)
         switch input.dtype {
@@ -4406,18 +4740,22 @@ public enum Ops {
         nFrames: Int, nFFT: Int, hopLength: Int,
         on cmd: MTLCommandBuffer, into out: Tensor? = nil
     ) -> Tensor {
-        precondition(specRe.dtype == specIm.dtype && specRe.dtype == window.dtype,
-                     "Ops.vocoderISTFT: specRe/specIm/window must share dtype")
+        precondition(
+            specRe.dtype == specIm.dtype && specRe.dtype == window.dtype,
+            "Ops.vocoderISTFT: specRe/specIm/window must share dtype")
         let nFreq = nFFT / 2 + 1
-        precondition(window.elementCount == nFFT,
-                     "Ops.vocoderISTFT: window must be [nFFT=\(nFFT)] "
-                     + "(ffai/vocoder.rs)")
-        precondition(specRe.elementCount == nFrames * nFreq,
-                     "Ops.vocoderISTFT: specRe must be [nFrames, nFreq] "
-                     + "= [\(nFrames), \(nFreq)] (ffai/vocoder.rs)")
-        precondition(specIm.elementCount == nFrames * nFreq,
-                     "Ops.vocoderISTFT: specIm must be [nFrames, nFreq] "
-                     + "= [\(nFrames), \(nFreq)] (ffai/vocoder.rs)")
+        precondition(
+            window.elementCount == nFFT,
+            "Ops.vocoderISTFT: window must be [nFFT=\(nFFT)] "
+                + "(ffai/vocoder.rs)")
+        precondition(
+            specRe.elementCount == nFrames * nFreq,
+            "Ops.vocoderISTFT: specRe must be [nFrames, nFreq] "
+                + "= [\(nFrames), \(nFreq)] (ffai/vocoder.rs)")
+        precondition(
+            specIm.elementCount == nFrames * nFreq,
+            "Ops.vocoderISTFT: specIm must be [nFrames, nFreq] "
+                + "= [\(nFrames), \(nFreq)] (ffai/vocoder.rs)")
         let outLen = (nFrames - 1) * hopLength + nFFT
         let result = out ?? Tensor.empty(shape: [outLen], dtype: specRe.dtype)
         // One thread per output sample.

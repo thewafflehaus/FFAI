@@ -16,6 +16,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("SafeTensors errors")
@@ -37,7 +38,8 @@ struct SafeTensorsErrorTests {
             _ = try SafeTensorsFile(url: url)
             Issue.record("expected throw")
         } catch let e as SafeTensorsError {
-            if case .headerTooSmall = e { /* ok */ } else {
+            if case .headerTooSmall = e { /* ok */
+            } else {
                 Issue.record("expected .headerTooSmall, got \(e)")
             }
         }
@@ -56,7 +58,8 @@ struct SafeTensorsErrorTests {
             _ = try SafeTensorsFile(url: url)
             Issue.record("expected throw")
         } catch let e as SafeTensorsError {
-            if case .headerJSONMalformed = e { /* ok */ } else {
+            if case .headerJSONMalformed = e { /* ok */
+            } else {
                 Issue.record("expected .headerJSONMalformed, got \(e)")
             }
         }
@@ -75,7 +78,8 @@ struct SafeTensorsErrorTests {
             _ = try SafeTensorsFile(url: url)
             Issue.record("expected throw")
         } catch let e as SafeTensorsError {
-            if case .headerEntryMalformed = e { /* ok */ } else {
+            if case .headerEntryMalformed = e { /* ok */
+            } else {
                 Issue.record("expected .headerEntryMalformed, got \(e)")
             }
         }
@@ -106,7 +110,8 @@ struct SafeTensorsErrorTests {
             _ = try file.tensor(named: "x")
             Issue.record("expected missingTensor — F64 should have been skipped")
         } catch let e as SafeTensorsError {
-            if case .missingTensor = e { /* ok */ } else {
+            if case .missingTensor = e { /* ok */
+            } else {
                 Issue.record("expected .missingTensor, got \(e)")
             }
         }
@@ -142,7 +147,8 @@ struct SafeTensorsErrorTests {
             _ = try bundle.tensor(named: "absent")
             Issue.record("expected throw")
         } catch let e as SafeTensorsError {
-            if case .missingTensor = e { /* ok */ } else {
+            if case .missingTensor = e { /* ok */
+            } else {
                 Issue.record("got \(e)")
             }
         }

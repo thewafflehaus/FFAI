@@ -45,9 +45,10 @@
 // `MoELayerTests`; this suite covers only the dense GDN-hybrid variant.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Qwen35 Text Integration", .serialized)
 struct Qwen35TextIntegrationTests {

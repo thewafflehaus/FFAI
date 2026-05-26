@@ -49,9 +49,9 @@ struct Gemma4VLVisionConfig {
 
     static func decode(_ c: ModelConfig) throws -> Gemma4VLVisionConfig {
         guard let depth = c.int("num_hidden_layers"),
-              let hidden = c.int("hidden_size"),
-              let numHeads = c.int("num_attention_heads"),
-              let patchSize = c.int("patch_size")
+            let hidden = c.int("hidden_size"),
+            let numHeads = c.int("num_attention_heads"),
+            let patchSize = c.int("patch_size")
         else {
             throw Gemma4Error.missingConfig("vision_config")
         }
@@ -62,8 +62,11 @@ struct Gemma4VLVisionConfig {
         // default 100.0 per the Gemma 4 vision config.
         var ropeTheta: Float = 100.0
         if let rp = c.nested("rope_parameters") {
-            if let t = rp["rope_theta"] as? Double { ropeTheta = Float(t) }
-            else if let t = rp["rope_theta"] as? Int { ropeTheta = Float(t) }
+            if let t = rp["rope_theta"] as? Double {
+                ropeTheta = Float(t)
+            } else if let t = rp["rope_theta"] as? Int {
+                ropeTheta = Float(t)
+            }
         }
         return Gemma4VLVisionConfig(
             depth: depth, hidden: hidden, intermediate: intermediate,
@@ -98,17 +101,26 @@ final class Gemma4VLVisionBlock {
     /// SwiGLU intermediate rounded up to the GEMM K-tile width.
     let paddedIntermediate: Int
 
-    init(inputNorm: RMSNorm, postAttnNorm: RMSNorm, preFFNorm: RMSNorm,
-         postFFNorm: RMSNorm, qProj: Linear, kProj: Linear, vProj: Linear,
-         oProj: Linear, qNorm: RMSNorm, kNorm: RMSNorm,
-         gate: Linear, up: Linear, down: Linear,
-         paddedIntermediate: Int, cfg: Gemma4VLVisionConfig) {
-        self.inputNorm = inputNorm; self.postAttnNorm = postAttnNorm
-        self.preFFNorm = preFFNorm; self.postFFNorm = postFFNorm
-        self.qProj = qProj; self.kProj = kProj
-        self.vProj = vProj; self.oProj = oProj
-        self.qNorm = qNorm; self.kNorm = kNorm
-        self.gate = gate; self.up = up; self.down = down
+    init(
+        inputNorm: RMSNorm, postAttnNorm: RMSNorm, preFFNorm: RMSNorm,
+        postFFNorm: RMSNorm, qProj: Linear, kProj: Linear, vProj: Linear,
+        oProj: Linear, qNorm: RMSNorm, kNorm: RMSNorm,
+        gate: Linear, up: Linear, down: Linear,
+        paddedIntermediate: Int, cfg: Gemma4VLVisionConfig
+    ) {
+        self.inputNorm = inputNorm
+        self.postAttnNorm = postAttnNorm
+        self.preFFNorm = preFFNorm
+        self.postFFNorm = postFFNorm
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
+        self.qNorm = qNorm
+        self.kNorm = kNorm
+        self.gate = gate
+        self.up = up
+        self.down = down
         self.paddedIntermediate = paddedIntermediate
         self.cfg = cfg
     }
@@ -116,48 +128,62 @@ final class Gemma4VLVisionBlock {
     /// Forward `[nTokens, hidden]` activations through one block.
     /// `xPos` / `yPos` are the per-token grid coordinates driving the
     /// multi-dimensional vision RoPE.
-    func forward(_ h: Tensor, nTokens: Int, xPos: [Int], yPos: [Int],
-                 device: Device) -> Tensor {
+    func forward(
+        _ h: Tensor, nTokens: Int, xPos: [Int], yPos: [Int],
+        device: Device
+    ) -> Tensor {
         let hidden = cfg.hidden
         // ── Attention sub-block ──
         let cmd = device.makeCommandBuffer()
-        let normed = Ops.rmsNormRows(h, weight: inputNorm.weight,
-                                     eps: inputNorm.eps, nRows: nTokens,
-                                     rowSize: hidden, on: cmd)
-        let q = projectRows(qProj, normed, nTokens: nTokens,
-                            outDim: cfg.numHeads * cfg.headDim, on: cmd)
-        let k = projectRows(kProj, normed, nTokens: nTokens,
-                            outDim: cfg.numKVHeads * cfg.headDim, on: cmd)
-        let v = projectRows(vProj, normed, nTokens: nTokens,
-                            outDim: cfg.numKVHeads * cfg.headDim, on: cmd)
+        let normed = Ops.rmsNormRows(
+            h, weight: inputNorm.weight,
+            eps: inputNorm.eps, nRows: nTokens,
+            rowSize: hidden, on: cmd)
+        let q = projectRows(
+            qProj, normed, nTokens: nTokens,
+            outDim: cfg.numHeads * cfg.headDim, on: cmd)
+        let k = projectRows(
+            kProj, normed, nTokens: nTokens,
+            outDim: cfg.numKVHeads * cfg.headDim, on: cmd)
+        let v = projectRows(
+            vProj, normed, nTokens: nTokens,
+            outDim: cfg.numKVHeads * cfg.headDim, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
 
-        let attn = cpuAttention(q: q, k: k, v: v, nTokens: nTokens,
-                                xPos: xPos, yPos: yPos, device: device)
+        let attn = cpuAttention(
+            q: q, k: k, v: v, nTokens: nTokens,
+            xPos: xPos, yPos: yPos, device: device)
 
         // ── Residual + MLP sub-block ──
         let cmd2 = device.makeCommandBuffer()
-        let attnProj = projectRows(oProj, attn, nTokens: nTokens,
-                                   outDim: hidden, on: cmd2)
-        let postAttn = Ops.rmsNormRows(attnProj, weight: postAttnNorm.weight,
-                                       eps: postAttnNorm.eps, nRows: nTokens,
-                                       rowSize: hidden, on: cmd2)
+        let attnProj = projectRows(
+            oProj, attn, nTokens: nTokens,
+            outDim: hidden, on: cmd2)
+        let postAttn = Ops.rmsNormRows(
+            attnProj, weight: postAttnNorm.weight,
+            eps: postAttnNorm.eps, nRows: nTokens,
+            rowSize: hidden, on: cmd2)
         let afterAttn = Ops.add(h, postAttn, on: cmd2)
-        let preFF = Ops.rmsNormRows(afterAttn, weight: preFFNorm.weight,
-                                    eps: preFFNorm.eps, nRows: nTokens,
-                                    rowSize: hidden, on: cmd2)
-        let g = projectRows(gate, preFF, nTokens: nTokens,
-                            outDim: paddedIntermediate, on: cmd2)
-        let u = projectRows(up, preFF, nTokens: nTokens,
-                            outDim: paddedIntermediate, on: cmd2)
+        let preFF = Ops.rmsNormRows(
+            afterAttn, weight: preFFNorm.weight,
+            eps: preFFNorm.eps, nRows: nTokens,
+            rowSize: hidden, on: cmd2)
+        let g = projectRows(
+            gate, preFF, nTokens: nTokens,
+            outDim: paddedIntermediate, on: cmd2)
+        let u = projectRows(
+            up, preFF, nTokens: nTokens,
+            outDim: paddedIntermediate, on: cmd2)
         let act = Ops.gelu(g, on: cmd2)
         let gated = Ops.mul(act, u, on: cmd2)
-        let d = projectRows(down, gated, nTokens: nTokens,
-                            outDim: hidden, on: cmd2)
-        let postFF = Ops.rmsNormRows(d, weight: postFFNorm.weight,
-                                     eps: postFFNorm.eps, nRows: nTokens,
-                                     rowSize: hidden, on: cmd2)
+        let d = projectRows(
+            down, gated, nTokens: nTokens,
+            outDim: hidden, on: cmd2)
+        let postFF = Ops.rmsNormRows(
+            d, weight: postFFNorm.weight,
+            eps: postFFNorm.eps, nRows: nTokens,
+            rowSize: hidden, on: cmd2)
         let result = Ops.add(afterAttn, postFF, on: cmd2)
         cmd2.commit()
         cmd2.waitUntilCompleted()
@@ -175,9 +201,11 @@ final class Gemma4VLVisionBlock {
     ///      rows — disjoint across tokens, so race-free.
     ///   2. Attention — per-(head, query-row): each `(head, i)` pair writes
     ///      to a disjoint `[oBase, oBase + headDim)` output slice.
-    private func cpuAttention(q: Tensor, k: Tensor, v: Tensor, nTokens: Int,
-                              xPos: [Int], yPos: [Int],
-                              device: Device) -> Tensor {
+    private func cpuAttention(
+        q: Tensor, k: Tensor, v: Tensor, nTokens: Int,
+        xPos: [Int], yPos: [Int],
+        device: Device
+    ) -> Tensor {
         let nHeads = cfg.numHeads
         let nKVHeads = cfg.numKVHeads
         let headDim = cfg.headDim
@@ -216,23 +244,24 @@ final class Gemma4VLVisionBlock {
             // optionally scaling by a per-dim weight vector.
             func applyRMSNorm(_ x: inout [Float], weight: [Float]?, eps: Float) {
                 var ss: Float = 0
-                for d in 0..<headDim { ss += x[d] * x[d] }
+                for d in 0 ..< headDim { ss += x[d] * x[d] }
                 let inv = 1.0 / (ss / Float(headDim) + eps).squareRoot()
-                for d in 0..<headDim {
+                for d in 0 ..< headDim {
                     x[d] = x[d] * inv * (weight != nil ? weight![d] : 1.0)
                 }
             }
             // Inline multi-dimensional RoPE: head dim splits into a per-axis
             // block (x then y); each block rotates by `position[axis]`.
             func applyRoPE(_ x: inout [Float], xp: Int, yp: Int) {
-                for axis in 0..<numDims {
+                for axis in 0 ..< numDims {
                     let start = axis * chPerDim
                     let pos = Float(axis == 0 ? xp : yp)
-                    for i in 0..<halfPerDim {
+                    for i in 0 ..< halfPerDim {
                         let exponent = (2.0 / Float(chPerDim)) * Float(i)
                         let timescale = pow(ropeTheta, exponent)
                         let theta = pos / timescale
-                        let c = cos(theta), s = sin(theta)
+                        let c = cos(theta)
+                        let s = sin(theta)
                         let a = x[start + i]
                         let b = x[start + halfPerDim + i]
                         // rotate-half: out_lo = a·c − b·s, out_hi = b·c + a·s.
@@ -241,18 +270,20 @@ final class Gemma4VLVisionBlock {
                     }
                 }
             }
-            for h in 0..<nHeads {
-                var x = Array(qa[(t * qStride + h * headDim)..<(t * qStride + (h + 1) * headDim)])
+            for h in 0 ..< nHeads {
+                var x = Array(qa[(t * qStride + h * headDim) ..< (t * qStride + (h + 1) * headDim)])
                 applyRMSNorm(&x, weight: qWeight, eps: qNormEps)
                 applyRoPE(&x, xp: xPos[t], yp: yPos[t])
                 qH[t * nHeads + h] = x
             }
-            for h in 0..<nKVHeads {
-                var xk = Array(ka[(t * kvStride + h * headDim)..<(t * kvStride + (h + 1) * headDim)])
+            for h in 0 ..< nKVHeads {
+                var xk = Array(
+                    ka[(t * kvStride + h * headDim) ..< (t * kvStride + (h + 1) * headDim)])
                 applyRMSNorm(&xk, weight: kWeight, eps: kNormEps)
                 applyRoPE(&xk, xp: xPos[t], yp: yPos[t])
                 kH[t * nKVHeads + h] = xk
-                var xv = Array(va[(t * kvStride + h * headDim)..<(t * kvStride + (h + 1) * headDim)])
+                var xv = Array(
+                    va[(t * kvStride + h * headDim) ..< (t * kvStride + (h + 1) * headDim)])
                 applyRMSNorm(&xv, weight: nil, eps: rmsNormEps)
                 vH[t * nKVHeads + h] = xv
             }
@@ -272,30 +303,33 @@ final class Gemma4VLVisionBlock {
         var qFlat = [Float](repeating: 0, count: nTokens * nHeads * headDim)
         var kFlat = [Float](repeating: 0, count: nKVHeads * nTokens * headDim)
         var vFlat = [Float](repeating: 0, count: nKVHeads * nTokens * headDim)
-        for t in 0..<nTokens {
-            for h in 0..<nHeads {
+        for t in 0 ..< nTokens {
+            for h in 0 ..< nHeads {
                 let qRow = qH[t * nHeads + h]
                 let dst = (t * nHeads + h) * headDim
-                for d in 0..<headDim { qFlat[dst + d] = qRow[d] }
+                for d in 0 ..< headDim { qFlat[dst + d] = qRow[d] }
             }
-            for h in 0..<nKVHeads {
+            for h in 0 ..< nKVHeads {
                 let kRow = kH[t * nKVHeads + h]
                 let vRow = vH[t * nKVHeads + h]
                 let dst = (h * nTokens + t) * headDim
-                for d in 0..<headDim {
+                for d in 0 ..< headDim {
                     kFlat[dst + d] = kRow[d]
                     vFlat[dst + d] = vRow[d]
                 }
             }
         }
-        let qT = Tensor.empty(shape: [nTokens, nHeads, headDim], dtype: .f32,
-                              device: device)
+        let qT = Tensor.empty(
+            shape: [nTokens, nHeads, headDim], dtype: .f32,
+            device: device)
         ImagePreprocessing.copyFloats(qFlat, into: qT)
-        let kT = Tensor.empty(shape: [nKVHeads, nTokens, headDim], dtype: .f32,
-                              device: device)
+        let kT = Tensor.empty(
+            shape: [nKVHeads, nTokens, headDim], dtype: .f32,
+            device: device)
         ImagePreprocessing.copyFloats(kFlat, into: kT)
-        let vT = Tensor.empty(shape: [nKVHeads, nTokens, headDim], dtype: .f32,
-                              device: device)
+        let vT = Tensor.empty(
+            shape: [nKVHeads, nTokens, headDim], dtype: .f32,
+            device: device)
         ImagePreprocessing.copyFloats(vFlat, into: vT)
         let cmd = device.makeCommandBuffer()
         let outT = Ops.sdpaBidirectional(
@@ -310,20 +344,24 @@ final class Gemma4VLVisionBlock {
         // expects. Re-emit in the input dtype so o_proj's GEMM sees the
         // expected element format.
         let outFlat = outT.toFloatArray()
-        let result = Tensor.empty(shape: [nTokens, qStride], dtype: q.dtype,
-                                  device: device)
+        let result = Tensor.empty(
+            shape: [nTokens, qStride], dtype: q.dtype,
+            device: device)
         ImagePreprocessing.copyFloats(outFlat, into: result)
         return result
     }
 
     /// Apply a `Linear` to every row of `[nTokens, *]` via `Ops.gemm`,
     /// then broadcast-add the bias if present.
-    private func projectRows(_ linear: Linear, _ x: Tensor, nTokens: Int,
-                             outDim: Int, on cmd: MTLCommandBuffer) -> Tensor {
+    private func projectRows(
+        _ linear: Linear, _ x: Tensor, nTokens: Int,
+        outDim: Int, on cmd: MTLCommandBuffer
+    ) -> Tensor {
         let y = Ops.gemm(weight: linear.weight, input: x, nRows: nTokens, on: cmd)
         guard let bias = linear.bias else { return y }
-        return addRowBias(y, bias: bias, nRows: nTokens,
-                          rowSize: outDim, on: cmd)
+        return addRowBias(
+            y, bias: bias, nRows: nTokens,
+            rowSize: outDim, on: cmd)
     }
 }
 
@@ -357,11 +395,13 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
     /// Soft tokens one image contributes after pooling.
     let tokensPerImage: Int
 
-    init(cfg: Gemma4VLVisionConfig, patchEmbedWeight: Tensor,
-         patchDimPadded: Int, posTableX: Tensor, posTableY: Tensor,
-         blocks: [Gemma4VLVisionBlock], stdBias: Tensor?, stdScale: Tensor?,
-         embedderProjection: AnyLinear, embedderNormEps: Float,
-         textHidden: Int, dtype: DType, gridSide: Int, tokensPerImage: Int) {
+    init(
+        cfg: Gemma4VLVisionConfig, patchEmbedWeight: Tensor,
+        patchDimPadded: Int, posTableX: Tensor, posTableY: Tensor,
+        blocks: [Gemma4VLVisionBlock], stdBias: Tensor?, stdScale: Tensor?,
+        embedderProjection: AnyLinear, embedderNormEps: Float,
+        textHidden: Int, dtype: DType, gridSide: Int, tokensPerImage: Int
+    ) {
         self.cfg = cfg
         self.patchEmbedWeight = patchEmbedWeight
         self.patchDimPadded = patchDimPadded
@@ -388,10 +428,12 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
         // The vision tower weights are namespaced under `vision_tower.`
         // (after `model.` stripping); the multi-modal embedder under
         // `embed_vision.`. Probe both possible prefixes.
-        let vt = weights.has("vision_tower.patch_embedder.input_proj.weight")
+        let vt =
+            weights.has("vision_tower.patch_embedder.input_proj.weight")
             ? weights.prefixed("vision_tower.")
             : weights.prefixed("model.vision_tower.")
-        let ev = weights.has("embed_vision.embedding_projection.weight")
+        let ev =
+            weights.has("embed_vision.embedding_projection.weight")
             ? weights.prefixed("embed_vision.")
             : weights.prefixed("model.embed_vision.")
 
@@ -418,7 +460,7 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
             * gemmKTileWidth
         var blocks: [Gemma4VLVisionBlock] = []
         blocks.reserveCapacity(cfg.depth)
-        for i in 0..<cfg.depth {
+        for i in 0 ..< cfg.depth {
             let p = "encoder.layers.\(i)"
             func lin(_ name: String) throws -> Linear {
                 // Gemma 4 vision linears are wrapped in a clippable
@@ -426,44 +468,50 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
                 // The leading `try` covers the whole `??` — the RHS
                 // `vt.tensor(...)` throws, so the operator expression
                 // must be marked `try` at its start.
-                let w = try (try? vt.tensor(named: "\(p).\(name).linear.weight"))
+                let w =
+                    try (try? vt.tensor(named: "\(p).\(name).linear.weight"))
                     ?? vt.tensor(named: "\(p).\(name).weight")
-                let b = (try? vt.tensor(named: "\(p).\(name).linear.bias"))
+                let b =
+                    (try? vt.tensor(named: "\(p).\(name).linear.bias"))
                     ?? (try? vt.tensor(named: "\(p).\(name).bias"))
                 return Linear(weight: w, bias: b)
             }
             // The four per-block norms are GemmaRMSNorm — fold the +1.
             func gemmaNorm(_ name: String) throws -> RMSNorm {
                 let raw = try vt.tensor(named: "\(p).\(name).weight")
-                return RMSNorm(weight: foldGemmaRMSNormWeight(raw),
-                               eps: cfg.rmsNormEps)
+                return RMSNorm(
+                    weight: foldGemmaRMSNormWeight(raw),
+                    eps: cfg.rmsNormEps)
             }
             // The q / k head norms are plain (weighted, no +1) RMSNorms.
             func headNorm(_ name: String) throws -> RMSNorm {
-                RMSNorm(weight: try vt.tensor(named: "\(p).\(name).weight"),
-                        eps: cfg.rmsNormEps)
+                RMSNorm(
+                    weight: try vt.tensor(named: "\(p).\(name).weight"),
+                    eps: cfg.rmsNormEps)
             }
             let gate = try lin("mlp.gate_proj")
             let up = try lin("mlp.up_proj")
             let down = try lin("mlp.down_proj")
-            blocks.append(Gemma4VLVisionBlock(
-                inputNorm: try gemmaNorm("input_layernorm"),
-                postAttnNorm: try gemmaNorm("post_attention_layernorm"),
-                preFFNorm: try gemmaNorm("pre_feedforward_layernorm"),
-                postFFNorm: try gemmaNorm("post_feedforward_layernorm"),
-                qProj: try lin("self_attn.q_proj"),
-                kProj: try lin("self_attn.k_proj"),
-                vProj: try lin("self_attn.v_proj"),
-                oProj: try lin("self_attn.o_proj"),
-                qNorm: try headNorm("self_attn.q_norm"),
-                kNorm: try headNorm("self_attn.k_norm"),
-                gate: padLinearRows(gate, toRows: paddedIntermediate, device: device),
-                up: padLinearRows(up, toRows: paddedIntermediate, device: device),
-                down: Linear(
-                    weight: padLinearColsTo(down.weight, toCols: paddedIntermediate,
-                                            device: device),
-                    bias: down.bias),
-                paddedIntermediate: paddedIntermediate, cfg: cfg))
+            blocks.append(
+                Gemma4VLVisionBlock(
+                    inputNorm: try gemmaNorm("input_layernorm"),
+                    postAttnNorm: try gemmaNorm("post_attention_layernorm"),
+                    preFFNorm: try gemmaNorm("pre_feedforward_layernorm"),
+                    postFFNorm: try gemmaNorm("post_feedforward_layernorm"),
+                    qProj: try lin("self_attn.q_proj"),
+                    kProj: try lin("self_attn.k_proj"),
+                    vProj: try lin("self_attn.v_proj"),
+                    oProj: try lin("self_attn.o_proj"),
+                    qNorm: try headNorm("self_attn.q_norm"),
+                    kNorm: try headNorm("self_attn.k_norm"),
+                    gate: padLinearRows(gate, toRows: paddedIntermediate, device: device),
+                    up: padLinearRows(up, toRows: paddedIntermediate, device: device),
+                    down: Linear(
+                        weight: padLinearColsTo(
+                            down.weight, toCols: paddedIntermediate,
+                            device: device),
+                        bias: down.bias),
+                    paddedIntermediate: paddedIntermediate, cfg: cfg))
         }
 
         // ── Standardization affine (optional) ──
@@ -509,8 +557,9 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
         // ── Patch unfold + embed ──
         let unfolded = unfoldPatches(image: image)
         let cmd = device.makeCommandBuffer()
-        var h = Ops.gemm(weight: patchEmbedWeight, input: unfolded,
-                         nRows: nPatches, on: cmd)
+        var h = Ops.gemm(
+            weight: patchEmbedWeight, input: unfolded,
+            nRows: nPatches, on: cmd)
         // Add the learned 2D position embedding (x + y axis lookups).
         let posEmb = positionEmbedding()
         h = Ops.add(h, posEmb, on: cmd)
@@ -520,17 +569,19 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
         // ── Per-patch grid coordinates ──
         var xPos = [Int](repeating: 0, count: nPatches)
         var yPos = [Int](repeating: 0, count: nPatches)
-        for y in 0..<side {
-            for x in 0..<side {
+        for y in 0 ..< side {
+            for x in 0 ..< side {
                 let idx = y * side + x
-                xPos[idx] = x; yPos[idx] = y
+                xPos[idx] = x
+                yPos[idx] = y
             }
         }
 
         // ── Block stack ──
         for block in blocks {
-            h = block.forward(h, nTokens: nPatches, xPos: xPos, yPos: yPos,
-                              device: device)
+            h = block.forward(
+                h, nTokens: nPatches, xPos: xPos, yPos: yPos,
+                device: device)
         }
 
         // ── Attention pooling → soft tokens, then multi-modal embed ──
@@ -552,20 +603,20 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
     private func unfoldPatches(image: Tensor) -> Tensor {
         let side = gridSide
         let p = cfg.patchSize
-        let pix = image.toFloatArray()        // [3, H, W]
+        let pix = image.toFloatArray()  // [3, H, W]
         let imgSide = side * p
         var rows = [Float](repeating: 0, count: side * side * patchDimPadded)
-        for pr in 0..<side {
-            for pc in 0..<side {
+        for pr in 0 ..< side {
+            for pc in 0 ..< side {
                 let patch = pr * side + pc
                 var col = 0
                 // Layout: (channel, py, px) — matches the reference's
                 // `(0,2,4,3,5,1)` transpose then channel-major flatten.
-                for py in 0..<p {
+                for py in 0 ..< p {
                     let yy = pr * p + py
-                    for px in 0..<p {
+                    for px in 0 ..< p {
                         let xx = pc * p + px
-                        for ch in 0..<3 {
+                        for ch in 0 ..< 3 {
                             let v = pix[(ch * imgSide + yy) * imgSide + xx]
                             // Re-centre: 2·(v − 0.5).
                             rows[patch * patchDimPadded + col] = 2 * (v - 0.5)
@@ -592,12 +643,12 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
         let tableY = posTableY.toFloatArray()
         let posSize = cfg.positionEmbeddingSize
         var dst = [Float](repeating: 0, count: side * side * hidden)
-        for pr in 0..<side {
-            for pc in 0..<side {
+        for pr in 0 ..< side {
+            for pc in 0 ..< side {
                 let patch = pr * side + pc
                 let xi = min(posSize - 1, pc)
                 let yi = min(posSize - 1, pr)
-                for d in 0..<hidden {
+                for d in 0 ..< hidden {
                     dst[patch * hidden + d] =
                         tableX[xi * hidden + d] + tableY[yi * hidden + d]
                 }
@@ -626,13 +677,13 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
         var pooled = [Float](repeating: 0, count: softSide * softSide * hidden)
         let stdB = stdBias?.toFloatArray()
         let stdS = stdScale?.toFloatArray()
-        for sy in 0..<softSide {
-            for sx in 0..<softSide {
+        for sy in 0 ..< softSide {
+            for sx in 0 ..< softSide {
                 let outBase = (sy * softSide + sx) * hidden
-                for c in 0..<hidden {
+                for c in 0 ..< hidden {
                     var acc: Float = 0
-                    for dy in 0..<k {
-                        for dx in 0..<k {
+                    for dy in 0 ..< k {
+                        for dx in 0 ..< k {
                             let py = sy * k + dy
                             let px = sx * k + dx
                             acc += src[(py * side + px) * hidden + c]
@@ -646,8 +697,9 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
                 }
             }
         }
-        let out = Tensor.empty(shape: [softSide * softSide, hidden],
-                               dtype: dtype, device: device)
+        let out = Tensor.empty(
+            shape: [softSide * softSide, hidden],
+            dtype: dtype, device: device)
         ImagePreprocessing.copyFloats(pooled, into: out)
         return out
     }
@@ -663,14 +715,15 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
         // Unweighted RMSNorm — the embedder's pre-projection norm has no
         // learned scale.
         var normed = [Float](repeating: 0, count: nTokens * hidden)
-        for t in 0..<nTokens {
+        for t in 0 ..< nTokens {
             var ss: Float = 0
-            for d in 0..<hidden { ss += src[t * hidden + d] * src[t * hidden + d] }
+            for d in 0 ..< hidden { ss += src[t * hidden + d] * src[t * hidden + d] }
             let inv = 1.0 / (ss / Float(hidden) + embedderNormEps).squareRoot()
-            for d in 0..<hidden { normed[t * hidden + d] = src[t * hidden + d] * inv }
+            for d in 0 ..< hidden { normed[t * hidden + d] = src[t * hidden + d] * inv }
         }
-        let normedT = Tensor.empty(shape: [nTokens, hidden], dtype: dtype,
-                                   device: device)
+        let normedT = Tensor.empty(
+            shape: [nTokens, hidden], dtype: dtype,
+            device: device)
         ImagePreprocessing.copyFloats(normed, into: normedT)
 
         let cmd = device.makeCommandBuffer()
@@ -690,15 +743,17 @@ final class Gemma4VLVisionModel: @unchecked Sendable {
     static func splitPositionTable(_ raw: Tensor, device: Device)
         -> (x: Tensor, y: Tensor)
     {
-        precondition(raw.shape.count == 3 && raw.shape[0] == 2,
-                     "Gemma4VL: position table must be [2, posSize, hidden], "
-                     + "got \(raw.shape)")
-        let posSize = raw.shape[1], hidden = raw.shape[2]
+        precondition(
+            raw.shape.count == 3 && raw.shape[0] == 2,
+            "Gemma4VL: position table must be [2, posSize, hidden], "
+                + "got \(raw.shape)")
+        let posSize = raw.shape[1]
+        let hidden = raw.shape[2]
         let src = raw.toFloatArray()
         var x = [Float](repeating: 0, count: posSize * hidden)
         var y = [Float](repeating: 0, count: posSize * hidden)
         let plane = posSize * hidden
-        for i in 0..<plane {
+        for i in 0 ..< plane {
             x[i] = src[i]
             y[i] = src[plane + i]
         }
@@ -815,7 +870,8 @@ public enum Gemma4VL {
             weights: weights, dtype: textEngine.dtype,
             quantization: config.quantization, device: device)
 
-        let imageTokenId = config.int("image_token_id")
+        let imageTokenId =
+            config.int("image_token_id")
             ?? config.int("image_token_index") ?? defaultImageTokenId
         return try VisionModel(
             visionEncoder: vision.asVisionEncoder(),

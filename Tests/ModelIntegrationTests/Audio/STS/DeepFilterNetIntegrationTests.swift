@@ -25,9 +25,10 @@
 // keep model tests serialised and within the memory budget.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 /// Synthetic clean audio fixture for offline 48 kHz path — separate
 /// from the shared 16 kHz `clean_001.wav` fixture (which targets STT).
@@ -42,7 +43,7 @@ enum DeepFilterNetFixtures {
         let freq: Float = 440.0
         let amplitude: Float = 0.25
         let n = Int(sampleRate * duration)
-        return (0..<n).map { i in
+        return (0 ..< n).map { i in
             amplitude * sinf(2.0 * Float.pi * freq * Float(i) / sampleRate)
         }
     }
@@ -80,8 +81,9 @@ struct DeepFilterNetIntegrationTests {
         )
 
         // Samples should be in [-1, 1] (iSTFT applies a hard clip).
-        #expect(enhanced.allSatisfy { abs($0) <= 1.0 + 1e-5 },
-                "all enhanced samples must be in [-1, 1]")
+        #expect(
+            enhanced.allSatisfy { abs($0) <= 1.0 + 1e-5 },
+            "all enhanced samples must be in [-1, 1]")
 
         // At least some samples should be non-zero (the model processed the audio).
         let hasNonZero = enhanced.contains { abs($0) > 1e-6 }

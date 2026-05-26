@@ -26,9 +26,10 @@
 // DO NOT run this file with `swift test`; use `make test-integration`.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("LFMAudio Integration", .serialized)
 struct LFMAudioIntegrationTests {
@@ -74,9 +75,10 @@ struct LFMAudioIntegrationTests {
 
         // Config reports the expected omni-audio capabilities via the registry.
         let cfgHandle = LFMAudioModel.handles(
-            ModelConfig(architecture: "Lfm2AudioForConditionalGeneration",
-                        modelType: "lfm_audio",
-                        raw: [:]))
+            ModelConfig(
+                architecture: "Lfm2AudioForConditionalGeneration",
+                modelType: "lfm_audio",
+                raw: [:]))
         #expect(cfgHandle)
     }
 
@@ -85,11 +87,11 @@ struct LFMAudioIntegrationTests {
     @Test("encodeAudio — synthetic 350 Hz tone produces finite feature tokens")
     func encodeAudio_syntheticTone() async throws {
         let model = try await loadLFMAudio()
-        let sr = model.config.preprocessor.sampleRate   // 16 000 Hz
+        let sr = model.config.preprocessor.sampleRate  // 16 000 Hz
 
         // 1 s 350 Hz pure tone at 16 kHz.
         var wave = [Float](repeating: 0, count: sr)
-        for i in 0..<sr {
+        for i in 0 ..< sr {
             wave[i] = 0.3 * sin(2.0 * Float.pi * 350.0 * Float(i) / Float(sr))
         }
 
@@ -97,25 +99,31 @@ struct LFMAudioIntegrationTests {
 
         // Shape: [nTokens, lfmHidden]
         #expect(features.shape.count == 2)
-        #expect(features.shape[1] == model.config.lfmHidden,
-                "second dim must equal lfmHidden \(model.config.lfmHidden)")
-        #expect(features.shape[0] > 0,
-                "LFMAudio produced zero tokens for a 1-s tone")
+        #expect(
+            features.shape[1] == model.config.lfmHidden,
+            "second dim must equal lfmHidden \(model.config.lfmHidden)")
+        #expect(
+            features.shape[0] > 0,
+            "LFMAudio produced zero tokens for a 1-s tone")
 
         // All values finite.
         let vals = features.toFloatArray()
-        #expect(vals.allSatisfy { $0.isFinite },
-                "LFMAudio audio features contain NaN / Inf")
+        #expect(
+            vals.allSatisfy { $0.isFinite },
+            "LFMAudio audio features contain NaN / Inf")
 
         // Non-degenerate (non-zero variance).
         let mean = vals.reduce(0, +) / Float(vals.count)
-        let variance = vals.map { ($0 - mean) * ($0 - mean) }
+        let variance =
+            vals.map { ($0 - mean) * ($0 - mean) }
             .reduce(0, +) / Float(vals.count)
-        #expect(variance > 1e-8,
-                "LFMAudio audio features are degenerate (variance=\(variance))")
+        #expect(
+            variance > 1e-8,
+            "LFMAudio audio features are degenerate (variance=\(variance))")
 
-        print("LFMAudio encoded 1-s tone → \(features.shape[0]) tokens "
-              + "× \(features.shape[1]) dims, variance=\(variance)")
+        print(
+            "LFMAudio encoded 1-s tone → \(features.shape[0]) tokens "
+                + "× \(features.shape[1]) dims, variance=\(variance)")
     }
 
     @Test("encodeAudio — real speech produces non-degenerate feature tokens")
@@ -129,20 +137,24 @@ struct LFMAudioIntegrationTests {
 
         #expect(features.shape.count == 2)
         #expect(features.shape[1] == model.config.lfmHidden)
-        #expect(features.shape[0] > 0,
-                "LFMAudio produced no tokens for real speech")
+        #expect(
+            features.shape[0] > 0,
+            "LFMAudio produced no tokens for real speech")
 
         let vals = features.toFloatArray()
         #expect(vals.allSatisfy { $0.isFinite })
 
         let mean = vals.reduce(0, +) / Float(vals.count)
-        let variance = vals.map { ($0 - mean) * ($0 - mean) }
+        let variance =
+            vals.map { ($0 - mean) * ($0 - mean) }
             .reduce(0, +) / Float(vals.count)
-        #expect(variance > 1e-6,
-                "LFMAudio real-speech features are degenerate (variance=\(variance))")
+        #expect(
+            variance > 1e-6,
+            "LFMAudio real-speech features are degenerate (variance=\(variance))")
 
-        print("LFMAudio encoded real speech → \(features.shape[0]) tokens "
-              + "× \(features.shape[1]) dims, variance=\(variance)")
+        print(
+            "LFMAudio encoded real speech → \(features.shape[0]) tokens "
+                + "× \(features.shape[1]) dims, variance=\(variance)")
     }
 
     @Test("encodeAudio — short clip does not crash or return wrong shape")
@@ -154,7 +166,7 @@ struct LFMAudioIntegrationTests {
         // tokens, but must not crash or return a malformed tensor.
         let count = sr / 10
         var wave = [Float](repeating: 0, count: count)
-        for i in 0..<count {
+        for i in 0 ..< count {
             wave[i] = 0.1 * sin(2.0 * Float.pi * 200.0 * Float(i) / Float(sr))
         }
 

@@ -31,10 +31,11 @@
 // Run via `make test-integration`.
 
 import Foundation
+import TestHelpers
 import Testing
 import Tokenizers
+
 @testable import FFAI
-import TestHelpers
 
 @Suite("GLMASR Integration", .serialized)
 struct GLMASRIntegrationTests {
@@ -63,8 +64,8 @@ struct GLMASRIntegrationTests {
     /// to run without hitting edge cases.
     private func syntheticTone(hz: Float = 440, seconds: Double = 1.0) -> [Float] {
         let sr = 16_000
-        let n  = Int(Double(sr) * seconds)
-        return (0..<n).map { 0.3 * sin(2 * Float.pi * hz * Float($0) / Float(sr)) }
+        let n = Int(Double(sr) * seconds)
+        return (0 ..< n).map { 0.3 * sin(2 * Float.pi * hz * Float($0) / Float(sr)) }
     }
 
     // ─── Tests ───────────────────────────────────────────────────────────
@@ -98,14 +99,17 @@ struct GLMASRIntegrationTests {
 
         // Adapter FC1 input is mergedDim = dModel * mergeFactor.
         let mergedDim = gc.whisperDModel * gc.mergeFactor
-        #expect(model.adaptingFC1Weight.shape[1] == mergedDim,
-                "FC1 input dim mismatch with merged dim")
-        #expect(model.adaptingFC2Weight.shape[0] == gc.lmHiddenSize,
-                "FC2 output dim must be lmHiddenSize")
+        #expect(
+            model.adaptingFC1Weight.shape[1] == mergedDim,
+            "FC1 input dim mismatch with merged dim")
+        #expect(
+            model.adaptingFC2Weight.shape[0] == gc.lmHiddenSize,
+            "FC2 output dim must be lmHiddenSize")
 
-        print("[GLM-ASR integration] config: whisper=\(gc.whisperEncoderLayers)L "
-              + "lm=\(gc.lmNumLayers)L hidden=\(gc.lmHiddenSize) "
-              + "dtype=\(model.dtype)")
+        print(
+            "[GLM-ASR integration] config: whisper=\(gc.whisperEncoderLayers)L "
+                + "lm=\(gc.lmNumLayers)L hidden=\(gc.lmHiddenSize) "
+                + "dtype=\(model.dtype)")
     }
 
     @Test("encodeAudio — produces finite, non-degenerate audio features")
@@ -116,21 +120,25 @@ struct GLMASRIntegrationTests {
         let features = model.encodeAudio(waveform: wave)
 
         // Shape: [nAudioTokens, lmHiddenSize].
-        #expect(features.shape.count == 2,
-                "audio features have unexpected rank \(features.shape.count)")
-        #expect(features.shape[1] == model.config.lmHiddenSize,
-                "audio feature hidden dim mismatch")
+        #expect(
+            features.shape.count == 2,
+            "audio features have unexpected rank \(features.shape.count)")
+        #expect(
+            features.shape[1] == model.config.lmHiddenSize,
+            "audio feature hidden dim mismatch")
         #expect(features.shape[0] > 0, "encodeAudio produced zero tokens")
 
         let vals = features.toFloatArray()
-        #expect(vals.allSatisfy { $0.isFinite },
-                "encodeAudio output contains NaN or Inf")
+        #expect(
+            vals.allSatisfy { $0.isFinite },
+            "encodeAudio output contains NaN or Inf")
 
         let variance = vals.map { $0 * $0 }.reduce(0, +) / Float(vals.count)
         #expect(variance > 1e-6, "encodeAudio output is degenerate (near-zero)")
 
-        print("[GLM-ASR integration] encodeAudio: \(features.shape[0]) tokens "
-              + "× \(features.shape[1]) dim")
+        print(
+            "[GLM-ASR integration] encodeAudio: \(features.shape[0]) tokens "
+                + "× \(features.shape[1]) dim")
     }
 
     @Test("transcribe — real speech produces a non-degenerate transcript")
@@ -156,8 +164,9 @@ struct GLMASRIntegrationTests {
 
         // Non-degenerate: a genuine decode visits several distinct words.
         let words = transcript.split(separator: " ")
-        #expect(words.count >= 2,
-                "GLM-ASR transcript is degenerate: \(transcript.debugDescription)")
+        #expect(
+            words.count >= 2,
+            "GLM-ASR transcript is degenerate: \(transcript.debugDescription)")
     }
 
     @Test("transcribe — synthetic tone does not crash or produce NaN")
@@ -188,7 +197,8 @@ struct GLMASRIntegrationTests {
             return
         }
         #expect(loaded.capabilities == Capability.speechToText)
-        print("[GLM-ASR integration] registry routed correctly, "
-              + "capabilities=\(loaded.capabilities)")
+        print(
+            "[GLM-ASR integration] registry routed correctly, "
+                + "capabilities=\(loaded.capabilities)")
     }
 }

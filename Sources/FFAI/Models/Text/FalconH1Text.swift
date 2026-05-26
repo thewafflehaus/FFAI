@@ -54,9 +54,9 @@ public struct FalconH1Hybrid: FalconH1Variant {
         device: Device
     ) throws -> FalconH1Model {
         guard let hidden = config.hiddenSize,
-              let nLayers = config.numLayers,
-              let vocab = config.vocabSize,
-              let nHeads = config.numAttentionHeads
+            let nLayers = config.numLayers,
+            let vocab = config.vocabSize,
+            let nHeads = config.numAttentionHeads
         else { throw FalconH1Error.missingConfig("hidden / layers / vocab / num_attention_heads") }
         let nKVHeads = config.numKeyValueHeads ?? nHeads
         let headDim = config.headDim ?? (hidden / nHeads)
@@ -89,7 +89,7 @@ public struct FalconH1Hybrid: FalconH1Variant {
         guard dSSM == mambaNHeads * mambaHeadDim else {
             throw FalconH1Error.unsupportedConfig(
                 "mamba_d_ssm (\(dSSM)) must equal mamba_n_heads*mamba_d_head "
-                + "(\(mambaNHeads * mambaHeadDim))")
+                    + "(\(mambaNHeads * mambaHeadDim))")
         }
         // The shipped Mamba 2 SSM kernels gate y with `silu(z)` directly.
         // FalconH1 checkpoints with `mamba_rms_norm=true` apply a gated
@@ -118,7 +118,8 @@ public struct FalconH1Hybrid: FalconH1Variant {
         // and corrupt the residual-stream magnitudes — so we skip all
         // folding and treat every multiplier as 1.0.
         let conv1dShape = (try weights.tensor(named: "model.layers.0.mamba.conv1d.weight")).shape
-        let preSanitized = conv1dShape.count >= 2
+        let preSanitized =
+            conv1dShape.count >= 2
             && conv1dShape[conv1dShape.count - 1] <= conv1dShape[1]
 
         func mult(_ key: String, default def: Float = 1.0) -> Float {
@@ -131,12 +132,14 @@ public struct FalconH1Hybrid: FalconH1Variant {
         let keyMultiplier = mult("key_multiplier")
         let ssmInMultiplier = mult("ssm_in_multiplier")
         let ssmOutMultiplier = mult("ssm_out_multiplier")
-        let mlpMultipliers: [Float] = preSanitized
+        let mlpMultipliers: [Float] =
+            preSanitized
             ? [1.0, 1.0]
             : (config.raw["mlp_multipliers"] as? [Double])?.map { Float($0) } ?? [1.0, 1.0]
         let mlpGateMultiplier = mlpMultipliers.first ?? 1.0
         let mlpDownMultiplier = mlpMultipliers.count > 1 ? mlpMultipliers[1] : 1.0
-        let ssmMultipliers: [Float] = preSanitized
+        let ssmMultipliers: [Float] =
+            preSanitized
             ? [1.0, 1.0, 1.0, 1.0, 1.0]
             : (config.raw["ssm_multipliers"] as? [Double])?.map { Float($0) }
                 ?? [1.0, 1.0, 1.0, 1.0, 1.0]
@@ -174,19 +177,22 @@ public struct FalconH1Hybrid: FalconH1Variant {
         // ── Per-layer construction ────────────────────────────────────
         var layers: [FalconH1DecoderLayer] = []
         layers.reserveCapacity(nLayers)
-        for i in 0..<nLayers {
+        for i in 0 ..< nLayers {
             let p = "model.layers.\(i)"
 
             // ── Attention path ────────────────────────────────────────
             // q_proj / k_proj fold attention_in_multiplier; k_proj also
             // folds key_multiplier; o_proj folds attention_out_multiplier.
-            let qW = scaleTensor(try weights.tensor(named: "\(p).self_attn.q_proj.weight"),
-                                 by: attnInMultiplier, device: device)
-            let kW = scaleTensor(try weights.tensor(named: "\(p).self_attn.k_proj.weight"),
-                                 by: attnInMultiplier * keyMultiplier, device: device)
+            let qW = scaleTensor(
+                try weights.tensor(named: "\(p).self_attn.q_proj.weight"),
+                by: attnInMultiplier, device: device)
+            let kW = scaleTensor(
+                try weights.tensor(named: "\(p).self_attn.k_proj.weight"),
+                by: attnInMultiplier * keyMultiplier, device: device)
             let vW = try weights.tensor(named: "\(p).self_attn.v_proj.weight")
-            let oW = scaleTensor(try weights.tensor(named: "\(p).self_attn.o_proj.weight"),
-                                 by: attnOutMultiplier, device: device)
+            let oW = scaleTensor(
+                try weights.tensor(named: "\(p).self_attn.o_proj.weight"),
+                by: attnOutMultiplier, device: device)
             let qProj = AnyLinear(Linear(weight: qW))
             let kProj = AnyLinear(Linear(weight: kW))
             let vProj = AnyLinear(Linear(weight: vW))
@@ -196,21 +202,25 @@ public struct FalconH1Hybrid: FalconH1Variant {
             // in_proj folds the per-row µP vector; out_proj folds
             // ssm_out_multiplier.
             let inProjRaw = try weights.tensor(named: "\(p).mamba.in_proj.weight")
-            let inProjW = scaleRows(inProjRaw, byRowVector: mupVector,
-                                    dtype: activationDtype, device: device)
-            let outProjW = scaleTensor(try weights.tensor(named: "\(p).mamba.out_proj.weight"),
-                                       by: ssmOutMultiplier, device: device)
+            let inProjW = scaleRows(
+                inProjRaw, byRowVector: mupVector,
+                dtype: activationDtype, device: device)
+            let outProjW = scaleTensor(
+                try weights.tensor(named: "\(p).mamba.out_proj.weight"),
+                by: ssmOutMultiplier, device: device)
             let inProj = AnyLinear(Linear(weight: inProjW))
             let outProj = AnyLinear(Linear(weight: outProjW))
 
             // conv1d.weight ships [conv_dim, 1, kernel]; the metaltile
             // kernel wants [kernel, conv_dim]. Same transpose Mamba 2 does.
             let convWSrc = try weights.tensor(named: "\(p).mamba.conv1d.weight")
-            precondition(convWSrc.elementCount == convDim * convKernel,
-                         "FalconH1: conv1d.weight count mismatch: \(convWSrc.shape)")
-            let convW = transposeConv1dWeightFH1(src: convWSrc,
-                                                 kernel: convKernel, channels: convDim,
-                                                 dtype: activationDtype, device: device)
+            precondition(
+                convWSrc.elementCount == convDim * convKernel,
+                "FalconH1: conv1d.weight count mismatch: \(convWSrc.shape)")
+            let convW = transposeConv1dWeightFH1(
+                src: convWSrc,
+                kernel: convKernel, channels: convDim,
+                dtype: activationDtype, device: device)
             let convB: Tensor = {
                 if useConvBias, weights.has("\(p).mamba.conv1d.bias") {
                     return (try? weights.tensor(named: "\(p).mamba.conv1d.bias"))
@@ -223,19 +233,24 @@ public struct FalconH1Hybrid: FalconH1Variant {
             let aLog = try weights.tensor(named: "\(p).mamba.A_log")
             let dVec = try weights.tensor(named: "\(p).mamba.D")
             let dtBiasSrc = try weights.tensor(named: "\(p).mamba.dt_bias")
-            let aEff = computeAEffFH1(aLog: aLog, nHeads: mambaNHeads,
-                                      dtype: activationDtype, device: device)
-            let dtBias = castVectorFH1(dtBiasSrc, count: mambaNHeads,
-                                       dtype: activationDtype, device: device)
-            let dTiled = tileDFH1(d: dVec, nHeads: mambaNHeads, headDim: mambaHeadDim,
-                                  dtype: activationDtype, device: device)
+            let aEff = computeAEffFH1(
+                aLog: aLog, nHeads: mambaNHeads,
+                dtype: activationDtype, device: device)
+            let dtBias = castVectorFH1(
+                dtBiasSrc, count: mambaNHeads,
+                dtype: activationDtype, device: device)
+            let dTiled = tileDFH1(
+                d: dVec, nHeads: mambaNHeads, headDim: mambaHeadDim,
+                dtype: activationDtype, device: device)
 
             // ── MLP (SwiGLU) — gate/down fold mlp_multipliers ─────────
-            let gateW = scaleTensor(try weights.tensor(named: "\(p).feed_forward.gate_proj.weight"),
-                                    by: mlpGateMultiplier, device: device)
+            let gateW = scaleTensor(
+                try weights.tensor(named: "\(p).feed_forward.gate_proj.weight"),
+                by: mlpGateMultiplier, device: device)
             let upW = try weights.tensor(named: "\(p).feed_forward.up_proj.weight")
-            let downW = scaleTensor(try weights.tensor(named: "\(p).feed_forward.down_proj.weight"),
-                                    by: mlpDownMultiplier, device: device)
+            let downW = scaleTensor(
+                try weights.tensor(named: "\(p).feed_forward.down_proj.weight"),
+                by: mlpDownMultiplier, device: device)
             let gateProj = AnyLinear(Linear(weight: gateW))
             let upProj = AnyLinear(Linear(weight: upW))
             let downProj = AnyLinear(Linear(weight: downW))
@@ -256,14 +271,15 @@ public struct FalconH1Hybrid: FalconH1Variant {
                 nHeads: mambaNHeads, headDim: mambaHeadDim, stateDim: stateDim,
                 convKernel: convKernel, dtype: activationDtype)
 
-            layers.append(FalconH1DecoderLayer(
-                inputNorm: inputNorm, preFfNorm: preFfNorm,
-                mamba: mamba,
-                qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
-                gateProj: gateProj, upProj: upProj, downProj: downProj,
-                hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
-                headDim: headDim, intermediate: intermediate,
-                ropeTheta: theta))
+            layers.append(
+                FalconH1DecoderLayer(
+                    inputNorm: inputNorm, preFfNorm: preFfNorm,
+                    mamba: mamba,
+                    qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
+                    gateProj: gateProj, upProj: upProj, downProj: downProj,
+                    hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
+                    headDim: headDim, intermediate: intermediate,
+                    ropeTheta: theta))
         }
 
         let finalNorm = RMSNorm(
@@ -274,8 +290,9 @@ public struct FalconH1Hybrid: FalconH1Variant {
         // copy rather than reusing the embedding-multiplier-scaled one.
         let lmHead: AnyLinear
         if !tieEmbed, weights.has("lm_head.weight") {
-            let lmW = scaleTensor(try weights.tensor(named: "lm_head.weight"),
-                                  by: lmHeadMultiplier, device: device)
+            let lmW = scaleTensor(
+                try weights.tensor(named: "lm_head.weight"),
+                by: lmHeadMultiplier, device: device)
             lmHead = AnyLinear(Linear(weight: lmW))
         } else {
             let lmW = scaleTensor(embedWRaw, by: lmHeadMultiplier, device: device)
@@ -305,26 +322,36 @@ public struct FalconH1Hybrid: FalconH1Variant {
 
 public final class FalconH1MambaMixer: Module {
     let inProj, outProj: AnyLinear
-    let convW: Tensor        // [kernel, conv_dim]
-    let convB: Tensor        // [conv_dim]
-    let aEff: Tensor         // [n_heads]   = -exp(A_log)
-    let dtBias: Tensor       // [n_heads]
-    let dTiled: Tensor       // [d_inner]   D[h] tiled across head_dim
+    let convW: Tensor  // [kernel, conv_dim]
+    let convB: Tensor  // [conv_dim]
+    let aEff: Tensor  // [n_heads]   = -exp(A_log)
+    let dtBias: Tensor  // [n_heads]
+    let dTiled: Tensor  // [d_inner]   D[h] tiled across head_dim
     let dInner, convDim, nHeads, headDim, stateDim, convKernel: Int
     let dtype: DType
 
-    init(inProj: AnyLinear, outProj: AnyLinear,
-         convW: Tensor, convB: Tensor,
-         aEff: Tensor, dtBias: Tensor, dTiled: Tensor,
-         dInner: Int, convDim: Int,
-         nHeads: Int, headDim: Int, stateDim: Int,
-         convKernel: Int, dtype: DType) {
-        self.inProj = inProj; self.outProj = outProj
-        self.convW = convW; self.convB = convB
-        self.aEff = aEff; self.dtBias = dtBias; self.dTiled = dTiled
-        self.dInner = dInner; self.convDim = convDim
-        self.nHeads = nHeads; self.headDim = headDim; self.stateDim = stateDim
-        self.convKernel = convKernel; self.dtype = dtype
+    init(
+        inProj: AnyLinear, outProj: AnyLinear,
+        convW: Tensor, convB: Tensor,
+        aEff: Tensor, dtBias: Tensor, dTiled: Tensor,
+        dInner: Int, convDim: Int,
+        nHeads: Int, headDim: Int, stateDim: Int,
+        convKernel: Int, dtype: DType
+    ) {
+        self.inProj = inProj
+        self.outProj = outProj
+        self.convW = convW
+        self.convB = convB
+        self.aEff = aEff
+        self.dtBias = dtBias
+        self.dTiled = dTiled
+        self.dInner = dInner
+        self.convDim = convDim
+        self.nHeads = nHeads
+        self.headDim = headDim
+        self.stateDim = stateDim
+        self.convKernel = convKernel
+        self.dtype = dtype
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -338,8 +365,10 @@ public final class FalconH1MambaMixer: Module {
     /// layer input. All work queued on `cmd`; cache mutations are
     /// kernel-driven (no host sync). Returns the mixer contribution
     /// (pre-residual-add), shape [hidden].
-    func forward(_ xNorm: Tensor, cache: Mamba2LayerCache,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forward(
+        _ xNorm: Tensor, cache: Mamba2LayerCache,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // in_proj → split into z (gate) / xBC / dt_raw
         let proj = inProj(xNorm, on: cmd)
         let z = proj.slicedRows(start: 0, count: dInner)
@@ -400,18 +429,29 @@ public final class FalconH1DecoderLayer: Module, DecoderLayer {
     let ropeTheta: Float
     let scale: Float
 
-    init(inputNorm: RMSNorm, preFfNorm: RMSNorm,
-         mamba: FalconH1MambaMixer,
-         qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
-         gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
-         hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         intermediate: Int, ropeTheta: Float) {
-        self.inputNorm = inputNorm; self.preFfNorm = preFfNorm
+    init(
+        inputNorm: RMSNorm, preFfNorm: RMSNorm,
+        mamba: FalconH1MambaMixer,
+        qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
+        gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
+        hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        intermediate: Int, ropeTheta: Float
+    ) {
+        self.inputNorm = inputNorm
+        self.preFfNorm = preFfNorm
         self.mamba = mamba
-        self.qProj = qProj; self.kProj = kProj; self.vProj = vProj; self.oProj = oProj
-        self.gateProj = gateProj; self.upProj = upProj; self.downProj = downProj
-        self.hidden = hidden; self.nHeads = nHeads; self.nKVHeads = nKVHeads
-        self.headDim = headDim; self.intermediate = intermediate
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
+        self.gateProj = gateProj
+        self.upProj = upProj
+        self.downProj = downProj
+        self.hidden = hidden
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.intermediate = intermediate
         self.ropeTheta = ropeTheta
         self.scale = 1.0 / Float(Double(headDim).squareRoot())
     }
@@ -433,9 +473,11 @@ public final class FalconH1DecoderLayer: Module, DecoderLayer {
 
     /// `DecoderLayer` conformance — layer-local single-token decode.
     /// The cache slot is a `FalconH1LayerCache` (Mamba state + KV).
-    public func decode(_ h: Tensor, position: Int,
-                       cache: any LayerCacheProtocol,
-                       cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func decode(
+        _ h: Tensor, position: Int,
+        cache: any LayerCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         guard let layerCache = cache as? FalconH1LayerCache else {
             fatalError("FalconH1DecoderLayer: expected FalconH1LayerCache, got \(type(of: cache))")
         }
@@ -444,12 +486,14 @@ public final class FalconH1DecoderLayer: Module, DecoderLayer {
         let xNorm = inputNorm(h, on: cmd)
 
         // Mamba 2 mixer contribution.
-        let mambaH = mamba.forward(xNorm, cache: layerCache.mamba,
-                                   cmd: cmd, device: device)
+        let mambaH = mamba.forward(
+            xNorm, cache: layerCache.mamba,
+            cmd: cmd, device: device)
 
         // GQA attention contribution.
-        let attnH = attention(xNorm, position: position,
-                               cache: layerCache.kv, cmd: cmd, device: device)
+        let attnH = attention(
+            xNorm, position: position,
+            cache: layerCache.kv, cmd: cmd, device: device)
 
         // Parallel-hybrid join: residual + mixer + attention.
         // Fuse the final (temp + attnH) → preFfNorm pair into
@@ -481,22 +525,27 @@ public final class FalconH1DecoderLayer: Module, DecoderLayer {
     /// GQA attention path: project → RoPE → KV-cache append → SDPA →
     /// o_proj. No per-head q/k norm (FalconH1 has none). Returns the
     /// pre-residual-add attention contribution, shape [hidden].
-    private func attention(_ xNorm: Tensor, position: Int,
-                           cache: KVCache,
-                           cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    private func attention(
+        _ xNorm: Tensor, position: Int,
+        cache: KVCache,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let q = qProj(xNorm, on: cmd)
         let k = kProj(xNorm, on: cmd)
         let v = vProj(xNorm, on: cmd)
 
-        let qRotated = Ops.rope(q.reshaped(to: [nHeads, headDim]),
-                                position: position, headDim: headDim,
-                                thetaBase: ropeTheta, scaling: .none, on: cmd)
-        let kRotated = Ops.rope(k.reshaped(to: [nKVHeads, headDim]),
-                                position: position, headDim: headDim,
-                                thetaBase: ropeTheta, scaling: .none, on: cmd)
+        let qRotated = Ops.rope(
+            q.reshaped(to: [nHeads, headDim]),
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, scaling: .none, on: cmd)
+        let kRotated = Ops.rope(
+            k.reshaped(to: [nKVHeads, headDim]),
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, scaling: .none, on: cmd)
 
-        cache.appendOnGPU(kFlat: kRotated,
-                          vFlat: v.reshaped(to: [nKVHeads, headDim]), on: cmd)
+        cache.appendOnGPU(
+            kFlat: kRotated,
+            vFlat: v.reshaped(to: [nKVHeads, headDim]), on: cmd)
 
         let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
         let attnOut = Ops.sdpaDecode(
@@ -553,22 +602,32 @@ public final class FalconH1Model: LanguageModel {
     public let mambaNHeads, mambaHeadDim, stateDim, convDim, convKernel, dSSM: Int
     public let dtype: DType
 
-    init(embedTokens: AnyEmbedding, layers: [any DecoderLayer],
-         finalNorm: RMSNorm, lmHead: AnyLinear,
-         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         mambaNHeads: Int, mambaHeadDim: Int, stateDim: Int,
-         convDim: Int, convKernel: Int, dSSM: Int,
-         vocab: Int, maxSeq: Int, dtype: DType) {
+    init(
+        embedTokens: AnyEmbedding, layers: [any DecoderLayer],
+        finalNorm: RMSNorm, lmHead: AnyLinear,
+        hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        mambaNHeads: Int, mambaHeadDim: Int, stateDim: Int,
+        convDim: Int, convKernel: Int, dSSM: Int,
+        vocab: Int, maxSeq: Int, dtype: DType
+    ) {
         self.embedTokens = embedTokens
         self.layers = layers
         self.finalNorm = finalNorm
         self.lmHead = lmHead
-        self.hidden = hidden; self.nLayers = nLayers
-        self.nHeads = nHeads; self.nKVHeads = nKVHeads; self.headDim = headDim
-        self.mambaNHeads = mambaNHeads; self.mambaHeadDim = mambaHeadDim
-        self.stateDim = stateDim; self.convDim = convDim
-        self.convKernel = convKernel; self.dSSM = dSSM
-        self.vocab = vocab; self.maxSeq = maxSeq; self.dtype = dtype
+        self.hidden = hidden
+        self.nLayers = nLayers
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.mambaNHeads = mambaNHeads
+        self.mambaHeadDim = mambaHeadDim
+        self.stateDim = stateDim
+        self.convDim = convDim
+        self.convKernel = convKernel
+        self.dSSM = dSSM
+        self.vocab = vocab
+        self.maxSeq = maxSeq
+        self.dtype = dtype
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -592,7 +651,7 @@ public final class FalconH1Model: LanguageModel {
     /// SSM half is constant-size; the KV half is sized to `maxSeq`.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxSeq
-        return (0..<nLayers).map { _ in
+        return (0 ..< nLayers).map { _ in
             let mamba = Mamba2LayerCache(
                 nHeads: mambaNHeads, stateDim: stateDim, headDim: mambaHeadDim,
                 convChannels: convDim, convKernelSize: convKernel,
@@ -611,9 +670,11 @@ public final class FalconH1Model: LanguageModel {
     /// Walks `[any DecoderLayer]` in lockstep with the per-layer caches —
     /// the exact heterogeneous-hybrid decode loop the `DecoderLayer`
     /// protocol exists to support.
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let tokenBuf = device.makeBuffer(length: 4)
         var tid = UInt32(tokenId)
         memcpy(tokenBuf.contents(), &tid, 4)
@@ -621,8 +682,9 @@ public final class FalconH1Model: LanguageModel {
         var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
 
         for (i, layer) in layers.enumerated() {
-            h = layer.decode(h, position: position, cache: caches[i],
-                             cmd: cmd, device: device)
+            h = layer.decode(
+                h, position: position, cache: caches[i],
+                cmd: cmd, device: device)
         }
 
         let normed = finalNorm(h, on: cmd)
@@ -638,15 +700,19 @@ public final class FalconH1Model: LanguageModel {
     /// the Llama/Qwen3 chunked path — the multipliers are already
     /// baked in, so no extra arithmetic needed in the chunked code.
     /// Today this override is commit-count-batched only.
-    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                             caches: [any LayerCacheProtocol],
-                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(!tokenIds.isEmpty,
-                     "FalconH1Model.forwardMulti: tokenIds must be non-empty")
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "FalconH1Model.forwardMulti: tokenIds must be non-empty")
         var logits: Tensor!
         for (i, tok) in tokenIds.enumerated() {
-            logits = forward(tokenId: tok, position: position + i,
-                             caches: caches, on: cmd, device: device)
+            logits = forward(
+                tokenId: tok, position: position + i,
+                caches: caches, on: cmd, device: device)
         }
         return logits
     }
@@ -675,8 +741,10 @@ private func readFloatsFH1(_ t: Tensor) -> [Float] {
 }
 
 /// Write a `[Float]` into a fresh tensor of the requested dtype.
-private func writeFloatsFH1(_ values: [Float], shape: [Int],
-                            dtype: DType, device: Device) -> Tensor {
+private func writeFloatsFH1(
+    _ values: [Float], shape: [Int],
+    dtype: DType, device: Device
+) -> Tensor {
     let t = Tensor.empty(shape: shape, dtype: dtype, device: device)
     switch dtype {
     case .f32:
@@ -704,18 +772,22 @@ private func scaleTensor(_ t: Tensor, by m: Float, device: Device) -> Tensor {
 /// Multiply each *row* of a 2D weight `[outFeatures, inFeatures]` by the
 /// per-row scalar in `rowVector` (`[outFeatures]`). FalconH1's in_proj
 /// folds the µP vector this way — one multiplier per output channel.
-private func scaleRows(_ t: Tensor, byRowVector rowVector: [Float],
-                       dtype: DType, device: Device) -> Tensor {
+private func scaleRows(
+    _ t: Tensor, byRowVector rowVector: [Float],
+    dtype: DType, device: Device
+) -> Tensor {
     precondition(t.shape.count == 2, "scaleRows: weight must be 2D")
-    let outF = t.shape[0], inF = t.shape[1]
-    precondition(rowVector.count == outF,
-                 "scaleRows: rowVector count \(rowVector.count) ≠ outFeatures \(outF)")
+    let outF = t.shape[0]
+    let inF = t.shape[1]
+    precondition(
+        rowVector.count == outF,
+        "scaleRows: rowVector count \(rowVector.count) ≠ outFeatures \(outF)")
     var floats = readFloatsFH1(t)
-    for r in 0..<outF {
+    for r in 0 ..< outF {
         let m = rowVector[r]
         if m == 1.0 { continue }
         let base = r * inF
-        for c in 0..<inF { floats[base + c] *= m }
+        for c in 0 ..< inF { floats[base + c] *= m }
     }
     return writeFloatsFH1(floats, shape: t.shape, dtype: dtype, device: device)
 }
@@ -725,12 +797,15 @@ private func scaleRows(_ t: Tensor, byRowVector rowVector: [Float],
 /// concatenation `[gate | x | B | C | dt]` with segment sizes
 /// `[dSSM, dSSM, groupsStateSize, groupsStateSize, nHeads]`. Each segment
 /// gets one `ssm_multipliers` entry, all multiplied by `ssm_in_multiplier`.
-private func computeMupVector(dSSM: Int, groupsStateSize: Int, nHeads: Int,
-                              ssmMultipliers: [Float],
-                              ssmInMultiplier: Float) -> [Float] {
+private func computeMupVector(
+    dSSM: Int, groupsStateSize: Int, nHeads: Int,
+    ssmMultipliers: [Float],
+    ssmInMultiplier: Float
+) -> [Float] {
     let sizes = [dSSM, dSSM, groupsStateSize, groupsStateSize, nHeads]
-    precondition(ssmMultipliers.count == sizes.count,
-                 "computeMupVector: ssm_multipliers must have \(sizes.count) entries")
+    precondition(
+        ssmMultipliers.count == sizes.count,
+        "computeMupVector: ssm_multipliers must have \(sizes.count) entries")
     var vec: [Float] = []
     vec.reserveCapacity(sizes.reduce(0, +))
     for (size, mult) in zip(sizes, ssmMultipliers) {
@@ -740,17 +815,22 @@ private func computeMupVector(dSSM: Int, groupsStateSize: Int, nHeads: Int,
 }
 
 /// A_eff = -exp(A_log), per head, in the activation dtype.
-private func computeAEffFH1(aLog: Tensor, nHeads: Int,
-                            dtype: DType, device: Device) -> Tensor {
+private func computeAEffFH1(
+    aLog: Tensor, nHeads: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     let floats = readFloatsFH1(aLog)
     precondition(floats.count == nHeads, "FalconH1: A_log expected [n_heads]")
-    return writeFloatsFH1(floats.map { -Foundation.exp($0) },
-                          shape: [nHeads], dtype: dtype, device: device)
+    return writeFloatsFH1(
+        floats.map { -Foundation.exp($0) },
+        shape: [nHeads], dtype: dtype, device: device)
 }
 
 /// Cast a per-head vector to the activation dtype, preserving values.
-private func castVectorFH1(_ src: Tensor, count: Int,
-                           dtype: DType, device: Device) -> Tensor {
+private func castVectorFH1(
+    _ src: Tensor, count: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     if src.dtype == dtype { return src }
     let floats = readFloatsFH1(src)
     precondition(floats.count == count, "FalconH1: vector size mismatch")
@@ -759,27 +839,31 @@ private func castVectorFH1(_ src: Tensor, count: Int,
 
 /// Tile `D[h]` across `head_dim` channels → `[n_heads * head_dim]` so the
 /// SSM skip connection (`y += D * x`) reuses `Ops.mul`.
-private func tileDFH1(d: Tensor, nHeads: Int, headDim: Int,
-                      dtype: DType, device: Device) -> Tensor {
+private func tileDFH1(
+    d: Tensor, nHeads: Int, headDim: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     let floats = readFloatsFH1(d)
     precondition(floats.count == nHeads, "FalconH1: D expected [n_heads]")
     var tiled: [Float] = []
     tiled.reserveCapacity(nHeads * headDim)
-    for h in 0..<nHeads {
-        for _ in 0..<headDim { tiled.append(floats[h]) }
+    for h in 0 ..< nHeads {
+        for _ in 0 ..< headDim { tiled.append(floats[h]) }
     }
     return writeFloatsFH1(tiled, shape: [nHeads * headDim], dtype: dtype, device: device)
 }
 
 /// Transpose HF conv1d.weight `[C, 1, K]` (channel-major) → `[K, C]`
 /// (kernel-tap-major) for the metaltile conv kernel.
-private func transposeConv1dWeightFH1(src: Tensor, kernel K: Int, channels C: Int,
-                                      dtype: DType, device: Device) -> Tensor {
+private func transposeConv1dWeightFH1(
+    src: Tensor, kernel K: Int, channels C: Int,
+    dtype: DType, device: Device
+) -> Tensor {
     let floats = readFloatsFH1(src)
     precondition(floats.count == K * C, "FalconH1: conv1d.weight count mismatch")
     var dst = [Float](repeating: 0, count: K * C)
-    for c in 0..<C {
-        for k in 0..<K { dst[k * C + c] = floats[c * K + k] }
+    for c in 0 ..< C {
+        for k in 0 ..< K { dst[k * C + c] = floats[c * K + k] }
     }
     return writeFloatsFH1(dst, shape: [K, C], dtype: dtype, device: device)
 }

@@ -17,9 +17,10 @@
 // fused `wqkv` projection that `loadLinear` handles transparently.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("InternLM2 Integration", .serialized)
 struct InternLM2IntegrationTests {

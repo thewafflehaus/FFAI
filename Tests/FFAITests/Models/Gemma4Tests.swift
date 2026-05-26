@@ -21,6 +21,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Gemma4 Family Root")
@@ -41,8 +42,9 @@ struct Gemma4RootTests {
 
     @Test("variant(for:) returns Gemma4Dense by default (no MoE / no PLE)")
     func variantDense() throws {
-        let cfg = ModelConfig(architecture: "Gemma4ForCausalLM",
-                              modelType: "gemma4", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "Gemma4ForCausalLM",
+            modelType: "gemma4", raw: [:])
         let v = try Gemma4.variant(for: cfg)
         #expect(String(describing: v) == String(describing: Gemma4Dense.self))
     }
@@ -85,15 +87,17 @@ struct Gemma4RootTests {
         let gp = Gemma4Dense.defaultGenerationParameters
         #expect(gp.maxTokens > 0)
         #expect(gp.temperature >= 0)
-        #expect(gp.prefillStepSize == 4096)   // documented family optimum
+        #expect(gp.prefillStepSize == 4096)  // documented family optimum
     }
 
     @Test("Gemma4Error stringifies every case with its payload")
     func errorDescriptions() {
-        #expect(Gemma4Error.missingConfig("text_config").description
-            .contains("text_config"))
-        #expect(Gemma4Error.missingTensor("model.embed_tokens.weight").description
-            .contains("model.embed_tokens.weight"))
+        #expect(
+            Gemma4Error.missingConfig("text_config").description
+                .contains("text_config"))
+        #expect(
+            Gemma4Error.missingTensor("model.embed_tokens.weight").description
+                .contains("model.embed_tokens.weight"))
         #expect(Gemma4Error.unsupportedHeadDim(99).description.contains("99"))
         #expect(Gemma4Error.unalignedNorm(193).description.contains("193"))
     }

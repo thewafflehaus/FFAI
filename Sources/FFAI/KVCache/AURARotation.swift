@@ -45,15 +45,16 @@ public enum AURARotation {
     /// Constructed recursively: `H_1 = [[1]]`, `H_{2n} = [[H_n, H_n],
     /// [H_n, -H_n]]`.
     public static func hadamardMatrix(dim: Int) -> [Float] {
-        precondition(dim > 0 && (dim & (dim - 1)) == 0,
-                     "AURARotation.hadamardMatrix: dim=\(dim) must be a power of 2")
+        precondition(
+            dim > 0 && (dim & (dim - 1)) == 0,
+            "AURARotation.hadamardMatrix: dim=\(dim) must be a power of 2")
         var h = [Float](repeating: 1, count: 1)
         var size = 1
         while size < dim {
             let newSize = size * 2
             var next = [Float](repeating: 0, count: newSize * newSize)
-            for i in 0..<size {
-                for j in 0..<size {
+            for i in 0 ..< size {
+                for j in 0 ..< size {
                     let v = h[i * size + j]
                     next[i * newSize + j] = v
                     next[i * newSize + (j + size)] = v
@@ -78,10 +79,10 @@ public enum AURARotation {
         z = (z ^ (z &>> 30)) &* 0xBF58_476D_1CE4_E5B9
         z = (z ^ (z &>> 27)) &* 0x94D0_49BB_1331_11EB
         z = z ^ (z &>> 31)
-        var state = z | 1   // xorshift64 requires non-zero seed
+        var state = z | 1  // xorshift64 requires non-zero seed
 
         var out = [Float](repeating: 0, count: dim)
-        for i in 0..<dim {
+        for i in 0 ..< dim {
             state ^= state &<< 13
             state ^= state &>> 7
             state ^= state &<< 17
@@ -99,8 +100,8 @@ public enum AURARotation {
         let s = whtSigns(dim: dim, seed: seed)
         let inv = Float(1.0 / Double(dim).squareRoot())
         var rot = [Float](repeating: 0, count: dim * dim)
-        for i in 0..<dim {
-            for j in 0..<dim {
+        for i in 0 ..< dim {
+            for j in 0 ..< dim {
                 rot[i * dim + j] = h[i * dim + j] * s[j] * inv
             }
         }
@@ -113,7 +114,7 @@ public enum AURARotation {
     /// codec quality than the SRHT path; see file header.
     public static func identityMatrix(dim: Int) -> [Float] {
         var out = [Float](repeating: 0, count: dim * dim)
-        for i in 0..<dim { out[i * dim + i] = 1.0 }
+        for i in 0 ..< dim { out[i * dim + i] = 1.0 }
         return out
     }
 }

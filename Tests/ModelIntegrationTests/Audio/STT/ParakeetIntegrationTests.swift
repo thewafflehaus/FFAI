@@ -25,9 +25,10 @@
 // Run via `make test-integration`.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Parakeet Integration", .serialized)
 struct ParakeetIntegrationTests {
@@ -59,7 +60,7 @@ struct ParakeetIntegrationTests {
     private func syntheticTone(hz: Float = 440, seconds: Double = 1.0) -> [Float] {
         let sr = 16_000
         let n = Int(Double(sr) * seconds)
-        return (0..<n).map { 0.3 * sin(2 * Float.pi * hz * Float($0) / Float(sr)) }
+        return (0 ..< n).map { 0.3 * sin(2 * Float.pi * hz * Float($0) / Float(sr)) }
     }
 
     /// Load the bundled conversational speech fixture, if present.
@@ -69,7 +70,8 @@ struct ParakeetIntegrationTests {
     /// is resampled to 16 kHz for Parakeet's front-end.
     private func speechFixtureWaveform() -> [Float] {
         if let wave = try? AudioTestHelpers.conversationalAWaveform(),
-           !wave.isEmpty {
+            !wave.isEmpty
+        {
             return wave
         }
         return syntheticTone()
@@ -108,8 +110,9 @@ struct ParakeetIntegrationTests {
         // LSTM layers match config
         #expect(model.lstmLayers.count == model.config.predNet.predRnnLayers)
 
-        print("Parakeet loaded: vocab=\(model.config.vocabulary.count) "
-              + "blankId=\(model.config.blankTokenId)")
+        print(
+            "Parakeet loaded: vocab=\(model.config.vocabulary.count) "
+                + "blankId=\(model.config.blankTokenId)")
     }
 
     @Test("frontend — NeMo Mel features are finite and correctly shaped")
@@ -122,20 +125,22 @@ struct ParakeetIntegrationTests {
         let nFrames = mel.count / cfg.nMels
         #expect(nFrames > 0, "front-end produced zero frames")
         #expect(mel.count == nFrames * cfg.nMels)
-        #expect(mel.allSatisfy { $0.isFinite },
-                "Parakeet front-end produced non-finite mel values")
+        #expect(
+            mel.allSatisfy { $0.isFinite },
+            "Parakeet front-end produced non-finite mel values")
 
         // Per-feature normalisation: each Mel bin should have near-zero mean.
         let nMels = cfg.nMels
         var maxAbsMean: Float = 0
-        for m in 0..<nMels {
+        for m in 0 ..< nMels {
             var sum: Float = 0
-            for t in 0..<nFrames { sum += mel[t * nMels + m] }
+            for t in 0 ..< nFrames { sum += mel[t * nMels + m] }
             let mean = abs(sum / Float(nFrames))
             if mean > maxAbsMean { maxAbsMean = mean }
         }
-        #expect(maxAbsMean < 0.5,
-                "Per-feature normalisation left large bias: maxAbsMean=\(maxAbsMean)")
+        #expect(
+            maxAbsMean < 0.5,
+            "Per-feature normalisation left large bias: maxAbsMean=\(maxAbsMean)")
         print("Parakeet front-end: \(nFrames) frames × \(nMels) Mel bins")
     }
 
@@ -146,8 +151,9 @@ struct ParakeetIntegrationTests {
         let model = try await loadParakeet()
         let wave = syntheticTone(seconds: 1.0)
         let tokens = model.transcribeTokens(waveform: wave)
-        #expect(tokens.allSatisfy { $0 >= 0 && $0 < model.config.blankTokenId },
-                "Transcribed token out of vocabulary range")
+        #expect(
+            tokens.allSatisfy { $0 >= 0 && $0 < model.config.blankTokenId },
+            "Transcribed token out of vocabulary range")
         print("Parakeet: synthetic tone decoded to \(tokens.count) tokens")
     }
 
@@ -159,19 +165,23 @@ struct ParakeetIntegrationTests {
 
         let tokens = model.transcribeTokens(waveform: wave)
         // A real utterance must produce a non-empty, in-vocab token stream.
-        #expect(!tokens.isEmpty,
-                "Parakeet produced no tokens for real speech")
-        #expect(tokens.allSatisfy { $0 >= 0 && $0 < model.config.blankTokenId },
-                "Parakeet token out of vocabulary range")
+        #expect(
+            !tokens.isEmpty,
+            "Parakeet produced no tokens for real speech")
+        #expect(
+            tokens.allSatisfy { $0 >= 0 && $0 < model.config.blankTokenId },
+            "Parakeet token out of vocabulary range")
 
         // Non-degenerate: a genuine decode visits several distinct ids.
         let distinct = Set(tokens).count
-        #expect(distinct > 1,
-                "Parakeet transcript is a single repeated token (degenerate decode)")
+        #expect(
+            distinct > 1,
+            "Parakeet transcript is a single repeated token (degenerate decode)")
 
         let text = model.transcribe(waveform: wave)
-        print("Parakeet transcribed \(tokens.count) tokens "
-              + "(\(distinct) distinct) → \"\(text)\"")
+        print(
+            "Parakeet transcribed \(tokens.count) tokens "
+                + "(\(distinct) distinct) → \"\(text)\"")
     }
 
     @Test("registry — Parakeet routes through AudioModelRegistry")

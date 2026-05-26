@@ -24,6 +24,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Parakeet")
@@ -43,7 +44,7 @@ struct ParakeetTests {
                 "pred_hidden": 640,
                 "joint_hidden": 640,
                 "tdt_durations": [0, 1, 2, 3, 4],
-                "num_tdt_durations": 5
+                "num_tdt_durations": 5,
             ] as [String: Any],
             "preprocessor": [
                 "_target_": "nemo.collections.asr.modules.AudioToMelSpectrogramPreprocessor",
@@ -56,7 +57,7 @@ struct ParakeetTests {
                 "n_fft": 512,
                 "dither": 1e-5,
                 "pad_to": 0,
-                "pad_value": 0.0
+                "pad_value": 0.0,
             ] as [String: Any],
             "encoder": [
                 "_target_": "nemo.collections.asr.modules.ConformerEncoder",
@@ -71,34 +72,34 @@ struct ParakeetTests {
                 "self_attention_model": "rel_pos",
                 "pos_emb_max_len": 5000,
                 "conv_kernel_size": 9,
-                "use_bias": false
+                "use_bias": false,
             ] as [String: Any],
             "decoder": [
                 "_target_": "nemo.collections.asr.modules.RNNTDecoder",
                 "blank_as_pad": true,
                 "prednet": [
                     "pred_hidden": 640,
-                    "pred_rnn_layers": 2
+                    "pred_rnn_layers": 2,
                 ] as [String: Any],
-                "vocab_size": vocabSize
+                "vocab_size": vocabSize,
             ] as [String: Any],
             "joint": [
                 "_target_": "nemo.collections.asr.modules.RNNTJoint",
                 "num_classes": vocabSize,
                 "num_extra_outputs": numExtraOutputs,
-                "vocabulary": (0..<vocabSize).map { "<tok\($0)>" },
+                "vocabulary": (0 ..< vocabSize).map { "<tok\($0)>" },
                 "jointnet": [
                     "joint_hidden": 640,
                     "activation": "relu",
                     "encoder_hidden": 1024,
-                    "pred_hidden": 640
-                ] as [String: Any]
+                    "pred_hidden": 640,
+                ] as [String: Any],
             ] as [String: Any],
             "decoding": [
                 "model_type": "tdt",
                 "durations": [0, 1, 2, 3, 4],
-                "greedy": ["max_symbols": 10] as [String: Any]
-            ] as [String: Any]
+                "greedy": ["max_symbols": 10] as [String: Any],
+            ] as [String: Any],
         ]
     }
 
@@ -117,8 +118,8 @@ struct ParakeetTests {
         #expect(cfg.preprocessor.sampleRate == 16_000)
         #expect(cfg.preprocessor.nMels == 128)
         #expect(cfg.preprocessor.nFFT == 512)
-        #expect(cfg.preprocessor.winLength == 400)   // 0.025 * 16000
-        #expect(cfg.preprocessor.hopLength == 160)    // 0.010 * 16000
+        #expect(cfg.preprocessor.winLength == 400)  // 0.025 * 16000
+        #expect(cfg.preprocessor.hopLength == 160)  // 0.010 * 16000
         #expect(cfg.preprocessor.normalise == "per_feature")
 
         // Encoder
@@ -135,7 +136,7 @@ struct ParakeetTests {
 
         // Joint
         #expect(cfg.joint.jointHidden == 640)
-        #expect(cfg.joint.numClasses == 1025)        // vocab + blank
+        #expect(cfg.joint.numClasses == 1025)  // vocab + blank
         #expect(cfg.joint.numExtraOutputs == 5)
 
         // TDT
@@ -143,7 +144,7 @@ struct ParakeetTests {
         #expect(cfg.maxSymbolsPerStep == 10)
 
         // Blank token
-        #expect(cfg.blankTokenId == 1024)            // vocabulary.count
+        #expect(cfg.blankTokenId == 1024)  // vocabulary.count
     }
 
     @Test("ParakeetConfig.from — parses V3 (vocab 8192) correctly")
@@ -153,7 +154,7 @@ struct ParakeetTests {
 
         #expect(cfg.vocabulary.count == 8192)
         #expect(cfg.blankTokenId == 8192)
-        #expect(cfg.joint.numClasses == 8193)        // 8192 + blank
+        #expect(cfg.joint.numClasses == 8193)  // 8192 + blank
     }
 
     @Test("ParakeetConfig.from — throws on missing encoder")
@@ -207,7 +208,7 @@ struct ParakeetTests {
         let raw: [String: Any] = [
             "model_type": "llama",
             "hidden_size": 4096,
-            "num_hidden_layers": 32
+            "num_hidden_layers": 32,
         ]
         #expect(!ParakeetModel.handles(makeConfig(raw)))
     }
@@ -243,7 +244,7 @@ struct ParakeetTests {
         // 1 s of a 440 Hz tone
         let sr = 16_000
         var wave = [Float](repeating: 0, count: sr)
-        for i in 0..<sr {
+        for i in 0 ..< sr {
             wave[i] = 0.3 * sin(2 * Float.pi * 440 * Float(i) / Float(sr))
         }
         let mel = ParakeetFrontEnd.logMelFeatures(waveform: wave, cfg: cfg)
@@ -251,8 +252,9 @@ struct ParakeetTests {
         let nFrames = mel.count / cfg.nMels
         #expect(nFrames > 0)
         #expect(mel.count == nFrames * cfg.nMels)
-        #expect(mel.allSatisfy { $0.isFinite },
-                "log-Mel front-end produced non-finite values")
+        #expect(
+            mel.allSatisfy { $0.isFinite },
+            "log-Mel front-end produced non-finite values")
     }
 
     @Test("ParakeetFrontEnd.logMelFeatures — empty waveform returns empty")
@@ -273,7 +275,7 @@ struct ParakeetTests {
             winLength: 400, hopLength: 160, preemph: 0.97,
             logZeroGuardValue: pow(2, -24), normalise: "global"
         )
-        let wave = (0..<8_000).map { Float(0.1) * sin(Float($0)) }
+        let wave = (0 ..< 8_000).map { Float(0.1) * sin(Float($0)) }
         let mel = ParakeetFrontEnd.logMelFeatures(waveform: wave, cfg: cfg)
         #expect(!mel.isEmpty)
         #expect(mel.allSatisfy { $0.isFinite })
@@ -299,10 +301,10 @@ struct ParakeetTests {
     @Test("ParakeetTokeniser.isSpecial — identifies special tokens")
     func tokeniser_isSpecial() {
         let vocab = ["<unk>", "hello", "<|endoftext|>", "<pad>", "world"]
-        #expect(ParakeetTokeniser.isSpecial(0, vocabulary: vocab))   // <unk>
+        #expect(ParakeetTokeniser.isSpecial(0, vocabulary: vocab))  // <unk>
         #expect(!ParakeetTokeniser.isSpecial(1, vocabulary: vocab))  // hello
-        #expect(ParakeetTokeniser.isSpecial(2, vocabulary: vocab))   // <|endoftext|>
-        #expect(ParakeetTokeniser.isSpecial(3, vocabulary: vocab))   // <pad>
+        #expect(ParakeetTokeniser.isSpecial(2, vocabulary: vocab))  // <|endoftext|>
+        #expect(ParakeetTokeniser.isSpecial(3, vocabulary: vocab))  // <pad>
         #expect(!ParakeetTokeniser.isSpecial(4, vocabulary: vocab))  // world
     }
 
@@ -310,7 +312,8 @@ struct ParakeetTests {
 
     @Test("ParakeetFrontEnd.melFilterbank — non-negative, shape correct")
     func melFilterbank_shape() {
-        let nMels = 128; let nFFT = 512
+        let nMels = 128
+        let nFFT = 512
         let bank = ParakeetFrontEnd.melFilterbank(
             sampleRate: 16_000, nFFT: nFFT, nMels: nMels)
         let nFreq = nFFT / 2 + 1
@@ -323,16 +326,18 @@ struct ParakeetTests {
         // row. This matches librosa's documented "Empty filters
         // detected in mel frequency basis" behavior and is expected
         // for any narrow-band Slaney filterbank.
-        let rowSums = (0..<nMels).map { m in
-            (0..<nFreq).map { k in bank[m * nFreq + k] }.reduce(0, +)
+        let rowSums = (0 ..< nMels).map { m in
+            (0 ..< nFreq).map { k in bank[m * nFreq + k] }.reduce(0, +)
         }
         // Allow up to a handful of empty rows at the low end (matches
         // librosa). The vast majority must be strictly positive.
         let emptyRows = rowSums.filter { $0 <= 0 }.count
-        #expect(emptyRows <= 4,
-                Comment(rawValue: "Expected at most 4 empty mel bands "
-                + "at the low end (librosa-equivalent Slaney); got "
-                + "\(emptyRows)."))
+        #expect(
+            emptyRows <= 4,
+            Comment(
+                rawValue: "Expected at most 4 empty mel bands "
+                    + "at the low end (librosa-equivalent Slaney); got "
+                    + "\(emptyRows)."))
         // All non-empty rows must be bounded (Slaney height = 2/(hi-lo)
         // in Hz, so the peak is well under the Nyquist bandwidth).
         #expect(rowSums.allSatisfy { $0 < 10.0 })

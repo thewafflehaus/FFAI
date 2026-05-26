@@ -28,6 +28,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("MossTTSNano")
@@ -127,7 +128,7 @@ struct MossTTSNanoTests {
         #expect(gpt.nHead == 12)
         #expect(gpt.nInner == 3_072)
         #expect(gpt.vocabSize == 16_384)
-        #expect(gpt.headDim == 64)        // 768 / 12
+        #expect(gpt.headDim == 64)  // 768 / 12
         #expect(gpt.intermediateSize == 3_072)
         #expect(gpt.hiddenSize == 768)
         #expect(abs(gpt.layerNormEpsilon - 1e-5) < 1e-8)
@@ -139,7 +140,7 @@ struct MossTTSNanoTests {
         let raw: [String: Any] = ["hidden_size": 512, "n_head": 8]
         let gpt = MossTTSNanoGPT2Config.from(raw)
         #expect(gpt.nEmbd == 512)
-        #expect(gpt.headDim == 64)   // 512 / 8
+        #expect(gpt.headDim == 64)  // 512 / 8
     }
 
     @Test("MossTTSNanoConfig — localGPT2Config has nPositions = nVQ + 1")
@@ -153,7 +154,7 @@ struct MossTTSNanoTests {
             return
         }
         let localCfg = nano.localGPT2Config()
-        #expect(localCfg.nPositions == nano.nVQ + 1)   // 17
+        #expect(localCfg.nPositions == nano.nVQ + 1)  // 17
         #expect(localCfg.nCtx == nano.nVQ + 1)
         #expect(localCfg.nLayer == nano.localTransformerLayers)
         // Other fields mirror the global GPT-2 config.
@@ -166,8 +167,10 @@ struct MossTTSNanoTests {
         let config = ModelConfig(
             architecture: nil,
             modelType: "moss_tts_nano",
-            raw: ["model_type": "moss_tts_nano", "gpt2_config": [:], "n_vq": 16,
-                  "audio_vocab_size": 1024])
+            raw: [
+                "model_type": "moss_tts_nano", "gpt2_config": [:], "n_vq": 16,
+                "audio_vocab_size": 1024,
+            ])
         let nano = MossTTSNanoConfig.from(config)
         #expect(nano?.audioCodebookSizes.count == 16)
         #expect(nano?.audioCodebookSizes.allSatisfy { $0 == 1024 } == true)
@@ -179,8 +182,10 @@ struct MossTTSNanoTests {
         let config = ModelConfig(
             architecture: nil,
             modelType: "moss_tts_nano",
-            raw: ["model_type": "moss_tts_nano", "gpt2_config": [:],
-                  "n_vq": 16, "audio_codebook_sizes": sizes])
+            raw: [
+                "model_type": "moss_tts_nano", "gpt2_config": [:],
+                "n_vq": 16, "audio_codebook_sizes": sizes,
+            ])
         let nano = MossTTSNanoConfig.from(config)
         #expect(nano?.audioCodebookSizes == sizes)
     }
@@ -286,14 +291,16 @@ struct MossTTSNanoTests {
         let hfRoot = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".cache/huggingface/hub")
         let candidates = [
-            "models--mlx-community--MOSS-TTS-Nano-100M",
+            "models--mlx-community--MOSS-TTS-Nano-100M"
         ]
         let fm = FileManager.default
         for slug in candidates {
             let base = hfRoot.appendingPathComponent(slug)
                 .appendingPathComponent("snapshots")
-            guard let sub = try? fm.contentsOfDirectory(
-                at: base, includingPropertiesForKeys: nil).first
+            guard
+                let sub = try? fm.contentsOfDirectory(
+                    at: base, includingPropertiesForKeys: nil
+                ).first
             else { continue }
             guard fm.fileExists(atPath: sub.appendingPathComponent("config.json").path)
             else { continue }

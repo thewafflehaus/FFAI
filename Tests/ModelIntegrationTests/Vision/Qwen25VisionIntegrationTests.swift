@@ -30,9 +30,10 @@
 // 7B-Instruct-4bit conversion because it ships the video tokenizer.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Qwen2.5 Vision Integration (image + video)", .serialized)
 struct Qwen25VisionIntegrationTests {
@@ -94,8 +95,10 @@ struct Qwen25VisionIntegrationTests {
         let questionTokens = m.tokenizer.encode(
             text: "<|im_start|>user\nDescribe this image.<|im_end|>\n"
                 + "<|im_start|>assistant\n")
-        let promptTokens = Array(repeating: imageTokenId,
-                                 count: vlm.imageTokenCount) + questionTokens
+        let promptTokens =
+            Array(
+                repeating: imageTokenId,
+                count: vlm.imageTokenCount) + questionTokens
 
         // A real photograph — the golden-retriever fixture.
         let image = try VisionTestHelpers.dogImage()
@@ -106,8 +109,9 @@ struct Qwen25VisionIntegrationTests {
 
         // Coherence first, then the content check: the caption should
         // mention a dog.
-        expectCoherentOutput(generated, minTokens: 8,
-                             label: "Qwen 2.5-VL image+text")
+        expectCoherentOutput(
+            generated, minTokens: 8,
+            label: "Qwen 2.5-VL image+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("Qwen 2.5-VL generated: \(text)")
         VisionTestHelpers.expectMentionsDog(text, label: "Qwen 2.5-VL")
@@ -161,7 +165,8 @@ struct Qwen25VisionIntegrationTests {
         let postTokens = m.tokenizer.encode(
             text: "<|vision_end|>What's in this video?<|im_end|>\n"
                 + "<|im_start|>assistant\n")
-        let promptTokens = preTokens
+        let promptTokens =
+            preTokens
             + Array(repeating: videoTokenId, count: videoTokenCount)
             + postTokens
 
@@ -173,8 +178,9 @@ struct Qwen25VisionIntegrationTests {
 
         // Coherence first, then the content check: the caption should
         // mention a cat (or kitten — model verbosity varies).
-        expectCoherentOutput(generated, minTokens: 8,
-                             label: "Qwen 2.5-VL video+text")
+        expectCoherentOutput(
+            generated, minTokens: 8,
+            label: "Qwen 2.5-VL video+text")
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("Qwen 2.5-VL video generated: \(text)")
         VisionTestHelpers.expectMentionsCat(text, label: "Qwen 2.5-VL video")

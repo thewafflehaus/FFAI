@@ -102,13 +102,13 @@ public protocol KVCacheProtocol: LayerCacheProtocol {
     func truncate(toLength length: Int)
 }
 
-public extension KVCacheProtocol {
+extension KVCacheProtocol {
     /// Default for callers that pre-date the sliding-window addition —
     /// behaves like a non-rotating cache. Concrete classes override
     /// when they wire `KVEvictionState` in.
-    var eviction: KVEviction { .unbounded }
-    var effectiveMaxSize: Int { maxSeq }
-    var absolutePosition: Int { length }
+    public var eviction: KVEviction { .unbounded }
+    public var effectiveMaxSize: Int { maxSeq }
+    public var absolutePosition: Int { length }
 
     /// Sink + window bounds for `Ops.sdpaDecode`'s sliding-window fast
     /// path, derived from the eviction policy. Returns
@@ -130,7 +130,7 @@ public extension KVCacheProtocol {
     /// thread `cache.sdpaSinkWindow(nKV:)` into `Ops.sdpaDecode` without
     /// branching on the cache kind; the API is wired end-to-end and a
     /// new cache layout only has to change this one method.
-    func sdpaSinkWindow(nKV: Int) -> (sinkEnd: Int, windowStart: Int) {
+    public func sdpaSinkWindow(nKV: Int) -> (sinkEnd: Int, windowStart: Int) {
         (sinkEnd: 0, windowStart: 0)
     }
 }
@@ -143,8 +143,8 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
     public let maxSeq: Int
     public let dtype: DType
 
-    public let kBuffer: Tensor   // [nKVHeads, maxSeq, headDim]
-    public let vBuffer: Tensor   // [nKVHeads, maxSeq, headDim]
+    public let kBuffer: Tensor  // [nKVHeads, maxSeq, headDim]
+    public let vBuffer: Tensor  // [nKVHeads, maxSeq, headDim]
 
     /// Lock-protected fill state. Safe today even without the lock —
     /// single-threaded decode — but planned's batched / speculative
@@ -170,21 +170,28 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
         }
     }
 
-    public convenience init(nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
-                            device: Device = .shared) {
-        self.init(nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
-                  dtype: dtype, eviction: .unbounded, device: device)
+    public convenience init(
+        nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
+        device: Device = .shared
+    ) {
+        self.init(
+            nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+            dtype: dtype, eviction: .unbounded, device: device)
     }
 
-    public init(nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
-                eviction: KVEviction,
-                device: Device = .shared) {
+    public init(
+        nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
+        eviction: KVEviction,
+        device: Device = .shared
+    ) {
         self.nKVHeads = nKVHeads
         self.headDim = headDim
         self.maxSeq = maxSeq
         self.dtype = dtype
-        self.kBuffer = Tensor.empty(shape: [nKVHeads, maxSeq, headDim], dtype: dtype, device: device)
-        self.vBuffer = Tensor.empty(shape: [nKVHeads, maxSeq, headDim], dtype: dtype, device: device)
+        self.kBuffer = Tensor.empty(
+            shape: [nKVHeads, maxSeq, headDim], dtype: dtype, device: device)
+        self.vBuffer = Tensor.empty(
+            shape: [nKVHeads, maxSeq, headDim], dtype: dtype, device: device)
         self.kBuffer.zero()
         self.vBuffer.zero()
         self._evictionState = KVEvictionState(policy: eviction, bufferCapacity: maxSeq)
@@ -201,7 +208,7 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
             let bytesPerHead = headDim * dtype.byteSize
             let kSrc = kFlat.buffer.contents().advanced(by: kFlat.offset)
             let vSrc = vFlat.buffer.contents().advanced(by: vFlat.offset)
-            for h in 0..<nKVHeads {
+            for h in 0 ..< nKVHeads {
                 let dstHeadOffset = (h * maxSeq + pos) * headDim * dtype.byteSize
                 let kDst = kBuffer.buffer.contents().advanced(by: kBuffer.offset + dstHeadOffset)
                 let vDst = vBuffer.buffer.contents().advanced(by: vBuffer.offset + dstHeadOffset)
@@ -218,17 +225,21 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
     /// vFlat is the same one (or a strictly-prior one) so dependencies
     /// are honored. Bumps `length` immediately so subsequent SDPA
     /// dispatches see the updated count.
-    public func appendOnGPU(kFlat: Tensor, vFlat: Tensor,
-                            on cmd: MTLCommandBuffer) {
+    public func appendOnGPU(
+        kFlat: Tensor, vFlat: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
         precondition(kFlat.dtype == dtype && vFlat.dtype == dtype, "KVCache: dtype mismatch")
         lengthLock.withLock {
             let pos = _evictionState.reserveNextSlot()
-            Ops.kvCacheUpdate(src: kFlat, into: kBuffer,
-                              nKVHeads: nKVHeads, headDim: headDim,
-                              maxSeq: maxSeq, position: pos, on: cmd)
-            Ops.kvCacheUpdate(src: vFlat, into: vBuffer,
-                              nKVHeads: nKVHeads, headDim: headDim,
-                              maxSeq: maxSeq, position: pos, on: cmd)
+            Ops.kvCacheUpdate(
+                src: kFlat, into: kBuffer,
+                nKVHeads: nKVHeads, headDim: headDim,
+                maxSeq: maxSeq, position: pos, on: cmd)
+            Ops.kvCacheUpdate(
+                src: vFlat, into: vBuffer,
+                nKVHeads: nKVHeads, headDim: headDim,
+                maxSeq: maxSeq, position: pos, on: cmd)
         }
     }
 
@@ -243,22 +254,28 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
     /// multi-token forwards (diffusion-block commit, multi-token
     /// prefill) — equivalent to N back-to-back `appendOnGPU` calls but
     /// takes the length lock once.
-    public func appendRangeOnGPU(kRows: [Tensor], vRows: [Tensor],
-                                 on cmd: MTLCommandBuffer) {
-        precondition(kRows.count == vRows.count,
-                     "KVCache.appendRangeOnGPU: kRows (\(kRows.count)) / vRows "
-                     + "(\(vRows.count)) count mismatch")
+    public func appendRangeOnGPU(
+        kRows: [Tensor], vRows: [Tensor],
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            kRows.count == vRows.count,
+            "KVCache.appendRangeOnGPU: kRows (\(kRows.count)) / vRows "
+                + "(\(vRows.count)) count mismatch")
         lengthLock.withLock {
             for (kFlat, vFlat) in zip(kRows, vRows) {
-                precondition(kFlat.dtype == dtype && vFlat.dtype == dtype,
-                             "KVCache.appendRangeOnGPU: dtype mismatch")
+                precondition(
+                    kFlat.dtype == dtype && vFlat.dtype == dtype,
+                    "KVCache.appendRangeOnGPU: dtype mismatch")
                 let pos = _evictionState.reserveNextSlot()
-                Ops.kvCacheUpdate(src: kFlat, into: kBuffer,
-                                  nKVHeads: nKVHeads, headDim: headDim,
-                                  maxSeq: maxSeq, position: pos, on: cmd)
-                Ops.kvCacheUpdate(src: vFlat, into: vBuffer,
-                                  nKVHeads: nKVHeads, headDim: headDim,
-                                  maxSeq: maxSeq, position: pos, on: cmd)
+                Ops.kvCacheUpdate(
+                    src: kFlat, into: kBuffer,
+                    nKVHeads: nKVHeads, headDim: headDim,
+                    maxSeq: maxSeq, position: pos, on: cmd)
+                Ops.kvCacheUpdate(
+                    src: vFlat, into: vBuffer,
+                    nKVHeads: nKVHeads, headDim: headDim,
+                    maxSeq: maxSeq, position: pos, on: cmd)
             }
         }
     }
@@ -268,18 +285,24 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
     /// K/V in the buffer's free region `[length, maxSeq)` across denoise
     /// iterations before a final commit. Caller guarantees the slot is
     /// free. No lock — `length` is unchanged, so no shared state moves.
-    public func writeTimestepOnGPU(kFlat: Tensor, vFlat: Tensor,
-                                   atSlot slot: Int, on cmd: MTLCommandBuffer) {
-        precondition(kFlat.dtype == dtype && vFlat.dtype == dtype,
-                     "KVCache.writeTimestepOnGPU: dtype mismatch")
-        precondition(slot >= 0 && slot < maxSeq,
-                     "KVCache.writeTimestepOnGPU: slot \(slot) out of range 0..<\(maxSeq)")
-        Ops.kvCacheUpdate(src: kFlat, into: kBuffer,
-                          nKVHeads: nKVHeads, headDim: headDim,
-                          maxSeq: maxSeq, position: slot, on: cmd)
-        Ops.kvCacheUpdate(src: vFlat, into: vBuffer,
-                          nKVHeads: nKVHeads, headDim: headDim,
-                          maxSeq: maxSeq, position: slot, on: cmd)
+    public func writeTimestepOnGPU(
+        kFlat: Tensor, vFlat: Tensor,
+        atSlot slot: Int, on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            kFlat.dtype == dtype && vFlat.dtype == dtype,
+            "KVCache.writeTimestepOnGPU: dtype mismatch")
+        precondition(
+            slot >= 0 && slot < maxSeq,
+            "KVCache.writeTimestepOnGPU: slot \(slot) out of range 0..<\(maxSeq)")
+        Ops.kvCacheUpdate(
+            src: kFlat, into: kBuffer,
+            nKVHeads: nKVHeads, headDim: headDim,
+            maxSeq: maxSeq, position: slot, on: cmd)
+        Ops.kvCacheUpdate(
+            src: vFlat, into: vBuffer,
+            nKVHeads: nKVHeads, headDim: headDim,
+            maxSeq: maxSeq, position: slot, on: cmd)
     }
 
     /// Raw cache exposes its storage buffers directly; no per-step
@@ -328,21 +351,21 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
     public let nKVHeads: Int
     public let headDim: Int
     public let maxSeq: Int
-    public let dtype: DType        // dtype of scales/biases + dequant output
-    public let bits: Int           // 8 for now
+    public let dtype: DType  // dtype of scales/biases + dequant output
+    public let bits: Int  // 8 for now
     public let groupSize: Int
 
     // Compressed storage (int8 packed 4-per-uint32)
-    public let kWeights: Tensor    // [nKVHeads, maxSeq, headDim / 4] u32
+    public let kWeights: Tensor  // [nKVHeads, maxSeq, headDim / 4] u32
     public let vWeights: Tensor
-    public let kScales: Tensor     // [nKVHeads, maxSeq, headDim / groupSize] T
+    public let kScales: Tensor  // [nKVHeads, maxSeq, headDim / groupSize] T
     public let vScales: Tensor
     public let kBiases: Tensor
     public let vBiases: Tensor
 
     // Shared working buffers (passed in at construction by the
     // family's makeKVCache; reused across every layer's cache).
-    public let sharedWorkingK: Tensor   // [nKVHeads, maxSeq, headDim] T
+    public let sharedWorkingK: Tensor  // [nKVHeads, maxSeq, headDim] T
     public let sharedWorkingV: Tensor
 
     /// Lock-protected fill state. See `KVCache.lengthLock` for the
@@ -359,33 +382,43 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
         }
     }
 
-    public convenience init(nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
-                            bits: Int, groupSize: Int,
-                            sharedWorkingK: Tensor, sharedWorkingV: Tensor,
-                            device: Device = .shared) {
-        self.init(nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
-                  dtype: dtype, bits: bits, groupSize: groupSize,
-                  sharedWorkingK: sharedWorkingK, sharedWorkingV: sharedWorkingV,
-                  eviction: .unbounded, device: device)
+    public convenience init(
+        nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
+        bits: Int, groupSize: Int,
+        sharedWorkingK: Tensor, sharedWorkingV: Tensor,
+        device: Device = .shared
+    ) {
+        self.init(
+            nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+            dtype: dtype, bits: bits, groupSize: groupSize,
+            sharedWorkingK: sharedWorkingK, sharedWorkingV: sharedWorkingV,
+            eviction: .unbounded, device: device)
     }
 
-    public init(nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
-                bits: Int, groupSize: Int,
-                sharedWorkingK: Tensor, sharedWorkingV: Tensor,
-                eviction: KVEviction,
-                device: Device = .shared) {
-        precondition(bits == 4 || bits == 8,
-                     "AffineQuantizedKVCache: bits must be 4 or 8 today (int6 is a follow-up)")
-        let valuesPerWord = 32 / bits   // int8 → 4, int4 → 8
-        precondition(headDim % valuesPerWord == 0,
-                     "headDim must be divisible by \(valuesPerWord) for int\(bits) packing")
+    public init(
+        nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
+        bits: Int, groupSize: Int,
+        sharedWorkingK: Tensor, sharedWorkingV: Tensor,
+        eviction: KVEviction,
+        device: Device = .shared
+    ) {
+        precondition(
+            bits == 4 || bits == 8,
+            "AffineQuantizedKVCache: bits must be 4 or 8 today (int6 is a follow-up)")
+        let valuesPerWord = 32 / bits  // int8 → 4, int4 → 8
+        precondition(
+            headDim % valuesPerWord == 0,
+            "headDim must be divisible by \(valuesPerWord) for int\(bits) packing")
         precondition(headDim % groupSize == 0, "headDim must be divisible by groupSize")
-        precondition(sharedWorkingK.shape == [nKVHeads, maxSeq, headDim],
-                     "sharedWorkingK shape mismatch")
-        precondition(sharedWorkingV.shape == [nKVHeads, maxSeq, headDim],
-                     "sharedWorkingV shape mismatch")
-        precondition(sharedWorkingK.dtype == dtype && sharedWorkingV.dtype == dtype,
-                     "sharedWorking dtype mismatch")
+        precondition(
+            sharedWorkingK.shape == [nKVHeads, maxSeq, headDim],
+            "sharedWorkingK shape mismatch")
+        precondition(
+            sharedWorkingV.shape == [nKVHeads, maxSeq, headDim],
+            "sharedWorkingV shape mismatch")
+        precondition(
+            sharedWorkingK.dtype == dtype && sharedWorkingV.dtype == dtype,
+            "sharedWorking dtype mismatch")
 
         self.nKVHeads = nKVHeads
         self.headDim = headDim
@@ -396,19 +429,28 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
 
         let packsPerRow = headDim / valuesPerWord
         let groupsPerRow = headDim / groupSize
-        self.kWeights = Tensor.empty(shape: [nKVHeads, maxSeq, packsPerRow], dtype: .u32, device: device)
-        self.vWeights = Tensor.empty(shape: [nKVHeads, maxSeq, packsPerRow], dtype: .u32, device: device)
-        self.kScales = Tensor.empty(shape: [nKVHeads, maxSeq, groupsPerRow], dtype: dtype, device: device)
-        self.vScales = Tensor.empty(shape: [nKVHeads, maxSeq, groupsPerRow], dtype: dtype, device: device)
-        self.kBiases = Tensor.empty(shape: [nKVHeads, maxSeq, groupsPerRow], dtype: dtype, device: device)
-        self.vBiases = Tensor.empty(shape: [nKVHeads, maxSeq, groupsPerRow], dtype: dtype, device: device)
+        self.kWeights = Tensor.empty(
+            shape: [nKVHeads, maxSeq, packsPerRow], dtype: .u32, device: device)
+        self.vWeights = Tensor.empty(
+            shape: [nKVHeads, maxSeq, packsPerRow], dtype: .u32, device: device)
+        self.kScales = Tensor.empty(
+            shape: [nKVHeads, maxSeq, groupsPerRow], dtype: dtype, device: device)
+        self.vScales = Tensor.empty(
+            shape: [nKVHeads, maxSeq, groupsPerRow], dtype: dtype, device: device)
+        self.kBiases = Tensor.empty(
+            shape: [nKVHeads, maxSeq, groupsPerRow], dtype: dtype, device: device)
+        self.vBiases = Tensor.empty(
+            shape: [nKVHeads, maxSeq, groupsPerRow], dtype: dtype, device: device)
 
         self.sharedWorkingK = sharedWorkingK
         self.sharedWorkingV = sharedWorkingV
 
-        kWeights.zero(); vWeights.zero()
-        kScales.zero(); vScales.zero()
-        kBiases.zero(); vBiases.zero()
+        kWeights.zero()
+        vWeights.zero()
+        kScales.zero()
+        vScales.zero()
+        kBiases.zero()
+        vBiases.zero()
 
         self._evictionState = KVEvictionState(policy: eviction, bufferCapacity: maxSeq)
     }
@@ -419,20 +461,25 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
         lengthLock.withLock { _evictionState.truncate(toLength: length) }
     }
 
-    public func appendOnGPU(kFlat: Tensor, vFlat: Tensor,
-                            on cmd: MTLCommandBuffer) {
-        precondition(kFlat.dtype == dtype && vFlat.dtype == dtype,
-                     "AffineQuantizedKVCache: dtype mismatch")
+    public func appendOnGPU(
+        kFlat: Tensor, vFlat: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            kFlat.dtype == dtype && vFlat.dtype == dtype,
+            "AffineQuantizedKVCache: dtype mismatch")
         lengthLock.withLock {
             let pos = _evictionState.reserveNextSlot()
-            Ops.quantizeKVAffine(src: kFlat,
-                                 weights: kWeights, scales: kScales, biases: kBiases,
-                                 nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
-                                 groupSize: groupSize, position: pos, bits: bits, on: cmd)
-            Ops.quantizeKVAffine(src: vFlat,
-                                 weights: vWeights, scales: vScales, biases: vBiases,
-                                 nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
-                                 groupSize: groupSize, position: pos, bits: bits, on: cmd)
+            Ops.quantizeKVAffine(
+                src: kFlat,
+                weights: kWeights, scales: kScales, biases: kBiases,
+                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                groupSize: groupSize, position: pos, bits: bits, on: cmd)
+            Ops.quantizeKVAffine(
+                src: vFlat,
+                weights: vWeights, scales: vScales, biases: vBiases,
+                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                groupSize: groupSize, position: pos, bits: bits, on: cmd)
         }
     }
 
@@ -441,14 +488,16 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
         // from the working buffers; the cache's compressed storage
         // is the persistent state.
         guard length > 0 else { return (sharedWorkingK, sharedWorkingV) }
-        Ops.bulkDequantKVAffine(weights: kWeights, scales: kScales, biases: kBiases,
-                                into: sharedWorkingK,
-                                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
-                                groupSize: groupSize, nPositions: length, bits: bits, on: cmd)
-        Ops.bulkDequantKVAffine(weights: vWeights, scales: vScales, biases: vBiases,
-                                into: sharedWorkingV,
-                                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
-                                groupSize: groupSize, nPositions: length, bits: bits, on: cmd)
+        Ops.bulkDequantKVAffine(
+            weights: kWeights, scales: kScales, biases: kBiases,
+            into: sharedWorkingK,
+            nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+            groupSize: groupSize, nPositions: length, bits: bits, on: cmd)
+        Ops.bulkDequantKVAffine(
+            weights: vWeights, scales: vScales, biases: vBiases,
+            into: sharedWorkingV,
+            nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+            groupSize: groupSize, nPositions: length, bits: bits, on: cmd)
         return (sharedWorkingK, sharedWorkingV)
     }
 
@@ -460,42 +509,40 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
         let packs = headDim / valuesPerWord
         let groups = headDim / groupSize
         // K + V × (weights + scales + biases)
-        return 2 * (
-            nKVHeads * maxSeq * packs * 4
-            + 2 * nKVHeads * maxSeq * groups * dtype.byteSize
-        )
+        return 2
+            * (nKVHeads * maxSeq * packs * 4
+                + 2 * nKVHeads * maxSeq * groups * dtype.byteSize)
     }
 
     public var bytesInUse: Int {
         let valuesPerWord = 32 / bits
         let packs = headDim / valuesPerWord
         let groups = headDim / groupSize
-        return 2 * (
-            nKVHeads * length * packs * 4
-            + 2 * nKVHeads * length * groups * dtype.byteSize
-        )
+        return 2
+            * (nKVHeads * length * packs * 4
+                + 2 * nKVHeads * length * groups * dtype.byteSize)
     }
 }
 
 // MARK: - Array helpers
 
-public extension Array where Element == any LayerCacheProtocol {
+extension Array where Element == any LayerCacheProtocol {
     /// Sum of `bytesAllocated` across all per-layer caches.
-    var totalBytesAllocated: Int { reduce(0) { $0 + $1.bytesAllocated } }
+    public var totalBytesAllocated: Int { reduce(0) { $0 + $1.bytesAllocated } }
     /// Sum of `bytesInUse` across all per-layer caches.
-    var totalBytesInUse: Int { reduce(0) { $0 + $1.bytesInUse } }
+    public var totalBytesInUse: Int { reduce(0) { $0 + $1.bytesInUse } }
 }
 
-public extension Array where Element == any KVCacheProtocol {
+extension Array where Element == any KVCacheProtocol {
     /// Sum of `bytesAllocated` across all per-layer caches.
-    var totalBytesAllocated: Int { reduce(0) { $0 + $1.bytesAllocated } }
+    public var totalBytesAllocated: Int { reduce(0) { $0 + $1.bytesAllocated } }
     /// Sum of `bytesInUse` across all per-layer caches.
-    var totalBytesInUse: Int { reduce(0) { $0 + $1.bytesInUse } }
+    public var totalBytesInUse: Int { reduce(0) { $0 + $1.bytesInUse } }
 }
 
-public extension Array where Element == KVCache {
+extension Array where Element == KVCache {
     /// Sum of `bytesAllocated` across all per-layer caches.
-    var totalBytesAllocated: Int { reduce(0) { $0 + $1.bytesAllocated } }
+    public var totalBytesAllocated: Int { reduce(0) { $0 + $1.bytesAllocated } }
     /// Sum of `bytesInUse` across all per-layer caches.
-    var totalBytesInUse: Int { reduce(0) { $0 + $1.bytesInUse } }
+    public var totalBytesInUse: Int { reduce(0) { $0 + $1.bytesInUse } }
 }

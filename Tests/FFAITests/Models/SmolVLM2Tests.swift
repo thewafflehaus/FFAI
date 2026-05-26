@@ -21,6 +21,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("SmolVLM2 Family Root — variant + defaults")
@@ -28,8 +29,9 @@ struct SmolVLM2RootTests {
 
     @Test("variant(for:) returns SmolVLM2Dense (the only variant today)")
     func variantDispatch() throws {
-        let cfg = ModelConfig(architecture: "SmolVLMForConditionalGeneration",
-                              modelType: "smolvlm", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "SmolVLMForConditionalGeneration",
+            modelType: "smolvlm", raw: [:])
         let v = try SmolVLM2.variant(for: cfg)
         #expect(String(describing: v) == String(describing: SmolVLM2Dense.self))
     }
@@ -52,11 +54,14 @@ struct SmolVLM2RootTests {
 
     @Test("SmolVLM2Error stringifies every case with its payload")
     func errorDescriptions() {
-        #expect(SmolVLM2Error.missingConfig("vision_config").description
-            .contains("vision_config"))
-        #expect(SmolVLM2Error.missingVisionConfig("hidden_size").description
-            .contains("hidden_size"))
-        #expect(SmolVLM2Error.missingTextConfig("vocab_size").description
-            .contains("vocab_size"))
+        #expect(
+            SmolVLM2Error.missingConfig("vision_config").description
+                .contains("vision_config"))
+        #expect(
+            SmolVLM2Error.missingVisionConfig("hidden_size").description
+                .contains("hidden_size"))
+        #expect(
+            SmolVLM2Error.missingTextConfig("vocab_size").description
+                .contains("vocab_size"))
     }
 }

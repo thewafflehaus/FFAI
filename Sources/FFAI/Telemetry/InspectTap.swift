@@ -147,24 +147,28 @@ public struct InspectTap: Sendable {
         switch t.dtype {
         case .f32:
             let p = basePtr.bindMemory(to: Float.self, capacity: n)
-            for i in 0..<n { floats.append(p[i]) }
+            for i in 0 ..< n { floats.append(p[i]) }
         case .f16:
             let p = basePtr.bindMemory(to: UInt16.self, capacity: n)
-            for i in 0..<n { floats.append(halfBitsToFloatForTest(p[i])) }
+            for i in 0 ..< n { floats.append(halfBitsToFloatForTest(p[i])) }
         case .bf16:
             let p = basePtr.bindMemory(to: UInt16.self, capacity: n)
-            for i in 0..<n { floats.append(bf16BitsToFloatForTest(p[i])) }
+            for i in 0 ..< n { floats.append(bf16BitsToFloatForTest(p[i])) }
         default:
             print("[L\(layer) \(label)] (unsupported dtype \(t.dtype))")
             return device.makeCommandBuffer()
         }
 
-        var nanCount = 0, infCount = 0
-        var mn: Float = .infinity, mx: Float = -.infinity
+        var nanCount = 0
+        var infCount = 0
+        var mn: Float = .infinity
+        var mx: Float = -.infinity
         for v in floats {
-            if v.isNaN { nanCount += 1 }
-            else if !v.isFinite { infCount += 1 }
-            else {
+            if v.isNaN {
+                nanCount += 1
+            } else if !v.isFinite {
+                infCount += 1
+            } else {
                 if v < mn { mn = v }
                 if v > mx { mx = v }
             }
@@ -175,13 +179,15 @@ public struct InspectTap: Sendable {
         let mnStr = mn.isFinite ? String(format: "%+.4f", mn) : "—"
         let mxStr = mx.isFinite ? String(format: "%+.4f", mx) : "—"
         let prefix = layer < 0 ? "[\(label)]" : "[L\(layer) \(label)]"
-        print("\(prefix) n=\(n) min=\(mnStr) max=\(mxStr) nan=\(nanCount) inf=\(infCount) first=[\(head)]")
+        print(
+            "\(prefix) n=\(n) min=\(mnStr) max=\(mxStr) nan=\(nanCount) inf=\(infCount) first=[\(head)]"
+        )
 
         return device.makeCommandBuffer()
     }
 }
 
-public extension InspectTap {
+extension InspectTap {
     /// Build the cmdbuf that callers should queue work on. When the
     /// tap is active, this is a *private* cmdbuf (separate from the
     /// caller's). The tap commits + waits + replaces it at each
@@ -192,7 +198,7 @@ public extension InspectTap {
     /// When the tap is inactive (production path), returns the
     /// caller's cmd unchanged — single-branch identity passthrough.
     @inline(__always)
-    func makeWorkCmd(from callerCmd: MTLCommandBuffer, device: Device) -> MTLCommandBuffer {
+    public func makeWorkCmd(from callerCmd: MTLCommandBuffer, device: Device) -> MTLCommandBuffer {
         active ? device.makeCommandBuffer() : callerCmd
     }
 }

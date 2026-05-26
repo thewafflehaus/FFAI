@@ -57,12 +57,12 @@ public struct NemotronDiffusionDense: NemotronDiffusionVariant {
         device: Device
     ) throws -> NemotronDiffusionModel {
         guard let hidden = config.hiddenSize,
-              let nLayers = config.numLayers,
-              let nHeads = config.numAttentionHeads,
-              let headDim = config.headDim,
-              let vocab = config.vocabSize,
-              let intermediate = config.intermediateSize,
-              let eps = config.rmsNormEps
+            let nLayers = config.numLayers,
+            let nHeads = config.numAttentionHeads,
+            let headDim = config.headDim,
+            let vocab = config.vocabSize,
+            let intermediate = config.intermediateSize,
+            let eps = config.rmsNormEps
         else {
             throw NemotronDiffusionError.missingConfig
         }
@@ -70,7 +70,8 @@ public struct NemotronDiffusionDense: NemotronDiffusionVariant {
         // rope_theta is nested under `rope_parameters` in this config.
         let theta: Float = {
             if let rp = config.nested("rope_parameters"),
-               let t = (rp["rope_theta"] as? Double) ?? (rp["rope_theta"] as? Int).map(Double.init) {
+                let t = (rp["rope_theta"] as? Double) ?? (rp["rope_theta"] as? Int).map(Double.init)
+            {
                 return Float(t)
             }
             return Float(config.ropeTheta ?? 1_000_000)
@@ -79,7 +80,7 @@ public struct NemotronDiffusionDense: NemotronDiffusionVariant {
         // or non-yarn configs fall back to plain RoPE (`factor == 1`).
         let yarn: Ops.RoPEYaRN = {
             guard let rp = config.nested("rope_parameters"),
-                  (rp["rope_type"] as? String) == "yarn"
+                (rp["rope_type"] as? String) == "yarn"
             else { return .plain }
             func f(_ key: String, _ fallback: Float) -> Float {
                 if let d = rp[key] as? Double { return Float(d) }
@@ -103,7 +104,8 @@ public struct NemotronDiffusionDense: NemotronDiffusionVariant {
         // memory. Diffusion / self-speculation size their caches
         // explicitly per call regardless of this.
         let defaultMaxSeq = 8192
-        let maxSeq = options.maxContextLength
+        let maxSeq =
+            options.maxContextLength
             ?? min(config.int("max_position_embeddings") ?? defaultMaxSeq, defaultMaxSeq)
         let maskTokenId = config.int("mask_token_id") ?? 100
         let blockSize = config.int("block_size") ?? 32
@@ -117,29 +119,36 @@ public struct NemotronDiffusionDense: NemotronDiffusionVariant {
 
         var layers: [NemotronDiffusionLayer] = []
         layers.reserveCapacity(nLayers)
-        for i in 0..<nLayers {
+        for i in 0 ..< nLayers {
             let p = "encoder.layers.\(i)"
-            let qProj = try loadLinear(base: "\(p).self_attn.q_proj", in: weights, quantization: quant)
-            let kProj = try loadLinear(base: "\(p).self_attn.k_proj", in: weights, quantization: quant)
-            let vProj = try loadLinear(base: "\(p).self_attn.v_proj", in: weights, quantization: quant)
-            let oProj = try loadLinear(base: "\(p).self_attn.o_proj", in: weights, quantization: quant)
-            let gateProj = try loadLinear(base: "\(p).mlp.gate_proj", in: weights, quantization: quant)
+            let qProj = try loadLinear(
+                base: "\(p).self_attn.q_proj", in: weights, quantization: quant)
+            let kProj = try loadLinear(
+                base: "\(p).self_attn.k_proj", in: weights, quantization: quant)
+            let vProj = try loadLinear(
+                base: "\(p).self_attn.v_proj", in: weights, quantization: quant)
+            let oProj = try loadLinear(
+                base: "\(p).self_attn.o_proj", in: weights, quantization: quant)
+            let gateProj = try loadLinear(
+                base: "\(p).mlp.gate_proj", in: weights, quantization: quant)
             let upProj = try loadLinear(base: "\(p).mlp.up_proj", in: weights, quantization: quant)
-            let downProj = try loadLinear(base: "\(p).mlp.down_proj", in: weights, quantization: quant)
+            let downProj = try loadLinear(
+                base: "\(p).mlp.down_proj", in: weights, quantization: quant)
             let inputNorm = RMSNorm(
                 weight: try weights.tensor(named: "\(p).input_layernorm.weight"),
                 eps: Float(eps))
             let postAttnNorm = RMSNorm(
                 weight: try weights.tensor(named: "\(p).post_attention_layernorm.weight"),
                 eps: Float(eps))
-            layers.append(NemotronDiffusionLayer(
-                qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
-                gateProj: gateProj, upProj: upProj, downProj: downProj,
-                inputNorm: inputNorm, postAttnNorm: postAttnNorm,
-                hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
-                headDim: headDim, intermediate: intermediate,
-                ropeTheta: theta, yarn: yarn
-            ))
+            layers.append(
+                NemotronDiffusionLayer(
+                    qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
+                    gateProj: gateProj, upProj: upProj, downProj: downProj,
+                    inputNorm: inputNorm, postAttnNorm: postAttnNorm,
+                    hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
+                    headDim: headDim, intermediate: intermediate,
+                    ropeTheta: theta, yarn: yarn
+                ))
         }
 
         let finalNorm = RMSNorm(
@@ -157,7 +166,8 @@ public struct NemotronDiffusionDense: NemotronDiffusionVariant {
 
         let activationDtype: DType
         if weights.isQuantized("encoder.embed_tokens"),
-           let scales = try? weights.tensor(named: "encoder.embed_tokens.scales") {
+            let scales = try? weights.tensor(named: "encoder.embed_tokens.scales")
+        {
             activationDtype = scales.dtype
         } else {
             activationDtype = embedTokens.weight.dtype
@@ -196,16 +206,27 @@ public final class NemotronDiffusionLayer: Module {
     var loraA: Tensor?
     var loraB: Tensor?
 
-    init(qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
-         gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
-         inputNorm: RMSNorm, postAttnNorm: RMSNorm,
-         hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         intermediate: Int, ropeTheta: Float, yarn: Ops.RoPEYaRN) {
-        self.qProj = qProj; self.kProj = kProj; self.vProj = vProj; self.oProj = oProj
-        self.gateProj = gateProj; self.upProj = upProj; self.downProj = downProj
-        self.inputNorm = inputNorm; self.postAttnNorm = postAttnNorm
-        self.hidden = hidden; self.nHeads = nHeads; self.nKVHeads = nKVHeads
-        self.headDim = headDim; self.intermediate = intermediate
+    init(
+        qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
+        gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
+        inputNorm: RMSNorm, postAttnNorm: RMSNorm,
+        hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        intermediate: Int, ropeTheta: Float, yarn: Ops.RoPEYaRN
+    ) {
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
+        self.gateProj = gateProj
+        self.upProj = upProj
+        self.downProj = downProj
+        self.inputNorm = inputNorm
+        self.postAttnNorm = postAttnNorm
+        self.hidden = hidden
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.intermediate = intermediate
         self.ropeTheta = ropeTheta
         self.yarn = yarn
         self.scale = 1.0 / Float(Double(headDim).squareRoot())
@@ -228,23 +249,28 @@ public final class NemotronDiffusionLayer: Module {
     /// Single-token forward (AR decode). Generic over the cache kind so
     /// AR mode works with raw / affine / AURA caches. Mirrors the
     /// Llama / Qwen3 single-token layer forward.
-    func forward(_ h: Tensor, position: Int, cache: any KVCacheProtocol,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forward(
+        _ h: Tensor, position: Int, cache: any KVCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let xNorm = inputNorm(h, on: cmd)
         let q = qProj(xNorm, on: cmd)
         let k = kProj(xNorm, on: cmd)
         let v = vProj(xNorm, on: cmd)
 
-        let qRotated = Ops.ropeYaRN(q.reshaped(to: [nHeads, headDim]),
-                                position: position, headDim: headDim,
-                                thetaBase: ropeTheta, yarn: yarn, on: cmd)
-        let kRotated = Ops.ropeYaRN(k.reshaped(to: [nKVHeads, headDim]),
-                                position: position, headDim: headDim,
-                                thetaBase: ropeTheta, yarn: yarn, on: cmd)
+        let qRotated = Ops.ropeYaRN(
+            q.reshaped(to: [nHeads, headDim]),
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, yarn: yarn, on: cmd)
+        let kRotated = Ops.ropeYaRN(
+            k.reshaped(to: [nKVHeads, headDim]),
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, yarn: yarn, on: cmd)
 
-        cache.appendOnGPU(kFlat: kRotated,
-                          vFlat: v.reshaped(to: [nKVHeads, headDim]),
-                          on: cmd)
+        cache.appendOnGPU(
+            kFlat: kRotated,
+            vFlat: v.reshaped(to: [nKVHeads, headDim]),
+            on: cmd)
 
         // AURA caches store K/V in Π-rotated space — rotate Q in, output
         // out. Raw / affine caches skip this. Same contract as Qwen3.
@@ -314,9 +340,11 @@ public final class NemotronDiffusionLayer: Module {
     /// - `causal == true`: query `r` attends `[0, length+r+1)`.
     ///   `causal == false`: every query attends the full
     ///   `[0, length+N)` (bidirectional within the block).
-    func forwardTokens(_ h: Tensor, n: Int, positions: [Int], cache: KVCache,
-                       append: Bool, causal: Bool, useLora: Bool,
-                       cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forwardTokens(
+        _ h: Tensor, n: Int, positions: [Int], cache: KVCache,
+        append: Bool, causal: Bool, useLora: Bool,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let baseLength = cache.length
         let dt = h.dtype
         let qDim = nHeads * headDim
@@ -324,30 +352,40 @@ public final class NemotronDiffusionLayer: Module {
 
         // RMSNorm every row, then Q/K/V as one GEMM each — the weight is
         // read once and reused across the block's rows (vs N gemvs).
-        let xNorm = Ops.rmsNormRows(h, weight: inputNorm.weight, eps: inputNorm.eps,
-                                    nRows: n, rowSize: hidden, on: cmd)
-        let qBlock = nemotronBlockProject(qProj, xNorm, nRows: n, on: cmd)   // [n, qDim]
-        let kBlock = nemotronBlockProject(kProj, xNorm, nRows: n, on: cmd)   // [n, kvDim]
-        let vBlock = nemotronBlockProject(vProj, xNorm, nRows: n, on: cmd)   // [n, kvDim]
+        let xNorm = Ops.rmsNormRows(
+            h, weight: inputNorm.weight, eps: inputNorm.eps,
+            nRows: n, rowSize: hidden, on: cmd)
+        let qBlock = nemotronBlockProject(qProj, xNorm, nRows: n, on: cmd)  // [n, qDim]
+        let kBlock = nemotronBlockProject(kProj, xNorm, nRows: n, on: cmd)  // [n, kvDim]
+        let vBlock = nemotronBlockProject(vProj, xNorm, nRows: n, on: cmd)  // [n, kvDim]
 
         // RoPE per row (position-dependent) + K/V cache staging. RoPE
         // writes each rotated Q row straight into the contiguous `qAll`.
         let qAll = Tensor.empty(shape: [n, nHeads, headDim], dtype: dt)
-        var kRot: [Tensor] = []; kRot.reserveCapacity(n)
-        var vRows: [Tensor] = []; vRows.reserveCapacity(n)
-        for r in 0..<n {
-            let qRow = Tensor(buffer: qBlock.buffer, offset: qBlock.offset + r * qDim * dt.byteSize,
-                              shape: [nHeads, headDim], dtype: dt)
-            let kRow = Tensor(buffer: kBlock.buffer, offset: kBlock.offset + r * kvDim * dt.byteSize,
-                              shape: [nKVHeads, headDim], dtype: dt)
-            let vRow = Tensor(buffer: vBlock.buffer, offset: vBlock.offset + r * kvDim * dt.byteSize,
-                              shape: [nKVHeads, headDim], dtype: dt)
-            let qSlice = Tensor(buffer: qAll.buffer, offset: qAll.offset + r * qDim * dt.byteSize,
-                                shape: [nHeads, headDim], dtype: dt)
-            _ = Ops.ropeYaRN(qRow, position: positions[r], headDim: headDim,
-                             thetaBase: ropeTheta, yarn: yarn, on: cmd, into: qSlice)
-            kRot.append(Ops.ropeYaRN(kRow, position: positions[r], headDim: headDim,
-                                     thetaBase: ropeTheta, yarn: yarn, on: cmd))
+        var kRot: [Tensor] = []
+        kRot.reserveCapacity(n)
+        var vRows: [Tensor] = []
+        vRows.reserveCapacity(n)
+        for r in 0 ..< n {
+            let qRow = Tensor(
+                buffer: qBlock.buffer, offset: qBlock.offset + r * qDim * dt.byteSize,
+                shape: [nHeads, headDim], dtype: dt)
+            let kRow = Tensor(
+                buffer: kBlock.buffer, offset: kBlock.offset + r * kvDim * dt.byteSize,
+                shape: [nKVHeads, headDim], dtype: dt)
+            let vRow = Tensor(
+                buffer: vBlock.buffer, offset: vBlock.offset + r * kvDim * dt.byteSize,
+                shape: [nKVHeads, headDim], dtype: dt)
+            let qSlice = Tensor(
+                buffer: qAll.buffer, offset: qAll.offset + r * qDim * dt.byteSize,
+                shape: [nHeads, headDim], dtype: dt)
+            _ = Ops.ropeYaRN(
+                qRow, position: positions[r], headDim: headDim,
+                thetaBase: ropeTheta, yarn: yarn, on: cmd, into: qSlice)
+            kRot.append(
+                Ops.ropeYaRN(
+                    kRow, position: positions[r], headDim: headDim,
+                    thetaBase: ropeTheta, yarn: yarn, on: cmd))
             vRows.append(vRow)
         }
 
@@ -357,9 +395,10 @@ public final class NemotronDiffusionLayer: Module {
         if append {
             cache.appendRangeOnGPU(kRows: kRot, vRows: vRows, on: cmd)
         } else {
-            for r in 0..<n {
-                cache.writeTimestepOnGPU(kFlat: kRot[r], vFlat: vRows[r],
-                                         atSlot: baseLength + r, on: cmd)
+            for r in 0 ..< n {
+                cache.writeTimestepOnGPU(
+                    kFlat: kRot[r], vFlat: vRows[r],
+                    atSlot: baseLength + r, on: cmd)
             }
         }
 
@@ -371,7 +410,7 @@ public final class NemotronDiffusionLayer: Module {
             causal: causal, scale: scale, on: cmd)
 
         // o_proj (GEMM), optional LoRA delta, residual — all batched.
-        var oBlock = nemotronBlockProject(oProj, attnAll, nRows: n, on: cmd)   // [n, hidden]
+        var oBlock = nemotronBlockProject(oProj, attnAll, nRows: n, on: cmd)  // [n, hidden]
         if useLora, let la = loraA, let lb = loraB {
             // o_proj(x) + loraB·(loraA·x); the alpha/rank scale is baked
             // into loraB. Each LoRA factor is one GEMM over the block.
@@ -390,9 +429,10 @@ public final class NemotronDiffusionLayer: Module {
             postAttn = fused.residual
             mlpNorm = fused.normed
         } else {
-            postAttn = Ops.add(h, oBlock, on: cmd)   // [n, hidden]
-            mlpNorm = Ops.rmsNormRows(postAttn, weight: postAttnNorm.weight, eps: postAttnNorm.eps,
-                                      nRows: n, rowSize: hidden, on: cmd)
+            postAttn = Ops.add(h, oBlock, on: cmd)  // [n, hidden]
+            mlpNorm = Ops.rmsNormRows(
+                postAttn, weight: postAttnNorm.weight, eps: postAttnNorm.eps,
+                nRows: n, rowSize: hidden, on: cmd)
         }
 
         // SwiGLU MLP — gate/up/down as block GEMMs.
@@ -408,15 +448,19 @@ public final class NemotronDiffusionLayer: Module {
 /// layer in one `Ops.gemm`. Diffusion / self-speculation require a
 /// non-quantized checkpoint — a quantized weight hits the precondition
 /// (the block GEMM has no quantized path; AR mode handles quant fine).
-private func nemotronBlockProject(_ proj: AnyLinear, _ input: Tensor, nRows: Int,
-                                  on cmd: MTLCommandBuffer) -> Tensor {
+private func nemotronBlockProject(
+    _ proj: AnyLinear, _ input: Tensor, nRows: Int,
+    on cmd: MTLCommandBuffer
+) -> Tensor {
     guard let lin = proj.inner as? Linear else {
-        preconditionFailure("NemotronDiffusion diffusion / self-speculation require a "
-            + "non-quantized checkpoint — the block GEMM has no quantized path")
+        preconditionFailure(
+            "NemotronDiffusion diffusion / self-speculation require a "
+                + "non-quantized checkpoint — the block GEMM has no quantized path")
     }
-    precondition(lin.bias == nil,
-                 "NemotronDiffusion: unexpected projection bias "
-                 + "(config declares attention_bias / mlp_bias = false)")
+    precondition(
+        lin.bias == nil,
+        "NemotronDiffusion: unexpected projection bias "
+            + "(config declares attention_bias / mlp_bias = false)")
     return Ops.gemm(weight: lin.weight, input: input, nRows: nRows, on: cmd)
 }
 
@@ -443,21 +487,30 @@ public final class NemotronDiffusionModel: LanguageModel {
     /// self-speculation uses the LoRA-enhanced diffusion drafter.
     public private(set) var hasLoRA = false
 
-    init(embedTokens: AnyEmbedding, layers: [NemotronDiffusionLayer],
-         finalNorm: RMSNorm, lmHead: AnyLinear,
-         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         vocab: Int, maxSeq: Int, ropeTheta: Float, dtype: DType,
-         maskTokenId: Int, blockSize: Int, eosTokenId: Int?,
-         kvCacheKind: KVCacheKind = .raw,
-         kvEviction: KVEviction = .unbounded) {
+    init(
+        embedTokens: AnyEmbedding, layers: [NemotronDiffusionLayer],
+        finalNorm: RMSNorm, lmHead: AnyLinear,
+        hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        vocab: Int, maxSeq: Int, ropeTheta: Float, dtype: DType,
+        maskTokenId: Int, blockSize: Int, eosTokenId: Int?,
+        kvCacheKind: KVCacheKind = .raw,
+        kvEviction: KVEviction = .unbounded
+    ) {
         self.embedTokens = embedTokens
         self.layers = layers
         self.finalNorm = finalNorm
         self.lmHead = lmHead
-        self.hidden = hidden; self.nLayers = nLayers; self.nHeads = nHeads
-        self.nKVHeads = nKVHeads; self.headDim = headDim; self.vocab = vocab
-        self.maxSeq = maxSeq; self.ropeTheta = ropeTheta; self.dtype = dtype
-        self.maskTokenId = maskTokenId; self.blockSize = blockSize
+        self.hidden = hidden
+        self.nLayers = nLayers
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.vocab = vocab
+        self.maxSeq = maxSeq
+        self.ropeTheta = ropeTheta
+        self.dtype = dtype
+        self.maskTokenId = maskTokenId
+        self.blockSize = blockSize
         self.eosTokenId = eosTokenId
         self.kvCacheKind = kvCacheKind
         self.kvEviction = kvEviction
@@ -493,11 +546,17 @@ public final class NemotronDiffusionModel: LanguageModel {
         let fm = FileManager.default
         let subfolder = directory.appendingPathComponent("linear_spec_lora")
         let loraDir: URL
-        if fm.fileExists(atPath: subfolder
-            .appendingPathComponent("adapter_model.safetensors").path) {
+        if fm.fileExists(
+            atPath:
+                subfolder
+                .appendingPathComponent("adapter_model.safetensors").path)
+        {
             loraDir = subfolder
-        } else if fm.fileExists(atPath: directory
-            .appendingPathComponent("adapter_model.safetensors").path) {
+        } else if fm.fileExists(
+            atPath:
+                directory
+                .appendingPathComponent("adapter_model.safetensors").path)
+        {
             loraDir = directory
         } else {
             return
@@ -510,8 +569,10 @@ public final class NemotronDiffusionModel: LanguageModel {
         var scaling: Float = 4.0
         let cfgURL = loraDir.appendingPathComponent("adapter_config.json")
         if let data = try? Data(contentsOf: cfgURL),
-           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            let alpha = (obj["lora_alpha"] as? Double) ?? (obj["lora_alpha"] as? Int).map(Double.init)
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        {
+            let alpha =
+                (obj["lora_alpha"] as? Double) ?? (obj["lora_alpha"] as? Int).map(Double.init)
             let rank = (obj["r"] as? Double) ?? (obj["r"] as? Int).map(Double.init)
             if let alpha, let rank, rank > 0 { scaling = Float(alpha / rank) }
         }
@@ -519,8 +580,8 @@ public final class NemotronDiffusionModel: LanguageModel {
         for (i, layer) in layers.enumerated() {
             let prefix = "base_model.model.encoder.layers.\(i).self_attn.o_proj"
             guard let a = try? bundle.tensor(named: "\(prefix).lora_A.weight"),
-                  let b = try? bundle.tensor(named: "\(prefix).lora_B.weight")
-            else { return }   // incomplete adapter — leave the model adapter-free
+                let b = try? bundle.tensor(named: "\(prefix).lora_B.weight")
+            else { return }  // incomplete adapter — leave the model adapter-free
             // Scaling is baked into loraB so the delta is just B·(A·x).
             layer.loraA = Self.convertWeight(a, to: dtype, scale: 1)
             layer.loraB = Self.convertWeight(b, to: dtype, scale: scaling)
@@ -565,16 +626,19 @@ public final class NemotronDiffusionModel: LanguageModel {
         let eviction = kvEviction
         switch kvCacheKind {
         case .raw:
-            return (0..<nLayers).map { _ in
-                KVCache(nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
-                        dtype: dtype, eviction: eviction, device: device)
+            return (0 ..< nLayers).map { _ in
+                KVCache(
+                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    dtype: dtype, eviction: eviction, device: device)
             }
         case .affineQuantized(let bits, let groupSize):
-            let sharedK = Tensor.empty(shape: [nKVHeads, cap, headDim],
-                                       dtype: dtype, device: device)
-            let sharedV = Tensor.empty(shape: [nKVHeads, cap, headDim],
-                                       dtype: dtype, device: device)
-            return (0..<nLayers).map { _ in
+            let sharedK = Tensor.empty(
+                shape: [nKVHeads, cap, headDim],
+                dtype: dtype, device: device)
+            let sharedV = Tensor.empty(
+                shape: [nKVHeads, cap, headDim],
+                dtype: dtype, device: device)
+            return (0 ..< nLayers).map { _ in
                 AffineQuantizedKVCache(
                     nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
                     dtype: dtype, bits: bits, groupSize: groupSize,
@@ -586,18 +650,21 @@ public final class NemotronDiffusionModel: LanguageModel {
             // multi-token forward stages scratch K/V in the buffer).
             // AURA caches support AR mode only; fall back to raw so the
             // tri-mode paths keep working.
-            return (0..<nLayers).map { _ in
-                KVCache(nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
-                        dtype: dtype, eviction: eviction, device: device)
+            return (0 ..< nLayers).map { _ in
+                KVCache(
+                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    dtype: dtype, eviction: eviction, device: device)
             }
         }
     }
 
     /// Single-token AR forward — the `LanguageModel` primitive that
     /// `Generate.swift` composes for autoregressive decoding.
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let tap = InspectTap.fromEnvironment
         var workCmd = tap.makeWorkCmd(from: cmd, device: device)
 
@@ -606,23 +673,28 @@ public final class NemotronDiffusionModel: LanguageModel {
         memcpy(tokenBuf.contents(), &tid, 4)
         let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
         var h = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
-        workCmd = tap.dumpLayerBoundary(h, label: "embed", layer: -1,
-                                        cmd: workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(
+            h, label: "embed", layer: -1,
+            cmd: workCmd, device: device)
 
         for (i, layer) in layers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              cmd: workCmd, device: device)
-            workCmd = tap.dumpLayerBoundary(h, label: "layer_out", layer: i,
-                                            cmd: workCmd, device: device)
+            h = layer.forward(
+                h, position: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                cmd: workCmd, device: device)
+            workCmd = tap.dumpLayerBoundary(
+                h, label: "layer_out", layer: i,
+                cmd: workCmd, device: device)
         }
 
         let normed = finalNorm(h, on: workCmd)
-        workCmd = tap.dumpLayerBoundary(normed, label: "final_norm", layer: -1,
-                                        cmd: workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(
+            normed, label: "final_norm", layer: -1,
+            cmd: workCmd, device: device)
         let logits = lmHead(normed, on: workCmd)
-        workCmd = tap.dumpLayerBoundary(logits, label: "logits", layer: -1,
-                                        cmd: workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(
+            logits, label: "logits", layer: -1,
+            cmd: workCmd, device: device)
 
         if tap.active {
             workCmd.commit()
@@ -642,11 +714,14 @@ public final class NemotronDiffusionModel: LanguageModel {
     /// SDPA over the chunk, batched lm_head. The tail-position logits
     /// returned here are the final element of forwardBlock's
     /// per-position output array.
-    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                             caches: [any LayerCacheProtocol],
-                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(!tokenIds.isEmpty,
-                     "NemotronDiffusionModel.forwardMulti: tokenIds must be non-empty")
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "NemotronDiffusionModel.forwardMulti: tokenIds must be non-empty")
         // forwardBlock requires raw KVCache per layer; if any cache
         // isn't raw, fall back to the per-token loop on the caller's
         // cmd (still gets the protocol's commit-count batching).
@@ -654,8 +729,9 @@ public final class NemotronDiffusionModel: LanguageModel {
         if !allRaw {
             var logits: Tensor!
             for (i, tok) in tokenIds.enumerated() {
-                logits = forward(tokenId: tok, position: position + i,
-                                 caches: caches, on: cmd, device: device)
+                logits = forward(
+                    tokenId: tok, position: position + i,
+                    caches: caches, on: cmd, device: device)
             }
             return logits
         }
@@ -686,25 +762,31 @@ public final class NemotronDiffusionModel: LanguageModel {
 
     public var supportsEmbeddingInput: Bool { true }
 
-    public func forward(inputEmbedding: Tensor, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(inputEmbedding.elementCount == hidden,
-                     "NemotronDiffusionModel.forward(inputEmbedding:): expected "
-                     + "[\(hidden)], got \(inputEmbedding.shape)")
+    public func forward(
+        inputEmbedding: Tensor, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            inputEmbedding.elementCount == hidden,
+            "NemotronDiffusionModel.forward(inputEmbedding:): expected "
+                + "[\(hidden)], got \(inputEmbedding.shape)")
         let tap = InspectTap.fromEnvironment
         var workCmd = tap.makeWorkCmd(from: cmd, device: device)
 
         var h = inputEmbedding.reshaped(to: [hidden])
-        workCmd = tap.dumpLayerBoundary(h, label: "embed_in", layer: -1,
-                                        cmd: workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(
+            h, label: "embed_in", layer: -1,
+            cmd: workCmd, device: device)
 
         for (i, layer) in layers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              cmd: workCmd, device: device)
-            workCmd = tap.dumpLayerBoundary(h, label: "layer_out", layer: i,
-                                            cmd: workCmd, device: device)
+            h = layer.forward(
+                h, position: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                cmd: workCmd, device: device)
+            workCmd = tap.dumpLayerBoundary(
+                h, label: "layer_out", layer: i,
+                cmd: workCmd, device: device)
         }
 
         let normed = finalNorm(h, on: workCmd)
@@ -724,8 +806,9 @@ public final class NemotronDiffusionModel: LanguageModel {
         let tokenBuf = device.makeBuffer(length: 4)
         var tid = UInt32(tokenId)
         memcpy(tokenBuf.contents(), &tid, 4)
-        let tokenTensor = Tensor(buffer: tokenBuf, offset: 0,
-                                 shape: [1], dtype: .u32)
+        let tokenTensor = Tensor(
+            buffer: tokenBuf, offset: 0,
+            shape: [1], dtype: .u32)
         let embed = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
         cmd.commit()
         cmd.waitUntilCompleted()
@@ -743,16 +826,20 @@ public final class NemotronDiffusionModel: LanguageModel {
     /// commit — K/V appended, `length` bumped by `tokenIds.count`.
     ///
     /// Requires raw `KVCache` per layer (precondition).
-    public func forwardBlock(tokenIds: [Int], positions: [Int],
-                             caches: [any LayerCacheProtocol],
-                             append: Bool, useLora: Bool = false,
-                             device: Device = .shared) -> [Tensor] {
-        precondition(tokenIds.count == positions.count,
-                     "forwardBlock: tokenIds / positions count mismatch")
+    public func forwardBlock(
+        tokenIds: [Int], positions: [Int],
+        caches: [any LayerCacheProtocol],
+        append: Bool, useLora: Bool = false,
+        device: Device = .shared
+    ) -> [Tensor] {
+        precondition(
+            tokenIds.count == positions.count,
+            "forwardBlock: tokenIds / positions count mismatch")
         let rawCaches: [KVCache] = caches.map {
             guard let kv = $0 as? KVCache else {
-                preconditionFailure("NemotronDiffusion diffusion/self-speculation "
-                    + "modes require a raw KVCache — load with LoadOptions.kvCache = .raw")
+                preconditionFailure(
+                    "NemotronDiffusion diffusion/self-speculation "
+                        + "modes require a raw KVCache — load with LoadOptions.kvCache = .raw")
             }
             return kv
         }
@@ -762,22 +849,24 @@ public final class NemotronDiffusionModel: LanguageModel {
         // Embed all N tokens in one gather → contiguous [n, hidden].
         let tokBuf = device.makeBuffer(length: n * 4)
         let tokPtr = tokBuf.contents().bindMemory(to: UInt32.self, capacity: n)
-        for i in 0..<n { tokPtr[i] = UInt32(tokenIds[i]) }
+        for i in 0 ..< n { tokPtr[i] = UInt32(tokenIds[i]) }
         let tokTensor = Tensor(buffer: tokBuf, offset: 0, shape: [n], dtype: .u32)
-        var hBlock = embedTokens(tokTensor, on: cmd)   // [n, hidden]
+        var hBlock = embedTokens(tokTensor, on: cmd)  // [n, hidden]
 
         // Causal commit appends K/V; bidirectional denoise stages scratch.
         let causal = append
         for (i, layer) in layers.enumerated() {
-            hBlock = layer.forwardTokens(hBlock, n: n, positions: positions,
-                                         cache: rawCaches[i],
-                                         append: append, causal: causal, useLora: useLora,
-                                         cmd: cmd, device: device)
+            hBlock = layer.forwardTokens(
+                hBlock, n: n, positions: positions,
+                cache: rawCaches[i],
+                append: append, causal: causal, useLora: useLora,
+                cmd: cmd, device: device)
         }
 
         // Final RMSNorm (rows) + LM head as one block GEMM → [n, vocab].
-        let normed = Ops.rmsNormRows(hBlock, weight: finalNorm.weight, eps: finalNorm.eps,
-                                     nRows: n, rowSize: hidden, on: cmd)
+        let normed = Ops.rmsNormRows(
+            hBlock, weight: finalNorm.weight, eps: finalNorm.eps,
+            nRows: n, rowSize: hidden, on: cmd)
         let logitsBlock = nemotronBlockProject(lmHead, normed, nRows: n, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
@@ -785,10 +874,12 @@ public final class NemotronDiffusionModel: LanguageModel {
         let dt = logitsBlock.dtype
         var logits: [Tensor] = []
         logits.reserveCapacity(n)
-        for r in 0..<n {
-            logits.append(Tensor(buffer: logitsBlock.buffer,
-                                  offset: logitsBlock.offset + r * vocab * dt.byteSize,
-                                  shape: [vocab], dtype: dt))
+        for r in 0 ..< n {
+            logits.append(
+                Tensor(
+                    buffer: logitsBlock.buffer,
+                    offset: logitsBlock.offset + r * vocab * dt.byteSize,
+                    shape: [vocab], dtype: dt))
         }
         return logits
     }

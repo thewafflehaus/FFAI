@@ -17,6 +17,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // .serialized — most tests in this suite mutate `Profile.shared`
@@ -57,7 +58,7 @@ struct ProfilingTests {
         Profile.shared.resetPhases()
         let result = Profile.time("phase-x") {
             // Tiny work.
-            (0..<100).reduce(0, +)
+            (0 ..< 100).reduce(0, +)
         }
         #expect(result == 4950)
         let phases = Profile.shared.phases
@@ -155,9 +156,9 @@ struct ProfilingTests {
         // gate a, and neither instance disturbs Profile.shared.
         b.level = .off
         b.recordPhase("b-ignored", durationS: 9.9)
-        #expect(b.phases.entries.count == 1)   // gated, not recorded
+        #expect(b.phases.entries.count == 1)  // gated, not recorded
         a.recordPhase("a-kept", durationS: 0.1)
-        #expect(a.phases.entries.count == 1)   // a still at .wallclock
+        #expect(a.phases.entries.count == 1)  // a still at .wallclock
 
         // The instance time(...) / signpost(...) helpers run against
         // the instance, not the singleton.

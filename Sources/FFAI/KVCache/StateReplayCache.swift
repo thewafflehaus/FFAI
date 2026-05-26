@@ -78,7 +78,7 @@ public protocol StateReplayCache: LayerCacheProtocol {
 extension SSMStateCache: StateReplayCache {
     public var canStateReplay: Bool { false }
 
-    public var length: Int { 0 }       // Recurrent state, no notion of length.
+    public var length: Int { 0 }  // Recurrent state, no notion of length.
     public var maxSeq: Int { .max }
     public var bytesInUse: Int { bytesAllocated }
 

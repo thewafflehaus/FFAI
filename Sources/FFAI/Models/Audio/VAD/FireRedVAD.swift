@@ -77,8 +77,8 @@
 // implemented; if a streaming variant is needed, look at `stream_vad.py`
 // upstream for the cache-passing protocol.
 
-import Foundation
 import Accelerate
+import Foundation
 
 // ─── Errors ──────────────────────────────────────────────────────────
 
@@ -241,19 +241,23 @@ final class FireRedFSMN: Sendable {
     let lookbackWeight: [Float]
     /// Lookahead filter weights `[P, N2]` or empty when N2=0.
     let lookaheadWeight: [Float]
-    let P: Int     // projection size
-    let N1: Int    // lookback order
-    let S1: Int    // lookback stride / dilation
-    let N2: Int    // lookahead order
-    let S2: Int    // lookahead stride / dilation
+    let P: Int  // projection size
+    let N1: Int  // lookback order
+    let S1: Int  // lookback stride / dilation
+    let N2: Int  // lookahead order
+    let S2: Int  // lookahead stride / dilation
 
-    init(lookbackWeight: [Float], lookaheadWeight: [Float],
-         P: Int, N1: Int, S1: Int, N2: Int, S2: Int) {
-        precondition(lookbackWeight.count == P * N1,
-                     "FireRedFSMN: lookback weight count \(lookbackWeight.count) != P(\(P))*N1(\(N1))")
+    init(
+        lookbackWeight: [Float], lookaheadWeight: [Float],
+        P: Int, N1: Int, S1: Int, N2: Int, S2: Int
+    ) {
+        precondition(
+            lookbackWeight.count == P * N1,
+            "FireRedFSMN: lookback weight count \(lookbackWeight.count) != P(\(P))*N1(\(N1))")
         if N2 > 0 {
-            precondition(lookaheadWeight.count == P * N2,
-                         "FireRedFSMN: lookahead weight count \(lookaheadWeight.count) != P(\(P))*N2(\(N2))")
+            precondition(
+                lookaheadWeight.count == P * N2,
+                "FireRedFSMN: lookahead weight count \(lookaheadWeight.count) != P(\(P))*N2(\(N2))")
         }
         self.lookbackWeight = lookbackWeight
         self.lookaheadWeight = lookaheadWeight
@@ -277,15 +281,15 @@ final class FireRedFSMN: Sendable {
 
         // Apply lookback and lookahead per channel (depthwise).
         // Copy each channel's filter to a 0-based array to avoid slice indexing pitfalls.
-        for p in 0..<P {
+        for p in 0 ..< P {
             let wLBBase = p * N1
-            for t in 0..<T {
+            for t in 0 ..< T {
                 var acc: Float = 0
                 // Lookback: tap k (1..N1) looks back k*S1 frames.
                 // The filter weight at position wLB[N1 - k] aligns the most-
                 // recent tap at index 0 and the furthest tap at index N1-1
                 // (matching PyTorch's depthwise lookback_filter with dilation=S1).
-                for k in 1...N1 {
+                for k in 1 ... N1 {
                     let src = t - k * S1
                     if src >= 0 {
                         acc += lookbackWeight[wLBBase + N1 - k] * inputs[src * P + p]
@@ -298,9 +302,9 @@ final class FireRedFSMN: Sendable {
             // Lookahead pass (non-causal, N2 future taps).
             if N2 > 0 && !lookaheadWeight.isEmpty {
                 let wLABase = p * N2
-                for t in 0..<T {
+                for t in 0 ..< T {
                     var acc: Float = 0
-                    for k in 1...N2 {
+                    for k in 1 ... N2 {
                         let src = t + k * S2
                         if src < T {
                             acc += lookaheadWeight[wLABase + k - 1] * inputs[src * P + p]
@@ -321,8 +325,8 @@ final class FireRedFSMN: Sendable {
 /// Structure: fc1 (P→H, bias, ReLU) → fc2 (H→P, no bias) → FSMN → + skip.
 /// Matches `DFSMNBlock.forward` in upstream `detect_model.py`.
 final class FireRedDFSMNBlock: Sendable {
-    let fc1: VADLinear   // [H, P]
-    let fc2: VADLinear   // [P, H], no bias
+    let fc1: VADLinear  // [H, P]
+    let fc2: VADLinear  // [P, H], no bias
     let fsmn: FireRedFSMN
 
     init(fc1: VADLinear, fc2: VADLinear, fsmn: FireRedFSMN) {
@@ -333,8 +337,9 @@ final class FireRedDFSMNBlock: Sendable {
 
     /// Forward `[T, P]` → `[T, P]` with a skip connection.
     func forward(_ inputs: [Float], T: Int) -> [Float] {
-        precondition(inputs.count == T * fc1.inFeatures,
-                     "FireRedDFSMNBlock: input count mismatch")
+        precondition(
+            inputs.count == T * fc1.inFeatures,
+            "FireRedDFSMNBlock: input count mismatch")
         // fc1: P → H with ReLU.
         var h = fc1.applyRows(inputs, rows: T)
         VADMath.reluInPlace(&h)
@@ -369,8 +374,8 @@ final class FireRedDFSMNBlock: Sendable {
 enum FireRedKaldiFbank {
     static let sampleRate: Int = 16000
     static let numMelBins: Int = 80
-    static let frameLengthSamples: Int = 400   // 25 ms at 16 kHz
-    static let frameShiftSamples: Int = 160    // 10 ms at 16 kHz
+    static let frameLengthSamples: Int = 400  // 25 ms at 16 kHz
+    static let frameShiftSamples: Int = 160  // 10 ms at 16 kHz
 
     // Precomputed once (module-level let is evaluated lazily in Swift).
     static let window: [Float] = makeWindow(frameLengthSamples)
@@ -388,7 +393,7 @@ enum FireRedKaldiFbank {
     /// when not rounded-to-power-of-two; for snip_edges this is adequate).
     private static func makeWindow(_ size: Int) -> [Float] {
         var w = [Float](repeating: 0, count: size)
-        for n in 0..<size {
+        for n in 0 ..< size {
             w[n] = 0.5 - 0.5 * cosf(2 * Float.pi * Float(n) / Float(size))
         }
         return w
@@ -413,20 +418,20 @@ enum FireRedKaldiFbank {
         let melMax = hzToMelKaldi(fMax)
         // numMels + 2 centre points.
         var centers = [Float](repeating: 0, count: numMels + 2)
-        for i in 0..<(numMels + 2) {
+        for i in 0 ..< (numMels + 2) {
             let mel = melMin + (melMax - melMin) * Float(i) / Float(numMels + 1)
             centers[i] = melToHzKaldi(mel)
         }
         // FFT bin centre frequencies.
         var binHz = [Float](repeating: 0, count: nFreq)
-        for k in 0..<nFreq { binHz[k] = Float(k) * Float(sampleRate) / Float(nFft) }
+        for k in 0 ..< nFreq { binHz[k] = Float(k) * Float(sampleRate) / Float(nFft) }
 
         var fb = [Float](repeating: 0, count: numMels * nFreq)
-        for m in 0..<numMels {
+        for m in 0 ..< numMels {
             let lo = centers[m]
             let ctr = centers[m + 1]
             let hi = centers[m + 2]
-            for k in 0..<nFreq {
+            for k in 0 ..< nFreq {
                 let hz = binHz[k]
                 var w: Float = 0
                 if hz >= lo && hz <= ctr && ctr > lo {
@@ -456,28 +461,29 @@ enum FireRedKaldiFbank {
         }()
         let nFreq = nFft / 2 + 1
         let numFrames = (N - frameLengthSamples) / frameShiftSamples + 1
-        var features = [[Float]](repeating: [Float](repeating: 0, count: numMelBins),
-                                 count: numFrames)
+        var features = [[Float]](
+            repeating: [Float](repeating: 0, count: numMelBins),
+            count: numFrames)
 
         // Pre-scale int16 to float. No per-sample normalisation — Kaldi
         // leaves the waveform in raw PCM counts (range ≈ ±32768), which
         // affects the absolute log-mel energy but is absorbed by CMVN.
         let floatSamples = samples.map { Float($0) }
 
-        for f in 0..<numFrames {
+        for f in 0 ..< numFrames {
             let start = f * frameShiftSamples
             var frame = [Float](repeating: 0, count: nFft)
             // Apply window to the frame.
-            for n in 0..<frameLengthSamples {
+            for n in 0 ..< frameLengthSamples {
                 frame[n] = floatSamples[start + n] * window[n]
             }
             // Real DFT → power spectrum (naive O(N²) — fine for nFft≤512).
             var power = [Float](repeating: 0, count: nFreq)
-            for k in 0..<nFreq {
+            for k in 0 ..< nFreq {
                 var re: Float = 0
                 var im: Float = 0
                 let w = -2 * Float.pi * Float(k) / Float(nFft)
-                for n in 0..<frameLengthSamples {
+                for n in 0 ..< frameLengthSamples {
                     let angle = w * Float(n)
                     re += frame[n] * cosf(angle)
                     im += frame[n] * sinf(angle)
@@ -487,10 +493,10 @@ enum FireRedKaldiFbank {
             // Apply mel filterbank: each mel bin sums weighted power bins.
             var mels = [Float](repeating: 0, count: numMelBins)
             let floor: Float = 1e-10  // matches Kaldi's energy floor
-            for m in 0..<numMelBins {
+            for m in 0 ..< numMelBins {
                 var energy: Float = 0
                 let base = m * nFreq
-                for k in 0..<nFreq { energy += melFb[base + k] * power[k] }
+                for k in 0 ..< nFreq { energy += melFb[base + k] * power[k] }
                 mels[m] = logf(max(energy, floor))
             }
             features[f] = mels
@@ -529,7 +535,7 @@ struct FireRedCMVN: Sendable {
     func apply(_ features: inout [[Float]]) {
         for f in features.indices {
             precondition(features[f].count == dim, "FireRedCMVN: feature dim mismatch")
-            for d in 0..<dim {
+            for d in 0 ..< dim {
                 features[f][d] = (features[f][d] - mean[d]) * invStd[d]
             }
         }
@@ -588,8 +594,8 @@ struct FireRedCMVN: Sendable {
 /// as SileroVAD and SmartTurn.
 final class FireRedDFSMN: Sendable {
     // Initial projection layers.
-    let fc1: VADLinear          // [H, idim]
-    let fc2: VADLinear          // [P, H]
+    let fc1: VADLinear  // [H, idim]
+    let fc2: VADLinear  // [P, H]
     // First FSMN block (no skip connection).
     let fsmn1: FireRedFSMN
     // R-1 DFSMN blocks (with skip).
@@ -597,18 +603,20 @@ final class FireRedDFSMN: Sendable {
     // M DNN layers after the DFSMN stack.
     let dnns: [VADLinear]
     // Output head.
-    let outLinear: VADLinear    // [odim, H_dnn]
+    let outLinear: VADLinear  // [odim, H_dnn]
 
     let idim: Int
     let H: Int
     let P: Int
 
-    init(fc1: VADLinear, fc2: VADLinear,
-         fsmn1: FireRedFSMN,
-         blocks: [FireRedDFSMNBlock],
-         dnns: [VADLinear],
-         outLinear: VADLinear,
-         idim: Int, H: Int, P: Int) {
+    init(
+        fc1: VADLinear, fc2: VADLinear,
+        fsmn1: FireRedFSMN,
+        blocks: [FireRedDFSMNBlock],
+        dnns: [VADLinear],
+        outLinear: VADLinear,
+        idim: Int, H: Int, P: Int
+    ) {
         self.fc1 = fc1
         self.fc2 = fc2
         self.fsmn1 = fsmn1
@@ -724,25 +732,34 @@ enum FireRedVADPostprocessor {
             let speech = isSpeech != 0
             switch state {
             case .silence:
-                if speech { state = .possibleSpeech; speechStart = t }
+                if speech {
+                    state = .possibleSpeech
+                    speechStart = t
+                }
             case .possibleSpeech:
                 if speech {
                     if t - speechStart >= minSpeechFrame {
                         state = .speech
-                        for tt in speechStart..<t { decisions[tt] = 1 }
+                        for tt in speechStart ..< t { decisions[tt] = 1 }
                     }
                 } else {
-                    state = .silence; speechStart = -1
+                    state = .silence
+                    speechStart = -1
                 }
             case .speech:
-                if !speech { state = .possibleSilence; silenceStart = t }
+                if !speech {
+                    state = .possibleSilence
+                    silenceStart = t
+                }
             case .possibleSilence:
                 if !speech {
                     if t - silenceStart >= minSilenceFrame {
-                        state = .silence; speechStart = -1
+                        state = .silence
+                        speechStart = -1
                     }
                 } else {
-                    state = .speech; silenceStart = -1
+                    state = .speech
+                    silenceStart = -1
                 }
             }
             // Assign current frame.
@@ -760,10 +777,10 @@ enum FireRedVADPostprocessor {
     /// `_fix_smooth_window_start`.
     static func fixSmoothWindowStart(_ decisions: [Int], windowSize: Int) -> [Int] {
         var out = decisions
-        for t in 1..<decisions.count {
+        for t in 1 ..< decisions.count {
             if decisions[t - 1] == 0 && decisions[t] == 1 {
                 let start = max(0, t - windowSize)
-                for tt in start..<t { out[tt] = 1 }
+                for tt in start ..< t { out[tt] = 1 }
             }
         }
         return out
@@ -777,12 +794,12 @@ enum FireRedVADPostprocessor {
         guard mergeFrames > 0 else { return decisions }
         var out = decisions
         var silenceStart: Int? = nil
-        for t in 1..<decisions.count {
+        for t in 1 ..< decisions.count {
             if decisions[t - 1] == 1 && decisions[t] == 0 && silenceStart == nil {
                 silenceStart = t
             } else if decisions[t - 1] == 0 && decisions[t] == 1, let ss = silenceStart {
                 if t - ss < mergeFrames {
-                    for tt in ss..<t { out[tt] = 1 }
+                    for tt in ss ..< t { out[tt] = 1 }
                 }
                 silenceStart = nil
             }
@@ -801,11 +818,13 @@ enum FireRedVADPostprocessor {
         var runs: [(Int, Int)] = []
         var inSpeech = false
         var runStart = 0
-        for t in 0..<decisions.count {
+        for t in 0 ..< decisions.count {
             if decisions[t] == 1 && !inSpeech {
-                inSpeech = true; runStart = t
+                inSpeech = true
+                runStart = t
             } else if decisions[t] == 0 && inSpeech {
-                runs.append((runStart, t)); inSpeech = false
+                runs.append((runStart, t))
+                inSpeech = false
             }
         }
         if inSpeech { runs.append((runStart, decisions.count)) }
@@ -822,12 +841,16 @@ enum FireRedVADPostprocessor {
                     let winStart = start + maxFrame / 2
                     let winEnd = min(start + maxFrame, e)
                     if winStart >= winEnd { break }
-                    let slice = probs[winStart..<winEnd]
-                    if let minOffset = slice.enumerated().min(by: { $0.element < $1.element })?.offset {
+                    let slice = probs[winStart ..< winEnd]
+                    if let minOffset = slice.enumerated().min(by: { $0.element < $1.element })?
+                        .offset
+                    {
                         let splitIdx = winStart + minOffset
                         splitPoints.append(splitIdx)
                         start = splitIdx + 1
-                    } else { break }
+                    } else {
+                        break
+                    }
                 }
                 for sp in splitPoints { out[sp] = 0 }
             }
@@ -853,9 +876,10 @@ enum FireRedVADPostprocessor {
             } else if decision == 0, let ss = speechStart {
                 let startSample = ss * frameShiftSamples
                 let endSample = t * frameShiftSamples
-                segments.append(VADSpeechSegment(
-                    startSample: startSample, endSample: endSample,
-                    sampleRate: sampleRate))
+                segments.append(
+                    VADSpeechSegment(
+                        startSample: startSample, endSample: endSample,
+                        sampleRate: sampleRate))
                 speechStart = nil
             }
         }
@@ -864,9 +888,10 @@ enum FireRedVADPostprocessor {
             let startSample = ss * frameShiftSamples
             let audioDurationSamples = Int(audioDurationSeconds * Double(sampleRate))
             let endSample = min(audioDurationSamples, decisions.count * frameShiftSamples)
-            segments.append(VADSpeechSegment(
-                startSample: startSample, endSample: endSample,
-                sampleRate: sampleRate))
+            segments.append(
+                VADSpeechSegment(
+                    startSample: startSample, endSample: endSample,
+                    sampleRate: sampleRate))
         }
         return segments
     }
@@ -944,16 +969,18 @@ public final class FireRedVADModel: @unchecked Sendable {
             throw FireRedVADError.unsupportedSampleRate(sampleRate)
         }
         guard !audio.isEmpty else {
-            return VADOutput(probabilities: [], frameStrideSamples: config.frameShiftSamples,
-                             sampleRate: sampleRate, segments: [])
+            return VADOutput(
+                probabilities: [], frameStrideSamples: config.frameShiftSamples,
+                sampleRate: sampleRate, segments: [])
         }
         let audioDuration = Double(audio.count) / Double(sampleRate)
 
         // Extract Kaldi fbank features (80 mel bins, 25 ms / 10 ms frames).
         var features = FireRedKaldiFbank.extractFloat(audio)
         guard !features.isEmpty else {
-            return VADOutput(probabilities: [], frameStrideSamples: config.frameShiftSamples,
-                             sampleRate: sampleRate, segments: [])
+            return VADOutput(
+                probabilities: [], frameStrideSamples: config.frameShiftSamples,
+                sampleRate: sampleRate, segments: [])
         }
 
         // Apply CMVN normalisation.
@@ -968,10 +995,11 @@ public final class FireRedVADModel: @unchecked Sendable {
             audioDurationSeconds: audioDuration,
             sampleRate: sampleRate)
 
-        return VADOutput(probabilities: probs,
-                         frameStrideSamples: config.frameShiftSamples,
-                         sampleRate: sampleRate,
-                         segments: segments)
+        return VADOutput(
+            probabilities: probs,
+            frameStrideSamples: config.frameShiftSamples,
+            sampleRate: sampleRate,
+            segments: segments)
     }
 
     // ─── PyTorch checkpoint reader ────────────────────────────────
@@ -993,7 +1021,7 @@ public final class FireRedVADModel: @unchecked Sendable {
         }
         // Verify zip magic.
         guard zip.count >= 4,
-              zip[0] == 0x50, zip[1] == 0x4B, zip[2] == 0x03, zip[3] == 0x04
+            zip[0] == 0x50, zip[1] == 0x4B, zip[2] == 0x03, zip[3] == 0x04
         else { throw FireRedVADError.unsupportedCheckpointFormat }
 
         // Build a table of { "name_in_zip" → data } for all files.
@@ -1001,17 +1029,22 @@ public final class FireRedVADModel: @unchecked Sendable {
         var i = 0
         while i + 30 <= zip.count {
             // Local file header signature.
-            guard zip[i] == 0x50 && zip[i+1] == 0x4B && zip[i+2] == 0x03 && zip[i+3] == 0x04
-            else { i += 1; continue }
-            let compMethod = Int(zip[i+8]) | (Int(zip[i+9]) << 8)
-            let compSize   = Int(zip[i+18]) | (Int(zip[i+19]) << 8)
-                           | (Int(zip[i+20]) << 16) | (Int(zip[i+21]) << 24)
-            let uncompSize = Int(zip[i+22]) | (Int(zip[i+23]) << 8)
-                           | (Int(zip[i+24]) << 16) | (Int(zip[i+25]) << 24)
-            let fnLen      = Int(zip[i+26]) | (Int(zip[i+27]) << 8)
-            let extraLen   = Int(zip[i+28]) | (Int(zip[i+29]) << 8)
+            guard zip[i] == 0x50 && zip[i + 1] == 0x4B && zip[i + 2] == 0x03 && zip[i + 3] == 0x04
+            else {
+                i += 1
+                continue
+            }
+            let compMethod = Int(zip[i + 8]) | (Int(zip[i + 9]) << 8)
+            let compSize =
+                Int(zip[i + 18]) | (Int(zip[i + 19]) << 8)
+                | (Int(zip[i + 20]) << 16) | (Int(zip[i + 21]) << 24)
+            let uncompSize =
+                Int(zip[i + 22]) | (Int(zip[i + 23]) << 8)
+                | (Int(zip[i + 24]) << 16) | (Int(zip[i + 25]) << 24)
+            let fnLen = Int(zip[i + 26]) | (Int(zip[i + 27]) << 8)
+            let extraLen = Int(zip[i + 28]) | (Int(zip[i + 29]) << 8)
             guard i + 30 + fnLen + extraLen <= zip.count else { break }
-            let fnBytes = zip[(i+30) ..< (i+30+fnLen)]
+            let fnBytes = zip[(i + 30) ..< (i + 30 + fnLen)]
             let fname = String(bytes: fnBytes, encoding: .utf8) ?? ""
             let dataStart = i + 30 + fnLen + extraLen
             let dataEnd = dataStart + compSize
@@ -1082,74 +1115,101 @@ public final class FireRedVADModel: @unchecked Sendable {
         // The current dict key being processed.
         var currentKey: String? = nil
 
-        func readByte() -> UInt8? { guard pos < pkl.count else { return nil }; let b = pkl[pos]; pos += 1; return b }
-        func readUInt16LE() -> Int { let lo = Int(pkl[pos]); let hi = Int(pkl[pos+1]); pos += 2; return lo | (hi << 8) }
+        func readByte() -> UInt8? {
+            guard pos < pkl.count else { return nil }
+            let b = pkl[pos]
+            pos += 1
+            return b
+        }
+        func readUInt16LE() -> Int {
+            let lo = Int(pkl[pos])
+            let hi = Int(pkl[pos + 1])
+            pos += 2
+            return lo | (hi << 8)
+        }
         func readUInt32LE() -> Int {
-            let v = Int(pkl[pos]) | (Int(pkl[pos+1]) << 8) | (Int(pkl[pos+2]) << 16) | (Int(pkl[pos+3]) << 24)
-            pos += 4; return v
+            let v =
+                Int(pkl[pos]) | (Int(pkl[pos + 1]) << 8) | (Int(pkl[pos + 2]) << 16)
+                | (Int(pkl[pos + 3]) << 24)
+            pos += 4
+            return v
         }
         func readLen1String() -> String {
-            let n = Int(pkl[pos]); pos += 1
-            let s = String(bytes: pkl[pos..<(pos+n)], encoding: .utf8) ?? ""; pos += n; return s
+            let n = Int(pkl[pos])
+            pos += 1
+            let s = String(bytes: pkl[pos ..< (pos + n)], encoding: .utf8) ?? ""
+            pos += n
+            return s
         }
         func readLen4String() -> String {
             let n = readUInt32LE()
-            let s = String(bytes: pkl[pos..<(pos+n)], encoding: .utf8) ?? ""; pos += n; return s
+            let s = String(bytes: pkl[pos ..< (pos + n)], encoding: .utf8) ?? ""
+            pos += n
+            return s
         }
         func readNewlineString() -> String {
-            var end = pos; while end < pkl.count && pkl[end] != 0x0A { end += 1 }
-            let s = String(bytes: pkl[pos..<end], encoding: .utf8) ?? ""; pos = end + 1; return s
+            var end = pos
+            while end < pkl.count && pkl[end] != 0x0A { end += 1 }
+            let s = String(bytes: pkl[pos ..< end], encoding: .utf8) ?? ""
+            pos = end + 1
+            return s
         }
 
         while pos < pkl.count {
             guard let op = readByte() else { break }
             switch op {
-            case 0x80: _ = readByte()   // PROTO
+            case 0x80: _ = readByte()  // PROTO
             case 0x28: marks.append(stack.count)  // MARK
-            case 0x2E: return           // STOP
-            case 0x28: break            // duplicate MARK (handled above)
+            case 0x2E: return  // STOP
+            case 0x28: break  // duplicate MARK (handled above)
             // Push values
             case 0x4E: stack.append(.none_val)  // NONE
-            case 0x89: stack.append(.bool(false)) // NEWFALSE
+            case 0x89: stack.append(.bool(false))  // NEWFALSE
             case 0x88: stack.append(.bool(true))  // NEWTRUE
-            case 0x4B: // BININT1
+            case 0x4B:  // BININT1
                 stack.append(.int(Int(readByte() ?? 0)))
-            case 0x4D: // BININT2
+            case 0x4D:  // BININT2
                 stack.append(.int(readUInt16LE()))
-            case 0x4A: // BININT4
+            case 0x4A:  // BININT4
                 stack.append(.int(readUInt32LE()))
-            case 0x49: // INT (ascii)
+            case 0x49:  // INT (ascii)
                 let s = readNewlineString()
                 stack.append(.int(Int(s) ?? 0))
-            case 0x47: // BINFLOAT (8 bytes big-endian double)
+            case 0x47:  // BINFLOAT (8 bytes big-endian double)
                 pos += 8
                 stack.append(.none_val)
-            case 0x46: // FLOAT (ascii)
+            case 0x46:  // FLOAT (ascii)
                 _ = readNewlineString()
                 stack.append(.none_val)
-            case 0x53: // STRING (ascii, quoted)
+            case 0x53:  // STRING (ascii, quoted)
                 _ = readNewlineString()
                 stack.append(.none_val)
-            case 0x54: // BINSTRING len4
+            case 0x54:  // BINSTRING len4
                 let n = readUInt32LE()
-                let s = String(bytes: pkl[pos..<(pos+n)], encoding: .utf8) ?? ""; pos += n
+                let s = String(bytes: pkl[pos ..< (pos + n)], encoding: .utf8) ?? ""
+                pos += n
                 stack.append(.str(s))
-            case 0x55: // SHORT_BINSTRING len1
+            case 0x55:  // SHORT_BINSTRING len1
                 let n = Int(readByte() ?? 0)
-                let s = String(bytes: pkl[pos..<(pos+n)], encoding: .utf8) ?? ""; pos += n
+                let s = String(bytes: pkl[pos ..< (pos + n)], encoding: .utf8) ?? ""
+                pos += n
                 stack.append(.str(s))
-            case 0x58: // BINUNICODE len4
+            case 0x58:  // BINUNICODE len4
                 stack.append(.str(readLen4String()))
-            case 0x8C: // SHORT_BINUNICODE len1
+            case 0x8C:  // SHORT_BINUNICODE len1
                 stack.append(.str(readLen1String()))
-            case 0x8D: // BINUNICODE8
-                let n = Int(pkl[pos]) | (Int(pkl[pos+1])<<8) | (Int(pkl[pos+2])<<16) | (Int(pkl[pos+3])<<24)
-                    | (Int(pkl[pos+4])<<32) | (Int(pkl[pos+5])<<40) | (Int(pkl[pos+6])<<48) | (Int(pkl[pos+7])<<56)
+            case 0x8D:  // BINUNICODE8
+                let n =
+                    Int(pkl[pos]) | (Int(pkl[pos + 1]) << 8) | (Int(pkl[pos + 2]) << 16)
+                    | (Int(pkl[pos + 3]) << 24)
+                    | (Int(pkl[pos + 4]) << 32) | (Int(pkl[pos + 5]) << 40)
+                    | (Int(pkl[pos + 6]) << 48) | (Int(pkl[pos + 7]) << 56)
                 pos += 8
-                let s = String(bytes: pkl[pos..<(pos+n)], encoding: .utf8) ?? ""; pos += n
+                let s = String(bytes: pkl[pos ..< (pos + n)], encoding: .utf8) ?? ""
+                pos += n
                 stack.append(.str(s))
             // Tuples
-            case 0x28+4: // TUPLE (MARK items TUPLE = 0x74)
+            case 0x28 + 4:  // TUPLE (MARK items TUPLE = 0x74)
                 guard let markIdx = marks.popLast() else { break }
                 let items = Array(stack[markIdx...])
                 stack.removeSubrange(markIdx...)
@@ -1159,40 +1219,43 @@ public final class FireRedVADModel: @unchecked Sendable {
                 let items = Array(stack[markIdx...])
                 stack.removeSubrange(markIdx...)
                 stack.append(.tuple(items))
-            case 0x85: // TUPLE1
+            case 0x85:  // TUPLE1
                 if let top = stack.popLast() { stack.append(.tuple([top])) }
-            case 0x86: // TUPLE2
+            case 0x86:  // TUPLE2
                 if stack.count >= 2 {
-                    let b = stack.removeLast(); let a = stack.removeLast()
+                    let b = stack.removeLast()
+                    let a = stack.removeLast()
                     stack.append(.tuple([a, b]))
                 }
-            case 0x87: // TUPLE3
+            case 0x87:  // TUPLE3
                 if stack.count >= 3 {
-                    let c = stack.removeLast(); let b = stack.removeLast(); let a = stack.removeLast()
+                    let c = stack.removeLast()
+                    let b = stack.removeLast()
+                    let a = stack.removeLast()
                     stack.append(.tuple([a, b, c]))
                 }
-            case 0x29: stack.append(.tuple([])) // EMPTY_TUPLE
-            case 0x7D: stack.append(.dict)      // EMPTY_DICT
-            case 0x5D: stack.append(.list)      // EMPTY_LIST
+            case 0x29: stack.append(.tuple([]))  // EMPTY_TUPLE
+            case 0x7D: stack.append(.dict)  // EMPTY_DICT
+            case 0x5D: stack.append(.list)  // EMPTY_LIST
             // Memo
-            case 0x71: // BINPUT (1 byte id)
+            case 0x71:  // BINPUT (1 byte id)
                 let id = Int(readByte() ?? 0)
                 if let top = stack.last { memo[id] = top }
-            case 0x72: // LONG_BINPUT (4 bytes id)
+            case 0x72:  // LONG_BINPUT (4 bytes id)
                 let id = readUInt32LE()
                 if let top = stack.last { memo[id] = top }
-            case 0x68: // BINGET (1 byte id)
+            case 0x68:  // BINGET (1 byte id)
                 let id = Int(readByte() ?? 0)
                 stack.append(memo[id] ?? .none_val)
-            case 0x6A: // LONG_BINGET (4 bytes id)
+            case 0x6A:  // LONG_BINGET (4 bytes id)
                 let id = readUInt32LE()
                 stack.append(memo[id] ?? .none_val)
             // Global / reduce
-            case 0x63: // GLOBAL "module\nname\n"
+            case 0x63:  // GLOBAL "module\nname\n"
                 _ = readNewlineString()
                 _ = readNewlineString()
                 stack.append(.global_fn)
-            case 0x52: // REDUCE (fn, args) → call
+            case 0x52:  // REDUCE (fn, args) → call
                 guard stack.count >= 2 else { break }
                 let args = stack.removeLast()
                 let fn = stack.removeLast()
@@ -1200,23 +1263,26 @@ public final class FireRedVADModel: @unchecked Sendable {
                 // The storage PersistId fires as a result pushed onto the stack marked
                 // .storage(id, count).
                 if case .tuple(let items) = args, items.count >= 4,
-                   case .str(let tag) = items[0], tag == "storage",
-                   case .str(let storageId) = items[2],
-                   case .int(let count) = items[4] {
+                    case .str(let tag) = items[0], tag == "storage",
+                    case .str(let storageId) = items[2],
+                    case .int(let count) = items[4]
+                {
                     stack.append(.storage(id: storageId, count: count))
                 } else {
                     stack.append(.reduced)
                 }
-            case 0x51: // NEWOBJ (cls, args) — treat like REDUCE
+            case 0x51:  // NEWOBJ (cls, args) — treat like REDUCE
                 guard stack.count >= 2 else { break }
                 _ = stack.removeLast()
                 _ = stack.removeLast()
                 stack.append(.reduced)
-            case 0x80+1: // NEWOBJ_EX (0x81)
+            case 0x80 + 1:  // NEWOBJ_EX (0x81)
                 guard stack.count >= 3 else { break }
-                _ = stack.removeLast(); _ = stack.removeLast(); _ = stack.removeLast()
+                _ = stack.removeLast()
+                _ = stack.removeLast()
+                _ = stack.removeLast()
                 stack.append(.reduced)
-            case 0x62: // BUILD (obj, state) — sets state on top-1
+            case 0x62:  // BUILD (obj, state) — sets state on top-1
                 guard stack.count >= 2 else { break }
                 let state = stack.removeLast()
                 // If the top is a tensor being built, try to extract shape.
@@ -1226,7 +1292,7 @@ public final class FireRedVADModel: @unchecked Sendable {
                 // _rebuild_tensor_v2 pattern below; BUILD is for other objects.
                 stack.append(.reduced)
             // Dict / list operations
-            case 0x75: // SETITEMS (mark key val key val ...)
+            case 0x75:  // SETITEMS (mark key val key val ...)
                 guard let markIdx = marks.popLast() else { break }
                 var idx = markIdx
                 while idx + 1 < stack.count {
@@ -1236,26 +1302,26 @@ public final class FireRedVADModel: @unchecked Sendable {
                     idx += 2
                 }
                 stack.removeSubrange(markIdx...)
-            case 0x73: // SETITEM (k v on top)
+            case 0x73:  // SETITEM (k v on top)
                 if stack.count >= 2 {
                     let val = stack.removeLast()
                     let key = stack.removeLast()
                     if case .str(let k) = key { currentKey = k }
                     _ = val
                 }
-            case 0x61: // APPENDS (list mark items)
+            case 0x61:  // APPENDS (list mark items)
                 if let markIdx = marks.popLast() {
                     stack.removeSubrange(markIdx...)
                 }
-            case 0x65: // APPENDS (alternate)
+            case 0x65:  // APPENDS (alternate)
                 if let markIdx = marks.popLast() {
                     stack.removeSubrange(markIdx...)
                 }
-            case 0x60: // POP
+            case 0x60:  // POP
                 _ = stack.popLast()
-            case 0x32: // POP_MARK
+            case 0x32:  // POP_MARK
                 if let markIdx = marks.popLast() { stack.removeSubrange(markIdx...) }
-            case 0x32: break // duplicate
+            case 0x32: break  // duplicate
             default: break
             }
 
@@ -1286,7 +1352,7 @@ public final class FireRedVADModel: @unchecked Sendable {
         for i in stride(from: stack.count - 1, through: 0, by: -1) {
             if case .storage(let id, let count) = stack[i] {
                 // Look ahead for shape tuple.
-                for j in (i+1)..<stack.count {
+                for j in (i + 1) ..< stack.count {
                     if case .tuple(let items) = stack[j] {
                         let shape = items.compactMap { (v: PickleVal) -> Int? in
                             if case .int(let n) = v { return n }
@@ -1317,13 +1383,16 @@ public final class FireRedVADModel: @unchecked Sendable {
     ///
     /// When an mlx-community safetensors conversion appears, update this
     /// method to detect `*.safetensors` and load via `SafeTensorsBundle`.
-    public static func loadFromDirectory(_ directory: URL,
-                                          device _: Device = .shared) throws -> FireRedVADModel {
+    public static func loadFromDirectory(
+        _ directory: URL,
+        device _: Device = .shared
+    ) throws -> FireRedVADModel {
         // Optional config.json — use published defaults if absent.
         var config = FireRedVADConfig()
         let configURL = directory.appendingPathComponent("config.json")
         if let data = try? Data(contentsOf: configURL),
-           let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        {
             config = FireRedVADConfig.decode(from: raw)
         }
 
@@ -1362,14 +1431,17 @@ public final class FireRedVADModel: @unchecked Sendable {
         // fsmn1: lookback [P, 1, N1] (squeeze dim1 → [P, N1]).
         let lb1 = squeezeGroupConvWeight(try w("dfsmn.fsmn1.lookback_filter.weight"), P: P, N: N1)
         let la1Raw = wOpt("dfsmn.fsmn1.lookahead_filter.weight") ?? []
-        let la1 = la1Raw.isEmpty ? la1Raw
+        let la1 =
+            la1Raw.isEmpty
+            ? la1Raw
             : squeezeGroupConvWeight(la1Raw, P: P, N: N2)
-        let fsmn1 = FireRedFSMN(lookbackWeight: lb1, lookaheadWeight: la1,
-                                 P: P, N1: N1, S1: S1, N2: N2, S2: S2)
+        let fsmn1 = FireRedFSMN(
+            lookbackWeight: lb1, lookaheadWeight: la1,
+            P: P, N1: N1, S1: S1, N2: N2, S2: S2)
 
         // DFSMN blocks: config.numBlocks - 1 blocks (first is fsmn1).
         var blocks: [FireRedDFSMNBlock] = []
-        for n in 0..<(config.numBlocks - 1) {
+        for n in 0 ..< (config.numBlocks - 1) {
             let prefix = "dfsmn.fsmns.\(n)"
             let bfc1 = VADLinear(
                 weight: try w("\(prefix).fc1.0.weight"),
@@ -1382,10 +1454,13 @@ public final class FireRedVADModel: @unchecked Sendable {
             let lbN = squeezeGroupConvWeight(
                 try w("\(prefix).fsmn.lookback_filter.weight"), P: P, N: N1)
             let laNRaw = wOpt("\(prefix).fsmn.lookahead_filter.weight") ?? []
-            let laN = laNRaw.isEmpty ? laNRaw
+            let laN =
+                laNRaw.isEmpty
+                ? laNRaw
                 : squeezeGroupConvWeight(laNRaw, P: P, N: N2)
-            let bFsmn = FireRedFSMN(lookbackWeight: lbN, lookaheadWeight: laN,
-                                     P: P, N1: N1, S1: S1, N2: N2, S2: S2)
+            let bFsmn = FireRedFSMN(
+                lookbackWeight: lbN, lookaheadWeight: laN,
+                P: P, N1: N1, S1: S1, N2: N2, S2: S2)
             blocks.append(FireRedDFSMNBlock(fc1: bfc1, fc2: bfc2, fsmn: bFsmn))
         }
 
@@ -1396,7 +1471,7 @@ public final class FireRedVADModel: @unchecked Sendable {
             bias: wOpt("dfsmn.dnns.0.bias"),
             inFeatures: P, outFeatures: H)
         dnnLayers.append(dnn0)
-        for l in 1..<config.numDnnLayers {
+        for l in 1 ..< config.numDnnLayers {
             let dnnN = VADLinear(
                 weight: try w("dfsmn.dnns.\(l).weight"),
                 bias: wOpt("dfsmn.dnns.\(l).bias"),
@@ -1428,14 +1503,17 @@ public final class FireRedVADModel: @unchecked Sendable {
         // The checkpoint stores the weight as a contiguous [P, 1, N] tensor
         // (depthwise `groups=P`, so in_channels_per_group=1). The flat layout
         // is already `[P, N]` when the middle dim is 1, so a copy suffices.
-        precondition(w.count == P * N, "squeezeGroupConvWeight: count \(w.count) != P(\(P))*N(\(N))")
+        precondition(
+            w.count == P * N, "squeezeGroupConvWeight: count \(w.count) != P(\(P))*N(\(N))")
         return w
     }
 
     /// Download (or hit cache) the `FireRedTeam/FireRedVAD` checkpoint and
     /// load it.
-    public static func fromPretrained(_ idOrPath: String,
-                                       device: Device = .shared) async throws -> FireRedVADModel {
+    public static func fromPretrained(
+        _ idOrPath: String,
+        device: Device = .shared
+    ) async throws -> FireRedVADModel {
         let dir = try await ModelLocator().resolve(idOrPath: idOrPath)
         return try loadFromDirectory(dir, device: device)
     }

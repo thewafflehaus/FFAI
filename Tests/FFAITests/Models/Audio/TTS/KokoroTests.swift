@@ -28,6 +28,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Kokoro")
@@ -77,8 +78,9 @@ struct KokoroTests {
     @Test("KokoroConfig.from — returns nil when required fields are missing")
     func configReturnsNilForMissing() {
         // Missing n_token + hidden_dim.
-        let config = ModelConfig(architecture: nil, modelType: "kokoro",
-                                 raw: ["model_type": "kokoro"])
+        let config = ModelConfig(
+            architecture: nil, modelType: "kokoro",
+            raw: ["model_type": "kokoro"])
         #expect(KokoroConfig.from(config) == nil)
     }
 
@@ -93,8 +95,9 @@ struct KokoroTests {
 
     @Test("KokoroModel.handles — true for kokoro model_type")
     func handlesByModelType() {
-        let config = ModelConfig(architecture: nil, modelType: "kokoro",
-                                 raw: ["model_type": "kokoro"])
+        let config = ModelConfig(
+            architecture: nil, modelType: "kokoro",
+            raw: ["model_type": "kokoro"])
         #expect(KokoroModel.handles(config))
     }
 
@@ -110,9 +113,10 @@ struct KokoroTests {
 
     @Test("KokoroModel.handles — false for unrelated text model")
     func handlesFalseForTextModel() {
-        let config = ModelConfig(architecture: "LlamaForCausalLM",
-                                 modelType: "llama",
-                                 raw: ["model_type": "llama"])
+        let config = ModelConfig(
+            architecture: "LlamaForCausalLM",
+            modelType: "llama",
+            raw: ["model_type": "llama"])
         #expect(!KokoroModel.handles(config))
     }
 
@@ -148,8 +152,9 @@ struct KokoroTests {
 
     @Test("AudioModelRegistry.capabilities — Kokoro maps to textToSpeech")
     func registryCapability() {
-        let config = ModelConfig(architecture: nil, modelType: "kokoro",
-                                 raw: ["model_type": "kokoro"])
+        let config = ModelConfig(
+            architecture: nil, modelType: "kokoro",
+            raw: ["model_type": "kokoro"])
         #expect(AudioModelRegistry.capabilities(for: config) == Capability.textToSpeech)
     }
 

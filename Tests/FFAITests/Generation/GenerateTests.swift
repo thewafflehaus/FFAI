@@ -19,6 +19,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Generate")
@@ -67,8 +68,9 @@ struct GenerateTests {
             thinkKLDivergence: nil, genKLDivergence: nil,
             thinkTokenCount: nil, genTokenCount: nil
         )
-        let final = GenerationChunk(text: "", tokens: [], position: 5,
-                                    stats: dummyStats)
+        let final = GenerationChunk(
+            text: "", tokens: [], position: 5,
+            stats: dummyStats)
         #expect(final.isFinal == true)
     }
 }

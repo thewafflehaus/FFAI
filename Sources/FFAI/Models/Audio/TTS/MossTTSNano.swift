@@ -226,7 +226,8 @@ public struct MossTTSNanoConfig: Sendable {
         let gpt = MossTTSNanoGPT2Config.from(gptRaw)
         let nVQ = i("n_vq", 16)
         let audioVocabSize = i("audio_vocab_size", 1024)
-        let codebookSizes = raw["audio_codebook_sizes"] as? [Int]
+        let codebookSizes =
+            raw["audio_codebook_sizes"] as? [Int]
             ?? Array(repeating: audioVocabSize, count: nVQ)
 
         return MossTTSNanoConfig(
@@ -244,8 +245,10 @@ public struct MossTTSNanoConfig: Sendable {
             audioEndTokenID: i("audio_end_token_id", 7),
             audioUserSlotTokenID: i("audio_user_slot_token_id", 8),
             audioAssistantSlotTokenID: i("audio_assistant_slot_token_id", 9),
-            audioTokenizerType: raw["audio_tokenizer_type"] as? String ?? "moss-audio-tokenizer-nano",
-            audioTokenizerPretrainedNameOrPath: raw["audio_tokenizer_pretrained_name_or_path"] as? String,
+            audioTokenizerType: raw["audio_tokenizer_type"] as? String
+                ?? "moss-audio-tokenizer-nano",
+            audioTokenizerPretrainedNameOrPath: raw["audio_tokenizer_pretrained_name_or_path"]
+                as? String,
             audioTokenizerSampleRate: i("audio_tokenizer_sample_rate", 48_000),
             localTransformerLayers: i("local_transformer_layers", 1),
             hiddenSize: i("hidden_size", gpt.nEmbd),
@@ -317,7 +320,8 @@ extension MossTTSNanoModel {
         if let arch = config.architecture, architectures.contains(arch) { return true }
         // Structural fallback: gpt2_config sub-block + n_vq.
         if config.raw["gpt2_config"] is [String: Any],
-           config.raw["n_vq"] != nil {
+            config.raw["n_vq"] != nil
+        {
             return true
         }
         return false

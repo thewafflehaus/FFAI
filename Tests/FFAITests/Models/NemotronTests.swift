@@ -25,6 +25,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Nemotron Unified Family Root")
@@ -58,8 +59,9 @@ struct NemotronUnifiedRootTests {
 
     @Test("NemotronH.variant(for:) returns NemotronHHybrid")
     func nemotronHVariant() throws {
-        let cfg = ModelConfig(architecture: "NemotronHForCausalLM",
-                              modelType: "nemotron_h", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "NemotronHForCausalLM",
+            modelType: "nemotron_h", raw: [:])
         let v = try NemotronH.variant(for: cfg)
         #expect(String(describing: v) == String(describing: NemotronHHybrid.self))
     }

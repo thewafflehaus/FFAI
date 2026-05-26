@@ -49,10 +49,12 @@ public struct DiffusionParameters: Sendable, Equatable {
     /// Stop when the model's EOS token is produced.
     public var stopOnEOS: Bool
 
-    public init(maxNewTokens: Int = 64,
-                blockLength: Int = 32,
-                confidenceThreshold: Float? = 0.9,
-                stopOnEOS: Bool = true) {
+    public init(
+        maxNewTokens: Int = 64,
+        blockLength: Int = 32,
+        confidenceThreshold: Float? = 0.9,
+        stopOnEOS: Bool = true
+    ) {
         self.maxNewTokens = maxNewTokens
         self.blockLength = blockLength
         self.confidenceThreshold = confidenceThreshold
@@ -72,13 +74,16 @@ public struct DiffusionResult: Sendable {
 
 // ─── Diffusion + self-speculation entry points ───────────────────────
 
-public extension Model {
+extension Model {
 
     /// Block-wise diffusion decoding. Requires a NemotronDiffusion
     /// engine loaded with a raw KV cache (`LoadOptions.kvCache = .raw`).
-    func generateDiffusion(prompt: String,
-                           parameters: DiffusionParameters = DiffusionParameters())
-        -> DiffusionResult {
+    public func generateDiffusion(
+        prompt: String,
+        parameters: DiffusionParameters = DiffusionParameters()
+    )
+        -> DiffusionResult
+    {
         let promptTokens = tokenizer.encode(text: prompt)
         let generated = driveDiffusion(promptTokens: promptTokens, params: parameters)
         return makeResult(promptTokens: promptTokens, generated: generated)
@@ -86,9 +91,12 @@ public extension Model {
 
     /// Linear self-speculation: diffusion drafts a block, AR verifies it,
     /// the longest matching prefix (plus one bonus token) is committed.
-    func generateSelfSpeculative(prompt: String,
-                                 parameters: DiffusionParameters = DiffusionParameters())
-        -> DiffusionResult {
+    public func generateSelfSpeculative(
+        prompt: String,
+        parameters: DiffusionParameters = DiffusionParameters()
+    )
+        -> DiffusionResult
+    {
         let promptTokens = tokenizer.encode(text: prompt)
         let generated = driveSelfSpeculative(promptTokens: promptTokens, params: parameters)
         return makeResult(promptTokens: promptTokens, generated: generated)
@@ -96,30 +104,38 @@ public extension Model {
 
     // ─── Internal drivers ────────────────────────────────────────────
 
-    private func makeResult(promptTokens: [Int],
-                            generated: (tokens: [Int], nfe: Int)) -> DiffusionResult {
+    private func makeResult(
+        promptTokens: [Int],
+        generated: (tokens: [Int], nfe: Int)
+    ) -> DiffusionResult {
         let text = tokenizer.decode(tokens: generated.tokens, skipSpecialTokens: true)
-        return DiffusionResult(promptTokens: promptTokens,
-                               generatedTokens: generated.tokens,
-                               text: text, forwardPasses: generated.nfe)
+        return DiffusionResult(
+            promptTokens: promptTokens,
+            generatedTokens: generated.tokens,
+            text: text, forwardPasses: generated.nfe)
     }
 
     private func diffusionEngine() -> NemotronDiffusionModel {
         guard let m = engine as? NemotronDiffusionModel else {
-            preconditionFailure("generateDiffusion / generateSelfSpeculative require a "
-                + "NemotronDiffusion model")
+            preconditionFailure(
+                "generateDiffusion / generateSelfSpeculative require a "
+                    + "NemotronDiffusion model")
         }
         return m
     }
 
-    private func driveDiffusion(promptTokens: [Int],
-                                params: DiffusionParameters)
-        -> (tokens: [Int], nfe: Int) {
+    private func driveDiffusion(
+        promptTokens: [Int],
+        params: DiffusionParameters
+    )
+        -> (tokens: [Int], nfe: Int)
+    {
         let m = diffusionEngine()
         let blockLength = params.blockLength
-        precondition(params.maxNewTokens % blockLength == 0,
-                     "generateDiffusion: maxNewTokens (\(params.maxNewTokens)) must be a "
-                     + "multiple of blockLength (\(blockLength))")
+        precondition(
+            params.maxNewTokens % blockLength == 0,
+            "generateDiffusion: maxNewTokens (\(params.maxNewTokens)) must be a "
+                + "multiple of blockLength (\(blockLength))")
         precondition(!promptTokens.isEmpty, "generateDiffusion: prompt is empty")
 
         let maskId = m.maskTokenId
@@ -131,10 +147,11 @@ public extension Model {
         var nfe = 0
 
         // Causal prefill — appends the prompt's K/V, seeds the first block.
-        let promptPositions = Array(0..<promptTokens.count)
-        let prefillLogits = m.forwardBlock(tokenIds: promptTokens,
-                                           positions: promptPositions,
-                                           caches: caches, append: true)
+        let promptPositions = Array(0 ..< promptTokens.count)
+        let prefillLogits = m.forwardBlock(
+            tokenIds: promptTokens,
+            positions: promptPositions,
+            caches: caches, append: true)
         nfe += 1
         var nextToken = argmax(prefillLogits[promptTokens.count - 1])
 
@@ -142,24 +159,26 @@ public extension Model {
         var generated: [Int] = []
         generated.reserveCapacity(params.maxNewTokens)
 
-        for b in 0..<numBlocks {
+        for b in 0 ..< numBlocks {
             var block = [Int](repeating: maskId, count: blockLength)
-            block[0] = nextToken                       // causal-context seed
+            block[0] = nextToken  // causal-context seed
             let blockStart = promptTokens.count + b * blockLength
-            let blockPositions = Array(blockStart..<blockStart + blockLength)
+            let blockPositions = Array(blockStart ..< blockStart + blockLength)
 
             let initialMaskCount = block.filter { $0 == maskId }.count
-            let transferBudget = Self.numTransferTokens(maskCount: initialMaskCount,
-                                                        steps: blockLength)
+            let transferBudget = Self.numTransferTokens(
+                maskCount: initialMaskCount,
+                steps: blockLength)
 
             // Denoise: repeatedly forward the block and commit the
             // highest-confidence masked positions.
-            for step in 0..<blockLength {
+            for step in 0 ..< blockLength {
                 let isMask = block.map { $0 == maskId }
                 if !isMask.contains(true) { break }
-                let blockLogits = m.forwardBlock(tokenIds: block,
-                                                 positions: blockPositions,
-                                                 caches: caches, append: false)
+                let blockLogits = m.forwardBlock(
+                    tokenIds: block,
+                    positions: blockPositions,
+                    caches: caches, append: false)
                 nfe += 1
                 let (x0, transfer) = Self.transferIndex(
                     blockLogits: blockLogits, isMask: isMask,
@@ -172,9 +191,10 @@ public extension Model {
             generated.append(contentsOf: block)
 
             // Causal commit — append the finalised block, seed the next.
-            let commitLogits = m.forwardBlock(tokenIds: block,
-                                              positions: blockPositions,
-                                              caches: caches, append: true)
+            let commitLogits = m.forwardBlock(
+                tokenIds: block,
+                positions: blockPositions,
+                caches: caches, append: true)
             nfe += 1
             nextToken = argmax(commitLogits[blockLength - 1])
 
@@ -187,9 +207,12 @@ public extension Model {
         return (generated, nfe)
     }
 
-    private func driveSelfSpeculative(promptTokens: [Int],
-                                      params: DiffusionParameters)
-        -> (tokens: [Int], nfe: Int) {
+    private func driveSelfSpeculative(
+        promptTokens: [Int],
+        params: DiffusionParameters
+    )
+        -> (tokens: [Int], nfe: Int)
+    {
         let m = diffusionEngine()
         let blockLength = params.blockLength
         precondition(!promptTokens.isEmpty, "generateSelfSpeculative: prompt is empty")
@@ -204,9 +227,10 @@ public extension Model {
         var nfe = 0
 
         // Causal prefill.
-        let prefillLogits = m.forwardBlock(tokenIds: promptTokens,
-                                           positions: Array(0..<promptTokens.count),
-                                           caches: caches, append: true)
+        let prefillLogits = m.forwardBlock(
+            tokenIds: promptTokens,
+            positions: Array(0 ..< promptTokens.count),
+            caches: caches, append: true)
         nfe += 1
         var nextToken = argmax(prefillLogits[promptTokens.count - 1])
 
@@ -215,33 +239,35 @@ public extension Model {
         while generated.count < params.maxNewTokens {
             let cacheLen = rawCaches[0].length
             var block = [Int](repeating: maskId, count: blockLength)
-            block[0] = nextToken                       // verified seed
-            let blockPositions = Array(cacheLen..<cacheLen + blockLength)
+            block[0] = nextToken  // verified seed
+            let blockPositions = Array(cacheLen ..< cacheLen + blockLength)
 
             // Draft phase — bidirectional, single full pass (greedy).
             // `useLora: true` engages the linear_spec_lora drafter when
             // an adapter is attached (a no-op otherwise).
-            let draftLogits = m.forwardBlock(tokenIds: block,
-                                             positions: blockPositions,
-                                             caches: caches, append: false,
-                                             useLora: true)
+            let draftLogits = m.forwardBlock(
+                tokenIds: block,
+                positions: blockPositions,
+                caches: caches, append: false,
+                useLora: true)
             nfe += 1
-            for p in 0..<blockLength where block[p] == maskId {
+            for p in 0 ..< blockLength where block[p] == maskId {
                 block[p] = argmax(draftLogits[p])
             }
 
             // Verify phase — causal, appends the whole block to the cache.
-            let verifyLogits = m.forwardBlock(tokenIds: block,
-                                              positions: blockPositions,
-                                              caches: caches, append: true)
+            let verifyLogits = m.forwardBlock(
+                tokenIds: block,
+                positions: blockPositions,
+                caches: caches, append: true)
             nfe += 1
-            let arTokens = (0..<blockLength).map { argmax(verifyLogits[$0]) }
+            let arTokens = (0 ..< blockLength).map { argmax(verifyLogits[$0]) }
 
             // Accept the longest prefix of the draft that the AR verifier
             // agrees with, plus one bonus token.
             let outcome = SpeculativeAccept.verify(
-                draft: Array(block[1..<blockLength]),
-                verifierTokens: Array(arTokens[0..<blockLength - 1]),
+                draft: Array(block[1 ..< blockLength]),
+                verifierTokens: Array(arTokens[0 ..< blockLength - 1]),
                 bonusToken: arTokens[blockLength - 1])
 
             generated.append(contentsOf: outcome.committedTokens)
@@ -275,7 +301,7 @@ extension Model {
         guard steps > 0 else { return [] }
         let base = maskCount / steps
         let remainder = maskCount % steps
-        return (0..<steps).map { $0 < remainder ? base + 1 : base }
+        return (0 ..< steps).map { $0 < remainder ? base + 1 : base }
     }
 
     /// Pick which masked positions to commit this denoising step. Greedy
@@ -286,19 +312,23 @@ extension Model {
     /// single highest-confidence position always commits, so a block
     /// never stalls). Without one, the top-`numTransfer` positions by
     /// confidence commit.
-    static func transferIndex(blockLogits: [Tensor], isMask: [Bool],
-                              numTransfer: Int, threshold: Float?)
-        -> (x0: [Int], transfer: [Int]) {
+    static func transferIndex(
+        blockLogits: [Tensor], isMask: [Bool],
+        numTransfer: Int, threshold: Float?
+    )
+        -> (x0: [Int], transfer: [Int])
+    {
         let n = blockLogits.count
         var x0 = [Int](repeating: 0, count: n)
         var confidence = [Float](repeating: -.infinity, count: n)
 
-        for p in 0..<n {
+        for p in 0 ..< n {
             let logits = Sampling.decodeF32(blockLogits[p])
             var bestIdx = 0
             var bestVal = logits[0]
-            for i in 1..<logits.count where logits[i] > bestVal {
-                bestVal = logits[i]; bestIdx = i
+            for i in 1 ..< logits.count where logits[i] > bestVal {
+                bestVal = logits[i]
+                bestIdx = i
             }
             x0[p] = bestIdx
             if isMask[p] {
@@ -309,7 +339,7 @@ extension Model {
             }
         }
 
-        let maskedByConfidence = (0..<n)
+        let maskedByConfidence = (0 ..< n)
             .filter { isMask[$0] }
             .sorted { confidence[$0] > confidence[$1] }
 
@@ -333,8 +363,9 @@ private func argmax(_ logits: Tensor) -> Int {
     let values = Sampling.decodeF32(logits)
     var bestIdx = 0
     var bestVal = values[0]
-    for i in 1..<values.count where values[i] > bestVal {
-        bestVal = values[i]; bestIdx = i
+    for i in 1 ..< values.count where values[i] > bestVal {
+        bestVal = values[i]
+        bestIdx = i
     }
     return bestIdx
 }

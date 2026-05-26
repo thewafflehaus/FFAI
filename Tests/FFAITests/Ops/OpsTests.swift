@@ -14,9 +14,10 @@
 //
 import Foundation
 import Metal
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Ops")
 struct OpsTests {
@@ -92,8 +93,9 @@ struct OpsTests {
             let qk = Tensor.empty(shape: [4], dtype: .f32)
             qk.copyIn(from: [Float(1), 0, 7, 9])
             runAndWait { cb in
-                Ops.ropePartial(qk, position: 1, headDim: 4, rotaryDim: 2,
-                                thetaBase: 10000, on: cb)
+                Ops.ropePartial(
+                    qk, position: 1, headDim: 4, rotaryDim: 2,
+                    thetaBase: 10000, on: cb)
             }
             let r = qk.toArray(as: Float.self)
             // rotaryDim=2 → one rotate-half pair (0, 1). inv_freq=1,
@@ -117,16 +119,18 @@ struct OpsTests {
             b.copyIn(from: [Float(1), 0, 0, 1])
             var full: Tensor!
             runAndWait { cb in
-                full = Ops.rope(a, position: 1, headDim: 4,
-                                thetaBase: 10000, on: cb)
+                full = Ops.rope(
+                    a, position: 1, headDim: 4,
+                    thetaBase: 10000, on: cb)
             }
             runAndWait { cb in
-                Ops.ropePartial(b, position: 1, headDim: 4, rotaryDim: 4,
-                                thetaBase: 10000, on: cb)
+                Ops.ropePartial(
+                    b, position: 1, headDim: 4, rotaryDim: 4,
+                    thetaBase: 10000, on: cb)
             }
             let rf = full.toArray(as: Float.self)
             let rp = b.toArray(as: Float.self)
-            for i in 0..<4 {
+            for i in 0 ..< 4 {
                 #expect(abs(rf[i] - rp[i]) < 1e-4, "i=\(i): \(rf[i]) vs \(rp[i])")
             }
         }
@@ -201,10 +205,11 @@ struct OpsTests {
             var out: Tensor!
             runAndWait { cb in out = Ops.gelu(x, on: cb) }
             let outPtr = out.buffer.contents().bindMemory(to: UInt16.self, capacity: n)
-            for i in 0..<n {
+            for i in 0 ..< n {
                 let v = bf16BitsToFloatForTest(outPtr[i])
-                #expect(v.isFinite,
-                        "gelu(\(xs[i])) in bf16 → \(v); must be finite")
+                #expect(
+                    v.isFinite,
+                    "gelu(\(xs[i])) in bf16 → \(v); must be finite")
             }
         }
     }
@@ -250,7 +255,7 @@ struct OpsTests {
             let headDim = 4
             let nHeads = 3
             var rot = [Float](repeating: 0, count: headDim * headDim)
-            for i in 0..<headDim {
+            for i in 0 ..< headDim {
                 rot[i * headDim + ((i + 1) % headDim)] = 1
             }
             let rotation = Tensor.empty(shape: [headDim, headDim], dtype: .f32)
@@ -258,8 +263,8 @@ struct OpsTests {
 
             // Per-head input: [10,11,12,13, 20,21,22,23, 30,31,32,33].
             var inVals = [Float]()
-            for h in 0..<nHeads {
-                for i in 0..<headDim {
+            for h in 0 ..< nHeads {
+                for i in 0 ..< headDim {
                     inVals.append(Float((h + 1) * 10 + i))
                 }
             }
@@ -268,8 +273,9 @@ struct OpsTests {
 
             var out: Tensor!
             runAndWait { cb in
-                out = Ops.auraRotatePerHead(x, rotation: rotation,
-                                            nHeads: nHeads, headDim: headDim, on: cb)
+                out = Ops.auraRotatePerHead(
+                    x, rotation: rotation,
+                    nHeads: nHeads, headDim: headDim, on: cb)
             }
             let got = out.toArray(as: Float.self)
 
@@ -278,8 +284,8 @@ struct OpsTests {
             //   head 1: [20,21,22,23] → [21,22,23,20]
             //   head 2: [30,31,32,33] → [31,32,33,30]
             var expected = [Float]()
-            for h in 0..<nHeads {
-                for i in 0..<headDim {
+            for h in 0 ..< nHeads {
+                for i in 0 ..< headDim {
                     expected.append(Float((h + 1) * 10 + ((i + 1) % headDim)))
                 }
             }
@@ -297,23 +303,25 @@ struct OpsTests {
             let headDim = 8
             let nHeads = 2
             var rot = [Float](repeating: 0, count: headDim * headDim)
-            for i in 0..<headDim { rot[i * headDim + i] = 1 }
+            for i in 0 ..< headDim { rot[i * headDim + i] = 1 }
             let rotation = Tensor.empty(shape: [headDim, headDim], dtype: .f32)
             rotation.copyIn(from: rot)
 
-            let inVals: [Float] = (0..<(nHeads * headDim)).map { Float($0) * 0.5 - 1.25 }
+            let inVals: [Float] = (0 ..< (nHeads * headDim)).map { Float($0) * 0.5 - 1.25 }
             let x = Tensor.empty(shape: [nHeads * headDim], dtype: .f32)
             x.copyIn(from: inVals)
 
             var out: Tensor!
             runAndWait { cb in
-                out = Ops.auraRotatePerHead(x, rotation: rotation,
-                                            nHeads: nHeads, headDim: headDim, on: cb)
+                out = Ops.auraRotatePerHead(
+                    x, rotation: rotation,
+                    nHeads: nHeads, headDim: headDim, on: cb)
             }
             let got = out.toArray(as: Float.self)
-            for i in 0..<inVals.count {
-                #expect(abs(got[i] - inVals[i]) < 1e-5,
-                        "i=\(i) got \(got[i]) expected \(inVals[i])")
+            for i in 0 ..< inVals.count {
+                #expect(
+                    abs(got[i] - inVals[i]) < 1e-5,
+                    "i=\(i) got \(got[i]) expected \(inVals[i])")
             }
         }
     }
@@ -325,7 +333,7 @@ struct OpsTests {
             // multiple of 128 (32-lane simdgroup × 4 elements/thread).
             // See Ops.rmsNorm preconditions for the full constraint set.
             let n = 128
-            let xs: [Float] = (0..<n).map { Float($0 + 1) }   // [1, 2, …, 128]
+            let xs: [Float] = (0 ..< n).map { Float($0 + 1) }  // [1, 2, …, 128]
             let ws: [Float] = Array(repeating: Float(1), count: n)
 
             let x = Tensor.empty(shape: [n], dtype: .f32)
@@ -340,10 +348,11 @@ struct OpsTests {
             // CPU reference: rms = sqrt(mean(x^2)); y = x / rms * weight.
             let ssq = xs.reduce(Float(0)) { $0 + $1 * $1 }
             let expectedRms = (ssq / Float(n)).squareRoot()
-            for i in 0..<n {
+            for i in 0 ..< n {
                 let expected = xs[i] / expectedRms
-                #expect(abs(result[i] - expected) < 1e-2,
-                        "i=\(i) got \(result[i]) expected \(expected)")
+                #expect(
+                    abs(result[i] - expected) < 1e-2,
+                    "i=\(i) got \(result[i]) expected \(expected)")
             }
         }
     }
@@ -356,8 +365,8 @@ struct OpsTests {
             // strided mt_rms_norm_wide kernel. eps eps=1e-6 like Gemma 4.
             let n = 5376
             let eps: Float = 1e-6
-            let xs: [Float] = (0..<n).map { Float(($0 % 37) - 18) * 0.21 }
-            let ws: [Float] = (0..<n).map { 1.0 + Float($0 % 11) * 0.03 }
+            let xs: [Float] = (0 ..< n).map { Float(($0 % 37) - 18) * 0.21 }
+            let ws: [Float] = (0 ..< n).map { 1.0 + Float($0 % 11) * 0.03 }
 
             let x = Tensor.empty(shape: [n], dtype: .f32)
             x.copyIn(from: xs)
@@ -371,10 +380,11 @@ struct OpsTests {
             // CPU reference: rms = sqrt(mean(x^2) + eps); y = x/rms*weight.
             let ssq = xs.reduce(Float(0)) { $0 + $1 * $1 }
             let expectedRms = (ssq / Float(n) + eps).squareRoot()
-            for i in 0..<n {
+            for i in 0 ..< n {
                 let expected = xs[i] / expectedRms * ws[i]
-                #expect(abs(result[i] - expected) < 1e-3,
-                        "i=\(i) got \(result[i]) expected \(expected)")
+                #expect(
+                    abs(result[i] - expected) < 1e-3,
+                    "i=\(i) got \(result[i]) expected \(expected)")
             }
         }
     }
@@ -390,7 +400,7 @@ struct OpsTests {
             }
             let r = out.toArray(as: Float.self)
             // theta = 0 → cos = 1, sin = 0 → identity
-            for i in 0..<4 {
+            for i in 0 ..< 4 {
                 #expect(abs(r[i] - Float(i + 1)) < 1e-4, "i=\(i) got \(r[i])")
             }
         }
@@ -412,10 +422,10 @@ struct OpsTests {
             //   x[1]*cos - x[3]*sin = 0*1 - 1*0.01 = -0.01
             //   x[1]*sin + x[3]*cos = 0*0.01 + 1*1 = 1
             let r = out.toArray(as: Float.self)
-            #expect(abs(r[0] - 0.5403) < 1e-3)   // index 0
+            #expect(abs(r[0] - 0.5403) < 1e-3)  // index 0
             #expect(abs(r[1] - (-0.01)) < 5e-3)  // index 1 (looser tol for f32 trig)
-            #expect(abs(r[2] - 0.8415) < 1e-3)   // index 0 + half_dim
-            #expect(abs(r[3] - 1.0) < 1e-3)      // index 1 + half_dim
+            #expect(abs(r[2] - 0.8415) < 1e-3)  // index 0 + half_dim
+            #expect(abs(r[3] - 1.0) < 1e-3)  // index 1 + half_dim
         }
     }
 
@@ -427,8 +437,8 @@ struct OpsTests {
             // before the preconditions existed, the test ran with head_dim=4
             // and pinned the GPU.
             let D = 128
-            let kvStride = 4   // pre-allocated capacity
-            let nKV = 1        // only the first position is filled
+            let kvStride = 4  // pre-allocated capacity
+            let nKV = 1  // only the first position is filled
             let nQHeads = 1
             let nKVHeads = 1
 
@@ -442,28 +452,30 @@ struct OpsTests {
             q.copyIn(from: qData)
 
             var kData = [Float](repeating: 0, count: nKVHeads * kvStride * D)
-            kData[0] = 1                              // K[head=0, pos=0, d=0]
+            kData[0] = 1  // K[head=0, pos=0, d=0]
             k.copyIn(from: kData)
 
             // V[0] is an arbitrary recognizable vector; positions [1..3]
             // are zero so even if the kernel read past `n_kv` we'd notice.
             var vData = [Float](repeating: 0, count: nKVHeads * kvStride * D)
-            for d in 0..<D { vData[d] = Float(d + 1) }   // [1, 2, …, 128]
+            for d in 0 ..< D { vData[d] = Float(d + 1) }  // [1, 2, …, 128]
             v.copyIn(from: vData)
 
             var out: Tensor!
             runAndWait { cb in
-                out = Ops.sdpaDecode(q: q, k: k, v: v,
-                                     nQHeads: nQHeads, nKVHeads: nKVHeads,
-                                     headDim: D,
-                                     nKV: nKV, kvStride: kvStride,
-                                     scale: 1.0, on: cb)
+                out = Ops.sdpaDecode(
+                    q: q, k: k, v: v,
+                    nQHeads: nQHeads, nKVHeads: nKVHeads,
+                    headDim: D,
+                    nKV: nKV, kvStride: kvStride,
+                    scale: 1.0, on: cb)
             }
             // n_kv = 1 → softmax([single_score]) = 1 → output == V[0].
             let r = out.toArray(as: Float.self)
-            for d in 0..<D {
-                #expect(abs(r[d] - Float(d + 1)) < 1e-4,
-                        "out[\(d)] = \(r[d]), expected \(d + 1)")
+            for d in 0 ..< D {
+                #expect(
+                    abs(r[d] - Float(d + 1)) < 1e-4,
+                    "out[\(d)] = \(r[d]), expected \(d + 1)")
             }
         }
     }
@@ -492,15 +504,15 @@ struct OpsTests {
             q.copyIn(from: qData)
 
             var kData = [Float](repeating: 0, count: nKVHeads * kvStride * D)
-            for pos in 0..<kvStride { kData[pos * D + 0] = 1 }
+            for pos in 0 ..< kvStride { kData[pos * D + 0] = 1 }
             k.copyIn(from: kData)
 
             // V[pos] = constant vector of value `pos`. The attention
             // output's first element is the mean of the attended `pos`
             // values, which makes the attended set directly checkable.
             var vData = [Float](repeating: 0, count: nKVHeads * kvStride * D)
-            for pos in 0..<kvStride {
-                for d in 0..<D { vData[pos * D + d] = Float(pos) }
+            for pos in 0 ..< kvStride {
+                for d in 0 ..< D { vData[pos * D + d] = Float(pos) }
             }
             v.copyIn(from: vData)
 
@@ -508,29 +520,33 @@ struct OpsTests {
             // mean(2, 3) = 2.5.
             var windowed: Tensor!
             runAndWait { cb in
-                windowed = Ops.sdpaDecode(q: q, k: k, v: v,
-                                          nQHeads: nQHeads, nKVHeads: nKVHeads,
-                                          headDim: D, nKV: nKV, kvStride: kvStride,
-                                          scale: 1.0, on: cb,
-                                          sinkEnd: 0, windowStart: 2)
+                windowed = Ops.sdpaDecode(
+                    q: q, k: k, v: v,
+                    nQHeads: nQHeads, nKVHeads: nKVHeads,
+                    headDim: D, nKV: nKV, kvStride: kvStride,
+                    scale: 1.0, on: cb,
+                    sinkEnd: 0, windowStart: 2)
             }
             let wr = windowed.toArray(as: Float.self)
-            #expect(abs(wr[0] - 2.5) < 1e-4,
-                    "windowStart=2 should attend {2,3}: got \(wr[0]), expected 2.5")
+            #expect(
+                abs(wr[0] - 2.5) < 1e-4,
+                "windowStart=2 should attend {2,3}: got \(wr[0]), expected 2.5")
 
             // sinkEnd=1, windowStart=3 → attends {0} ∪ {3}.
             // mean(0, 3) = 1.5.
             var sinked: Tensor!
             runAndWait { cb in
-                sinked = Ops.sdpaDecode(q: q, k: k, v: v,
-                                        nQHeads: nQHeads, nKVHeads: nKVHeads,
-                                        headDim: D, nKV: nKV, kvStride: kvStride,
-                                        scale: 1.0, on: cb,
-                                        sinkEnd: 1, windowStart: 3)
+                sinked = Ops.sdpaDecode(
+                    q: q, k: k, v: v,
+                    nQHeads: nQHeads, nKVHeads: nKVHeads,
+                    headDim: D, nKV: nKV, kvStride: kvStride,
+                    scale: 1.0, on: cb,
+                    sinkEnd: 1, windowStart: 3)
             }
             let sr = sinked.toArray(as: Float.self)
-            #expect(abs(sr[0] - 1.5) < 1e-4,
-                    "sinkEnd=1, windowStart=3 should attend {0,3}: got \(sr[0]), expected 1.5")
+            #expect(
+                abs(sr[0] - 1.5) < 1e-4,
+                "sinkEnd=1, windowStart=3 should attend {0,3}: got \(sr[0]), expected 1.5")
 
             // sinkEnd=0, windowStart=0 → dense full attention {0,1,2,3}.
             // mean(0,1,2,3) = 1.5 — same mean as above by coincidence,
@@ -538,15 +554,17 @@ struct OpsTests {
             // default-argument call.
             var dense: Tensor!
             runAndWait { cb in
-                dense = Ops.sdpaDecode(q: q, k: k, v: v,
-                                       nQHeads: nQHeads, nKVHeads: nKVHeads,
-                                       headDim: D, nKV: nKV, kvStride: kvStride,
-                                       scale: 1.0, on: cb,
-                                       sinkEnd: 0, windowStart: 0)
+                dense = Ops.sdpaDecode(
+                    q: q, k: k, v: v,
+                    nQHeads: nQHeads, nKVHeads: nKVHeads,
+                    headDim: D, nKV: nKV, kvStride: kvStride,
+                    scale: 1.0, on: cb,
+                    sinkEnd: 0, windowStart: 0)
             }
             let dr = dense.toArray(as: Float.self)
-            #expect(abs(dr[0] - 1.5) < 1e-4,
-                    "dense attention over {0,1,2,3}: got \(dr[0]), expected 1.5")
+            #expect(
+                abs(dr[0] - 1.5) < 1e-4,
+                "dense attention over {0,1,2,3}: got \(dr[0]), expected 1.5")
         }
     }
 
@@ -560,8 +578,9 @@ struct OpsTests {
         uBuf.copyIn(from: [uniform])
         let out = Tensor.empty(shape: [1], dtype: .u32)
         runAndWait { cb in
-            Ops.softmaxCategoricalSample(logits, into: out, temperature: tBuf,
-                                         uniform: uBuf, on: cb)
+            Ops.softmaxCategoricalSample(
+                logits, into: out, temperature: tBuf,
+                uniform: uBuf, on: cb)
         }
         return Int(out.toArray(as: UInt32.self)[0])
     }
@@ -600,7 +619,7 @@ struct OpsTests {
         autoreleasepool {
             let n = 32
             var vals = [Float](repeating: 0, count: n)
-            for i in 0..<n { vals[i] = Float(i) / 5.0 }
+            for i in 0 ..< n { vals[i] = Float(i) / 5.0 }
             let l = Tensor.empty(shape: [n], dtype: .f32)
             l.copyIn(from: vals)
 
@@ -613,7 +632,7 @@ struct OpsTests {
             func cpuExpected(uniform: Float) -> Int {
                 let target = Double(uniform) * total
                 var cum = 0.0
-                for i in 0..<n {
+                for i in 0 ..< n {
                     cum += expSums[i]
                     if cum >= target { return i }
                 }
@@ -635,8 +654,8 @@ struct OpsTests {
             let n = 152_000
             var vals = [Float](repeating: -10.0, count: n)
             // Three tokens have most of the mass.
-            vals[42] = 8.0      // dominant
-            vals[1000] = 6.0    // secondary
+            vals[42] = 8.0  // dominant
+            vals[1000] = 6.0  // secondary
             vals[50_000] = 4.0  // tertiary
             let l = Tensor.empty(shape: [n], dtype: .f32)
             l.copyIn(from: vals)
@@ -656,9 +675,12 @@ struct OpsTests {
                 let target = Double(u) * total
                 var cum = 0.0
                 var expected = n - 1
-                for i in 0..<n {
+                for i in 0 ..< n {
                     cum += expSums[i]
-                    if cum >= target { expected = i; break }
+                    if cum >= target {
+                        expected = i
+                        break
+                    }
                 }
                 #expect(gpu == expected, "uniform=\(u): gpu=\(gpu) cpu=\(expected)")
             }
@@ -669,12 +691,12 @@ struct OpsTests {
     func gpuSampleDtypes() {
         autoreleasepool {
             let f16 = Tensor.empty(shape: [4], dtype: .f16)
-            f16.copyIn(from: [Float16(0), 0, 8, 0])   // peak at index 2
+            f16.copyIn(from: [Float16(0), 0, 8, 0])  // peak at index 2
             #expect(runGPUSample(logits: f16, temperature: 1.0, uniform: 0.5) == 2)
 
             let bf16 = Tensor.empty(shape: [4], dtype: .bf16)
             // bf16 representations of 0, 0, 8, 0:
-            bf16.copyIn(from: [UInt16(0), 0, 0x4100, 0])   // 0x4100 = bf16(8.0)
+            bf16.copyIn(from: [UInt16(0), 0, 0x4100, 0])  // 0x4100 = bf16(8.0)
             #expect(runGPUSample(logits: bf16, temperature: 1.0, uniform: 0.5) == 2)
         }
     }
@@ -691,9 +713,9 @@ struct OpsTests {
             // strided scan in the 256-thread reduction).
             let n = 4096
             var logits = [Float](repeating: 0, count: n)
-            for i in 0..<n { logits[i] = Float((i * 31) % 997) * 0.001 }
+            for i in 0 ..< n { logits[i] = Float((i * 31) % 997) * 0.001 }
             let peak = 2718
-            logits[peak] = 99.0   // unambiguous maximum
+            logits[peak] = 99.0  // unambiguous maximum
             let cpuArgmax = logits.indices.max(by: { logits[$0] < logits[$1] })!
 
             let logitsT = Tensor.empty(shape: [n], dtype: .f32)
@@ -714,7 +736,7 @@ struct OpsTests {
 
             let f16 = Tensor.empty(shape: [n], dtype: .f16)
             // Ramp of small values, one clear peak at index 300.
-            var f16Data = (0..<n).map { Float16(Float($0 % 7) * 0.5) }
+            var f16Data = (0 ..< n).map { Float16(Float($0 % 7) * 0.5) }
             f16Data[300] = 64.0
             f16.copyIn(from: f16Data)
             let outF16 = Tensor.empty(shape: [1], dtype: .u32)
@@ -723,8 +745,8 @@ struct OpsTests {
 
             let bf16 = Tensor.empty(shape: [n], dtype: .bf16)
             // bf16 bits: ramp of small values, one peak (0x4280 = bf16(64.0)).
-            var bf16Bits = [UInt16](repeating: 0x3F00, count: n)   // bf16(0.5)
-            bf16Bits[123] = 0x4280                                  // bf16(64.0)
+            var bf16Bits = [UInt16](repeating: 0x3F00, count: n)  // bf16(0.5)
+            bf16Bits[123] = 0x4280  // bf16(64.0)
             bf16.copyIn(from: bf16Bits)
             let outBf16 = Tensor.empty(shape: [1], dtype: .u32)
             runAndWait { cb in Ops.argmax(bf16, into: outBf16, on: cb) }
@@ -744,13 +766,14 @@ struct OpsTests {
             var out: Tensor!
             runAndWait { cb in out = Ops.softplus(x, on: cb) }
             let r = out.toArray(as: Float.self)
-            for i in 0..<xs.count {
+            for i in 0 ..< xs.count {
                 // Numerically-stable CPU reference: softplus(x) =
                 // max(x,0) + log1p(exp(-|x|)).
                 let v = xs[i]
                 let expected = max(v, 0) + Float(log1p(Double(exp(-abs(v)))))
-                #expect(abs(r[i] - expected) < 1e-3,
-                        "i=\(i) x=\(v) got \(r[i]) expected \(expected)")
+                #expect(
+                    abs(r[i] - expected) < 1e-3,
+                    "i=\(i) x=\(v) got \(r[i]) expected \(expected)")
             }
         }
     }
@@ -773,13 +796,13 @@ struct OpsTests {
 
             // Distinct data per row so a row-offset bug would surface.
             var xData = [Float](repeating: 0, count: nRows * rowSize)
-            for row in 0..<nRows {
-                for d in 0..<rowSize {
+            for row in 0 ..< nRows {
+                for d in 0 ..< rowSize {
                     xData[row * rowSize + d] = Float(d + 1) * Float(row + 1) * 0.1
                 }
             }
             // Non-uniform weight so the weight multiply is exercised.
-            let wData: [Float] = (0..<rowSize).map { 1.0 + Float($0 % 5) * 0.1 }
+            let wData: [Float] = (0 ..< rowSize).map { 1.0 + Float($0 % 5) * 0.1 }
 
             let x = Tensor.empty(shape: [nRows, rowSize], dtype: .f32)
             x.copyIn(from: xData)
@@ -788,23 +811,25 @@ struct OpsTests {
 
             var out: Tensor!
             runAndWait { cb in
-                out = Ops.rmsNormRows(x, weight: w, eps: eps,
-                                      nRows: nRows, rowSize: rowSize, on: cb)
+                out = Ops.rmsNormRows(
+                    x, weight: w, eps: eps,
+                    nRows: nRows, rowSize: rowSize, on: cb)
             }
             let r = out.toArray(as: Float.self)
 
-            for row in 0..<nRows {
+            for row in 0 ..< nRows {
                 var ssq: Float = 0
-                for d in 0..<rowSize {
+                for d in 0 ..< rowSize {
                     let v = xData[row * rowSize + d]
                     ssq += v * v
                 }
                 let rms = (ssq / Float(rowSize) + eps).squareRoot()
-                for d in 0..<rowSize {
+                for d in 0 ..< rowSize {
                     let expected = xData[row * rowSize + d] / rms * wData[d]
                     let got = r[row * rowSize + d]
-                    #expect(abs(got - expected) < 1e-2,
-                            "row=\(row) d=\(d) got \(got) expected \(expected)")
+                    #expect(
+                        abs(got - expected) < 1e-2,
+                        "row=\(row) d=\(d) got \(got) expected \(expected)")
                 }
             }
         }
@@ -816,11 +841,12 @@ struct OpsTests {
             // Two-row case so we exercise both the nRows=1 and
             // nRows>1 dispatch paths in one test. n=128 is the
             // smallest legal width (TPG = n/4 = 32 = simdgroup).
-            let nRows = 2, n = 128
+            let nRows = 2
+            let n = 128
             let eps: Float = 1e-6
-            let aData: [Float] = (0..<nRows * n).map { Float(($0 % 19) - 9) * 0.31 }
-            let bData: [Float] = (0..<nRows * n).map { Float(($0 % 13) - 6) * 0.17 }
-            let wData: [Float] = (0..<n).map { 1.0 + Float($0 % 7) * 0.05 }
+            let aData: [Float] = (0 ..< nRows * n).map { Float(($0 % 19) - 9) * 0.31 }
+            let bData: [Float] = (0 ..< nRows * n).map { Float(($0 % 13) - 6) * 0.17 }
+            let wData: [Float] = (0 ..< n).map { 1.0 + Float($0 % 7) * 0.05 }
 
             let a = Tensor.empty(shape: [nRows, n], dtype: .f32)
             a.copyIn(from: aData)
@@ -833,30 +859,33 @@ struct OpsTests {
             let (residual, normed) = Ops.addAndRmsNorm(
                 a, b, weight: weight, eps: eps,
                 nRows: nRows, rowSize: n, on: cmd)
-            cmd.commit(); cmd.waitUntilCompleted()
+            cmd.commit()
+            cmd.waitUntilCompleted()
 
             let residArr = residual.toArray(as: Float.self)
             let normedArr = normed.toArray(as: Float.self)
 
             // CPU reference: residual is a+b; normed is RMSNorm(a+b)·w.
-            for row in 0..<nRows {
+            for row in 0 ..< nRows {
                 var ssq: Float = 0
                 var sums = [Float](repeating: 0, count: n)
-                for d in 0..<n {
+                for d in 0 ..< n {
                     let s = aData[row * n + d] + bData[row * n + d]
                     sums[d] = s
                     ssq += s * s
                 }
                 let rms = (ssq / Float(n) + eps).squareRoot()
-                for d in 0..<n {
+                for d in 0 ..< n {
                     let expectedResid = sums[d]
                     let expectedNormed = sums[d] / rms * wData[d]
                     let gotResid = residArr[row * n + d]
                     let gotNormed = normedArr[row * n + d]
-                    #expect(abs(gotResid - expectedResid) < 1e-3,
-                            "residual row=\(row) d=\(d): got \(gotResid) expected \(expectedResid)")
-                    #expect(abs(gotNormed - expectedNormed) < 1e-2,
-                            "normed row=\(row) d=\(d): got \(gotNormed) expected \(expectedNormed)")
+                    #expect(
+                        abs(gotResid - expectedResid) < 1e-3,
+                        "residual row=\(row) d=\(d): got \(gotResid) expected \(expectedResid)")
+                    #expect(
+                        abs(gotNormed - expectedNormed) < 1e-2,
+                        "normed row=\(row) d=\(d): got \(gotNormed) expected \(expectedNormed)")
                 }
             }
         }
@@ -868,13 +897,16 @@ struct OpsTests {
             // With every K row identical, all scores tie → softmax is
             // uniform → each query's output is the plain mean of the
             // attended V rows. A reference that needs no SDPA oracle.
-            let headDim = 128, nQHeads = 2, nKVHeads = 1
-            let baseKV = 0, nQuery = 4
+            let headDim = 128
+            let nQHeads = 2
+            let nKVHeads = 1
+            let baseKV = 0
+            let nQuery = 4
             let kvStride = baseKV + nQuery
             let scale = 1.0 / Float(Double(headDim).squareRoot())
 
             let q = Tensor.empty(shape: [nQuery, nQHeads, headDim], dtype: .f32)
-            q.copyIn(from: (0..<nQuery * nQHeads * headDim).map { Float($0 % 7) * 0.1 })
+            q.copyIn(from: (0 ..< nQuery * nQHeads * headDim).map { Float($0 % 7) * 0.1 })
 
             // K: every row the same constant vector.
             let k = Tensor.empty(shape: [nKVHeads, kvStride, headDim], dtype: .f32)
@@ -882,8 +914,8 @@ struct OpsTests {
 
             // V: row t holds the constant value `t` so the mean is easy.
             var vData = [Float](repeating: 0, count: nKVHeads * kvStride * headDim)
-            for t in 0..<kvStride {
-                for d in 0..<headDim { vData[t * headDim + d] = Float(t) }
+            for t in 0 ..< kvStride {
+                for d in 0 ..< headDim { vData[t * headDim + d] = Float(t) }
             }
             let v = Tensor.empty(shape: [nKVHeads, kvStride, headDim], dtype: .f32)
             v.copyIn(from: vData)
@@ -891,11 +923,13 @@ struct OpsTests {
             let cmd = Device.shared.makeCommandBuffer()
             // Full (non-causal) mode → every query attends all 4 V rows,
             // so each output element is mean(0,1,2,3) = 1.5.
-            let out = Ops.sdpaMulti(q: q, k: k, v: v,
-                                    nQHeads: nQHeads, nKVHeads: nKVHeads, headDim: headDim,
-                                    baseKV: baseKV, nQuery: nQuery, kvStride: kvStride,
-                                    causal: false, scale: scale, on: cmd)
-            cmd.commit(); cmd.waitUntilCompleted()
+            let out = Ops.sdpaMulti(
+                q: q, k: k, v: v,
+                nQHeads: nQHeads, nKVHeads: nKVHeads, headDim: headDim,
+                baseKV: baseKV, nQuery: nQuery, kvStride: kvStride,
+                causal: false, scale: scale, on: cmd)
+            cmd.commit()
+            cmd.waitUntilCompleted()
 
             let result = out.toArray(as: Float.self)
             #expect(result.count == nQuery * nQHeads * headDim)
@@ -908,8 +942,11 @@ struct OpsTests {
     @Test("sdpaMulti — causal mode: query r attends V rows 0...r")
     func sdpaMultiCausalPrefixMeans() {
         autoreleasepool {
-            let headDim = 128, nQHeads = 1, nKVHeads = 1
-            let baseKV = 0, nQuery = 4
+            let headDim = 128
+            let nQHeads = 1
+            let nKVHeads = 1
+            let baseKV = 0
+            let nQuery = 4
             let kvStride = baseKV + nQuery
             let scale = 1.0 / Float(Double(headDim).squareRoot())
 
@@ -918,27 +955,30 @@ struct OpsTests {
             let k = Tensor.empty(shape: [nKVHeads, kvStride, headDim], dtype: .f32)
             k.copyIn(from: [Float](repeating: 0.5, count: nKVHeads * kvStride * headDim))
             var vData = [Float](repeating: 0, count: nKVHeads * kvStride * headDim)
-            for t in 0..<kvStride {
-                for d in 0..<headDim { vData[t * headDim + d] = Float(t) }
+            for t in 0 ..< kvStride {
+                for d in 0 ..< headDim { vData[t * headDim + d] = Float(t) }
             }
             let v = Tensor.empty(shape: [nKVHeads, kvStride, headDim], dtype: .f32)
             v.copyIn(from: vData)
 
             let cmd = Device.shared.makeCommandBuffer()
-            let out = Ops.sdpaMulti(q: q, k: k, v: v,
-                                    nQHeads: nQHeads, nKVHeads: nKVHeads, headDim: headDim,
-                                    baseKV: baseKV, nQuery: nQuery, kvStride: kvStride,
-                                    causal: true, scale: scale, on: cmd)
-            cmd.commit(); cmd.waitUntilCompleted()
+            let out = Ops.sdpaMulti(
+                q: q, k: k, v: v,
+                nQHeads: nQHeads, nKVHeads: nKVHeads, headDim: headDim,
+                baseKV: baseKV, nQuery: nQuery, kvStride: kvStride,
+                causal: true, scale: scale, on: cmd)
+            cmd.commit()
+            cmd.waitUntilCompleted()
 
             // Causal: query r attends rows 0...r → output = mean(0...r).
             let result = out.toArray(as: Float.self)
-            for r in 0..<nQuery {
-                let expected = Float(r) / 2.0   // mean(0,1,...,r)
-                for d in 0..<headDim {
+            for r in 0 ..< nQuery {
+                let expected = Float(r) / 2.0  // mean(0,1,...,r)
+                for d in 0 ..< headDim {
                     let got = result[r * headDim + d]
-                    #expect(abs(got - expected) < 1e-3,
-                            "query \(r) d=\(d): expected \(expected), got \(got)")
+                    #expect(
+                        abs(got - expected) < 1e-3,
+                        "query \(r) d=\(d): expected \(expected), got \(got)")
                 }
             }
         }
@@ -953,23 +993,27 @@ struct OpsTests {
             // Cover every supported head_dim so the routing in
             // Ops.sdpaBidirectional is exercised end-to-end.
             for headDim in [32, 64, 72] {
-                let nQHeads = 2, nKVHeads = 1
-                let baseKV = 0, nQuery = 4
+                let nQHeads = 2
+                let nKVHeads = 1
+                let baseKV = 0
+                let nQuery = 4
                 let kvStride = baseKV + nQuery
                 let scale = 1.0 / Float(Double(headDim).squareRoot())
 
                 let q = Tensor.empty(shape: [nQuery, nQHeads, headDim], dtype: .f32)
-                q.copyIn(from: (0..<nQuery * nQHeads * headDim).map { Float($0 % 7) * 0.1 })
+                q.copyIn(from: (0 ..< nQuery * nQHeads * headDim).map { Float($0 % 7) * 0.1 })
 
                 // K: every row the same constant vector → uniform scores.
                 let k = Tensor.empty(shape: [nKVHeads, kvStride, headDim], dtype: .f32)
-                k.copyIn(from: [Float](repeating: 0.5,
-                                       count: nKVHeads * kvStride * headDim))
+                k.copyIn(
+                    from: [Float](
+                        repeating: 0.5,
+                        count: nKVHeads * kvStride * headDim))
 
                 // V: row t holds the constant value `t` so mean is easy.
                 var vData = [Float](repeating: 0, count: nKVHeads * kvStride * headDim)
-                for t in 0..<kvStride {
-                    for d in 0..<headDim { vData[t * headDim + d] = Float(t) }
+                for t in 0 ..< kvStride {
+                    for d in 0 ..< headDim { vData[t * headDim + d] = Float(t) }
                 }
                 let v = Tensor.empty(shape: [nKVHeads, kvStride, headDim], dtype: .f32)
                 v.copyIn(from: vData)
@@ -980,14 +1024,16 @@ struct OpsTests {
                     nQHeads: nQHeads, nKVHeads: nKVHeads, headDim: headDim,
                     baseKV: baseKV, nQuery: nQuery, kvStride: kvStride,
                     scale: scale, on: cmd)
-                cmd.commit(); cmd.waitUntilCompleted()
+                cmd.commit()
+                cmd.waitUntilCompleted()
 
                 // Every query attends V rows {0,1,2,3} → mean = 1.5.
                 let result = out.toArray(as: Float.self)
                 #expect(result.count == nQuery * nQHeads * headDim)
                 for value in result {
-                    #expect(abs(value - 1.5) < 1e-3,
-                            "headDim=\(headDim): expected mean V = 1.5, got \(value)")
+                    #expect(
+                        abs(value - 1.5) < 1e-3,
+                        "headDim=\(headDim): expected mean V = 1.5, got \(value)")
                 }
             }
         }
@@ -1012,33 +1058,35 @@ struct OpsTests {
 
             // Every q-head = e_0; K[0] = e_0 → dot(Q, K[0]) = 1.
             var qData = [Float](repeating: 0, count: nQHeads * D)
-            for h in 0..<nQHeads { qData[h * D + 0] = 1 }
+            for h in 0 ..< nQHeads { qData[h * D + 0] = 1 }
             q.copyIn(from: qData)
 
             var kData = [Float](repeating: 0, count: nKVHeads * kvStride * D)
-            kData[0] = 1                                 // K[head=0, pos=0, d=0]
+            kData[0] = 1  // K[head=0, pos=0, d=0]
             k.copyIn(from: kData)
 
             // V[0] = ramp; positions [1..3] are zero so an over-read
             // past `n_kv` would show up in the output.
             var vData = [Float](repeating: 0, count: nKVHeads * kvStride * D)
-            for d in 0..<D { vData[d] = Float(d + 1) }   // [1, 2, …, 512]
+            for d in 0 ..< D { vData[d] = Float(d + 1) }  // [1, 2, …, 512]
             v.copyIn(from: vData)
 
             var out: Tensor!
             runAndWait { cb in
-                out = Ops.sdpaDecode(q: q, k: k, v: v,
-                                     nQHeads: nQHeads, nKVHeads: nKVHeads,
-                                     headDim: D, nKV: nKV, kvStride: kvStride,
-                                     scale: 1.0, on: cb)
+                out = Ops.sdpaDecode(
+                    q: q, k: k, v: v,
+                    nQHeads: nQHeads, nKVHeads: nKVHeads,
+                    headDim: D, nKV: nKV, kvStride: kvStride,
+                    scale: 1.0, on: cb)
             }
             // n_kv = 1 → softmax([single_score]) = 1 → output == V[0]
             // for every q-head.
             let r = out.toArray(as: Float.self)
-            for h in 0..<nQHeads {
-                for d in 0..<D {
-                    #expect(abs(r[h * D + d] - Float(d + 1)) < 1e-3,
-                            "head \(h) out[\(d)] = \(r[h * D + d]), expected \(d + 1)")
+            for h in 0 ..< nQHeads {
+                for d in 0 ..< D {
+                    #expect(
+                        abs(r[h * D + d] - Float(d + 1)) < 1e-3,
+                        "head \(h) out[\(d)] = \(r[h * D + d]), expected \(d + 1)")
                 }
             }
         }
@@ -1050,20 +1098,24 @@ struct OpsTests {
             // factor=1 → interpolation == extrapolation → the YaRN ramp
             // is a no-op and the kernel reduces to plain RoPE. `.plain`
             // also has attn_factor 1, so it must match Ops.rope exactly.
-            let headDim = 128, nHeads = 2
+            let headDim = 128
+            let nHeads = 2
             let qk = Tensor.empty(shape: [nHeads, headDim], dtype: .f32)
-            qk.copyIn(from: (0..<nHeads * headDim).map { Float($0 % 13) * 0.1 - 0.5 })
+            qk.copyIn(from: (0 ..< nHeads * headDim).map { Float($0 % 13) * 0.1 - 0.5 })
 
             let cmd = Device.shared.makeCommandBuffer()
-            let plain = Ops.rope(qk, position: 64, headDim: headDim,
-                                 thetaBase: 1_000_000, scaling: .none, on: cmd)
-            let yarn = Ops.ropeYaRN(qk, position: 64, headDim: headDim,
-                                    thetaBase: 1_000_000, yarn: .plain, on: cmd)
-            cmd.commit(); cmd.waitUntilCompleted()
+            let plain = Ops.rope(
+                qk, position: 64, headDim: headDim,
+                thetaBase: 1_000_000, scaling: .none, on: cmd)
+            let yarn = Ops.ropeYaRN(
+                qk, position: 64, headDim: headDim,
+                thetaBase: 1_000_000, yarn: .plain, on: cmd)
+            cmd.commit()
+            cmd.waitUntilCompleted()
 
             let p = plain.toArray(as: Float.self)
             let y = yarn.toArray(as: Float.self)
-            for i in 0..<p.count {
+            for i in 0 ..< p.count {
                 #expect(abs(p[i] - y[i]) < 1e-5, "i=\(i): plain \(p[i]) vs yarn \(y[i])")
             }
         }
@@ -1074,21 +1126,25 @@ struct OpsTests {
         autoreleasepool {
             // position 0 → theta 0 → cos 1 / sin 0; attn_factor 1 → the
             // rotation is the identity regardless of the YaRN band.
-            let headDim = 128, nHeads = 2
-            let input = (0..<nHeads * headDim).map { Float($0 % 7) * 0.1 }
+            let headDim = 128
+            let nHeads = 2
+            let input = (0 ..< nHeads * headDim).map { Float($0 % 7) * 0.1 }
             let qk = Tensor.empty(shape: [nHeads, headDim], dtype: .f32)
             qk.copyIn(from: input)
 
-            let yarn = Ops.RoPEYaRN.from(headDim: headDim, thetaBase: 1_000_000,
-                                         factor: 16, betaFast: 32, betaSlow: 1,
-                                         originalMaxPosition: 16384)
+            let yarn = Ops.RoPEYaRN.from(
+                headDim: headDim, thetaBase: 1_000_000,
+                factor: 16, betaFast: 32, betaSlow: 1,
+                originalMaxPosition: 16384)
             let cmd = Device.shared.makeCommandBuffer()
-            let out = Ops.ropeYaRN(qk, position: 0, headDim: headDim,
-                                   thetaBase: 1_000_000, yarn: yarn, on: cmd)
-            cmd.commit(); cmd.waitUntilCompleted()
+            let out = Ops.ropeYaRN(
+                qk, position: 0, headDim: headDim,
+                thetaBase: 1_000_000, yarn: yarn, on: cmd)
+            cmd.commit()
+            cmd.waitUntilCompleted()
 
             let o = out.toArray(as: Float.self)
-            for i in 0..<o.count {
+            for i in 0 ..< o.count {
                 #expect(abs(o[i] - input[i]) < 1e-5, "i=\(i): expected \(input[i]), got \(o[i])")
             }
         }
@@ -1098,13 +1154,14 @@ struct OpsTests {
     func ropeYaRNFromCorrectionBand() {
         // Nemotron-Labs-Diffusion params — the band must land inside
         // [0, headDim) with high > low.
-        let y = Ops.RoPEYaRN.from(headDim: 128, thetaBase: 1_000_000,
-                                  factor: 16, betaFast: 32, betaSlow: 1,
-                                  originalMaxPosition: 16384)
+        let y = Ops.RoPEYaRN.from(
+            headDim: 128, thetaBase: 1_000_000,
+            factor: 16, betaFast: 32, betaSlow: 1,
+            originalMaxPosition: 16384)
         #expect(y.factor == 16)
         #expect(y.low >= 0 && y.low < y.high)
         #expect(y.high <= 127)
-        #expect(y.attnFactor == 1)   // mscale == mscale_all_dim default
+        #expect(y.attnFactor == 1)  // mscale == mscale_all_dim default
     }
 
     @Test("gemm — multi-row matmul matches a CPU reference")
@@ -1112,9 +1169,11 @@ struct OpsTests {
         autoreleasepool {
             // out[r,o] = Σ_k weight[o,k]·input[r,k]. nRows / outDim are
             // not multiples of the 32×32 tile — exercises the edge path.
-            let nRows = 5, inDim = 48, outDim = 7
-            let wData = (0..<outDim * inDim).map { Float($0 % 11) * 0.1 - 0.4 }
-            let xData = (0..<nRows * inDim).map { Float($0 % 9) * 0.1 - 0.2 }
+            let nRows = 5
+            let inDim = 48
+            let outDim = 7
+            let wData = (0 ..< outDim * inDim).map { Float($0 % 11) * 0.1 - 0.4 }
+            let xData = (0 ..< nRows * inDim).map { Float($0 % 9) * 0.1 - 0.2 }
             let weight = Tensor.empty(shape: [outDim, inDim], dtype: .f32)
             let input = Tensor.empty(shape: [nRows, inDim], dtype: .f32)
             weight.copyIn(from: wData)
@@ -1122,16 +1181,18 @@ struct OpsTests {
 
             let cmd = Device.shared.makeCommandBuffer()
             let out = Ops.gemm(weight: weight, input: input, nRows: nRows, on: cmd)
-            cmd.commit(); cmd.waitUntilCompleted()
+            cmd.commit()
+            cmd.waitUntilCompleted()
 
             let got = out.toArray(as: Float.self)
             #expect(got.count == nRows * outDim)
-            for r in 0..<nRows {
-                for o in 0..<outDim {
+            for r in 0 ..< nRows {
+                for o in 0 ..< outDim {
                     var acc: Float = 0
-                    for k in 0..<inDim { acc += wData[o * inDim + k] * xData[r * inDim + k] }
-                    #expect(abs(got[r * outDim + o] - acc) < 1e-4,
-                            "r=\(r) o=\(o): expected \(acc), got \(got[r * outDim + o])")
+                    for k in 0 ..< inDim { acc += wData[o * inDim + k] * xData[r * inDim + k] }
+                    #expect(
+                        abs(got[r * outDim + o] - acc) < 1e-4,
+                        "r=\(r) o=\(o): expected \(acc), got \(got[r * outDim + o])")
                 }
             }
         }
@@ -1155,7 +1216,7 @@ struct OpsTests {
 
             // Deterministic, non-trivial input.
             var data = [Float](repeating: 0, count: nHeads * headDim)
-            for i in 0..<data.count {
+            for i in 0 ..< data.count {
                 data[i] = Float((i * 7) % 19 - 9) * 0.13
             }
             let qk = Tensor.empty(shape: [nHeads, headDim], dtype: .f32)
@@ -1169,12 +1230,12 @@ struct OpsTests {
             let got = qk.toArray(as: Float.self)
 
             // CPU oracle of the reference's ProportionalRoPE.
-            let half = headDim / 2            // 256 — pairing offset
-            let rotatedPairs = rotatedDim / 2 // 64 — rotated pair count
+            let half = headDim / 2  // 256 — pairing offset
+            let rotatedPairs = rotatedDim / 2  // 64 — rotated pair count
             var expected = data
-            for h in 0..<nHeads {
+            for h in 0 ..< nHeads {
                 let base = h * headDim
-                for i in 0..<rotatedPairs {
+                for i in 0 ..< rotatedPairs {
                     // inv_freq = theta^(-2i/headDim) = theta^(-i/half)
                     let invFreq = Float(
                         pow(Double(theta), -Double(i) / Double(half)))
@@ -1188,9 +1249,10 @@ struct OpsTests {
                 }
                 // i ∈ [rotatedPairs, half): pass-through (unchanged).
             }
-            for idx in 0..<got.count {
-                #expect(abs(got[idx] - expected[idx]) < 1e-3,
-                        "idx=\(idx): got \(got[idx]) expected \(expected[idx])")
+            for idx in 0 ..< got.count {
+                #expect(
+                    abs(got[idx] - expected[idx]) < 1e-3,
+                    "idx=\(idx): got \(got[idx]) expected \(expected[idx])")
             }
         }
     }

@@ -21,6 +21,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("SafeTensorsWriter")
@@ -70,12 +71,15 @@ struct SafeTensorsWriterTests {
 
         let url = dir.appendingPathComponent("model.safetensors")
         let writer = SafeTensorsWriter(url: url)
-        try writer.append(name: "layer.a",
-                          dtype: .f32, shape: [2, 2], bytes: rawData(f32Vals))
-        try writer.append(name: "layer.b",
-                          dtype: .bf16, shape: [2, 3], bytes: rawData(bf16Vals))
-        try writer.append(name: "layer.c",
-                          dtype: .u32, shape: [1, 2], bytes: rawData(u32Vals))
+        try writer.append(
+            name: "layer.a",
+            dtype: .f32, shape: [2, 2], bytes: rawData(f32Vals))
+        try writer.append(
+            name: "layer.b",
+            dtype: .bf16, shape: [2, 3], bytes: rawData(bf16Vals))
+        try writer.append(
+            name: "layer.c",
+            dtype: .u32, shape: [1, 2], bytes: rawData(u32Vals))
         try writer.finalize()
 
         let file = try SafeTensorsFile(url: url)
@@ -107,8 +111,9 @@ struct SafeTensorsWriterTests {
         let vals: [Float] = [10, 20, 30, 40, 50, 60]
         let url = dir.appendingPathComponent("model.safetensors")
         let writer = SafeTensorsWriter(url: url)
-        try writer.append(name: "embed.weight", dtype: .f32,
-                          shape: [2, 3], bytes: rawData(vals))
+        try writer.append(
+            name: "embed.weight", dtype: .f32,
+            shape: [2, 3], bytes: rawData(vals))
         try writer.finalize()
 
         // Bundle discovery picks up "model.safetensors" via the standard
@@ -135,7 +140,8 @@ struct SafeTensorsWriterTests {
             try writer.append(name: "x", dtype: .f32, shape: [1], bytes: bytes)
             Issue.record("expected SafeTensorsWriterError.duplicateName")
         } catch let e as SafeTensorsWriterError {
-            if case .duplicateName = e { /* expected */ } else {
+            if case .duplicateName = e { /* expected */
+            } else {
                 Issue.record("wrong error: \(e)")
             }
         }
@@ -152,7 +158,8 @@ struct SafeTensorsWriterTests {
             try writer.append(name: "empty", dtype: .f32, shape: [0], bytes: Data())
             Issue.record("expected SafeTensorsWriterError.emptyTensor")
         } catch let e as SafeTensorsWriterError {
-            if case .emptyTensor = e { /* expected */ } else {
+            if case .emptyTensor = e { /* expected */
+            } else {
                 Issue.record("wrong error: \(e)")
             }
         } catch {

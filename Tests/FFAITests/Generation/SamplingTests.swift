@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Sampling")
@@ -36,7 +37,7 @@ struct SamplingTests {
     func argmaxBf16() {
         let t = Tensor.empty(shape: [4], dtype: .bf16)
         // bf16 = top 16 bits of f32; build by shifting our floats down.
-        let bits: [UInt16] = [0x3F80, 0x40C0, 0x3FC0, 0xBF80] // 1.0, 6.0, 1.5, -1.0
+        let bits: [UInt16] = [0x3F80, 0x40C0, 0x3FC0, 0xBF80]  // 1.0, 6.0, 1.5, -1.0
         t.copyIn(from: bits)
         #expect(Sampling.argmax(t) == 1)
     }
@@ -47,9 +48,9 @@ struct SamplingTests {
         t.copyIn(from: [Float(1), 5, 2, 9, 0, 7])
         let top3 = Sampling.topN(t, n: 3)
         #expect(top3.count == 3)
-        #expect(top3[0].0 == 3)   // value 9
-        #expect(top3[1].0 == 5)   // value 7
-        #expect(top3[2].0 == 1)   // value 5
+        #expect(top3[0].0 == 3)  // value 9
+        #expect(top3[1].0 == 5)  // value 7
+        #expect(top3[2].0 == 1)  // value 5
         #expect(top3[0].1 == 9)
     }
 
@@ -60,7 +61,7 @@ struct SamplingTests {
         #expect(Sampling.topN(f16, n: 1)[0].0 == 1)
 
         let bf16 = Tensor.empty(shape: [3], dtype: .bf16)
-        bf16.copyIn(from: [UInt16(0x3F80), 0x40A0, 0x4000]) // 1, 5, 2
+        bf16.copyIn(from: [UInt16(0x3F80), 0x40A0, 0x4000])  // 1, 5, 2
         #expect(Sampling.topN(bf16, n: 1)[0].0 == 1)
     }
 
@@ -86,8 +87,8 @@ struct SamplingTests {
         let p = GenerationParameters(temperature: 0.7)
         var rng1 = SeededRandomNumberGenerator(seed: 12345)
         var rng2 = SeededRandomNumberGenerator(seed: 12345)
-        let seq1 = (0..<8).map { _ in Sampling.sample(t, parameters: p, rng: &rng1) }
-        let seq2 = (0..<8).map { _ in Sampling.sample(t, parameters: p, rng: &rng2) }
+        let seq1 = (0 ..< 8).map { _ in Sampling.sample(t, parameters: p, rng: &rng1) }
+        let seq2 = (0 ..< 8).map { _ in Sampling.sample(t, parameters: p, rng: &rng2) }
         #expect(seq1 == seq2)
     }
 
@@ -98,12 +99,12 @@ struct SamplingTests {
         var rng = SeededRandomNumberGenerator(seed: 1)
         let p = GenerationParameters(temperature: 1.0, topK: 2)
         var hits = Set<Int>()
-        for _ in 0..<200 {
+        for _ in 0 ..< 200 {
             hits.insert(Sampling.sample(t, parameters: p, rng: &rng))
         }
         // Across 200 draws with topK=2 we should only ever see {1, 4}.
         #expect(hits.isSubset(of: [1, 4]))
-        #expect(hits.contains(4))   // the dominant prob should fire
+        #expect(hits.contains(4))  // the dominant prob should fire
     }
 
     @Test("top-P keeps only the cumulative-prob nucleus")
@@ -113,7 +114,7 @@ struct SamplingTests {
         var rng = SeededRandomNumberGenerator(seed: 2)
         let p = GenerationParameters(temperature: 1.0, topP: 0.5)
         // top-P=0.5 with the peak >>> rest should always pick the peak.
-        for _ in 0..<50 {
+        for _ in 0 ..< 50 {
             #expect(Sampling.sample(t, parameters: p, rng: &rng) == 0)
         }
     }
@@ -124,7 +125,7 @@ struct SamplingTests {
         let t = makeLogits([8.0, 0.0, 0.0, 0.0])
         var rng = SeededRandomNumberGenerator(seed: 3)
         let p = GenerationParameters(temperature: 1.0, minP: 0.5)
-        for _ in 0..<50 {
+        for _ in 0 ..< 50 {
             #expect(Sampling.sample(t, parameters: p, rng: &rng) == 0)
         }
     }
@@ -136,11 +137,13 @@ struct SamplingTests {
         let t = makeLogits([5.0, 3.0, 1.0, 0.5])
         var rng = SeededRandomNumberGenerator(seed: 4)
         let p = GenerationParameters(temperature: 0, repetitionPenalty: 2.0)
-        let plain = Sampling.sample(t, parameters: GenerationParameters(temperature: 0),
-                                    rng: &rng, tokenHistory: [0])
+        let plain = Sampling.sample(
+            t, parameters: GenerationParameters(temperature: 0),
+            rng: &rng, tokenHistory: [0])
         #expect(plain == 0)
-        let penalized = Sampling.sample(t, parameters: p,
-                                        rng: &rng, tokenHistory: [0])
+        let penalized = Sampling.sample(
+            t, parameters: p,
+            rng: &rng, tokenHistory: [0])
         #expect(penalized == 1)
     }
 
@@ -175,10 +178,10 @@ struct SamplingTests {
 
     @Test("SeededRandomNumberGenerator is deterministic across instances")
     func seededDeterminism() {
-        var r1 = SeededRandomNumberGenerator(seed: 0xDEADBEEF)
-        var r2 = SeededRandomNumberGenerator(seed: 0xDEADBEEF)
-        let s1 = (0..<10).map { _ in r1.next() }
-        let s2 = (0..<10).map { _ in r2.next() }
+        var r1 = SeededRandomNumberGenerator(seed: 0xDEAD_BEEF)
+        var r2 = SeededRandomNumberGenerator(seed: 0xDEAD_BEEF)
+        let s1 = (0 ..< 10).map { _ in r1.next() }
+        let s2 = (0 ..< 10).map { _ in r2.next() }
         #expect(s1 == s2)
     }
 

@@ -23,7 +23,7 @@ import Metal
 public final class BufferPool: @unchecked Sendable {
     public let device: Device
     private let lock = NSLock()
-    private var freelists: [Int: [MTLBuffer]] = [:]   // bytes → free buffers
+    private var freelists: [Int: [MTLBuffer]] = [:]  // bytes → free buffers
 
     public static let shared = BufferPool(device: .shared)
 
@@ -133,7 +133,8 @@ public final class BufferPoolScope: @unchecked Sendable {
     /// Test-visible: number of buffers currently held by this scope.
     /// Goes to 0 after the scope's `body` returns.
     internal var heldCount: Int {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return acquired.count
     }
 }

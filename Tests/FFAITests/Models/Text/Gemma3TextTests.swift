@@ -24,6 +24,7 @@
 import Foundation
 import Metal
 import Testing
+
 @testable import FFAI
 
 @Suite("Gemma3Dense Variant Surface")
@@ -51,7 +52,7 @@ struct Gemma3TextTests {
     @Test("pattern=6 marks every 6th layer global")
     func pattern6Layout() {
         let pattern = 6
-        for i in 0..<12 {
+        for i in 0 ..< 12 {
             let isSliding = (i + 1) % pattern != 0
             if (i + 1) % pattern == 0 {
                 #expect(!isSliding, "layer \(i) (i+1=\(i+1)) must be global")
@@ -71,7 +72,7 @@ struct Gemma3TextTests {
         let ropeTheta: Float = 1_000_000
         let ropeLocal: Float = 10_000
         let pattern = 6
-        for i in 0..<6 {
+        for i in 0 ..< 6 {
             let isSliding = (i + 1) % pattern != 0
             let layerRopeTheta = isSliding ? ropeLocal : ropeTheta
             #expect(layerRopeTheta == (isSliding ? ropeLocal : ropeTheta))
@@ -100,10 +101,10 @@ struct Gemma3TextTests {
         switch dtype {
         case .f32:
             let p = inputBuf.contents().bindMemory(to: Float.self, capacity: n)
-            for i in 0..<n { p[i] = values[i] }
+            for i in 0 ..< n { p[i] = values[i] }
         case .f16:
             let p = inputBuf.contents().bindMemory(to: UInt16.self, capacity: n)
-            for i in 0..<n {
+            for i in 0 ..< n {
                 // Use the same conversion routines used at runtime so
                 // we're round-tripping through THE codepath, not a
                 // hypothetical one.
@@ -111,7 +112,7 @@ struct Gemma3TextTests {
             }
         case .bf16:
             let p = inputBuf.contents().bindMemory(to: UInt16.self, capacity: n)
-            for i in 0..<n {
+            for i in 0 ..< n {
                 p[i] = floatToBf16BitsForTest(values[i])
             }
         default:
@@ -129,13 +130,13 @@ struct Gemma3TextTests {
         switch dtype {
         case .f32:
             let p = foldedBuf.contents().bindMemory(to: Float.self, capacity: n)
-            for i in 0..<n { out[i] = p[i] }
+            for i in 0 ..< n { out[i] = p[i] }
         case .f16:
             let p = foldedBuf.contents().bindMemory(to: UInt16.self, capacity: n)
-            for i in 0..<n { out[i] = halfBitsToFloatForTest(p[i]) }
+            for i in 0 ..< n { out[i] = halfBitsToFloatForTest(p[i]) }
         case .bf16:
             let p = foldedBuf.contents().bindMemory(to: UInt16.self, capacity: n)
-            for i in 0..<n { out[i] = bf16BitsToFloatForTest(p[i]) }
+            for i in 0 ..< n { out[i] = bf16BitsToFloatForTest(p[i]) }
         default:
             fatalError("roundTripFold: unsupported \(dtype)")
         }
@@ -147,8 +148,9 @@ struct Gemma3TextTests {
         let weights: [Float] = [0.0, 0.5, -0.5, 1.0, 2.0, -2.0, 100.0]
         let folded = roundTripFold(weights, dtype: .f32)
         for (i, w) in weights.enumerated() {
-            #expect(folded[i] == w + 1.0,
-                    "f32 fold of \(w) should be \(w + 1.0), got \(folded[i])")
+            #expect(
+                folded[i] == w + 1.0,
+                "f32 fold of \(w) should be \(w + 1.0), got \(folded[i])")
         }
     }
 
@@ -169,8 +171,9 @@ struct Gemma3TextTests {
         for (i, w) in weights.enumerated() {
             let expected = w + 1.0
             let diff = abs(folded[i] - expected)
-            #expect(diff < 0.05,
-                    "bf16 fold of \(w): expected ≈ \(expected), got \(folded[i]) (|diff| = \(diff))")
+            #expect(
+                diff < 0.05,
+                "bf16 fold of \(w): expected ≈ \(expected), got \(folded[i]) (|diff| = \(diff))")
         }
     }
 
@@ -189,8 +192,10 @@ struct Gemma3TextTests {
             // can reach |52| * 2^-7 ≈ 0.4. Use a relative tolerance.
             let tol = max(0.05, abs(expected) * 0.01)
             let diff = abs(folded[i] - expected)
-            #expect(diff < tol,
-                    "bf16 fold of \(w): expected ≈ \(expected), got \(folded[i]) (|diff| = \(diff), tol = \(tol))")
+            #expect(
+                diff < tol,
+                "bf16 fold of \(w): expected ≈ \(expected), got \(folded[i]) (|diff| = \(diff), tol = \(tol))"
+            )
         }
     }
 
@@ -211,7 +216,7 @@ struct Gemma3TextTests {
         let h0 = Tensor.empty(shape: [n], dtype: .bf16, device: device)
         let h0Ptr = h0.buffer.contents().bindMemory(to: UInt16.self, capacity: n)
         let halfBits = floatToBf16BitsForTest(0.5)
-        for i in 0..<n { h0Ptr[i] = halfBits }
+        for i in 0 ..< n { h0Ptr[i] = halfBits }
 
         // Multiply on the GPU exactly as Gemma3Model.forward does.
         var product: Tensor!
@@ -224,13 +229,15 @@ struct Gemma3TextTests {
         let pPtr = product.buffer.contents()
             .advanced(by: product.offset)
             .bindMemory(to: UInt16.self, capacity: n)
-        let stored = bf16BitsToFloatForTest(embedScale.buffer.contents()
-            .bindMemory(to: UInt16.self, capacity: 1)[0])
+        let stored = bf16BitsToFloatForTest(
+            embedScale.buffer.contents()
+                .bindMemory(to: UInt16.self, capacity: 1)[0])
         let expected = 0.5 * stored
-        for i in 0..<n {
+        for i in 0 ..< n {
             let v = bf16BitsToFloatForTest(pPtr[i])
-            #expect(v == expected,
-                    "embed-scale product slot \(i) = \(v), expected \(expected)")
+            #expect(
+                v == expected,
+                "embed-scale product slot \(i) = \(v), expected \(expected)")
             #expect(v.isFinite, "embed-scale product slot \(i) = \(v) is non-finite")
         }
     }
@@ -247,14 +254,15 @@ struct Gemma3TextTests {
         // should hold the same value (rounded from `scalar`).
         let p = t.buffer.contents().bindMemory(to: UInt16.self, capacity: n)
         let first = bf16BitsToFloatForTest(p[0])
-        for i in 0..<n {
+        for i in 0 ..< n {
             let v = bf16BitsToFloatForTest(p[i])
             #expect(v == first, "fillScalar slot \(i) = \(v), expected uniform \(first)")
         }
         // The stored value should be within bf16 rounding of the
         // fp32 input. sqrt(1152) ≈ 33.94 → bf16 should be ≈ 34.0.
         let diff = abs(first - scalar)
-        #expect(diff < 0.5,
-                "fillScalar(sqrt(1152) ≈ \(scalar)): stored \(first) (|diff| = \(diff))")
+        #expect(
+            diff < 0.5,
+            "fillScalar(sqrt(1152) ≈ \(scalar)): stored \(first) (|diff| = \(diff))")
     }
 }

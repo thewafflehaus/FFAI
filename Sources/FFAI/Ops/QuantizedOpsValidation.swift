@@ -63,7 +63,8 @@ public enum QuantizedOpsValidation {
         let nGroups = numel / groupSize
         let expectedPacks = numel / pf
         if packedCount != expectedPacks {
-            return "packed buffer must have numel/pack_factor = \(numel)/\(pf) = \(expectedPacks) entries, got \(packedCount)"
+            return
+                "packed buffer must have numel/pack_factor = \(numel)/\(pf) = \(expectedPacks) entries, got \(packedCount)"
         }
         if scalesCount != nGroups {
             return "scales must have n_groups=\(nGroups) entries, got \(scalesCount)"
@@ -105,10 +106,12 @@ public enum QuantizedOpsValidation {
         // group) or skip elements (groupSize > 64 → lanes don't cover
         // the tail). Only group_size=64 is emitted at this layer.
         if groupSize != 64 {
-            return "groupSize=\(groupSize) unsupported for affine quantize — only group_size=64 is emitted (kernel reduces over one simdgroup × 2 elements/lane = 64 elements; see metaltile mt_affine_quantize_int\(bits))"
+            return
+                "groupSize=\(groupSize) unsupported for affine quantize — only group_size=64 is emitted (kernel reduces over one simdgroup × 2 elements/lane = 64 elements; see metaltile mt_affine_quantize_int\(bits))"
         }
         if !numel.isMultiple(of: groupSize) {
-            return "numel=\(numel) must be a multiple of groupSize=\(groupSize) — partial trailing group would be silently dropped"
+            return
+                "numel=\(numel) must be a multiple of groupSize=\(groupSize) — partial trailing group would be silently dropped"
         }
         if !groupSize.isMultiple(of: pf) {
             return "groupSize=\(groupSize) must be a multiple of pack_factor=\(pf) for bits=\(bits)"
@@ -116,7 +119,8 @@ public enum QuantizedOpsValidation {
         let nGroups = numel / groupSize
         let expectedPacks = numel / pf
         if packedCount != expectedPacks {
-            return "packed buffer must have numel/pack_factor = \(numel)/\(pf) = \(expectedPacks) entries, got \(packedCount)"
+            return
+                "packed buffer must have numel/pack_factor = \(numel)/\(pf) = \(expectedPacks) entries, got \(packedCount)"
         }
         if scalesCount != nGroups {
             return "scales must have n_groups=\(nGroups) entries, got \(scalesCount)"

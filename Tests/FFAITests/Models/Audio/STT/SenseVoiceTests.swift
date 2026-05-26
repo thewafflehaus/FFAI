@@ -26,6 +26,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("SenseVoice")
@@ -83,8 +84,9 @@ struct SenseVoiceTests {
 
     @Test("SenseVoiceConfig.from — returns nil when vocab_size absent")
     func configRequiresVocabSize() {
-        let config = ModelConfig(architecture: nil, modelType: "sensevoice",
-                                 raw: [:])
+        let config = ModelConfig(
+            architecture: nil, modelType: "sensevoice",
+            raw: [:])
         #expect(SenseVoiceConfig.from(config) == nil)
     }
 
@@ -124,22 +126,24 @@ struct SenseVoiceTests {
 
     @Test("SenseVoiceModel.handles — true for sensevoice model_type")
     func handlesByModelType() {
-        let config = ModelConfig(architecture: nil, modelType: "sensevoice",
-                                 raw: ["model_type": "sensevoice"])
+        let config = ModelConfig(
+            architecture: nil, modelType: "sensevoice",
+            raw: ["model_type": "sensevoice"])
         #expect(SenseVoiceModel.handles(config))
     }
 
     @Test("SenseVoiceModel.handles — true for SenseVoiceSmall architecture")
     func handlesByArchitecture() {
-        let config = ModelConfig(architecture: "SenseVoiceSmall",
-                                 modelType: nil, raw: [:])
+        let config = ModelConfig(
+            architecture: "SenseVoiceSmall",
+            modelType: nil, raw: [:])
         #expect(SenseVoiceModel.handles(config))
     }
 
     @Test("SenseVoiceModel.handles — structural fallback via tp_blocks marker")
     func handlesStructural() {
         let raw: [String: Any] = [
-            "encoder_conf": ["tp_blocks": 20] as [String: Any],
+            "encoder_conf": ["tp_blocks": 20] as [String: Any]
         ]
         let config = ModelConfig(architecture: nil, modelType: nil, raw: raw)
         #expect(SenseVoiceModel.handles(config))
@@ -147,9 +151,10 @@ struct SenseVoiceTests {
 
     @Test("SenseVoiceModel.handles — false for unrelated text model")
     func handlesFalseForTextModel() {
-        let config = ModelConfig(architecture: "LlamaForCausalLM",
-                                 modelType: "llama",
-                                 raw: ["model_type": "llama"])
+        let config = ModelConfig(
+            architecture: "LlamaForCausalLM",
+            modelType: "llama",
+            raw: ["model_type": "llama"])
         #expect(!SenseVoiceModel.handles(config))
     }
 
@@ -157,8 +162,9 @@ struct SenseVoiceTests {
 
     @Test("AudioModelRegistry.capabilities — SenseVoice maps to speechToText")
     func registryCapability() {
-        let config = ModelConfig(architecture: nil, modelType: "sensevoice",
-                                 raw: ["model_type": "sensevoice"])
+        let config = ModelConfig(
+            architecture: nil, modelType: "sensevoice",
+            raw: ["model_type": "sensevoice"])
         #expect(AudioModelRegistry.capabilities(for: config) == Capability.speechToText)
     }
 
@@ -197,8 +203,9 @@ struct SenseVoiceTests {
         let nMels = 2
         let frames = 12
         let fbank = [Float](repeating: 1.0, count: frames * nMels)
-        let out = SenseVoiceFrontEnd.lowFrameRate(fbank, nMels: nMels,
-                                                  lfrM: 7, lfrN: 6)
+        let out = SenseVoiceFrontEnd.lowFrameRate(
+            fbank, nMels: nMels,
+            lfrM: 7, lfrN: 6)
         #expect(out.count == 2 * 7 * nMels)
     }
 

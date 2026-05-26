@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // Unit tests for the Gemma 3 VL family (the SigLIP +
@@ -55,16 +56,18 @@ struct Gemma3VisionConfigTests {
             "vision_config": visionConfig,
             "text_config": textConfig,
         ]
-        return ModelConfig(architecture: "Gemma3ForConditionalGeneration",
-                           modelType: "gemma3", raw: raw)
+        return ModelConfig(
+            architecture: "Gemma3ForConditionalGeneration",
+            modelType: "gemma3", raw: raw)
     }
 
     @Test("routes as a vision-language checkpoint")
     func routesAsVisionLanguage() {
         let cfg = makeConfig()
         #expect(VisionLanguageArchitectures.isVisionLanguage(cfg))
-        #expect(VisionLanguageArchitectures.architectures
-            .contains("Gemma3ForConditionalGeneration"))
+        #expect(
+            VisionLanguageArchitectures.architectures
+                .contains("Gemma3ForConditionalGeneration"))
         // The default image-placeholder token id.
         #expect(Gemma3VL.defaultImageTokenId == 262_144)
         #expect(cfg.int("image_token_index") == 262_144)
@@ -92,7 +95,7 @@ struct Gemma3VisionConfigTests {
         // 896 / 14 = 64 patches per side → 4096 raw patches.
         #expect(enc.patchesPerSide == 64)
         #expect(enc.numPatches == 4096)
-        #expect(enc.headDim == 72)              // 1152 / 16
+        #expect(enc.headDim == 72)  // 1152 / 16
     }
 
     @Test("sparse text_config merges Gemma 3 text-model defaults")

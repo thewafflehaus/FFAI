@@ -44,9 +44,10 @@
 // row of `ModelKVCacheMatrixIntegrationTests`.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite(
     "GPTOSS Integration", .serialized,
@@ -81,8 +82,10 @@ struct GPTOSSIntegrationTests {
                 continue
             }
         }
-        let m = try #require(loaded,
-                             "GPT-OSS-20B: none of \(candidates) loaded — \(lastError.map { "\($0)" } ?? "no checkpoint cached")")
+        let m = try #require(
+            loaded,
+            "GPT-OSS-20B: none of \(candidates) loaded — \(lastError.map { "\($0)" } ?? "no checkpoint cached")"
+        )
 
         // Engine should be GPT-OSS (not a dense / hybrid family).
         #expect(m.gptOSS != nil)
@@ -124,11 +127,13 @@ struct GPTOSSIntegrationTests {
                 }
                 switch kind {
                 case .sliding:
-                    #expect(kv.effectiveMaxSize == 128,
-                            "sliding layer \(i) should cap at the 128-token window")
+                    #expect(
+                        kv.effectiveMaxSize == 128,
+                        "sliding layer \(i) should cap at the 128-token window")
                 case .full:
-                    #expect(kv.effectiveMaxSize > 128,
-                            "full-attention layer \(i) should be unbounded")
+                    #expect(
+                        kv.effectiveMaxSize > 128,
+                        "full-attention layer \(i) should be unbounded")
                 }
             }
         }

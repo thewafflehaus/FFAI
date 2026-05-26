@@ -21,6 +21,7 @@
 import Foundation
 import Metal
 import Testing
+
 @testable import FFAI
 
 @Suite("StateReplayCache protocol")
@@ -30,8 +31,9 @@ struct StateReplayCacheTests {
     func ssmStateCacheConforms() {
         let cache = SSMStateCache(nHeads: 4, stateDim: 16, headDim: 64)
         let asReplay: any StateReplayCache = cache
-        #expect(asReplay.canStateReplay == false,
-                "SSMStateCache should declare no replay support until ssm_replay kernel lands")
+        #expect(
+            asReplay.canStateReplay == false,
+            "SSMStateCache should declare no replay support until ssm_replay kernel lands")
         #expect(asReplay.length == 0)
         #expect(asReplay.maxSeq == .max)
         #expect(asReplay.bytesInUse == asReplay.bytesAllocated)
@@ -42,8 +44,9 @@ struct StateReplayCacheTests {
         let cache = SSMStateCache(nHeads: 2, stateDim: 4, headDim: 8)
         // Poison the state with non-zero data; rollback should clear it.
         let bytes = cache.h.byteCount
-        memset(cache.h.buffer.contents().advanced(by: cache.h.offset),
-               0xFF, bytes)
+        memset(
+            cache.h.buffer.contents().advanced(by: cache.h.offset),
+            0xFF, bytes)
         let beforeFirstByte = cache.h.buffer.contents()
             .advanced(by: cache.h.offset)
             .load(as: UInt8.self)
@@ -64,8 +67,9 @@ struct StateReplayCacheTests {
     @Test("rollback with non-zero acceptedPrefix still resets (degraded until tape lands)")
     func rollbackWithPrefixIsDegradedReset() {
         let cache = SSMStateCache(nHeads: 1, stateDim: 2, headDim: 4)
-        memset(cache.h.buffer.contents().advanced(by: cache.h.offset),
-               0x42, cache.h.byteCount)
+        memset(
+            cache.h.buffer.contents().advanced(by: cache.h.offset),
+            0x42, cache.h.byteCount)
         let cmd = Device.shared.makeCommandBuffer()
         cache.rollback(acceptedPrefix: 3, on: cmd)
         cmd.commit()
@@ -77,8 +81,9 @@ struct StateReplayCacheTests {
         let firstByte = cache.h.buffer.contents()
             .advanced(by: cache.h.offset)
             .load(as: UInt8.self)
-        #expect(firstByte == 0x00,
-                "rollback with acceptedPrefix > 0 should reset until ssm_replay kernel exists")
+        #expect(
+            firstByte == 0x00,
+            "rollback with acceptedPrefix > 0 should reset until ssm_replay kernel exists")
     }
 
     @Test("beginRecord + commit are no-ops on the non-replay path")

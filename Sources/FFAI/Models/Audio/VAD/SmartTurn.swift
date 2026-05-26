@@ -45,7 +45,7 @@ public enum SmartTurnError: Error, CustomStringConvertible {
     public var description: String {
         switch self {
         case .missingWeight(let w): return "SmartTurn: required weight missing: \(w)"
-        case .invalidAudio(let m):  return "SmartTurn: \(m)"
+        case .invalidAudio(let m): return "SmartTurn: \(m)"
         }
     }
 }
@@ -70,13 +70,15 @@ public struct SmartTurnConfig: Sendable {
     public let normalizeAudio: Bool
     public let threshold: Float
 
-    public init(numMelBins: Int = 80, maxSourcePositions: Int = 400,
-                dModel: Int = 384, encoderAttentionHeads: Int = 6,
-                encoderLayers: Int = 4, encoderFfnDim: Int = 1536,
-                kProjBias: Bool = false,
-                samplingRate: Int = 16000, maxAudioSeconds: Int = 8,
-                nFft: Int = 400, hopLength: Int = 160,
-                normalizeAudio: Bool = true, threshold: Float = 0.5) {
+    public init(
+        numMelBins: Int = 80, maxSourcePositions: Int = 400,
+        dModel: Int = 384, encoderAttentionHeads: Int = 6,
+        encoderLayers: Int = 4, encoderFfnDim: Int = 1536,
+        kProjBias: Bool = false,
+        samplingRate: Int = 16000, maxAudioSeconds: Int = 8,
+        nFft: Int = 400, hopLength: Int = 160,
+        normalizeAudio: Bool = true, threshold: Float = 0.5
+    ) {
         self.numMelBins = numMelBins
         self.maxSourcePositions = maxSourcePositions
         self.dModel = dModel
@@ -146,14 +148,14 @@ struct SmartTurnEncoderLayer {
             numHeads: numHeads, headDim: headDim, scale: scale)
         let attnOut = outProj.applyRows(attn, rows: seqLen)
         var h = [Float](repeating: 0, count: x.count)
-        for i in 0..<x.count { h[i] = x[i] + attnOut[i] }
+        for i in 0 ..< x.count { h[i] = x[i] + attnOut[i] }
 
         // Feed-forward sub-block.
         let normed2 = finalLayerNorm.applyRows(h, rows: seqLen)
         let mid = VADMath.gelu(fc1.applyRows(normed2, rows: seqLen))
         let ff = fc2.applyRows(mid, rows: seqLen)
         var out = [Float](repeating: 0, count: x.count)
-        for i in 0..<x.count { out[i] = h[i] + ff[i] }
+        for i in 0 ..< x.count { out[i] = h[i] + ff[i] }
         return out
     }
 }
@@ -166,28 +168,30 @@ public final class SmartTurnModel: @unchecked Sendable {
     public let config: SmartTurnConfig
 
     // Encoder front-end convs.
-    let conv1: VADConv1d   // [numMelBins → dModel], K=3, pad=1
-    let conv2: VADConv1d   // [dModel → dModel], K=3, stride=2, pad=1
-    let positionEmbedding: [Float]   // [maxSourcePositions, dModel]
+    let conv1: VADConv1d  // [numMelBins → dModel], K=3, pad=1
+    let conv2: VADConv1d  // [dModel → dModel], K=3, stride=2, pad=1
+    let positionEmbedding: [Float]  // [maxSourcePositions, dModel]
     let layers: [SmartTurnEncoderLayer]
     let encoderLayerNorm: VADLayerNorm
     // Attention pooling + classifier head.
-    let poolAttn0: VADLinear   // [dModel → 256]
-    let poolAttn2: VADLinear   // [256 → 1]
-    let classifier0: VADLinear // [dModel → 256]
-    let classifier1: VADLayerNorm // over 256
-    let classifier4: VADLinear // [256 → 64]
-    let classifier6: VADLinear // [64 → 1]
+    let poolAttn0: VADLinear  // [dModel → 256]
+    let poolAttn2: VADLinear  // [256 → 1]
+    let classifier0: VADLinear  // [dModel → 256]
+    let classifier1: VADLayerNorm  // over 256
+    let classifier4: VADLinear  // [256 → 64]
+    let classifier6: VADLinear  // [64 → 1]
     // Cached mel front-end.
     let melWindow: [Float]
     let melFilterbank: [Float]
 
-    init(config: SmartTurnConfig,
-         conv1: VADConv1d, conv2: VADConv1d, positionEmbedding: [Float],
-         layers: [SmartTurnEncoderLayer], encoderLayerNorm: VADLayerNorm,
-         poolAttn0: VADLinear, poolAttn2: VADLinear,
-         classifier0: VADLinear, classifier1: VADLayerNorm,
-         classifier4: VADLinear, classifier6: VADLinear) {
+    init(
+        config: SmartTurnConfig,
+        conv1: VADConv1d, conv2: VADConv1d, positionEmbedding: [Float],
+        layers: [SmartTurnEncoderLayer], encoderLayerNorm: VADLayerNorm,
+        poolAttn0: VADLinear, poolAttn2: VADLinear,
+        classifier0: VADLinear, classifier1: VADLayerNorm,
+        classifier4: VADLinear, classifier6: VADLinear
+    ) {
         self.config = config
         self.conv1 = conv1
         self.conv2 = conv2
@@ -224,7 +228,10 @@ public final class SmartTurnModel: @unchecked Sendable {
         if config.normalizeAudio, !samples.isEmpty {
             let mean = samples.reduce(0, +) / Float(samples.count)
             var variance: Float = 0
-            for x in samples { let d = x - mean; variance += d * d }
+            for x in samples {
+                let d = x - mean
+                variance += d * d
+            }
             variance /= Float(samples.count)
             let std = max(variance.squareRoot(), 1e-7)
             for i in samples.indices { samples[i] = (samples[i] - mean) / std }
@@ -272,8 +279,8 @@ public final class SmartTurnModel: @unchecked Sendable {
         // Encoder expects channel-major [numMels, numFrames]; `mel` is
         // frame-major [numFrames, numMels]. Transpose.
         var chMajor = [Float](repeating: 0, count: numMels * numFrames)
-        for f in 0..<numFrames {
-            for m in 0..<numMels {
+        for f in 0 ..< numFrames {
+            for m in 0 ..< numMels {
                 chMajor[m * numFrames + f] = mel[f * numMels + m]
             }
         }
@@ -290,9 +297,9 @@ public final class SmartTurnModel: @unchecked Sendable {
         // [hLen, dModel] and add positional embeddings. The position
         // table has `maxSourcePositions` rows; clamp longer sequences.
         var x = [Float](repeating: 0, count: hLen * dModel)
-        for t in 0..<hLen {
+        for t in 0 ..< hLen {
             let hasPos = t < config.maxSourcePositions
-            for d in 0..<dModel {
+            for d in 0 ..< dModel {
                 let pos = hasPos ? positionEmbedding[t * dModel + d] : 0
                 x[t * dModel + d] = h[d * hLen + t] + pos
             }
@@ -307,14 +314,14 @@ public final class SmartTurnModel: @unchecked Sendable {
         // Attention pooling: scores = poolAttn2(tanh(poolAttn0(x))),
         // softmax over time, weighted sum.
         let pa0 = VADMath.tanhActivation(poolAttn0.applyRows(x, rows: hLen))
-        let pa2 = poolAttn2.applyRows(pa0, rows: hLen)   // [hLen, 1]
+        let pa2 = poolAttn2.applyRows(pa0, rows: hLen)  // [hLen, 1]
         var weights = pa2
-        VADMath.softmaxInPlace(&weights, range: 0..<hLen)
+        VADMath.softmaxInPlace(&weights, range: 0 ..< hLen)
         var pooled = [Float](repeating: 0, count: dModel)
-        for t in 0..<hLen {
+        for t in 0 ..< hLen {
             let w = weights[t]
             let base = t * dModel
-            for d in 0..<dModel { pooled[d] += w * x[base + d] }
+            for d in 0 ..< dModel { pooled[d] += w * x[base + d] }
         }
 
         // Classifier MLP: Linear → LayerNorm → GELU → Linear → GELU →
@@ -329,8 +336,10 @@ public final class SmartTurnModel: @unchecked Sendable {
     }
 
     /// Predict whether `audio` reached a conversational endpoint.
-    public func predictEndpoint(audio: [Float],
-                                threshold: Float? = nil) -> VADEndpointOutput {
+    public func predictEndpoint(
+        audio: [Float],
+        threshold: Float? = nil
+    ) -> VADEndpointOutput {
         let (mel, nMels, nFrames) = melFeatures(audio: audio)
         let prob = probability(forMelFeatures: mel, numMels: nMels, numFrames: nFrames)
         let thr = threshold ?? config.threshold
@@ -346,22 +355,27 @@ public final class SmartTurnModel: @unchecked Sendable {
         if key.hasPrefix("val_") { return nil }
         var out = key
         if out.hasPrefix("inner.") { out.removeFirst("inner.".count) }
-        for n in 0...6 {
-            out = out.replacingOccurrences(of: "pool_attention.\(n).",
-                                           with: "pool_attention_\(n).")
-            out = out.replacingOccurrences(of: "classifier.\(n).",
-                                           with: "classifier_\(n).")
+        for n in 0 ... 6 {
+            out = out.replacingOccurrences(
+                of: "pool_attention.\(n).",
+                with: "pool_attention_\(n).")
+            out = out.replacingOccurrences(
+                of: "classifier.\(n).",
+                with: "classifier_\(n).")
         }
         return out
     }
 
     /// Load a SmartTurn checkpoint from a local snapshot directory.
-    public static func loadFromDirectory(_ directory: URL,
-                                         device: Device = .shared) throws -> SmartTurnModel {
+    public static func loadFromDirectory(
+        _ directory: URL,
+        device: Device = .shared
+    ) throws -> SmartTurnModel {
         var config = SmartTurnConfig()
         let configURL = directory.appendingPathComponent("config.json")
         if let data = try? Data(contentsOf: configURL),
-           let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        {
             config = SmartTurnConfig.decode(from: raw)
         }
 
@@ -392,9 +406,9 @@ public final class SmartTurnModel: @unchecked Sendable {
             // if already [outC, inC, K] keep.
             if let s = shape(name), s.count == 3, s[1] == k, s[2] == inC {
                 var out = [Float](repeating: 0, count: raw.count)
-                for o in 0..<outC {
-                    for kk in 0..<k {
-                        for ic in 0..<inC {
+                for o in 0 ..< outC {
+                    for kk in 0 ..< k {
+                        for ic in 0 ..< inC {
                             // src [o, kk, ic] → dst [o, ic, kk]
                             out[(o * inC + ic) * k + kk] = raw[(o * k + kk) * inC + ic]
                         }
@@ -417,19 +431,22 @@ public final class SmartTurnModel: @unchecked Sendable {
         let posEmb = try get("encoder.embed_positions.weight")
 
         // Linear weights ship as PyTorch `[out, in]` — matches VADLinear.
-        func linear(_ base: String, inF: Int, outF: Int, requireBias: Bool = true) throws -> VADLinear {
+        func linear(_ base: String, inF: Int, outF: Int, requireBias: Bool = true) throws
+            -> VADLinear
+        {
             let w = try get("\(base).weight")
             // Some fc weights may ship transposed; detect by shape.
             var weight = w
             if let s = shape("\(base).weight"), s.count == 2, s[0] == inF, s[1] == outF, inF != outF {
                 // Stored [in, out] → transpose to [out, in].
                 var t = [Float](repeating: 0, count: w.count)
-                for o in 0..<outF { for i in 0..<inF { t[o * inF + i] = w[i * outF + o] } }
+                for o in 0 ..< outF { for i in 0 ..< inF { t[o * inF + i] = w[i * outF + o] } }
                 weight = t
             }
-            return VADLinear(weight: weight,
-                             bias: requireBias ? try get("\(base).bias") : getOpt("\(base).bias"),
-                             inFeatures: inF, outFeatures: outF)
+            return VADLinear(
+                weight: weight,
+                bias: requireBias ? try get("\(base).bias") : getOpt("\(base).bias"),
+                inFeatures: inF, outFeatures: outF)
         }
         func layerNorm(_ base: String, dim: Int) throws -> VADLayerNorm {
             VADLayerNorm(weight: try get("\(base).weight"), bias: try get("\(base).bias"), dim: dim)
@@ -439,19 +456,21 @@ public final class SmartTurnModel: @unchecked Sendable {
         let headDim = d / heads
         var layers: [SmartTurnEncoderLayer] = []
         layers.reserveCapacity(config.encoderLayers)
-        for i in 0..<config.encoderLayers {
+        for i in 0 ..< config.encoderLayers {
             let p = "encoder.layers.\(i)"
-            layers.append(SmartTurnEncoderLayer(
-                selfAttnLayerNorm: try layerNorm("\(p).self_attn_layer_norm", dim: d),
-                qProj: try linear("\(p).self_attn.q_proj", inF: d, outF: d),
-                kProj: try linear("\(p).self_attn.k_proj", inF: d, outF: d,
-                                  requireBias: config.kProjBias),
-                vProj: try linear("\(p).self_attn.v_proj", inF: d, outF: d),
-                outProj: try linear("\(p).self_attn.out_proj", inF: d, outF: d),
-                finalLayerNorm: try layerNorm("\(p).final_layer_norm", dim: d),
-                fc1: try linear("\(p).fc1", inF: d, outF: config.encoderFfnDim),
-                fc2: try linear("\(p).fc2", inF: config.encoderFfnDim, outF: d),
-                numHeads: heads, headDim: headDim))
+            layers.append(
+                SmartTurnEncoderLayer(
+                    selfAttnLayerNorm: try layerNorm("\(p).self_attn_layer_norm", dim: d),
+                    qProj: try linear("\(p).self_attn.q_proj", inF: d, outF: d),
+                    kProj: try linear(
+                        "\(p).self_attn.k_proj", inF: d, outF: d,
+                        requireBias: config.kProjBias),
+                    vProj: try linear("\(p).self_attn.v_proj", inF: d, outF: d),
+                    outProj: try linear("\(p).self_attn.out_proj", inF: d, outF: d),
+                    finalLayerNorm: try layerNorm("\(p).final_layer_norm", dim: d),
+                    fc1: try linear("\(p).fc1", inF: d, outF: config.encoderFfnDim),
+                    fc2: try linear("\(p).fc2", inF: config.encoderFfnDim, outF: d),
+                    numHeads: heads, headDim: headDim))
         }
 
         return SmartTurnModel(
@@ -467,8 +486,10 @@ public final class SmartTurnModel: @unchecked Sendable {
     }
 
     /// Download (or hit cache) a SmartTurn checkpoint and load it.
-    public static func fromPretrained(_ idOrPath: String,
-                                      device: Device = .shared) async throws -> SmartTurnModel {
+    public static func fromPretrained(
+        _ idOrPath: String,
+        device: Device = .shared
+    ) async throws -> SmartTurnModel {
         let dir = try await ModelLocator().resolve(idOrPath: idOrPath)
         return try loadFromDirectory(dir, device: device)
     }

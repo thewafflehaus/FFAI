@@ -29,9 +29,10 @@
 // tokens, not one repeated id.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Whisper Integration", .serialized)
 struct WhisperIntegrationTests {
@@ -68,7 +69,7 @@ struct WhisperIntegrationTests {
         // stem + the transformer stack.
         let sr = 16_000
         var wave = [Float](repeating: 0, count: sr)
-        for i in 0..<sr {
+        for i in 0 ..< sr {
             wave[i] = 0.3 * sin(2.0 * Float.pi * 440.0 * Float(i) / Float(sr))
         }
         let features = model.encodeAudio(waveform: wave)
@@ -85,7 +86,7 @@ struct WhisperIntegrationTests {
         let model = try await loadWhisper()
         let sr = 16_000
         var wave = [Float](repeating: 0, count: sr / 2)
-        for i in 0..<wave.count {
+        for i in 0 ..< wave.count {
             wave[i] = 0.25 * sin(2.0 * Float.pi * 330.0 * Float(i) / Float(sr))
         }
         let features = model.encodeAudio(waveform: wave)
@@ -97,15 +98,17 @@ struct WhisperIntegrationTests {
         let prefix = [50258, 50259, 50359, 50363]
             .filter { $0 < model.config.vocab }
         let tokens = prefix.isEmpty ? [0] : prefix
-        let logits = model.decoderLogits(tokenIds: tokens,
-                                         audioFeatures: features)
+        let logits = model.decoderLogits(
+            tokenIds: tokens,
+            audioFeatures: features)
         #expect(logits.count == model.config.vocab)
         #expect(logits.allSatisfy { $0.isFinite })
         // The decoder is pre-trained — the top logit should pull ahead
         // of the noise floor (not a flat distribution).
         let sorted = logits.sorted(by: >)
-        #expect(sorted[0] > sorted[min(99, sorted.count - 1)],
-                "Whisper decoder produced a degenerate logit distribution")
+        #expect(
+            sorted[0] > sorted[min(99, sorted.count - 1)],
+            "Whisper decoder produced a degenerate logit distribution")
     }
 
     @Test("transcribe — real speech decodes to a non-degenerate token stream")
@@ -127,15 +130,18 @@ struct WhisperIntegrationTests {
             eosToken: eos, maxTokens: 200)
 
         // A real utterance must produce a non-empty, in-vocab stream.
-        #expect(!generated.isEmpty,
-                "Whisper produced no transcript tokens for real speech")
+        #expect(
+            !generated.isEmpty,
+            "Whisper produced no transcript tokens for real speech")
         #expect(generated.allSatisfy { $0 >= 0 && $0 < model.config.vocab })
         // Non-degenerate: a genuine decode visits several distinct ids,
         // not one token repeated (the classic stuck-decoder failure).
         let distinct = Set(generated).count
-        #expect(distinct > 1,
-                "Whisper transcript is a single repeated token (degenerate decode)")
-        print("Whisper transcribed real speech into \(generated.count) "
-              + "tokens (\(distinct) distinct): \(generated.prefix(16))")
+        #expect(
+            distinct > 1,
+            "Whisper transcript is a single repeated token (degenerate decode)")
+        print(
+            "Whisper transcribed real speech into \(generated.count) "
+                + "tokens (\(distinct) distinct): \(generated.prefix(16))")
     }
 }

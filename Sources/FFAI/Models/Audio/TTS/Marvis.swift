@@ -65,9 +65,11 @@ public struct CSMTransformerConfig: Sendable {
     public let ropeTheta: Float
     public let ropeScaling: Ops.RoPEScaling
 
-    public init(hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int,
-                headDim: Int, intermediate: Int, rmsNormEps: Float,
-                ropeTheta: Float, ropeScaling: Ops.RoPEScaling) {
+    public init(
+        hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int,
+        headDim: Int, intermediate: Int, rmsNormEps: Float,
+        ropeTheta: Float, ropeScaling: Ops.RoPEScaling
+    ) {
         self.hidden = hidden
         self.nLayers = nLayers
         self.nHeads = nHeads
@@ -102,10 +104,12 @@ public struct MarvisConfig: Sendable {
     /// `Linear` and produce garbage output.
     public let quantization: ModelConfig.QuantizationConfig?
 
-    public init(backbone: CSMTransformerConfig, decoder: CSMTransformerConfig,
-                textVocabSize: Int, audioVocabSize: Int,
-                audioNumCodebooks: Int, sampleRate: Int = 24_000,
-                quantization: ModelConfig.QuantizationConfig? = nil) {
+    public init(
+        backbone: CSMTransformerConfig, decoder: CSMTransformerConfig,
+        textVocabSize: Int, audioVocabSize: Int,
+        audioNumCodebooks: Int, sampleRate: Int = 24_000,
+        quantization: ModelConfig.QuantizationConfig? = nil
+    ) {
         self.backbone = backbone
         self.decoder = decoder
         self.textVocabSize = textVocabSize
@@ -119,9 +123,9 @@ public struct MarvisConfig: Sendable {
     /// `depth_decoder_config`; the backbone fields are top-level.
     public static func from(_ config: ModelConfig) -> MarvisConfig? {
         guard let hidden = config.hiddenSize,
-              let nLayers = config.numLayers,
-              let nHeads = config.numAttentionHeads,
-              let intermediate = config.intermediateSize
+            let nLayers = config.numLayers,
+            let nHeads = config.numAttentionHeads,
+            let intermediate = config.intermediateSize
         else { return nil }
         let headDim = config.headDim ?? (hidden / nHeads)
         let nKVHeads = config.numKeyValueHeads ?? nHeads
@@ -137,29 +141,32 @@ public struct MarvisConfig: Sendable {
         // Depth decoder — its own nested config block.
         let decoder: CSMTransformerConfig
         if let d = config.nested("depth_decoder_config"),
-           let dHidden = (d["hidden_size"] as? Int),
-           let dLayers = (d["num_hidden_layers"] as? Int),
-           let dHeads = (d["num_attention_heads"] as? Int),
-           let dInter = (d["intermediate_size"] as? Int) {
+            let dHidden = (d["hidden_size"] as? Int),
+            let dLayers = (d["num_hidden_layers"] as? Int),
+            let dHeads = (d["num_attention_heads"] as? Int),
+            let dInter = (d["intermediate_size"] as? Int)
+        {
             let dHeadDim = (d["head_dim"] as? Int) ?? (dHidden / dHeads)
             let dKV = (d["num_key_value_heads"] as? Int) ?? dHeads
             let dEps = Float((d["rms_norm_eps"] as? Double) ?? 1e-5)
-            let dTheta = Float((d["rope_theta"] as? Int).map(Double.init)
-                ?? (d["rope_theta"] as? Double) ?? 500_000)
+            let dTheta = Float(
+                (d["rope_theta"] as? Int).map(Double.init)
+                    ?? (d["rope_theta"] as? Double) ?? 500_000)
             decoder = CSMTransformerConfig(
                 hidden: dHidden, nLayers: dLayers, nHeads: dHeads,
                 nKVHeads: dKV, headDim: dHeadDim, intermediate: dInter,
                 rmsNormEps: dEps, ropeTheta: dTheta,
-                ropeScaling: csmRoPEScaling(d["rope_scaling"] as? [String: Any],
-                                            headDim: dHeadDim))
+                ropeScaling: csmRoPEScaling(
+                    d["rope_scaling"] as? [String: Any],
+                    headDim: dHeadDim))
         } else {
             // Single-transformer fallback — decoder mirrors the backbone.
             decoder = backbone
         }
 
         guard let textVocab = config.int("text_vocab_size") ?? config.vocabSize,
-              let audioVocab = config.int("audio_vocab_size"),
-              let nCodebooks = config.int("audio_num_codebooks")
+            let audioVocab = config.int("audio_vocab_size"),
+            let nCodebooks = config.int("audio_num_codebooks")
         else { return nil }
 
         return MarvisConfig(
@@ -174,7 +181,8 @@ public struct MarvisConfig: Sendable {
 /// Build `Ops.RoPEScaling` from a CSM `rope_scaling` block (Llama3
 /// scaling). Returns `.none` when absent or not the `llama3` type.
 private func csmRoPEScaling(_ rs: [String: Any]?, headDim: Int)
-    -> Ops.RoPEScaling {
+    -> Ops.RoPEScaling
+{
     guard let rs = rs else { return .none }
     let type = (rs["rope_type"] as? String) ?? (rs["type"] as? String)
     guard type == "llama3" else { return .none }
@@ -203,8 +211,10 @@ public final class CSMTransformer: @unchecked Sendable {
     public let finalNorm: RMSNorm
     public let dtype: DType
 
-    public init(config: CSMTransformerConfig, layers: [LlamaLayer],
-                finalNorm: RMSNorm, dtype: DType) {
+    public init(
+        config: CSMTransformerConfig, layers: [LlamaLayer],
+        finalNorm: RMSNorm, dtype: DType
+    ) {
         self.config = config
         self.layers = layers
         self.finalNorm = finalNorm
@@ -213,22 +223,26 @@ public final class CSMTransformer: @unchecked Sendable {
 
     /// One per-layer KV cache for a generation session.
     public func makeCaches(maxSeq: Int, device: Device) -> [KVCache] {
-        (0..<config.nLayers).map { _ in
-            KVCache(nKVHeads: config.nKVHeads, headDim: config.headDim,
-                    maxSeq: maxSeq, dtype: dtype, device: device)
+        (0 ..< config.nLayers).map { _ in
+            KVCache(
+                nKVHeads: config.nKVHeads, headDim: config.headDim,
+                maxSeq: maxSeq, dtype: dtype, device: device)
         }
     }
 
     /// Run one timestep through the layer stack. `h` is the `[hidden]`
     /// embedding row; `position` its absolute index. Returns the
     /// post-norm hidden state. All work is queued on `cmd`.
-    public func forward(_ h: Tensor, position: Int,
-                        caches: [KVCache], on cmd: MTLCommandBuffer,
-                        device: Device) -> Tensor {
+    public func forward(
+        _ h: Tensor, position: Int,
+        caches: [KVCache], on cmd: MTLCommandBuffer,
+        device: Device
+    ) -> Tensor {
         var x = h
         for (i, layer) in layers.enumerated() {
-            x = layer.forward(x, position: position, cache: caches[i],
-                              cmd: cmd, device: device)
+            x = layer.forward(
+                x, position: position, cache: caches[i],
+                cmd: cmd, device: device)
         }
         return finalNorm(x, on: cmd)
     }
@@ -296,12 +310,14 @@ public final class MarvisModel: @unchecked Sendable {
     /// The Mimi codec decoder — `nil` until the codec port lands.
     public var mimiDecoder: (any MimiDecoding)?
 
-    public init(config: MarvisConfig, backbone: CSMTransformer,
-                decoder: CSMTransformer, textEmbeddings: AnyEmbedding,
-                audioEmbeddings: AnyEmbedding, projection: AnyLinear,
-                codebook0Head: AnyLinear, audioHead: Tensor,
-                tokenizer: any Tokenizer, dtype: DType,
-                mimiDecoder: (any MimiDecoding)? = nil) {
+    public init(
+        config: MarvisConfig, backbone: CSMTransformer,
+        decoder: CSMTransformer, textEmbeddings: AnyEmbedding,
+        audioEmbeddings: AnyEmbedding, projection: AnyLinear,
+        codebook0Head: AnyLinear, audioHead: Tensor,
+        tokenizer: any Tokenizer, dtype: DType,
+        mimiDecoder: (any MimiDecoding)? = nil
+    ) {
         self.config = config
         self.backbone = backbone
         self.decoder = decoder
@@ -320,8 +336,10 @@ public final class MarvisModel: @unchecked Sendable {
     // ─── Embedding helpers ───────────────────────────────────────────
 
     /// Embed a text token id into the backbone hidden dim.
-    private func embedText(_ tokenId: Int, on cmd: MTLCommandBuffer,
-                           device: Device) -> Tensor {
+    private func embedText(
+        _ tokenId: Int, on cmd: MTLCommandBuffer,
+        device: Device
+    ) -> Tensor {
         let buf = device.makeBuffer(length: 4)
         var v = UInt32(tokenId)
         memcpy(buf.contents(), &v, 4)
@@ -331,9 +349,11 @@ public final class MarvisModel: @unchecked Sendable {
 
     /// Embed an audio-codebook code. CSM packs all K codebooks into one
     /// table; codebook `cb`'s code `c` is row `cb * audioVocab + c`.
-    private func embedAudio(codebook cb: Int, code: Int,
-                            on cmd: MTLCommandBuffer,
-                            device: Device) -> Tensor {
+    private func embedAudio(
+        codebook cb: Int, code: Int,
+        on cmd: MTLCommandBuffer,
+        device: Device
+    ) -> Tensor {
         let row = cb * config.audioVocabSize + code
         let buf = device.makeBuffer(length: 4)
         var v = UInt32(row)
@@ -354,11 +374,13 @@ public final class MarvisModel: @unchecked Sendable {
     /// Returns `[K, nFrames]` — the Mimi code matrix, one row per
     /// codebook. A speaker prefix `[speaker]` frames the text the way
     /// CSM was trained.
-    public func generateFrames(text: String, speaker: Int = 0,
-                               maxFrames: Int = 750,
-                               temperature: Float = 0.9,
-                               seed: UInt64 = 0,
-                               device: Device = .shared) throws -> [[Int]] {
+    public func generateFrames(
+        text: String, speaker: Int = 0,
+        maxFrames: Int = 750,
+        temperature: Float = 0.9,
+        seed: UInt64 = 0,
+        device: Device = .shared
+    ) throws -> [[Int]] {
         let K = config.audioNumCodebooks
         let maxSeq = 2048
         let backboneCaches = backbone.makeCaches(maxSeq: maxSeq, device: device)
@@ -368,14 +390,16 @@ public final class MarvisModel: @unchecked Sendable {
         let promptText = "[\(speaker)]" + text
         let textIds = tokenizer.encode(text: promptText)
         var position = 0
-        var backboneHidden = Tensor.empty(shape: [config.backbone.hidden],
-                                          dtype: dtype, device: device)
+        var backboneHidden = Tensor.empty(
+            shape: [config.backbone.hidden],
+            dtype: dtype, device: device)
         for tid in textIds {
             let cmd = device.makeCommandBuffer()
             let emb = embedText(tid, on: cmd, device: device)
-            backboneHidden = backbone.forward(emb, position: position,
-                                              caches: backboneCaches,
-                                              on: cmd, device: device)
+            backboneHidden = backbone.forward(
+                emb, position: position,
+                caches: backboneCaches,
+                on: cmd, device: device)
             cmd.commit()
             cmd.waitUntilCompleted()
             position += 1
@@ -384,7 +408,7 @@ public final class MarvisModel: @unchecked Sendable {
         var rng = SeededRandomNumberGenerator(seed: seed)
         var frames: [[Int]] = []
 
-        for _ in 0..<maxFrames {
+        for _ in 0 ..< maxFrames {
             // Codebook 0 from the backbone hidden state.
             let frame = try generateFrame(
                 backboneHidden: backboneHidden, temperature: temperature,
@@ -397,16 +421,19 @@ public final class MarvisModel: @unchecked Sendable {
             // Feed the frame back into the backbone: sum its K codebook
             // embeddings into one timestep input.
             let cmd = device.makeCommandBuffer()
-            var summed = embedAudio(codebook: 0, code: frame[0],
-                                    on: cmd, device: device)
-            for cb in 1..<K {
-                let e = embedAudio(codebook: cb, code: frame[cb],
-                                   on: cmd, device: device)
+            var summed = embedAudio(
+                codebook: 0, code: frame[0],
+                on: cmd, device: device)
+            for cb in 1 ..< K {
+                let e = embedAudio(
+                    codebook: cb, code: frame[cb],
+                    on: cmd, device: device)
                 summed = Ops.add(summed, e, on: cmd)
             }
-            backboneHidden = backbone.forward(summed, position: position,
-                                              caches: backboneCaches,
-                                              on: cmd, device: device)
+            backboneHidden = backbone.forward(
+                summed, position: position,
+                caches: backboneCaches,
+                on: cmd, device: device)
             cmd.commit()
             cmd.waitUntilCompleted()
             position += 1
@@ -416,7 +443,7 @@ public final class MarvisModel: @unchecked Sendable {
         // Transpose `[nFrames, K]` → `[K, nFrames]` — one row per codebook.
         var codes = [[Int]](repeating: [], count: K)
         for frame in frames {
-            for cb in 0..<K { codes[cb].append(frame[cb]) }
+            for cb in 0 ..< K { codes[cb].append(frame[cb]) }
         }
         return codes
     }
@@ -424,9 +451,11 @@ public final class MarvisModel: @unchecked Sendable {
     /// Generate one `[K]` frame: the codebook-0 head samples code 0 from
     /// the backbone hidden, then the depth decoder autoregressively
     /// samples codebooks 1…K-1.
-    private func generateFrame(backboneHidden: Tensor, temperature: Float,
-                               rng: inout SeededRandomNumberGenerator,
-                               device: Device) throws -> [Int] {
+    private func generateFrame(
+        backboneHidden: Tensor, temperature: Float,
+        rng: inout SeededRandomNumberGenerator,
+        device: Device
+    ) throws -> [Int] {
         let K = config.audioNumCodebooks
         var frame = [Int](repeating: 0, count: K)
 
@@ -447,22 +476,25 @@ public final class MarvisModel: @unchecked Sendable {
 
         let cmdP = device.makeCommandBuffer()
         let projHidden = projection(backboneHidden, on: cmdP)
-        _ = decoder.forward(projHidden, position: decPosition,
-                            caches: decoderCaches, on: cmdP, device: device)
+        _ = decoder.forward(
+            projHidden, position: decPosition,
+            caches: decoderCaches, on: cmdP, device: device)
         cmdP.commit()
         cmdP.waitUntilCompleted()
         decPosition += 1
 
         var lastCode = frame[0]
-        for cb in 1..<K {
+        for cb in 1 ..< K {
             let cmd = device.makeCommandBuffer()
             // Embed the previous codebook's code; project to decoder dim.
-            let emb = embedAudio(codebook: cb - 1, code: lastCode,
-                                 on: cmd, device: device)
+            let emb = embedAudio(
+                codebook: cb - 1, code: lastCode,
+                on: cmd, device: device)
             let projEmb = projection(emb, on: cmd)
-            let decHidden = decoder.forward(projEmb, position: decPosition,
-                                            caches: decoderCaches,
-                                            on: cmd, device: device)
+            let decHidden = decoder.forward(
+                projEmb, position: decPosition,
+                caches: decoderCaches,
+                on: cmd, device: device)
             // Codebook `cb`'s head is audio_head row `cb - 1`:
             // `[decoderHidden, audioVocab]`. logits = decHidden · head.
             let headRow = audioHeadRow(cb - 1)
@@ -470,8 +502,9 @@ public final class MarvisModel: @unchecked Sendable {
             // matmul as decHidden(in) · head(in,out) — done via gemv on
             // the transposed view is unavailable, so use a row-major
             // gemm over a single row.
-            let logits = Ops.gemm(weight: headRow, input: decHidden,
-                                  nRows: 1, on: cmd)
+            let logits = Ops.gemm(
+                weight: headRow, input: decHidden,
+                nRows: 1, on: cmd)
             cmd.commit()
             cmd.waitUntilCompleted()
             let code = sampleLogits(logits, temperature: temperature, rng: &rng)
@@ -491,15 +524,18 @@ public final class MarvisModel: @unchecked Sendable {
         let decHidden = config.decoder.hidden
         let audioVocab = config.audioVocabSize
         let plane = decHidden * audioVocab
-        return Tensor(buffer: audioHead.buffer,
-                      offset: audioHead.offset + i * plane * audioHead.dtype.byteSize,
-                      shape: [audioVocab, decHidden], dtype: audioHead.dtype)
+        return Tensor(
+            buffer: audioHead.buffer,
+            offset: audioHead.offset + i * plane * audioHead.dtype.byteSize,
+            shape: [audioVocab, decHidden], dtype: audioHead.dtype)
     }
 
     /// Sample a token id from `[vocab]` logits. `temperature == 0` is
     /// greedy argmax; otherwise a temperature-scaled categorical draw.
-    private func sampleLogits(_ logits: Tensor, temperature: Float,
-                              rng: inout SeededRandomNumberGenerator) -> Int {
+    private func sampleLogits(
+        _ logits: Tensor, temperature: Float,
+        rng: inout SeededRandomNumberGenerator
+    ) -> Int {
         if temperature <= 0 { return Sampling.argmax(logits) }
         let values = Sampling.decodeF32(logits).map { $0 / temperature }
         // Softmax + inverse-CDF draw.
@@ -507,7 +543,7 @@ public final class MarvisModel: @unchecked Sendable {
         var exps = values.map { Foundation.exp($0 - maxV) }
         let sum = exps.reduce(0, +)
         if sum > 0 { for i in exps.indices { exps[i] /= sum } }
-        let draw = Float.random(in: 0..<1, using: &rng)
+        let draw = Float.random(in: 0 ..< 1, using: &rng)
         var acc: Float = 0
         for (i, p) in exps.enumerated() {
             acc += p
@@ -518,18 +554,21 @@ public final class MarvisModel: @unchecked Sendable {
 
     /// Full text→waveform synthesis. Requires a Mimi decoder; throws
     /// `MarvisError.codecUnavailable` when one is not wired.
-    public func synthesize(text: String, speaker: Int = 0,
-                           maxFrames: Int = 750,
-                           temperature: Float = 0.9,
-                           seed: UInt64 = 0,
-                           device: Device = .shared) throws -> Tensor {
+    public func synthesize(
+        text: String, speaker: Int = 0,
+        maxFrames: Int = 750,
+        temperature: Float = 0.9,
+        seed: UInt64 = 0,
+        device: Device = .shared
+    ) throws -> Tensor {
         guard let decoder = mimiDecoder else {
             throw MarvisError.codecUnavailable
         }
-        let codes = try generateFrames(text: text, speaker: speaker,
-                                       maxFrames: maxFrames,
-                                       temperature: temperature,
-                                       seed: seed, device: device)
+        let codes = try generateFrames(
+            text: text, speaker: speaker,
+            maxFrames: maxFrames,
+            temperature: temperature,
+            seed: seed, device: device)
         return decoder.decode(codes: codes, device: device)
     }
 }
@@ -556,30 +595,36 @@ extension MarvisModel {
     /// Both transformers are built from the checkpoint weights; the Mimi
     /// codec decoder is left unset (separate port — see scope note).
     public static func load(directory: URL, device: Device = .shared)
-        async throws -> MarvisModel {
+        async throws -> MarvisModel
+    {
         let config = try ModelConfig.load(from: directory)
         guard let mc = MarvisConfig.from(config) else {
             throw MarvisError.missingConfig
         }
         let bundle = try SafeTensorsBundle(directory: directory, device: device)
         let tokenizer = try await TokenizerLoader().load(from: directory)
-        return try build(config: mc, bundle: bundle, tokenizer: tokenizer,
-                         device: device)
+        return try build(
+            config: mc, bundle: bundle, tokenizer: tokenizer,
+            device: device)
     }
 
     /// Assemble a `MarvisModel` from a decoded config + a weight bundle.
     /// Factored out so tests can drive it directly.
-    public static func build(config mc: MarvisConfig,
-                             bundle: SafeTensorsBundle,
-                             tokenizer: any Tokenizer,
-                             device: Device = .shared) throws -> MarvisModel {
+    public static func build(
+        config mc: MarvisConfig,
+        bundle: SafeTensorsBundle,
+        tokenizer: any Tokenizer,
+        device: Device = .shared
+    ) throws -> MarvisModel {
         // CSM checkpoints prefix the two transformers `backbone.` and
         // `decoder.` (mlx conversions also carry a leading `model.`).
-        let prefix = bundle.has("model.backbone.layers.0.input_layernorm.weight")
+        let prefix =
+            bundle.has("model.backbone.layers.0.input_layernorm.weight")
             ? "model." : ""
         // Dtype probe — the unquantized text-embedding scales (or weight
         // itself if not quantized) reveals the activation precision.
-        let dtypeProbe = bundle.isQuantized("\(prefix)text_embeddings")
+        let dtypeProbe =
+            bundle.isQuantized("\(prefix)text_embeddings")
             ? try bundle.tensor(named: "\(prefix)text_embeddings.scales").dtype
             : try bundle.tensor(named: "\(prefix)text_embeddings.weight").dtype
         let dtype = dtypeProbe
@@ -632,31 +677,39 @@ extension MarvisModel {
     ) throws -> CSMTransformer {
         var layers: [LlamaLayer] = []
         layers.reserveCapacity(c.nLayers)
-        for i in 0..<c.nLayers {
+        for i in 0 ..< c.nLayers {
             let p = "\(base).layers.\(i)"
-            layers.append(LlamaLayer(
-                qProj: try loadLinear(base: "\(p).self_attn.q_proj", in: bundle, quantization: q),
-                kProj: try loadLinear(base: "\(p).self_attn.k_proj", in: bundle, quantization: q),
-                vProj: try loadLinear(base: "\(p).self_attn.v_proj", in: bundle, quantization: q),
-                oProj: try loadLinear(base: "\(p).self_attn.o_proj", in: bundle, quantization: q),
-                gateProj: try loadLinear(base: "\(p).mlp.gate_proj", in: bundle, quantization: q),
-                upProj: try loadLinear(base: "\(p).mlp.up_proj", in: bundle, quantization: q),
-                downProj: try loadLinear(base: "\(p).mlp.down_proj", in: bundle, quantization: q),
-                inputNorm: RMSNorm(
-                    weight: try bundle.tensor(named: "\(p).input_layernorm.weight"),
-                    eps: c.rmsNormEps),
-                postAttnNorm: RMSNorm(
-                    weight: try bundle.tensor(named: "\(p).post_attention_layernorm.weight"),
-                    eps: c.rmsNormEps),
-                hidden: c.hidden, nHeads: c.nHeads, nKVHeads: c.nKVHeads,
-                headDim: c.headDim, intermediate: c.intermediate,
-                ropeTheta: c.ropeTheta, ropeScaling: c.ropeScaling))
+            layers.append(
+                LlamaLayer(
+                    qProj: try loadLinear(
+                        base: "\(p).self_attn.q_proj", in: bundle, quantization: q),
+                    kProj: try loadLinear(
+                        base: "\(p).self_attn.k_proj", in: bundle, quantization: q),
+                    vProj: try loadLinear(
+                        base: "\(p).self_attn.v_proj", in: bundle, quantization: q),
+                    oProj: try loadLinear(
+                        base: "\(p).self_attn.o_proj", in: bundle, quantization: q),
+                    gateProj: try loadLinear(
+                        base: "\(p).mlp.gate_proj", in: bundle, quantization: q),
+                    upProj: try loadLinear(base: "\(p).mlp.up_proj", in: bundle, quantization: q),
+                    downProj: try loadLinear(
+                        base: "\(p).mlp.down_proj", in: bundle, quantization: q),
+                    inputNorm: RMSNorm(
+                        weight: try bundle.tensor(named: "\(p).input_layernorm.weight"),
+                        eps: c.rmsNormEps),
+                    postAttnNorm: RMSNorm(
+                        weight: try bundle.tensor(named: "\(p).post_attention_layernorm.weight"),
+                        eps: c.rmsNormEps),
+                    hidden: c.hidden, nHeads: c.nHeads, nKVHeads: c.nKVHeads,
+                    headDim: c.headDim, intermediate: c.intermediate,
+                    ropeTheta: c.ropeTheta, ropeScaling: c.ropeScaling))
         }
         let finalNorm = RMSNorm(
             weight: try bundle.tensor(named: "\(base).norm.weight"),
             eps: c.rmsNormEps)
-        return CSMTransformer(config: c, layers: layers,
-                              finalNorm: finalNorm, dtype: dtype)
+        return CSMTransformer(
+            config: c, layers: layers,
+            finalNorm: finalNorm, dtype: dtype)
     }
 
     /// Transpose the stored `audio_head` from
@@ -666,30 +719,34 @@ extension MarvisModel {
     /// slices contiguous `[audioVocab, decoderHidden]` planes. The
     /// result is materialized in `dtype` — the activation dtype the
     /// decoder hidden runs in — so the per-codebook gemm dtype-matches.
-    private static func loadAudioHead(_ stored: Tensor, decoderHidden: Int,
-                                      audioVocab: Int, dtype: DType,
-                                      device: Device)
-        throws -> Tensor {
+    private static func loadAudioHead(
+        _ stored: Tensor, decoderHidden: Int,
+        audioVocab: Int, dtype: DType,
+        device: Device
+    )
+        throws -> Tensor
+    {
         let planeElems = decoderHidden * audioVocab
-        precondition(stored.elementCount % planeElems == 0,
-                     "Marvis.loadAudioHead: audio_head shape "
-                     + "\(stored.shape) is not a multiple of "
-                     + "decoderHidden*audioVocab")
+        precondition(
+            stored.elementCount % planeElems == 0,
+            "Marvis.loadAudioHead: audio_head shape "
+                + "\(stored.shape) is not a multiple of "
+                + "decoderHidden*audioVocab")
         let nPlanes = stored.elementCount / planeElems
         let src = stored.toFloatArray()
         var dst = [Float](repeating: 0, count: src.count)
-        for p in 0..<nPlanes {
+        for p in 0 ..< nPlanes {
             let base = p * planeElems
             // [decoderHidden, audioVocab] → [audioVocab, decoderHidden].
-            for d in 0..<decoderHidden {
-                for v in 0..<audioVocab {
-                    dst[base + v * decoderHidden + d]
-                        = src[base + d * audioVocab + v]
+            for d in 0 ..< decoderHidden {
+                for v in 0 ..< audioVocab {
+                    dst[base + v * decoderHidden + d] = src[base + d * audioVocab + v]
                 }
             }
         }
-        let out = Tensor.empty(shape: [nPlanes, audioVocab, decoderHidden],
-                               dtype: dtype, device: device)
+        let out = Tensor.empty(
+            shape: [nPlanes, audioVocab, decoderHidden],
+            dtype: dtype, device: device)
         AudioPreprocessing.copyFloats(dst, into: out)
         return out
     }

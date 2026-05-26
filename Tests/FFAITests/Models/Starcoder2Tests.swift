@@ -20,6 +20,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Starcoder2 Family Root")

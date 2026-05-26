@@ -65,7 +65,7 @@ public enum DeepFilterNetSTFT {
     public static func vorbisWindow(size: Int) -> [Float] {
         let half = max(1, size / 2)
         var window = [Float](repeating: 0, count: size)
-        for i in 0..<size {
+        for i in 0 ..< size {
             let inner = sinf(0.5 * Float.pi * (Float(i) + 0.5) / Float(half))
             window[i] = sinf(0.5 * Float.pi * inner * inner)
         }
@@ -96,7 +96,8 @@ public enum DeepFilterNetSTFT {
         precondition(window.count == fftSize, "stft: window length must equal fftSize")
 
         // Prepend hopSize zeros to match libDF frame alignment.
-        let padded = [Float](repeating: 0, count: hopSize) + audio
+        let padded =
+            [Float](repeating: 0, count: hopSize) + audio
             + [Float](repeating: 0, count: fftSize)
 
         let freqBins = fftSize / 2 + 1
@@ -123,13 +124,15 @@ public enum DeepFilterNetSTFT {
         let concurrentThreshold = 16
         if nFrames >= concurrentThreshold {
             // Parallel: each frame is independent. Allocate per-frame scratch.
-            var realBuffers = [[Float]](repeating: [Float](repeating: 0, count: fftPow2), count: nFrames)
-            var imagBuffers = [[Float]](repeating: [Float](repeating: 0, count: fftPow2), count: nFrames)
+            var realBuffers = [[Float]](
+                repeating: [Float](repeating: 0, count: fftPow2), count: nFrames)
+            var imagBuffers = [[Float]](
+                repeating: [Float](repeating: 0, count: fftPow2), count: nFrames)
             DispatchQueue.concurrentPerform(iterations: nFrames) { frame in
                 let offset = frame * hopSize
                 var frameBuffer = [Float](repeating: 0, count: fftPow2)
                 // Apply window and fill frame buffer (zero-pad to fftPow2).
-                for i in 0..<fftSize {
+                for i in 0 ..< fftSize {
                     frameBuffer[i] = padded[offset + i] * window[i]
                 }
                 // Real FFT via split complex.
@@ -138,17 +141,18 @@ public enum DeepFilterNetSTFT {
                     imagp: &imagBuffers[frame]
                 )
                 frameBuffer.withUnsafeBufferPointer { buf in
-                    buf.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftPow2 / 2) { cPtr in
+                    buf.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftPow2 / 2) {
+                        cPtr in
                         vDSP_ctoz(cPtr, 2, &splitComplex, 1, vDSP_Length(fftPow2 / 2))
                     }
                 }
                 vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2N, FFTDirection(FFT_FORWARD))
                 // Scale: vDSP forward FFT has an implicit factor of 2 vs DFT convention.
                 // We apply wnorm here (matches libDF's fft_norm).
-                let scale = wnorm / 2.0   // /2 because vDSP RFFT packs Nyquist in imag[0]
+                let scale = wnorm / 2.0  // /2 because vDSP RFFT packs Nyquist in imag[0]
                 realBuffers[frame][0] *= scale
                 imagBuffers[frame][0] = 0  // DC bin is purely real
-                for b in 1..<(freqBins - 1) {
+                for b in 1 ..< (freqBins - 1) {
                     realBuffers[frame][b] *= scale
                     imagBuffers[frame][b] *= scale
                 }
@@ -163,9 +167,9 @@ public enum DeepFilterNetSTFT {
                 }
             }
             // Gather results into flat arrays.
-            for frame in 0..<nFrames {
+            for frame in 0 ..< nFrames {
                 let base = frame * freqBins
-                for b in 0..<freqBins {
+                for b in 0 ..< freqBins {
                     outReal[base + b] = realBuffers[frame][b]
                     outImag[base + b] = imagBuffers[frame][b]
                 }
@@ -175,18 +179,19 @@ public enum DeepFilterNetSTFT {
             var frameBuffer = [Float](repeating: 0, count: fftPow2)
             var realScratch = [Float](repeating: 0, count: fftPow2)
             var imagScratch = [Float](repeating: 0, count: fftPow2)
-            for frame in 0..<nFrames {
+            for frame in 0 ..< nFrames {
                 let offset = frame * hopSize
                 // Apply window and zero-pad.
-                for i in 0..<fftSize {
+                for i in 0 ..< fftSize {
                     frameBuffer[i] = padded[offset + i] * window[i]
                 }
                 if fftPow2 > fftSize {
-                    for i in fftSize..<fftPow2 { frameBuffer[i] = 0 }
+                    for i in fftSize ..< fftPow2 { frameBuffer[i] = 0 }
                 }
                 var splitComplex = DSPSplitComplex(realp: &realScratch, imagp: &imagScratch)
                 frameBuffer.withUnsafeBufferPointer { buf in
-                    buf.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftPow2 / 2) { cPtr in
+                    buf.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftPow2 / 2) {
+                        cPtr in
                         vDSP_ctoz(cPtr, 2, &splitComplex, 1, vDSP_Length(fftPow2 / 2))
                     }
                 }
@@ -195,7 +200,7 @@ public enum DeepFilterNetSTFT {
                 let base = frame * freqBins
                 outReal[base] = realScratch[0] * scale
                 outImag[base] = 0
-                for b in 1..<(freqBins - 1) {
+                for b in 1 ..< (freqBins - 1) {
                     outReal[base + b] = realScratch[b] * scale
                     outImag[base + b] = imagScratch[b] * scale
                 }
@@ -265,12 +270,12 @@ public enum DeepFilterNetSTFT {
         var imagScratch = [Float](repeating: 0, count: fftPow2)
         var timeBuf = [Float](repeating: 0, count: fftPow2)
 
-        for frame in 0..<nFrames {
+        for frame in 0 ..< nFrames {
             let base = frame * freqBins
             // Fill split complex (DC, positive frequencies, Nyquist).
             realScratch[0] = spectrum.real[base] * invWnorm * 2.0  // ×2 for vDSP convention
             imagScratch[0] = 0
-            for b in 1..<(freqBins - 1) {
+            for b in 1 ..< (freqBins - 1) {
                 realScratch[b] = spectrum.real[base + b] * invWnorm * 2.0
                 imagScratch[b] = spectrum.imag[base + b] * invWnorm * 2.0
             }
@@ -283,7 +288,7 @@ public enum DeepFilterNetSTFT {
                 imagScratch[0] = spectrum.real[base + freqBins - 1] * invWnorm * 2.0
             }
             // Zero upper half (not needed for IRFFT but keep scratch clean).
-            for b in freqBins..<(fftPow2 / 2 + 1) {
+            for b in freqBins ..< (fftPow2 / 2 + 1) {
                 realScratch[b] = 0
                 imagScratch[b] = 0
             }
@@ -291,14 +296,15 @@ public enum DeepFilterNetSTFT {
             vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2N, FFTDirection(FFT_INVERSE))
             // Unpack split complex to interleaved.
             timeBuf.withUnsafeMutableBufferPointer { buf in
-                buf.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftPow2 / 2) { cPtr in
+                buf.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftPow2 / 2) {
+                    cPtr in
                     vDSP_ztoc(&splitComplex, 1, cPtr, 2, vDSP_Length(fftPow2 / 2))
                 }
             }
             // Normalise by fftPow2 (vDSP IRFFT scaling).
             let normFactor = 1.0 / Float(fftPow2)
             let frameOffset = frame * hopSize
-            for i in 0..<fftSize {
+            for i in 0 ..< fftSize {
                 outputBuf[frameOffset + i] += timeBuf[i] * normFactor * window[i]
             }
         }
@@ -307,7 +313,7 @@ public enum DeepFilterNetSTFT {
         let delay = fftSize - hopSize
         let end = min(delay + origLen, outputBuf.count)
         guard end > delay else { return [] }
-        var out = Array(outputBuf[delay..<end])
+        var out = Array(outputBuf[delay ..< end])
         // Clip to [-1, 1].
         for i in out.indices {
             out[i] = min(max(out[i], -1.0), 1.0)
@@ -359,7 +365,7 @@ func dfErbBandWidths(
     var freqOver = 0
     let minBins = max(1, minNbFreqs)
 
-    for i in 1...nbBands {
+    for i in 1 ... nbBands {
         let f = dfErbToFreq(erbLow + Float(i) * step)
         let fb = Int((f / freqWidth).rounded())
         var nbFreqs = fb - prevFreq - freqOver
@@ -389,5 +395,5 @@ func dfErbBandWidths(
 func dfLinspace(start: Float, end: Float, count: Int) -> [Float] {
     guard count > 1 else { return [start] }
     let step = (end - start) / Float(count - 1)
-    return (0..<count).map { start + Float($0) * step }
+    return (0 ..< count).map { start + Float($0) * step }
 }

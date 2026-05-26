@@ -39,14 +39,18 @@ public final class Mamba2LayerCache: LayerCacheProtocol, @unchecked Sendable {
     public private(set) var length: Int = 0
     public let maxSeq: Int = .max
 
-    public init(nHeads: Int, stateDim: Int, headDim: Int,
-                convChannels: Int, convKernelSize: Int,
-                dtype: DType, device: Device = .shared) {
-        self.ssm = SSMStateCache(nHeads: nHeads, stateDim: stateDim,
-                                 headDim: headDim, device: device)
-        self.conv = ConvStateCache(nChannels: convChannels,
-                                   kernelSize: convKernelSize,
-                                   dtype: dtype, device: device)
+    public init(
+        nHeads: Int, stateDim: Int, headDim: Int,
+        convChannels: Int, convKernelSize: Int,
+        dtype: DType, device: Device = .shared
+    ) {
+        self.ssm = SSMStateCache(
+            nHeads: nHeads, stateDim: stateDim,
+            headDim: headDim, device: device)
+        self.conv = ConvStateCache(
+            nChannels: convChannels,
+            kernelSize: convKernelSize,
+            dtype: dtype, device: device)
     }
 
     public func reset() {

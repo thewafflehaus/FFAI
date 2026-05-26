@@ -24,6 +24,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("CohereTranscribe")
@@ -40,24 +41,24 @@ struct CohereTranscribeTests {
         #expect(cfg != nil)
 
         // Published AED defaults.
-        #expect(cfg?.encoder.dModel            == 512)
+        #expect(cfg?.encoder.dModel == 512)
         #expect(cfg?.encoder.ffExpansionFactor == 4)
-        #expect(cfg?.encoder.nHeads            == 8)
-        #expect(cfg?.encoder.convKernelSize    == 31)
-        #expect(cfg?.encoder.nLayers           == 18)
-        #expect(cfg?.encoder.posEmbMaxLen      == 5000)
+        #expect(cfg?.encoder.nHeads == 8)
+        #expect(cfg?.encoder.convKernelSize == 31)
+        #expect(cfg?.encoder.nLayers == 18)
+        #expect(cfg?.encoder.posEmbMaxLen == 5000)
         #expect(cfg?.encoder.subsamplingConvChannels == 256)
         #expect(cfg?.encoder.subsamplingFactor == 8)
-        #expect(cfg?.encoder.featIn            == 128)
+        #expect(cfg?.encoder.featIn == 128)
 
-        #expect(cfg?.decoder.hiddenSize          == 512)
-        #expect(cfg?.decoder.innerSize           == 2048)
-        #expect(cfg?.decoder.numAttentionHeads   == 8)
-        #expect(cfg?.decoder.numLayers           == 6)
-        #expect(cfg?.decoder.maxSequenceLength   == 512)
+        #expect(cfg?.decoder.hiddenSize == 512)
+        #expect(cfg?.decoder.innerSize == 2048)
+        #expect(cfg?.decoder.numAttentionHeads == 8)
+        #expect(cfg?.decoder.numLayers == 6)
+        #expect(cfg?.decoder.maxSequenceLength == 512)
 
-        #expect(cfg?.sampleRate     == 16_000)
-        #expect(cfg?.maxAudioClipS  == 60)
+        #expect(cfg?.sampleRate == 16_000)
+        #expect(cfg?.maxAudioClipS == 60)
     }
 
     @Test("CohereTranscribeConfig.from — detects by architecture string")
@@ -80,35 +81,35 @@ struct CohereTranscribeTests {
                 "vocab_size": 50000,
                 "sample_rate": 16000,
                 "encoder": [
-                    "d_model":                    1024,
-                    "ff_expansion_factor":        4,
-                    "n_heads":                    16,
-                    "conv_kernel_size":           31,
-                    "n_layers":                   24,
-                    "pos_emb_max_len":            5000,
-                    "subsampling_conv_channels":  256,
-                    "subsampling_factor":         8,
-                    "feat_in":                    128,
+                    "d_model": 1024,
+                    "ff_expansion_factor": 4,
+                    "n_heads": 16,
+                    "conv_kernel_size": 31,
+                    "n_layers": 24,
+                    "pos_emb_max_len": 5000,
+                    "subsampling_conv_channels": 256,
+                    "subsampling_factor": 8,
+                    "feat_in": 128,
                 ] as [String: Any],
                 "transf_decoder": [
                     "config_dict": [
-                        "hidden_size":           1024,
-                        "inner_size":            4096,
-                        "num_attention_heads":   16,
-                        "num_layers":            12,
-                        "max_sequence_length":   512,
+                        "hidden_size": 1024,
+                        "inner_size": 4096,
+                        "num_attention_heads": 16,
+                        "num_layers": 12,
+                        "max_sequence_length": 512,
                     ] as [String: Any]
                 ] as [String: Any],
             ])
         let cfg = CohereTranscribeConfig.from(config)
         #expect(cfg != nil)
-        #expect(cfg?.vocabSize           == 50000)
-        #expect(cfg?.encoder.dModel      == 1024)
-        #expect(cfg?.encoder.nHeads      == 16)
-        #expect(cfg?.encoder.nLayers     == 24)
-        #expect(cfg?.decoder.hiddenSize  == 1024)
-        #expect(cfg?.decoder.innerSize   == 4096)
-        #expect(cfg?.decoder.numLayers   == 12)
+        #expect(cfg?.vocabSize == 50000)
+        #expect(cfg?.encoder.dModel == 1024)
+        #expect(cfg?.encoder.nHeads == 16)
+        #expect(cfg?.encoder.nLayers == 24)
+        #expect(cfg?.decoder.hiddenSize == 1024)
+        #expect(cfg?.decoder.innerSize == 4096)
+        #expect(cfg?.decoder.numLayers == 12)
     }
 
     @Test("CohereTranscribeConfig.from — returns nil for text-only config")
@@ -170,7 +171,8 @@ struct CohereTranscribeTests {
             architecture: "CohereTranscribeForConditionalGeneration",
             modelType: "cohere_transcribe",
             raw: ["model_type": "cohere_transcribe"])
-        #expect(AudioModelRegistry.capabilities(for: config)
+        #expect(
+            AudioModelRegistry.capabilities(for: config)
                 == Capability.speechToText)
     }
 

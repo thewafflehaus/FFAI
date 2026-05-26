@@ -48,46 +48,52 @@ public struct FishS1DACConfig: Codable, Sendable {
     public var quantizerWindowSize: Int
 
     enum CodingKeys: String, CodingKey {
-        case encoderDim                          = "encoder_dim"
-        case encoderRates                        = "encoder_rates"
-        case latentDim                           = "latent_dim"
-        case decoderDim                          = "decoder_dim"
-        case decoderRates                        = "decoder_rates"
-        case nCodebooks                          = "n_codebooks"
-        case codebookSize                        = "codebook_size"
-        case codebookDim                         = "codebook_dim"
-        case semanticCodebookSize                = "semantic_codebook_size"
-        case downsampleFactor                    = "downsample_factor"
-        case downsampleDims                      = "downsample_dims"
-        case sampleRate                          = "sample_rate"
-        case quantizerTransformerLayers          = "quantizer_transformer_layers"
-        case quantizerTransformerHeads           = "quantizer_transformer_heads"
-        case quantizerTransformerDim             = "quantizer_transformer_dim"
+        case encoderDim = "encoder_dim"
+        case encoderRates = "encoder_rates"
+        case latentDim = "latent_dim"
+        case decoderDim = "decoder_dim"
+        case decoderRates = "decoder_rates"
+        case nCodebooks = "n_codebooks"
+        case codebookSize = "codebook_size"
+        case codebookDim = "codebook_dim"
+        case semanticCodebookSize = "semantic_codebook_size"
+        case downsampleFactor = "downsample_factor"
+        case downsampleDims = "downsample_dims"
+        case sampleRate = "sample_rate"
+        case quantizerTransformerLayers = "quantizer_transformer_layers"
+        case quantizerTransformerHeads = "quantizer_transformer_heads"
+        case quantizerTransformerDim = "quantizer_transformer_dim"
         case quantizerTransformerIntermediateSize = "quantizer_transformer_intermediate_size"
-        case quantizerTransformerHeadDim         = "quantizer_transformer_head_dim"
-        case quantizerWindowSize                 = "quantizer_window_size"
+        case quantizerTransformerHeadDim = "quantizer_transformer_head_dim"
+        case quantizerWindowSize = "quantizer_window_size"
     }
 
     public init(from decoder: Swift.Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        encoderDim                          = try c.decodeIfPresent(Int.self,    forKey: .encoderDim)                          ?? 64
-        encoderRates                        = try c.decodeIfPresent([Int].self,  forKey: .encoderRates)                        ?? [2, 4, 8, 8]
-        latentDim                           = try c.decodeIfPresent(Int.self,    forKey: .latentDim)                           ?? 1024
-        decoderDim                          = try c.decodeIfPresent(Int.self,    forKey: .decoderDim)                          ?? 1536
-        decoderRates                        = try c.decodeIfPresent([Int].self,  forKey: .decoderRates)                        ?? [8, 8, 4, 2]
-        nCodebooks                          = try c.decodeIfPresent(Int.self,    forKey: .nCodebooks)                          ?? 9
-        codebookSize                        = try c.decodeIfPresent(Int.self,    forKey: .codebookSize)                        ?? 1024
-        codebookDim                         = try c.decodeIfPresent(Int.self,    forKey: .codebookDim)                         ?? 8
-        semanticCodebookSize                = try c.decodeIfPresent(Int.self,    forKey: .semanticCodebookSize)                ?? 4096
-        downsampleFactor                    = try c.decodeIfPresent([Int].self,  forKey: .downsampleFactor)                    ?? [2, 2]
-        downsampleDims                      = try c.decodeIfPresent([Int]?.self, forKey: .downsampleDims)                      ?? nil
-        sampleRate                          = try c.decodeIfPresent(Int.self,    forKey: .sampleRate)                          ?? 44_100
-        quantizerTransformerLayers          = try c.decodeIfPresent(Int.self,    forKey: .quantizerTransformerLayers)          ?? 8
-        quantizerTransformerHeads           = try c.decodeIfPresent(Int.self,    forKey: .quantizerTransformerHeads)           ?? 16
-        quantizerTransformerDim             = try c.decodeIfPresent(Int.self,    forKey: .quantizerTransformerDim)             ?? 1024
-        quantizerTransformerIntermediateSize = try c.decodeIfPresent(Int.self,   forKey: .quantizerTransformerIntermediateSize) ?? 3072
-        quantizerTransformerHeadDim         = try c.decodeIfPresent(Int.self,    forKey: .quantizerTransformerHeadDim)         ?? 64
-        quantizerWindowSize                 = try c.decodeIfPresent(Int.self,    forKey: .quantizerWindowSize)                 ?? 128
+        encoderDim = try c.decodeIfPresent(Int.self, forKey: .encoderDim) ?? 64
+        encoderRates = try c.decodeIfPresent([Int].self, forKey: .encoderRates) ?? [2, 4, 8, 8]
+        latentDim = try c.decodeIfPresent(Int.self, forKey: .latentDim) ?? 1024
+        decoderDim = try c.decodeIfPresent(Int.self, forKey: .decoderDim) ?? 1536
+        decoderRates = try c.decodeIfPresent([Int].self, forKey: .decoderRates) ?? [8, 8, 4, 2]
+        nCodebooks = try c.decodeIfPresent(Int.self, forKey: .nCodebooks) ?? 9
+        codebookSize = try c.decodeIfPresent(Int.self, forKey: .codebookSize) ?? 1024
+        codebookDim = try c.decodeIfPresent(Int.self, forKey: .codebookDim) ?? 8
+        semanticCodebookSize =
+            try c.decodeIfPresent(Int.self, forKey: .semanticCodebookSize) ?? 4096
+        downsampleFactor = try c.decodeIfPresent([Int].self, forKey: .downsampleFactor) ?? [2, 2]
+        downsampleDims = try c.decodeIfPresent([Int]?.self, forKey: .downsampleDims) ?? nil
+        sampleRate = try c.decodeIfPresent(Int.self, forKey: .sampleRate) ?? 44_100
+        quantizerTransformerLayers =
+            try c.decodeIfPresent(Int.self, forKey: .quantizerTransformerLayers) ?? 8
+        quantizerTransformerHeads =
+            try c.decodeIfPresent(Int.self, forKey: .quantizerTransformerHeads) ?? 16
+        quantizerTransformerDim =
+            try c.decodeIfPresent(Int.self, forKey: .quantizerTransformerDim) ?? 1024
+        quantizerTransformerIntermediateSize =
+            try c.decodeIfPresent(Int.self, forKey: .quantizerTransformerIntermediateSize) ?? 3072
+        quantizerTransformerHeadDim =
+            try c.decodeIfPresent(Int.self, forKey: .quantizerTransformerHeadDim) ?? 64
+        quantizerWindowSize = try c.decodeIfPresent(Int.self, forKey: .quantizerWindowSize) ?? 128
     }
 
     /// Total temporal downsampling factor (encoder strides product).
@@ -107,9 +113,9 @@ public enum FishS1DACError: Error, CustomStringConvertible {
 
     public var description: String {
         switch self {
-        case .missingWeights(let s):  return "FishS1DAC: missing weights — \(s)"
-        case .configNotFound(let s):  return "FishS1DAC: config not found — \(s)"
-        case .shapeMismatch(let s):   return "FishS1DAC: shape mismatch — \(s)"
+        case .missingWeights(let s): return "FishS1DAC: missing weights — \(s)"
+        case .configNotFound(let s): return "FishS1DAC: config not found — \(s)"
+        case .shapeMismatch(let s): return "FishS1DAC: shape mismatch — \(s)"
         }
     }
 }

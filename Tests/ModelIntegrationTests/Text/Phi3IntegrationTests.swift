@@ -22,9 +22,10 @@
 // guard against a shape-misalignment in the slice math.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Phi Integration", .serialized)
 struct Phi3IntegrationTests {
@@ -48,7 +49,8 @@ struct Phi3IntegrationTests {
         #expect(m.engine.nLayers == 32)
         #expect(m.engine.nHeads == 32)
         #expect(m.engine.headDim == 96)
-        #expect(m.llama != nil, "Phi-3 should load through the Llama engine after fused-weight slicing")
+        #expect(
+            m.llama != nil, "Phi-3 should load through the Llama engine after fused-weight slicing")
 
         let result = try await m.generate(
             prompt: prompt,

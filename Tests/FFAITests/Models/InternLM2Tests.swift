@@ -20,6 +20,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("InternLM2 Family Root")

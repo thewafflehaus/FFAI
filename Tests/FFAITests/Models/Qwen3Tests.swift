@@ -21,6 +21,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Qwen3 Family Root")
@@ -39,8 +40,9 @@ struct Qwen3RootTests {
 
     @Test("variant(for:) returns Qwen3Dense")
     func variantDispatch() throws {
-        let cfg = ModelConfig(architecture: "Qwen3ForCausalLM",
-                              modelType: "qwen3", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "Qwen3ForCausalLM",
+            modelType: "qwen3", raw: [:])
         let v = try Qwen3.variant(for: cfg)
         #expect(String(describing: v) == String(describing: Qwen3Dense.self))
     }
@@ -48,7 +50,8 @@ struct Qwen3RootTests {
     @Test("Qwen3Error stringifies every case with its payload")
     func errorDescriptions() {
         #expect(Qwen3Error.missingConfig.description.contains("Qwen3"))
-        #expect(Qwen3Error.missingTensor("model.embed_tokens.weight").description
-            .contains("model.embed_tokens.weight"))
+        #expect(
+            Qwen3Error.missingTensor("model.embed_tokens.weight").description
+                .contains("model.embed_tokens.weight"))
     }
 }

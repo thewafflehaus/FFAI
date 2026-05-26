@@ -26,9 +26,9 @@ public protocol Module: AnyObject {
     func parameters() -> [(String, Tensor)]
 }
 
-public extension Module {
+extension Module {
     /// Pretty-print parameter names (debugging aid).
-    func parameterSummary() -> String {
+    public func parameterSummary() -> String {
         parameters()
             .map { "\($0.0): \($0.1.shape) \($0.1.dtype)" }
             .joined(separator: "\n")

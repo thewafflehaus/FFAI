@@ -60,11 +60,13 @@ final class Mistral3Projector: @unchecked Sendable {
     let textHidden: Int
     let spatialMergeSize: Int
 
-    init(norm: RMSNorm,
-         mergingLayer: AnyLinear,
-         linear1: AnyLinear, linear1Bias: Tensor?,
-         linear2: AnyLinear, linear2Bias: Tensor?,
-         visionHidden: Int, textHidden: Int, spatialMergeSize: Int) {
+    init(
+        norm: RMSNorm,
+        mergingLayer: AnyLinear,
+        linear1: AnyLinear, linear1Bias: Tensor?,
+        linear2: AnyLinear, linear2Bias: Tensor?,
+        visionHidden: Int, textHidden: Int, spatialMergeSize: Int
+    ) {
         self.norm = norm
         self.mergingLayer = mergingLayer
         self.linear1 = linear1
@@ -98,7 +100,8 @@ final class Mistral3Projector: @unchecked Sendable {
             in: weights, quantization: quantization)
         // Biases are loaded separately because `QuantizedLinear` does not
         // store them — the external load ensures both checkpoint formats work.
-        let linear1Bias: Tensor? = hasBias
+        let linear1Bias: Tensor? =
+            hasBias
             ? try? weights.tensor(named: "multi_modal_projector.linear_1.bias")
             : nil
 
@@ -106,7 +109,8 @@ final class Mistral3Projector: @unchecked Sendable {
         let linear2 = try loadLinear(
             base: "multi_modal_projector.linear_2",
             in: weights, quantization: quantization)
-        let linear2Bias: Tensor? = hasBias
+        let linear2Bias: Tensor? =
+            hasBias
             ? try? weights.tensor(named: "multi_modal_projector.linear_2.bias")
             : nil
 
@@ -135,8 +139,9 @@ final class Mistral3Projector: @unchecked Sendable {
 
         // ── Step 1: RMSNorm ──
         let cmd = device.makeCommandBuffer()
-        let normed = Ops.rmsNormRows(tokens, weight: norm.weight, eps: norm.eps,
-                                     nRows: nPatches, rowSize: visionHidden, on: cmd)
+        let normed = Ops.rmsNormRows(
+            tokens, weight: norm.weight, eps: norm.eps,
+            nRows: nPatches, rowSize: visionHidden, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
 
@@ -155,13 +160,13 @@ final class Mistral3Projector: @unchecked Sendable {
                 let mCol = mi % mergedW
                 var outOff = mi * mergedDim
                 // Gather the s×s patch block starting at (mRow*s, mCol*s).
-                for dr in 0..<s {
-                    for dc in 0..<s {
+                for dr in 0 ..< s {
+                    for dc in 0 ..< s {
                         let patchRow = mRow * s + dr
                         let patchCol = mCol * s + dc
                         let patchIdx = patchRow * gridW + patchCol
                         let srcOff = patchIdx * visionHidden
-                        for d in 0..<visionHidden {
+                        for d in 0 ..< visionHidden {
                             ptr[outOff + d] = src[srcOff + d]
                         }
                         outOff += visionHidden
@@ -171,8 +176,9 @@ final class Mistral3Projector: @unchecked Sendable {
         }
 
         // Copy merged float buffer into a GPU tensor.
-        let mergedTensor = Tensor.empty(shape: [nMerged, mergedDim],
-                                        dtype: normed.dtype, device: device)
+        let mergedTensor = Tensor.empty(
+            shape: [nMerged, mergedDim],
+            dtype: normed.dtype, device: device)
         ImagePreprocessing.copyFloats(merged, into: mergedTensor)
 
         // ── Step 3: Merge projection [visionHidden*s², visionHidden] ──
@@ -187,8 +193,9 @@ final class Mistral3Projector: @unchecked Sendable {
             linear1, input: afterMerge, nRows: nMerged,
             outDim: textHidden, device: device)
         if let b = linear1Bias {
-            x = mistral3BroadcastAddBias(x, bias: b, nRows: nMerged,
-                                          rowSize: textHidden, device: device)
+            x = mistral3BroadcastAddBias(
+                x, bias: b, nRows: nMerged,
+                rowSize: textHidden, device: device)
         }
         let cmd2 = device.makeCommandBuffer()
         x = Ops.gelu(x, on: cmd2)
@@ -200,8 +207,9 @@ final class Mistral3Projector: @unchecked Sendable {
             linear2, input: x, nRows: nMerged,
             outDim: textHidden, device: device)
         if let b = linear2Bias {
-            y = mistral3BroadcastAddBias(y, bias: b, nRows: nMerged,
-                                          rowSize: textHidden, device: device)
+            y = mistral3BroadcastAddBias(
+                y, bias: b, nRows: nMerged,
+                rowSize: textHidden, device: device)
         }
         return y
     }
@@ -225,8 +233,9 @@ private func mistral3ApplyLinearRows(
     if let plain = linear.inner as? Linear {
         // GPU path: single tiled GEMM over all rows.
         let cmd = device.makeCommandBuffer()
-        let out = Ops.gemm(weight: plain.weight, input: input,
-                           nRows: nRows, on: cmd)
+        let out = Ops.gemm(
+            weight: plain.weight, input: input,
+            nRows: nRows, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
         return out
@@ -237,10 +246,11 @@ private func mistral3ApplyLinearRows(
         let rowBytes = inDim * input.dtype.byteSize
         var rows: [Tensor] = []
         rows.reserveCapacity(nRows)
-        for r in 0..<nRows {
-            let rowT = Tensor(buffer: input.buffer,
-                              offset: input.offset + r * rowBytes,
-                              shape: [inDim], dtype: input.dtype)
+        for r in 0 ..< nRows {
+            let rowT = Tensor(
+                buffer: input.buffer,
+                offset: input.offset + r * rowBytes,
+                shape: [inDim], dtype: input.dtype)
             let cmd = device.makeCommandBuffer()
             let outRow = linear(rowT, on: cmd)
             cmd.commit()
@@ -248,13 +258,15 @@ private func mistral3ApplyLinearRows(
             rows.append(outRow)
         }
         // Concatenate rows into [nRows, outDim].
-        let out = Tensor.empty(shape: [nRows, outDim], dtype: rows[0].dtype,
-                               device: device)
+        let out = Tensor.empty(
+            shape: [nRows, outDim], dtype: rows[0].dtype,
+            device: device)
         let outRowBytes = outDim * out.dtype.byteSize
         for (r, row) in rows.enumerated() {
-            memcpy(out.buffer.contents().advanced(by: out.offset + r * outRowBytes),
-                   row.buffer.contents().advanced(by: row.offset),
-                   outRowBytes)
+            memcpy(
+                out.buffer.contents().advanced(by: out.offset + r * outRowBytes),
+                row.buffer.contents().advanced(by: row.offset),
+                outRowBytes)
         }
         return out
     }
@@ -267,8 +279,8 @@ private func mistral3BroadcastAddBias(
 ) -> Tensor {
     let biasVals = bias.toFloatArray()
     var flat = [Float](repeating: 0, count: nRows * rowSize)
-    for r in 0..<nRows {
-        for c in 0..<rowSize { flat[r * rowSize + c] = biasVals[c] }
+    for r in 0 ..< nRows {
+        for c in 0 ..< rowSize { flat[r * rowSize + c] = biasVals[c] }
     }
     let biasT = Tensor.empty(shape: [nRows, rowSize], dtype: x.dtype, device: device)
     ImagePreprocessing.copyFloats(flat, into: biasT)
@@ -291,9 +303,11 @@ final class Mistral3ComposedTower {
     let textHidden: Int
     let dtype: DType
 
-    init(encoder: PixtralVisionEncoder, projector: Mistral3Projector,
-         visionCfg: PixtralVisionConfig, spatialMergeSize: Int,
-         textHidden: Int, dtype: DType) {
+    init(
+        encoder: PixtralVisionEncoder, projector: Mistral3Projector,
+        visionCfg: PixtralVisionConfig, spatialMergeSize: Int,
+        textHidden: Int, dtype: DType
+    ) {
         self.encoder = encoder
         self.projector = projector
         self.visionCfg = visionCfg
@@ -330,11 +344,12 @@ final class Mistral3ComposedEncoder: VisionEncoder {
             layerNormEps: cfg.rmsNormEps, textHidden: tower.textHidden)
         // Placeholder tensors — base `encode` is fully overridden below.
         let placeholder = tower.encoder.patchConvWeight
-        super.init(config: facadeConfig,
-                   patchEmbedWeight: placeholder, patchEmbedBias: placeholder,
-                   positionEmbedding: placeholder, layers: [],
-                   postLayerNorm: tower.encoder.lnPre.asLayerNorm(),
-                   projection: nil, dtype: tower.dtype)
+        super.init(
+            config: facadeConfig,
+            patchEmbedWeight: placeholder, patchEmbedBias: placeholder,
+            positionEmbedding: placeholder, layers: [],
+            postLayerNorm: tower.encoder.lnPre.asLayerNorm(),
+            projection: nil, dtype: tower.dtype)
         _ = mergedPatches  // suppress unused-variable warning
     }
 
@@ -354,16 +369,18 @@ final class Mistral3ComposedEncoder: VisionEncoder {
         let gridH = imageH / p
         let gridW = imageW / p
 
-        precondition(gridH % s == 0 && gridW % s == 0,
-                     "Mistral3: gridH (\(gridH)) and gridW (\(gridW)) must be "
-                     + "divisible by spatialMergeSize (\(s))")
+        precondition(
+            gridH % s == 0 && gridW % s == 0,
+            "Mistral3: gridH (\(gridH)) and gridW (\(gridW)) must be "
+                + "divisible by spatialMergeSize (\(s))")
 
         // Run the Pixtral vision encoder: [nPatches, visionHidden].
         let raw = tower.encoder.encode(image: image, device: device)
 
         // Project via Mistral3's patch-merger + MLP: [mergedPatches, textHidden].
-        return tower.projector.project(tokens: raw, gridH: gridH, gridW: gridW,
-                                       device: device)
+        return tower.projector.project(
+            tokens: raw, gridH: gridH, gridW: gridW,
+            device: device)
     }
 }
 
@@ -376,7 +393,7 @@ extension SafeTensorsBundle {
     /// the mlx-community 4-bit conversion uses.
     var mistral3ProjectorQuantization: ModelConfig.QuantizationConfig? {
         guard isQuantized("multi_modal_projector.linear_1"),
-              let scales = try? tensor(named: "multi_modal_projector.linear_1.scales")
+            let scales = try? tensor(named: "multi_modal_projector.linear_1.scales")
         else { return nil }
         // The group_size is inferred from the scale tensor shape and the
         // known output dimension (scales: [outDim, inDim / groupSize]).

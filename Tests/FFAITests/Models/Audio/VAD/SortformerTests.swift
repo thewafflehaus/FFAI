@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // Unit tests for the Sortformer speaker-diarization family — config
@@ -229,16 +230,18 @@ struct SortformerTests {
 
     @Test("VADModelRegistry.detectKind — dispatches sortformer by config model_type")
     func registryDetectSortformerByConfig() throws {
-        let dir = try writeTempConfig(["model_type": "sortformer"],
-                                     named: "test-sortformer")
+        let dir = try writeTempConfig(
+            ["model_type": "sortformer"],
+            named: "test-sortformer")
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(try VADModelRegistry.detectKind(in: dir) == .sortformer)
     }
 
     @Test("VADModelRegistry.detectKind — dispatches diar_sortformer by config model_type")
     func registryDetectDiarSortformerByConfig() throws {
-        let dir = try writeTempConfig(["model_type": "diar_sortformer"],
-                                     named: "test-diar-sortformer")
+        let dir = try writeTempConfig(
+            ["model_type": "diar_sortformer"],
+            named: "test-diar-sortformer")
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(try VADModelRegistry.detectKind(in: dir) == .sortformer)
     }
@@ -248,8 +251,9 @@ struct SortformerTests {
         let base = FileManager.default.temporaryDirectory
         let dir = base.appendingPathComponent(
             "sortformer-4spk-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir,
-                                               withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(try VADModelRegistry.detectKind(in: dir) == .sortformer)
     }
@@ -259,8 +263,9 @@ struct SortformerTests {
         let base = FileManager.default.temporaryDirectory
         let dir = base.appendingPathComponent(
             "diar_streaming_4spk-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir,
-                                               withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(try VADModelRegistry.detectKind(in: dir) == .sortformer)
     }
@@ -273,9 +278,10 @@ struct SortformerTests {
         // during frames 10-24, all others are silent.
         let T = 40
         let numSpeakers = 4
-        var probs = [[Float]](repeating: [Float](repeating: 0.05, count: numSpeakers),
-                             count: T)
-        for t in 10..<25 { probs[t][0] = 0.85 }
+        var probs = [[Float]](
+            repeating: [Float](repeating: 0.05, count: numSpeakers),
+            count: T)
+        for t in 10 ..< 25 { probs[t][0] = 0.85 }
 
         // frameStride = hop * subsamplingFactor = 160 * 8 = 1280 samples @ 16kHz
         let frameDuration = Float(1280) / Float(16000)
@@ -294,7 +300,7 @@ struct SortformerTests {
         }
 
         // Speakers 1-3 should be silent.
-        for spk in 1..<numSpeakers {
+        for spk in 1 ..< numSpeakers {
             #expect(segments.filter { $0.speaker == spk }.isEmpty)
         }
     }
@@ -322,10 +328,11 @@ struct SortformerTests {
         // Two speakers active simultaneously in the middle.
         let T = 30
         let numSpeakers = 2
-        var probs = [[Float]](repeating: [Float](repeating: 0.02, count: numSpeakers),
-                             count: T)
-        for t in 5..<20 { probs[t][0] = 0.9 }
-        for t in 10..<25 { probs[t][1] = 0.85 }
+        var probs = [[Float]](
+            repeating: [Float](repeating: 0.02, count: numSpeakers),
+            count: T)
+        for t in 5 ..< 20 { probs[t][0] = 0.9 }
+        for t in 10 ..< 25 { probs[t][1] = 0.85 }
 
         let frameDuration = Float(1280) / Float(16000)
         let segments = SortformerModel.probsToSegments(
@@ -342,12 +349,15 @@ struct SortformerTests {
 
     // Write a config.json into a fresh temp directory and return the
     // directory URL.
-    private func writeTempConfig(_ config: [String: Any],
-                                 named: String) throws -> URL {
+    private func writeTempConfig(
+        _ config: [String: Any],
+        named: String
+    ) throws -> URL {
         let base = FileManager.default.temporaryDirectory
         let dir = base.appendingPathComponent("\(named)-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir,
-                                               withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true)
         let data = try JSONSerialization.data(withJSONObject: config)
         try data.write(to: dir.appendingPathComponent("config.json"))
         return dir

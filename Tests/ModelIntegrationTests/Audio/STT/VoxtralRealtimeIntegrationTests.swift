@@ -34,9 +34,10 @@
 // !!   make test-integration
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("VoxtralRealtime Integration", .serialized)
 struct VoxtralRealtimeIntegrationTests {
@@ -103,7 +104,7 @@ struct VoxtralRealtimeIntegrationTests {
         // 1 second of 440 Hz sine — exercises the full conv stem + transformer.
         let sr = 16_000
         var wave = [Float](repeating: 0, count: sr)
-        for i in 0..<sr {
+        for i in 0 ..< sr {
             wave[i] = 0.3 * sin(2.0 * Float.pi * 440.0 * Float(i) / Float(sr))
         }
 
@@ -115,8 +116,9 @@ struct VoxtralRealtimeIntegrationTests {
         #expect(features.shape[0] > 0, "encoder produced zero audio tokens")
 
         let vals = features.toFloatArray()
-        #expect(vals.allSatisfy { $0.isFinite },
-                "audio features contain NaN or Inf")
+        #expect(
+            vals.allSatisfy { $0.isFinite },
+            "audio features contain NaN or Inf")
         let variance = vals.map { $0 * $0 }.reduce(0, +) / Float(vals.count)
         #expect(variance > 1e-8, "audio features are degenerate (near-zero)")
     }
@@ -134,10 +136,12 @@ struct VoxtralRealtimeIntegrationTests {
         print("[VoxtralRealtime integration] transcript: \(transcript.debugDescription)")
 
         // Non-empty and at least two words (non-degenerate).
-        #expect(!transcript.isEmpty,
-                "VoxtralRealtime produced an empty transcript")
+        #expect(
+            !transcript.isEmpty,
+            "VoxtralRealtime produced an empty transcript")
         let words = transcript.split(separator: " ")
-        #expect(words.count >= 2,
-                "VoxtralRealtime transcript is degenerate: \(transcript.debugDescription)")
+        #expect(
+            words.count >= 2,
+            "VoxtralRealtime transcript is degenerate: \(transcript.debugDescription)")
     }
 }

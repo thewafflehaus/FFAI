@@ -32,16 +32,20 @@ struct ConvertCommand: AsyncParsableCommand {
         abstract: "Quantize a bf16/fp16 HuggingFace checkpoint to MLX 4-bit affine."
     )
 
-    @Argument(help: "HF repo id (e.g. HuggingFaceTB/SmolLM2-360M-Instruct) or local directory path.")
+    @Argument(
+        help: "HF repo id (e.g. HuggingFaceTB/SmolLM2-360M-Instruct) or local directory path.")
     var source: String
 
     @Option(name: .shortAndLong, help: "Bits per weight: 2, 4, or 8.")
     var bits: Int = 4
 
-    @Option(name: .long, help: "Output directory. Defaults to ~/.cache/ffai/converts/<repo>-<bits>bit.")
+    @Option(
+        name: .long, help: "Output directory. Defaults to ~/.cache/ffai/converts/<repo>-<bits>bit.")
     var output: String?
 
-    @Option(name: .long, help: "Upload to HF repo (e.g. ekryski/foo-4bit). Requires `hf` CLI authenticated.")
+    @Option(
+        name: .long,
+        help: "Upload to HF repo (e.g. ekryski/foo-4bit). Requires `hf` CLI authenticated.")
     var uploadRepo: String?
 
     @Flag(name: .long, help: "Quantize embed_tokens too (mlx-lm default: skip).")
@@ -120,7 +124,8 @@ struct ConvertCommand: AsyncParsableCommand {
     /// one directory level deep and is human-readable.
     private func defaultOutputDir(for source: String, bits: Int) -> URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let cacheRoot = home
+        let cacheRoot =
+            home
             .appendingPathComponent(".cache")
             .appendingPathComponent("ffai")
             .appendingPathComponent("converts")
@@ -153,15 +158,17 @@ struct ConvertCommand: AsyncParsableCommand {
         try process.run()
         process.waitUntilExit()
 
-        let output = String(
-            data: pipe.fileHandleForReading.readDataToEndOfFile(),
-            encoding: .utf8) ?? ""
+        let output =
+            String(
+                data: pipe.fileHandleForReading.readDataToEndOfFile(),
+                encoding: .utf8) ?? ""
         if !output.isEmpty { print(output) }
 
         if process.terminationStatus != 0 {
             // Non-fatal: the model was written locally even if upload fails.
-            print("warning: hf upload exited \(process.terminationStatus) — "
-                  + "model is still at \(directory.path)")
+            print(
+                "warning: hf upload exited \(process.terminationStatus) — "
+                    + "model is still at \(directory.path)")
         } else {
             print("uploaded: https://huggingface.co/\(repoId)")
         }

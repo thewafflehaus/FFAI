@@ -36,8 +36,8 @@ import Foundation
 /// Transpose an NCL tensor `[1, C, T]` to a `[T, C]` row-major matrix.
 private func nclToRows(_ x: [Float], c: Int, t: Int) -> [Float] {
     var out = [Float](repeating: 0, count: t * c)
-    for ch in 0..<c {
-        for pos in 0..<t { out[pos * c + ch] = x[ch * t + pos] }
+    for ch in 0 ..< c {
+        for pos in 0 ..< t { out[pos * c + ch] = x[ch * t + pos] }
     }
     return out
 }
@@ -45,8 +45,8 @@ private func nclToRows(_ x: [Float], c: Int, t: Int) -> [Float] {
 /// Transpose a `[T, C]` row-major matrix back to NCL `[1, C, T]`.
 private func rowsToNcl(_ x: [Float], c: Int, t: Int) -> [Float] {
     var out = [Float](repeating: 0, count: c * t)
-    for pos in 0..<t {
-        for ch in 0..<c { out[ch * t + pos] = x[pos * c + ch] }
+    for pos in 0 ..< t {
+        for ch in 0 ..< c { out[ch * t + pos] = x[pos * c + ch] }
     }
     return out
 }
@@ -56,7 +56,7 @@ private func rowsToNcl(_ x: [Float], c: Int, t: Int) -> [Float] {
 /// A Vocos ConvNeXt block: depthwise conv → LayerNorm → pointwise linear
 /// → GELU → pointwise linear → layer-scale, with a residual connection.
 struct VocosConvNeXtBlock {
-    let dwWeight: [Float]      // [dim, 1, K]  (depthwise)
+    let dwWeight: [Float]  // [dim, 1, K]  (depthwise)
     let dwShape: [Int]
     let dwBias: [Float]?
     let normW: [Float], normB: [Float]?
@@ -70,18 +70,23 @@ struct VocosConvNeXtBlock {
         let (dw, ds) = try w.convWeight("\(prefix).dwconv.weight")
         self.dwWeight = dw
         self.dwShape = ds
-        self.dwBias = w.has("\(prefix).dwconv.bias")
+        self.dwBias =
+            w.has("\(prefix).dwconv.bias")
             ? try w.floats("\(prefix).dwconv.bias") : nil
         self.normW = try w.floats("\(prefix).norm.weight")
-        self.normB = w.has("\(prefix).norm.bias")
+        self.normB =
+            w.has("\(prefix).norm.bias")
             ? try w.floats("\(prefix).norm.bias") : nil
         self.pw1W = try w.floats("\(prefix).pwconv1.weight")
-        self.pw1B = w.has("\(prefix).pwconv1.bias")
+        self.pw1B =
+            w.has("\(prefix).pwconv1.bias")
             ? try w.floats("\(prefix).pwconv1.bias") : nil
         self.pw2W = try w.floats("\(prefix).pwconv2.weight")
-        self.pw2B = w.has("\(prefix).pwconv2.bias")
+        self.pw2B =
+            w.has("\(prefix).pwconv2.bias")
             ? try w.floats("\(prefix).pwconv2.bias") : nil
-        self.gamma = w.has("\(prefix).gamma")
+        self.gamma =
+            w.has("\(prefix).gamma")
             ? try w.floats("\(prefix).gamma") : nil
         self.dim = config.dim
         self.interDim = config.intermediateDim
@@ -99,26 +104,30 @@ struct VocosConvNeXtBlock {
             groups: dim)
         // LayerNorm over channels — done in [T, dim] row layout.
         var rows = nclToRows(h, c: dim, t: hs[2])
-        rows = AudioMath.layerNorm(rows, rows: hs[2], dim: dim,
-                                   weight: normW, bias: normB)
+        rows = AudioMath.layerNorm(
+            rows, rows: hs[2], dim: dim,
+            weight: normW, bias: normB)
         // Pointwise convs (1×1) implemented as linears over [T, dim].
-        var ff = AudioMath.linear(rows, rows: hs[2], inDim: dim,
-                                  weight: pw1W, outDim: interDim, bias: pw1B)
+        var ff = AudioMath.linear(
+            rows, rows: hs[2], inDim: dim,
+            weight: pw1W, outDim: interDim, bias: pw1B)
         ff = AudioMath.gelu(ff)
-        var out = AudioMath.linear(ff, rows: hs[2], inDim: interDim,
-                                   weight: pw2W, outDim: dim, bias: pw2B)
+        var out = AudioMath.linear(
+            ff, rows: hs[2], inDim: interDim,
+            weight: pw2W, outDim: dim, bias: pw2B)
         // Layer scale (per-channel gamma).
         if let g = gamma {
-            for pos in 0..<hs[2] {
-                for ch in 0..<dim { out[pos * dim + ch] *= g[ch] }
+            for pos in 0 ..< hs[2] {
+                for ch in 0 ..< dim { out[pos * dim + ch] *= g[ch] }
             }
         }
         // Residual add (x is NCL; out is [T, dim]).
         let outNcl = rowsToNcl(out, c: dim, t: hs[2])
-        precondition(outNcl.count == x.count,
-                     "VocosConvNeXtBlock: residual length mismatch")
+        precondition(
+            outNcl.count == x.count,
+            "VocosConvNeXtBlock: residual length mismatch")
         var sum = x
-        for i in 0..<sum.count { sum[i] += outNcl[i] }
+        for i in 0 ..< sum.count { sum[i] += outNcl[i] }
         _ = t
         return (sum, shape)
     }
@@ -129,7 +138,7 @@ struct VocosConvNeXtBlock {
 /// The Vocos ConvNeXt backbone — an input conv, an initial LayerNorm, a
 /// stack of ConvNeXt blocks, and a final LayerNorm.
 struct VocosBackbone {
-    let embedWeight: [Float]   // [dim, inputChannels, K]
+    let embedWeight: [Float]  // [dim, inputChannels, K]
     let embedShape: [Int]
     let embedBias: [Float]?
     let normW: [Float], normB: [Float]?
@@ -141,19 +150,23 @@ struct VocosBackbone {
         let (ew, es) = try w.convWeight("backbone.embed.weight")
         self.embedWeight = ew
         self.embedShape = es
-        self.embedBias = w.has("backbone.embed.bias")
+        self.embedBias =
+            w.has("backbone.embed.bias")
             ? try w.floats("backbone.embed.bias") : nil
         self.normW = try w.floats("backbone.norm.weight")
-        self.normB = w.has("backbone.norm.bias")
+        self.normB =
+            w.has("backbone.norm.bias")
             ? try w.floats("backbone.norm.bias") : nil
         var bs: [VocosConvNeXtBlock] = []
-        for i in 0..<c.numLayers {
-            bs.append(try VocosConvNeXtBlock(
-                weights: w, prefix: "backbone.convnext.\(i)", config: c))
+        for i in 0 ..< c.numLayers {
+            bs.append(
+                try VocosConvNeXtBlock(
+                    weights: w, prefix: "backbone.convnext.\(i)", config: c))
         }
         self.blocks = bs
         self.finalNormW = try w.floats("backbone.final_layer_norm.weight")
-        self.finalNormB = w.has("backbone.final_layer_norm.bias")
+        self.finalNormB =
+            w.has("backbone.final_layer_norm.bias")
             ? try w.floats("backbone.final_layer_norm.bias") : nil
         self.dim = c.dim
     }
@@ -169,15 +182,17 @@ struct VocosBackbone {
             groups: 1)
         // Initial LayerNorm over channels.
         var rows = nclToRows(h, c: dim, t: hs[2])
-        rows = AudioMath.layerNorm(rows, rows: hs[2], dim: dim,
-                                   weight: normW, bias: normB)
+        rows = AudioMath.layerNorm(
+            rows, rows: hs[2], dim: dim,
+            weight: normW, bias: normB)
         h = rowsToNcl(rows, c: dim, t: hs[2])
         // ConvNeXt blocks.
         for block in blocks { (h, hs) = block(h, shape: hs) }
         // Final LayerNorm.
         rows = nclToRows(h, c: dim, t: hs[2])
-        rows = AudioMath.layerNorm(rows, rows: hs[2], dim: dim,
-                                   weight: finalNormW, bias: finalNormB)
+        rows = AudioMath.layerNorm(
+            rows, rows: hs[2], dim: dim,
+            weight: finalNormW, bias: finalNormB)
         h = rowsToNcl(rows, c: dim, t: hs[2])
         return (h, hs)
     }
@@ -190,7 +205,7 @@ struct VocosBackbone {
 /// overlap-add. The overlap-add reuses the fused GPU `Ops.vocoderISTFT`
 /// kernel; the post-ISTFT centre-trim is done on the host.
 struct VocosISTFTHead {
-    let outWeight: [Float]    // [nFFT+2, dim]
+    let outWeight: [Float]  // [nFFT+2, dim]
     let outBias: [Float]?
     let nFFT: Int
     let hopLength: Int
@@ -200,7 +215,8 @@ struct VocosISTFTHead {
 
     init(weights w: VocosWeights, config c: VocosConfig) throws {
         self.outWeight = try w.floats("head.out.weight")
-        self.outBias = w.has("head.out.bias")
+        self.outBias =
+            w.has("head.out.bias")
             ? try w.floats("head.out.bias") : nil
         self.nFFT = c.nFFT
         self.hopLength = c.hopLength
@@ -209,22 +225,25 @@ struct VocosISTFTHead {
 
     /// Reconstruct a `[L]` waveform from an NCL backbone feature map
     /// `[1, dim, T]`.
-    func synthesize(_ x: [Float], shape: [Int],
-                    device: Device = .shared) -> Tensor {
+    func synthesize(
+        _ x: [Float], shape: [Int],
+        device: Device = .shared
+    ) -> Tensor {
         let t = shape[2]
         // Project each frame to STFT coefficients: [T, nFFT+2].
         let rows = nclToRows(x, c: dim, t: t)
-        let coeffs = AudioMath.linear(rows, rows: t, inDim: dim,
-                                      weight: outWeight, outDim: nFFT + 2,
-                                      bias: outBias)
+        let coeffs = AudioMath.linear(
+            rows, rows: t, inDim: dim,
+            weight: outWeight, outDim: nFFT + 2,
+            bias: outBias)
         // Split into magnitude (exp, clipped) and phase; build the
         // complex STFT plane `[T, nFreq]` with nFreq = nFFT/2 + 1.
         let nFreq = nFFT / 2 + 1
         var specRe = [Float](repeating: 0, count: t * nFreq)
         var specIm = [Float](repeating: 0, count: t * nFreq)
-        for frame in 0..<t {
+        for frame in 0 ..< t {
             let base = frame * (nFFT + 2)
-            for f in 0..<nFreq {
+            for f in 0 ..< nFreq {
                 let mag = min(expf(coeffs[base + f]), Self.magClip)
                 let phase = coeffs[base + nFreq + f]
                 specRe[frame * nFreq + f] = mag * cosf(phase)
@@ -252,9 +271,10 @@ struct VocosISTFTHead {
         let trim = nFFT / 2
         let lo = min(trim, full.count)
         let hi = max(full.count - trim, lo)
-        let trimmed = Array(full[lo..<hi])
-        let out = Tensor.empty(shape: [trimmed.count], dtype: .f32,
-                               device: device)
+        let trimmed = Array(full[lo ..< hi])
+        let out = Tensor.empty(
+            shape: [trimmed.count], dtype: .f32,
+            device: device)
         out.copyIn(from: trimmed)
         return out
     }

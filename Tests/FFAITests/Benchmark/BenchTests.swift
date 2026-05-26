@@ -19,6 +19,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Bench")
@@ -94,10 +95,11 @@ struct BenchTests {
 
     @Test("BenchRow.init(stats:) maps the right fields")
     func rowFromStats() {
-        let row = BenchRow(model: "demo/foo", method: "simple",
-                           quantization: "4bit",
-                           stats: makeStats(), outputPreview: "hello",
-                           genPerplexity: 5.5, genKLDivergence: 0.04)
+        let row = BenchRow(
+            model: "demo/foo", method: "simple",
+            quantization: "4bit",
+            stats: makeStats(), outputPreview: "hello",
+            genPerplexity: 5.5, genKLDivergence: 0.04)
         #expect(row.model == "demo/foo")
         #expect(row.method == "simple")
         #expect(row.quantization == "4bit")
@@ -121,10 +123,11 @@ struct BenchTests {
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         let writer = BenchmarkWriter(reportDirectory: tempDir, chipSlug: "test-chip")
-        let row = BenchRow(model: "demo/foo", method: "simple",
-                           quantization: "4bit",
-                           stats: makeStats(), outputPreview: "hello world",
-                           genPerplexity: nil, genKLDivergence: nil)
+        let row = BenchRow(
+            model: "demo/foo", method: "simple",
+            quantization: "4bit",
+            stats: makeStats(), outputPreview: "hello world",
+            genPerplexity: nil, genKLDivergence: nil)
         let urls = try writer.append(row, date: Date(timeIntervalSince1970: 0))
 
         // Date 1970-01-01 → file stem `test-chip-1970-01-01`.
@@ -157,14 +160,16 @@ struct BenchTests {
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         let writer = BenchmarkWriter(reportDirectory: tempDir, chipSlug: "test-chip")
-        let row1 = BenchRow(model: "demo/foo", method: "simple",
-                            quantization: "bf16",
-                            stats: makeStats(), outputPreview: "a",
-                            genPerplexity: nil, genKLDivergence: nil)
-        let row2 = BenchRow(model: "demo/bar", method: "wikitext2",
-                            quantization: "4bit",
-                            stats: makeStats(), outputPreview: nil,
-                            genPerplexity: 5.5, genKLDivergence: 0.04)
+        let row1 = BenchRow(
+            model: "demo/foo", method: "simple",
+            quantization: "bf16",
+            stats: makeStats(), outputPreview: "a",
+            genPerplexity: nil, genKLDivergence: nil)
+        let row2 = BenchRow(
+            model: "demo/bar", method: "wikitext2",
+            quantization: "4bit",
+            stats: makeStats(), outputPreview: nil,
+            genPerplexity: 5.5, genKLDivergence: 0.04)
         let date = Date(timeIntervalSince1970: 0)
         _ = try writer.append(row1, date: date)
         let urls = try writer.append(row2, date: date)
@@ -194,8 +199,9 @@ struct BenchTests {
 
     @Test("BenchRunnerError descriptions name the missing piece")
     func runnerErrorDescriptions() {
-        let e1 = BenchRunnerError.notImplemented(method: .niah,
-                                                 dependency: "sliding-window mask")
+        let e1 = BenchRunnerError.notImplemented(
+            method: .niah,
+            dependency: "sliding-window mask")
         #expect(String(describing: e1).contains("niah"))
         #expect(String(describing: e1).contains("sliding-window mask"))
 

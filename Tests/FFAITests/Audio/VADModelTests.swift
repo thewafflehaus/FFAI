@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // Unit tests for the voice-activity-detection (VAD) model families —
@@ -126,7 +127,7 @@ struct VADModelTests {
         // 40 chunks @ 512 samples / 16 kHz: silence, a speech burst long
         // enough to clear minSpeechDurationMs, then silence again.
         var probs = [Float](repeating: 0.05, count: 40)
-        for i in 12..<28 { probs[i] = 0.9 }
+        for i in 12 ..< 28 { probs[i] = 0.9 }
         let segments = SileroVADModel.probsToSegments(
             probs, audioLen: 40 * 512, sampleRate: 16000, chunkSize: 512,
             threshold: 0.5, minSpeechDurationMs: 250,
@@ -230,17 +231,21 @@ struct VADModelTests {
     @Test("SmartTurnModel.remap — flattens nested head keys, drops val_*")
     func smartTurnRemap() {
         // A leading `inner.` prefix is stripped.
-        #expect(SmartTurnModel.remap("inner.encoder.conv1.weight")
+        #expect(
+            SmartTurnModel.remap("inner.encoder.conv1.weight")
                 == "encoder.conv1.weight")
         // `pool_attention.N` / `classifier.N` → underscored flat names.
-        #expect(SmartTurnModel.remap("pool_attention.0.weight")
+        #expect(
+            SmartTurnModel.remap("pool_attention.0.weight")
                 == "pool_attention_0.weight")
-        #expect(SmartTurnModel.remap("classifier.6.bias")
+        #expect(
+            SmartTurnModel.remap("classifier.6.bias")
                 == "classifier_6.bias")
         // `val_*` validation tensors are dropped.
         #expect(SmartTurnModel.remap("val_accuracy") == nil)
         // An ordinary key passes through unchanged.
-        #expect(SmartTurnModel.remap("encoder.layer_norm.weight")
+        #expect(
+            SmartTurnModel.remap("encoder.layer_norm.weight")
                 == "encoder.layer_norm.weight")
     }
 
@@ -256,13 +261,15 @@ struct VADModelTests {
 
     @Test("VADModelRegistry.detectKind — dispatches by config model_type")
     func registryDetectKindByConfig() throws {
-        let dir = try writeTempConfig(["model_type": "silero_vad"],
-                                      named: "some-checkpoint")
+        let dir = try writeTempConfig(
+            ["model_type": "silero_vad"],
+            named: "some-checkpoint")
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(try VADModelRegistry.detectKind(in: dir) == .sileroVAD)
 
-        let dir2 = try writeTempConfig(["model_type": "smart_turn_v3"],
-                                       named: "another-checkpoint")
+        let dir2 = try writeTempConfig(
+            ["model_type": "smart_turn_v3"],
+            named: "another-checkpoint")
         defer { try? FileManager.default.removeItem(at: dir2) }
         #expect(try VADModelRegistry.detectKind(in: dir2) == .smartTurn)
     }
@@ -272,7 +279,8 @@ struct VADModelTests {
         // No config.json at all — detection must fall back to the
         // directory name heuristic.
         let base = FileManager.default.temporaryDirectory
-        let dir = base.appendingPathComponent("models--mlx-community--smart-turn-v3-\(UUID().uuidString)")
+        let dir = base.appendingPathComponent(
+            "models--mlx-community--smart-turn-v3-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(try VADModelRegistry.detectKind(in: dir) == .smartTurn)
@@ -280,8 +288,9 @@ struct VADModelTests {
 
     @Test("VADModelRegistry.detectKind — rejects an unknown architecture")
     func registryDetectKindUnknown() throws {
-        let dir = try writeTempConfig(["model_type": "not_a_vad_model"],
-                                      named: "mystery-model")
+        let dir = try writeTempConfig(
+            ["model_type": "not_a_vad_model"],
+            named: "mystery-model")
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(throws: AudioModelError.self) {
             _ = try VADModelRegistry.detectKind(in: dir)
@@ -290,8 +299,10 @@ struct VADModelTests {
 
     // Write a config.json into a fresh temp directory and return the
     // directory URL.
-    private func writeTempConfig(_ config: [String: Any],
-                                 named: String) throws -> URL {
+    private func writeTempConfig(
+        _ config: [String: Any],
+        named: String
+    ) throws -> URL {
         let base = FileManager.default.temporaryDirectory
         let dir = base.appendingPathComponent("\(named)-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

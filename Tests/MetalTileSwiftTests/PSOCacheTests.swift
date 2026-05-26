@@ -26,6 +26,7 @@
 import Foundation
 import Metal
 import Testing
+
 @testable import MetalTileSwift
 
 @Suite("PSOCache")
@@ -42,8 +43,9 @@ struct PSOCacheTests {
         let pso = try cache.pipelineStateThrowing(for: "vector_add_f32")
         // Metal refuses to instantiate a function it couldn't compile;
         // a positive max-threads value confirms the PSO is alive.
-        #expect(pso.maxTotalThreadsPerThreadgroup > 0,
-                "vector_add_f32 PSO reports zero maxTotalThreadsPerThreadgroup")
+        #expect(
+            pso.maxTotalThreadsPerThreadgroup > 0,
+            "vector_add_f32 PSO reports zero maxTotalThreadsPerThreadgroup")
     }
 
     @Test("pipelineStateThrowing throws kernelNotFound for an unknown name")
@@ -55,8 +57,9 @@ struct PSOCacheTests {
         } catch let err as PSOCacheError {
             // The error description should at least mention the kernel
             // name so failures are diagnosable from logs.
-            #expect(err.description.contains("absolutely_not_a_real_kernel_xyz"),
-                    "PSOCacheError description should name the missing kernel; got: \(err)")
+            #expect(
+                err.description.contains("absolutely_not_a_real_kernel_xyz"),
+                "PSOCacheError description should name the missing kernel; got: \(err)")
         } catch {
             Issue.record("expected PSOCacheError; got \(type(of: error)): \(error)")
         }
@@ -73,7 +76,7 @@ struct PSOCacheTests {
         // concurrent compiles into one.
         let kernel = "vector_add_f32"
         let psos = await withTaskGroup(of: MTLComputePipelineState.self) { group in
-            for _ in 0..<8 {
+            for _ in 0 ..< 8 {
                 group.addTask {
                     cache.pipelineState(for: kernel)
                 }
@@ -85,8 +88,10 @@ struct PSOCacheTests {
         #expect(psos.count == 8)
         let first = psos[0]
         for (i, pso) in psos.enumerated() {
-            #expect(pso === first,
-                    "concurrent PSO lookup \(i) returned a different instance than the first — cache failed to dedupe under race")
+            #expect(
+                pso === first,
+                "concurrent PSO lookup \(i) returned a different instance than the first — cache failed to dedupe under race"
+            )
         }
     }
 

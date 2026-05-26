@@ -53,12 +53,12 @@ public struct Qwen3Dense: Qwen3Variant {
         device: Device
     ) throws -> Qwen3Model {
         guard let hidden = config.hiddenSize,
-              let nLayers = config.numLayers,
-              let nHeads = config.numAttentionHeads,
-              let headDim = config.headDim,
-              let vocab = config.vocabSize,
-              let intermediate = config.intermediateSize,
-              let eps = config.rmsNormEps
+            let nLayers = config.numLayers,
+            let nHeads = config.numAttentionHeads,
+            let headDim = config.headDim,
+            let vocab = config.vocabSize,
+            let intermediate = config.intermediateSize,
+            let eps = config.rmsNormEps
         else {
             throw Qwen3Error.missingConfig
         }
@@ -76,8 +76,8 @@ public struct Qwen3Dense: Qwen3Variant {
         var ropeScaling = Ops.RoPEScaling.none
         if let rs = config.nested("rope_scaling") {
             if let typeStr = (rs["type"] as? String) ?? (rs["rope_type"] as? String),
-               typeStr == "linear",
-               let factor = rs["factor"] as? Double
+                typeStr == "linear",
+                let factor = rs["factor"] as? Double
             {
                 ropeScaling = Ops.RoPEScaling(
                     scaleFactor: Float(factor),
@@ -91,7 +91,8 @@ public struct Qwen3Dense: Qwen3Variant {
                     scaleFactor: Float((rs["factor"] as? Double) ?? 1),
                     lowFreqFactor: Float((rs["low_freq_factor"] as? Double) ?? 1),
                     highFreqFactor: Float((rs["high_freq_factor"] as? Double) ?? 4),
-                    originalMaxPosition: Float((rs["original_max_position_embeddings"] as? Int) ?? 8192)
+                    originalMaxPosition: Float(
+                        (rs["original_max_position_embeddings"] as? Int) ?? 8192)
                 )
             }
         }
@@ -107,13 +108,17 @@ public struct Qwen3Dense: Qwen3Variant {
         // Layers
         var layers: [Qwen3Layer] = []
         layers.reserveCapacity(nLayers)
-        for i in 0..<nLayers {
+        for i in 0 ..< nLayers {
             let p = "model.layers.\(i)"
 
-            let qProj = try loadLinear(base: "\(p).self_attn.q_proj", in: weights, quantization: quant)
-            let kProj = try loadLinear(base: "\(p).self_attn.k_proj", in: weights, quantization: quant)
-            let vProj = try loadLinear(base: "\(p).self_attn.v_proj", in: weights, quantization: quant)
-            let oProj = try loadLinear(base: "\(p).self_attn.o_proj", in: weights, quantization: quant)
+            let qProj = try loadLinear(
+                base: "\(p).self_attn.q_proj", in: weights, quantization: quant)
+            let kProj = try loadLinear(
+                base: "\(p).self_attn.k_proj", in: weights, quantization: quant)
+            let vProj = try loadLinear(
+                base: "\(p).self_attn.v_proj", in: weights, quantization: quant)
+            let oProj = try loadLinear(
+                base: "\(p).self_attn.o_proj", in: weights, quantization: quant)
 
             // Per-head Q/K RMSNorm — the structural delta vs Llama.
             let qNorm = RMSNorm(
@@ -123,9 +128,11 @@ public struct Qwen3Dense: Qwen3Variant {
                 weight: try weights.tensor(named: "\(p).self_attn.k_norm.weight"),
                 eps: Float(eps))
 
-            let gateProj = try loadLinear(base: "\(p).mlp.gate_proj", in: weights, quantization: quant)
+            let gateProj = try loadLinear(
+                base: "\(p).mlp.gate_proj", in: weights, quantization: quant)
             let upProj = try loadLinear(base: "\(p).mlp.up_proj", in: weights, quantization: quant)
-            let downProj = try loadLinear(base: "\(p).mlp.down_proj", in: weights, quantization: quant)
+            let downProj = try loadLinear(
+                base: "\(p).mlp.down_proj", in: weights, quantization: quant)
 
             let inputNorm = RMSNorm(
                 weight: try weights.tensor(named: "\(p).input_layernorm.weight"),
@@ -134,15 +141,16 @@ public struct Qwen3Dense: Qwen3Variant {
                 weight: try weights.tensor(named: "\(p).post_attention_layernorm.weight"),
                 eps: Float(eps))
 
-            layers.append(Qwen3Layer(
-                qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
-                qNorm: qNorm, kNorm: kNorm,
-                gateProj: gateProj, upProj: upProj, downProj: downProj,
-                inputNorm: inputNorm, postAttnNorm: postAttnNorm,
-                hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
-                headDim: headDim, intermediate: intermediate,
-                ropeTheta: theta, ropeScaling: ropeScaling
-            ))
+            layers.append(
+                Qwen3Layer(
+                    qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
+                    qNorm: qNorm, kNorm: kNorm,
+                    gateProj: gateProj, upProj: upProj, downProj: downProj,
+                    inputNorm: inputNorm, postAttnNorm: postAttnNorm,
+                    hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
+                    headDim: headDim, intermediate: intermediate,
+                    ropeTheta: theta, ropeScaling: ropeScaling
+                ))
         }
 
         // Final norm
@@ -160,10 +168,11 @@ public struct Qwen3Dense: Qwen3Variant {
                 weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
                 scaleCols: t.scales.shape[t.scales.shape.count - 1],
                 groupSize: q.groupSize)
-            lmHead = AnyLinear(QuantizedLinear(
-                weight: t.weight, scales: t.scales, biases: t.biases,
-                bits: bits, groupSize: q.groupSize
-            ))
+            lmHead = AnyLinear(
+                QuantizedLinear(
+                    weight: t.weight, scales: t.scales, biases: t.biases,
+                    bits: bits, groupSize: q.groupSize
+                ))
         } else {
             lmHead = AnyLinear(Linear(weight: embedTokens.weight))
         }
@@ -171,7 +180,8 @@ public struct Qwen3Dense: Qwen3Variant {
         // Activation/inference dtype: prefer scales for quantized models.
         let activationDtype: DType
         if weights.isQuantized("model.embed_tokens"),
-           let scales = try? weights.tensor(named: "model.embed_tokens.scales") {
+            let scales = try? weights.tensor(named: "model.embed_tokens.scales")
+        {
             activationDtype = scales.dtype
         } else {
             activationDtype = embedTokens.weight.dtype
@@ -202,19 +212,31 @@ public final class Qwen3Layer: Module {
     let ropeScaling: Ops.RoPEScaling
     let scale: Float
 
-    init(qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
-         qNorm: RMSNorm, kNorm: RMSNorm,
-         gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
-         inputNorm: RMSNorm, postAttnNorm: RMSNorm,
-         hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         intermediate: Int, ropeTheta: Float,
-         ropeScaling: Ops.RoPEScaling) {
-        self.qProj = qProj; self.kProj = kProj; self.vProj = vProj; self.oProj = oProj
-        self.qNorm = qNorm; self.kNorm = kNorm
-        self.gateProj = gateProj; self.upProj = upProj; self.downProj = downProj
-        self.inputNorm = inputNorm; self.postAttnNorm = postAttnNorm
-        self.hidden = hidden; self.nHeads = nHeads; self.nKVHeads = nKVHeads
-        self.headDim = headDim; self.intermediate = intermediate
+    init(
+        qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
+        qNorm: RMSNorm, kNorm: RMSNorm,
+        gateProj: AnyLinear, upProj: AnyLinear, downProj: AnyLinear,
+        inputNorm: RMSNorm, postAttnNorm: RMSNorm,
+        hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        intermediate: Int, ropeTheta: Float,
+        ropeScaling: Ops.RoPEScaling
+    ) {
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.oProj = oProj
+        self.qNorm = qNorm
+        self.kNorm = kNorm
+        self.gateProj = gateProj
+        self.upProj = upProj
+        self.downProj = downProj
+        self.inputNorm = inputNorm
+        self.postAttnNorm = postAttnNorm
+        self.hidden = hidden
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.intermediate = intermediate
         self.ropeTheta = ropeTheta
         self.ropeScaling = ropeScaling
         self.scale = 1.0 / Float(Double(headDim).squareRoot())
@@ -239,8 +261,10 @@ public final class Qwen3Layer: Module {
     /// Single-token forward pass. Same shape as LlamaLayer.forward but
     /// applies q_norm / k_norm to each head's [head_dim] vector before
     /// RoPE. All work queued on `cmd`, no commit/wait inside.
-    func forward(_ h: Tensor, position: Int, cache: any KVCacheProtocol,
-                 cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forward(
+        _ h: Tensor, position: Int, cache: any KVCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // Attention
         let xNorm = inputNorm(h, on: cmd)
         let q = qProj(xNorm, on: cmd)
@@ -248,25 +272,30 @@ public final class Qwen3Layer: Module {
         let v = vProj(xNorm, on: cmd)
 
         // Per-head q_norm / k_norm
-        let qNormed = applyPerHeadRMSNorm(q, weight: qNorm.weight, eps: qNorm.eps,
-                                          nHeads: nHeads, headDim: headDim,
-                                          on: cmd, device: device)
-        let kNormed = applyPerHeadRMSNorm(k, weight: kNorm.weight, eps: kNorm.eps,
-                                          nHeads: nKVHeads, headDim: headDim,
-                                          on: cmd, device: device)
+        let qNormed = applyPerHeadRMSNorm(
+            q, weight: qNorm.weight, eps: qNorm.eps,
+            nHeads: nHeads, headDim: headDim,
+            on: cmd, device: device)
+        let kNormed = applyPerHeadRMSNorm(
+            k, weight: kNorm.weight, eps: kNorm.eps,
+            nHeads: nKVHeads, headDim: headDim,
+            on: cmd, device: device)
 
         // RoPE
-        let qRotated = Ops.rope(qNormed.reshaped(to: [nHeads, headDim]),
-                                position: position, headDim: headDim,
-                                thetaBase: ropeTheta, scaling: ropeScaling, on: cmd)
-        let kRotated = Ops.rope(kNormed.reshaped(to: [nKVHeads, headDim]),
-                                position: position, headDim: headDim,
-                                thetaBase: ropeTheta, scaling: ropeScaling, on: cmd)
+        let qRotated = Ops.rope(
+            qNormed.reshaped(to: [nHeads, headDim]),
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, scaling: ropeScaling, on: cmd)
+        let kRotated = Ops.rope(
+            kNormed.reshaped(to: [nKVHeads, headDim]),
+            position: position, headDim: headDim,
+            thetaBase: ropeTheta, scaling: ropeScaling, on: cmd)
 
         // GPU KV cache update — no CPU sync.
-        cache.appendOnGPU(kFlat: kRotated,
-                          vFlat: v.reshaped(to: [nKVHeads, headDim]),
-                          on: cmd)
+        cache.appendOnGPU(
+            kFlat: kRotated,
+            vFlat: v.reshaped(to: [nKVHeads, headDim]),
+            on: cmd)
 
         // AURA cache stores K and V in Π-rotated space, so for the
         // scores to cancel out we apply Π to Q before SDPA and Π^T to
@@ -338,8 +367,9 @@ public final class Qwen3Layer: Module {
         nHeads: Int, headDim: Int,
         on cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
-        Ops.rmsNormRows(x, weight: weight, eps: eps,
-                        nRows: nHeads, rowSize: headDim, on: cmd)
+        Ops.rmsNormRows(
+            x, weight: weight, eps: eps,
+            nRows: nHeads, rowSize: headDim, on: cmd)
     }
 
     /// Chunked forward — process `nRows` tokens at once. See
@@ -350,12 +380,15 @@ public final class Qwen3Layer: Module {
     /// **Cache compatibility.** AURA caches need Q π-rotation; the
     /// fast path skips it. `Qwen3Model.forwardMulti` falls back to the
     /// per-token loop when any layer's cache is `AURAQuantizedKVCache`.
-    func forwardMulti(_ h: Tensor, startingAt position: Int,
-                      cache: any KVCacheProtocol,
-                      cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    func forwardMulti(
+        _ h: Tensor, startingAt position: Int,
+        cache: any KVCacheProtocol,
+        cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         let nRows = h.shape[0]
-        precondition(h.shape == [nRows, hidden],
-                     "Qwen3Layer.forwardMulti: h shape \(h.shape) ≠ [nRows, hidden]")
+        precondition(
+            h.shape == [nRows, hidden],
+            "Qwen3Layer.forwardMulti: h shape \(h.shape) ≠ [nRows, hidden]")
 
         // ── Attention ───────────────────────────────────────────────────
         let xNorm = Ops.rmsNormRows(
@@ -364,9 +397,9 @@ public final class Qwen3Layer: Module {
             nRows: nRows, rowSize: hidden, on: cmd
         ).reshaped(to: [nRows, hidden])
 
-        let q = qProj.callMany(xNorm, t: nRows, on: cmd, device: device)   // [N, nHeads*headDim]
-        let k = kProj.callMany(xNorm, t: nRows, on: cmd, device: device)   // [N, nKVHeads*headDim]
-        let v = vProj.callMany(xNorm, t: nRows, on: cmd, device: device)   // [N, nKVHeads*headDim]
+        let q = qProj.callMany(xNorm, t: nRows, on: cmd, device: device)  // [N, nHeads*headDim]
+        let k = kProj.callMany(xNorm, t: nRows, on: cmd, device: device)  // [N, nKVHeads*headDim]
+        let v = vProj.callMany(xNorm, t: nRows, on: cmd, device: device)  // [N, nKVHeads*headDim]
 
         // Per-head q_norm / k_norm — flatten to one big [nRows*nHeads,
         // headDim] (resp. [nRows*nKVHeads, headDim]) row stack so the
@@ -387,21 +420,25 @@ public final class Qwen3Layer: Module {
         let kNormed = kNormedFlat.reshaped(to: [nRows, nKVHeads * headDim])
 
         // RoPE — single-position kernel looped per row on the same cmd.
-        let qRot = Tensor.empty(shape: [nRows, nHeads * headDim],
-                                dtype: q.dtype, device: device)
-        let kRot = Tensor.empty(shape: [nRows, nKVHeads * headDim],
-                                dtype: k.dtype, device: device)
-        for i in 0..<nRows {
+        let qRot = Tensor.empty(
+            shape: [nRows, nHeads * headDim],
+            dtype: q.dtype, device: device)
+        let kRot = Tensor.empty(
+            shape: [nRows, nKVHeads * headDim],
+            dtype: k.dtype, device: device)
+        for i in 0 ..< nRows {
             let qRow = qNormed.slicedRows(start: i, count: 1).reshaped(to: [nHeads * headDim])
             let qOut = qRot.slicedRows(start: i, count: 1).reshaped(to: [nHeads * headDim])
-            _ = Ops.rope(qRow, position: position + i, headDim: headDim,
-                         thetaBase: ropeTheta, scaling: ropeScaling,
-                         on: cmd, into: qOut)
+            _ = Ops.rope(
+                qRow, position: position + i, headDim: headDim,
+                thetaBase: ropeTheta, scaling: ropeScaling,
+                on: cmd, into: qOut)
             let kRow = kNormed.slicedRows(start: i, count: 1).reshaped(to: [nKVHeads * headDim])
             let kOut = kRot.slicedRows(start: i, count: 1).reshaped(to: [nKVHeads * headDim])
-            _ = Ops.rope(kRow, position: position + i, headDim: headDim,
-                         thetaBase: ropeTheta, scaling: ropeScaling,
-                         on: cmd, into: kOut)
+            _ = Ops.rope(
+                kRow, position: position + i, headDim: headDim,
+                thetaBase: ropeTheta, scaling: ropeScaling,
+                on: cmd, into: kOut)
             cache.appendOnGPU(
                 kFlat: kOut.reshaped(to: [nKVHeads, headDim]),
                 vFlat: v.slicedRows(start: i, count: 1).reshaped(to: [nKVHeads, headDim]),
@@ -480,20 +517,28 @@ public final class Qwen3Model: LanguageModel {
     /// `AURADecodePath` for the path semantics.
     public let auraDecodePath: AURADecodePath
 
-    init(embedTokens: AnyEmbedding, layers: [Qwen3Layer],
-         finalNorm: RMSNorm, lmHead: AnyLinear,
-         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-         vocab: Int, maxSeq: Int, ropeTheta: Float, dtype: DType,
-         kvCacheKind: KVCacheKind = .raw,
-         kvEviction: KVEviction = .unbounded,
-         auraDecodePath: AURADecodePath = .compressed) {
+    init(
+        embedTokens: AnyEmbedding, layers: [Qwen3Layer],
+        finalNorm: RMSNorm, lmHead: AnyLinear,
+        hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
+        vocab: Int, maxSeq: Int, ropeTheta: Float, dtype: DType,
+        kvCacheKind: KVCacheKind = .raw,
+        kvEviction: KVEviction = .unbounded,
+        auraDecodePath: AURADecodePath = .compressed
+    ) {
         self.embedTokens = embedTokens
         self.layers = layers
         self.finalNorm = finalNorm
         self.lmHead = lmHead
-        self.hidden = hidden; self.nLayers = nLayers; self.nHeads = nHeads
-        self.nKVHeads = nKVHeads; self.headDim = headDim; self.vocab = vocab
-        self.maxSeq = maxSeq; self.ropeTheta = ropeTheta; self.dtype = dtype
+        self.hidden = hidden
+        self.nLayers = nLayers
+        self.nHeads = nHeads
+        self.nKVHeads = nKVHeads
+        self.headDim = headDim
+        self.vocab = vocab
+        self.maxSeq = maxSeq
+        self.ropeTheta = ropeTheta
+        self.dtype = dtype
         self.kvCacheKind = kvCacheKind
         self.kvEviction = kvEviction
         self.auraDecodePath = auraDecodePath
@@ -517,16 +562,19 @@ public final class Qwen3Model: LanguageModel {
         let eviction = kvEviction
         switch kvCacheKind {
         case .raw:
-            return (0..<nLayers).map { _ in
-                KVCache(nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
-                        dtype: dtype, eviction: eviction, device: device)
+            return (0 ..< nLayers).map { _ in
+                KVCache(
+                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    dtype: dtype, eviction: eviction, device: device)
             }
         case .affineQuantized(let bits, let groupSize):
-            let sharedK = Tensor.empty(shape: [nKVHeads, cap, headDim],
-                                       dtype: dtype, device: device)
-            let sharedV = Tensor.empty(shape: [nKVHeads, cap, headDim],
-                                       dtype: dtype, device: device)
-            return (0..<nLayers).map { _ in
+            let sharedK = Tensor.empty(
+                shape: [nKVHeads, cap, headDim],
+                dtype: dtype, device: device)
+            let sharedV = Tensor.empty(
+                shape: [nKVHeads, cap, headDim],
+                dtype: dtype, device: device)
+            return (0 ..< nLayers).map { _ in
                 AffineQuantizedKVCache(
                     nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
                     dtype: dtype, bits: bits, groupSize: groupSize,
@@ -548,20 +596,24 @@ public final class Qwen3Model: LanguageModel {
 
             let kCodebook = Tensor.empty(shape: [kCodebookData.count], dtype: .f32, device: device)
             kCodebook.copyIn(from: kCodebookData)
-            let kBoundaries = Tensor.empty(shape: [kBoundariesData.count], dtype: .f32, device: device)
+            let kBoundaries = Tensor.empty(
+                shape: [kBoundariesData.count], dtype: .f32, device: device)
             kBoundaries.copyIn(from: kBoundariesData)
             let vCodebook = Tensor.empty(shape: [vCodebookData.count], dtype: .f32, device: device)
             vCodebook.copyIn(from: vCodebookData)
-            let vBoundaries = Tensor.empty(shape: [vBoundariesData.count], dtype: .f32, device: device)
+            let vBoundaries = Tensor.empty(
+                shape: [vBoundariesData.count], dtype: .f32, device: device)
             vBoundaries.copyIn(from: vBoundariesData)
 
             // Shared working buffers — same pattern as affineQuantized:
             // bulk-dequant target shared across all layers.
-            let sharedK = Tensor.empty(shape: [nKVHeads, cap, headDim],
-                                       dtype: dtype, device: device)
-            let sharedV = Tensor.empty(shape: [nKVHeads, cap, headDim],
-                                       dtype: dtype, device: device)
-            return (0..<nLayers).map { i in
+            let sharedK = Tensor.empty(
+                shape: [nKVHeads, cap, headDim],
+                dtype: dtype, device: device)
+            let sharedV = Tensor.empty(
+                shape: [nKVHeads, cap, headDim],
+                dtype: dtype, device: device)
+            return (0 ..< nLayers).map { i in
                 let rot = AURAQuantizedKVCacheRotations.build(
                     headDim: headDim, layerIndex: i,
                     activationDtype: dtype, device: device)
@@ -586,9 +638,11 @@ public final class Qwen3Model: LanguageModel {
     /// extension composes this with the appropriate output kernel
     /// (`argmax` for forwardSample, `softmax_categorical_sample` for
     /// forwardSampleCategorical) on the same cmdbuf.
-    public func forward(tokenId: Int, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
         // See Sources/FFAI/Inspect/InspectTap.swift — no-op when
         // FFAI_INSPECT isn't set.
         let tap = InspectTap.fromEnvironment
@@ -599,23 +653,28 @@ public final class Qwen3Model: LanguageModel {
         memcpy(tokenBuf.contents(), &tid, 4)
         let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
         var h = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
-        workCmd = tap.dumpLayerBoundary(h, label: "embed", layer: -1,
-                                        cmd: workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(
+            h, label: "embed", layer: -1,
+            cmd: workCmd, device: device)
 
         for (i, layer) in layers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              cmd: workCmd, device: device)
-            workCmd = tap.dumpLayerBoundary(h, label: "layer_out", layer: i,
-                                            cmd: workCmd, device: device)
+            h = layer.forward(
+                h, position: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                cmd: workCmd, device: device)
+            workCmd = tap.dumpLayerBoundary(
+                h, label: "layer_out", layer: i,
+                cmd: workCmd, device: device)
         }
 
         let normed = finalNorm(h, on: workCmd)
-        workCmd = tap.dumpLayerBoundary(normed, label: "final_norm", layer: -1,
-                                        cmd: workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(
+            normed, label: "final_norm", layer: -1,
+            cmd: workCmd, device: device)
         let logits = lmHead(normed, on: workCmd)
-        workCmd = tap.dumpLayerBoundary(logits, label: "logits", layer: -1,
-                                        cmd: workCmd, device: device)
+        workCmd = tap.dumpLayerBoundary(
+            logits, label: "logits", layer: -1,
+            cmd: workCmd, device: device)
 
         if tap.active {
             workCmd.commit()
@@ -627,11 +686,14 @@ public final class Qwen3Model: LanguageModel {
     /// Chunked multi-token forward — prefill fast path. See
     /// `LlamaModel.forwardMulti` for the design notes; Qwen3's layer
     /// fast path differs only in the per-head q_norm / k_norm step.
-    public func forwardMulti(tokenIds: [Int], startingAt position: Int,
-                             caches: [any LayerCacheProtocol],
-                             on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(!tokenIds.isEmpty,
-                     "Qwen3Model.forwardMulti: tokenIds must be non-empty")
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "Qwen3Model.forwardMulti: tokenIds must be non-empty")
 
         // Fallback to per-token loop when (a) AURA caches require
         // π-rotated K/V layout not implemented by the chunked path,
@@ -642,8 +704,9 @@ public final class Qwen3Model: LanguageModel {
         if hasAura || headDimUnsupported {
             var logits: Tensor!
             for (i, tok) in tokenIds.enumerated() {
-                logits = forward(tokenId: tok, position: position + i,
-                                 caches: caches, on: cmd, device: device)
+                logits = forward(
+                    tokenId: tok, position: position + i,
+                    caches: caches, on: cmd, device: device)
             }
             return logits
         }
@@ -655,8 +718,9 @@ public final class Qwen3Model: LanguageModel {
         }
         let idsTensor = Tensor(buffer: idsBuf, offset: 0, shape: [n], dtype: .u32)
         var h = embedTokens(idsTensor, on: cmd)
-        precondition(h.shape == [n, hidden],
-                     "Qwen3Model.forwardMulti: embedding shape \(h.shape) ≠ [n, hidden]")
+        precondition(
+            h.shape == [n, hidden],
+            "Qwen3Model.forwardMulti: embedding shape \(h.shape) ≠ [n, hidden]")
 
         for (i, layer) in layers.enumerated() {
             h = layer.forwardMulti(
@@ -677,17 +741,21 @@ public final class Qwen3Model: LanguageModel {
     /// embedding the VL model looked up itself).
     public var supportsEmbeddingInput: Bool { true }
 
-    public func forward(inputEmbedding: Tensor, position: Int,
-                        caches: [any LayerCacheProtocol],
-                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
-        precondition(inputEmbedding.elementCount == hidden,
-                     "Qwen3Model.forward(inputEmbedding:): expected [\(hidden)], "
-                     + "got \(inputEmbedding.shape)")
+    public func forward(
+        inputEmbedding: Tensor, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            inputEmbedding.elementCount == hidden,
+            "Qwen3Model.forward(inputEmbedding:): expected [\(hidden)], "
+                + "got \(inputEmbedding.shape)")
         var h = inputEmbedding.reshaped(to: [hidden])
         for (i, layer) in layers.enumerated() {
-            h = layer.forward(h, position: position,
-                              cache: caches[i] as! any KVCacheProtocol,
-                              cmd: cmd, device: device)
+            h = layer.forward(
+                h, position: position,
+                cache: caches[i] as! any KVCacheProtocol,
+                cmd: cmd, device: device)
         }
         let normed = finalNorm(h, on: cmd)
         return lmHead(normed, on: cmd)

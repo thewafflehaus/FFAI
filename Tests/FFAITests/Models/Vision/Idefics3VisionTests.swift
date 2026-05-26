@@ -27,6 +27,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Idefics3 Vision Config")
@@ -73,22 +74,22 @@ struct Idefics3ConfigTests {
     @Test("VisionConfig: parses required fields")
     func visionConfigRequired() throws {
         let vc = try Idefics3VisionConfig(from: Self.minimalVisionRaw)
-        #expect(vc.hiddenSize          == 1152)
-        #expect(vc.patchSize           == 14)
-        #expect(vc.imageSize           == 364)
-        #expect(vc.numHiddenLayers     == 27)
-        #expect(vc.numAttentionHeads   == 16)
+        #expect(vc.hiddenSize == 1152)
+        #expect(vc.patchSize == 14)
+        #expect(vc.imageSize == 364)
+        #expect(vc.numHiddenLayers == 27)
+        #expect(vc.numAttentionHeads == 16)
     }
 
     @Test("VisionConfig: default values for optional fields")
     func visionConfigDefaults() throws {
         let vc = try Idefics3VisionConfig(from: Self.minimalVisionRaw)
         // intermediateSize defaults to hiddenSize * 4 = 4608
-        #expect(vc.intermediateSize    == 1152 * 4)
-        #expect(vc.numChannels         == 3)
-        #expect(vc.layerNormEps        == 1e-6)
+        #expect(vc.intermediateSize == 1152 * 4)
+        #expect(vc.numChannels == 3)
+        #expect(vc.layerNormEps == 1e-6)
         // headDim derived: 1152 / 16 = 72
-        #expect(vc.headDim             == 72)
+        #expect(vc.headDim == 72)
     }
 
     @Test("VisionConfig: explicit intermediate_size overrides default")
@@ -152,24 +153,24 @@ struct Idefics3ConfigTests {
     @Test("TextConfig: parses required fields")
     func textConfigRequired() throws {
         let tc = try Idefics3TextConfig(from: Self.minimalTextRaw)
-        #expect(tc.hiddenSize        == 4096)
-        #expect(tc.vocabSize         == 128259)
-        #expect(tc.numHiddenLayers   == 32)
+        #expect(tc.hiddenSize == 4096)
+        #expect(tc.vocabSize == 128259)
+        #expect(tc.numHiddenLayers == 32)
         #expect(tc.numAttentionHeads == 32)
-        #expect(tc.numKeyValueHeads  == 8)
-        #expect(tc.intermediateSize  == 14336)
+        #expect(tc.numKeyValueHeads == 8)
+        #expect(tc.intermediateSize == 14336)
     }
 
     @Test("TextConfig: default values for optional fields")
     func textConfigDefaults() throws {
         let tc = try Idefics3TextConfig(from: Self.minimalTextRaw)
         // headDim default: hiddenSize / numAttentionHeads = 4096 / 32 = 128
-        #expect(tc.headDim              == 128)
+        #expect(tc.headDim == 128)
         #expect(tc.maxPositionEmbeddings == 8192)
-        #expect(tc.rmsNormEps           == 1e-5)
+        #expect(tc.rmsNormEps == 1e-5)
         // ropeTheta defaults to 500_000 for Idefics3
-        #expect(tc.ropeTheta            == 500_000)
-        #expect(tc.tieWordEmbeddings    == false)
+        #expect(tc.ropeTheta == 500_000)
+        #expect(tc.tieWordEmbeddings == false)
     }
 
     @Test("TextConfig: explicit head_dim overrides derived value")
@@ -217,11 +218,11 @@ struct Idefics3ConfigTests {
     @Test("Idefics3Config: parses all top-level fields")
     func topLevelConfig() throws {
         let cfg = try Idefics3Config(from: Self.minimalTopRaw)
-        #expect(cfg.scaleFactor    == 2)
-        #expect(cfg.imageTokenId   == 49153)
-        #expect(cfg.vocabSize      == 128259)
+        #expect(cfg.scaleFactor == 2)
+        #expect(cfg.imageTokenId == 49153)
+        #expect(cfg.vocabSize == 128259)
         #expect(cfg.visionConfig.hiddenSize == 1152)
-        #expect(cfg.textConfig.hiddenSize   == 4096)
+        #expect(cfg.textConfig.hiddenSize == 4096)
     }
 
     @Test("Idefics3Config: default scaleFactor and imageTokenId")
@@ -230,7 +231,7 @@ struct Idefics3ConfigTests {
         raw.removeValue(forKey: "scale_factor")
         raw.removeValue(forKey: "image_token_id")
         let cfg = try Idefics3Config(from: raw)
-        #expect(cfg.scaleFactor  == 2)
+        #expect(cfg.scaleFactor == 2)
         #expect(cfg.imageTokenId == 49153)
     }
 
@@ -325,25 +326,26 @@ struct Idefics3ConfigTests {
         try Self.writeMinimalBundle(in: dir)
 
         let cfgJSON = """
-        {
-          "architectures": ["Idefics3ForConditionalGeneration"],
-          "model_type": "idefics3",
-          "scale_factor": 2,
-          "image_token_id": 49153,
-          "vocab_size": 128259,
-          "vision_config": {
-            "hidden_size": 1152, "patch_size": 14, "image_size": 364,
-            "num_hidden_layers": 27, "num_attention_heads": 16
-          },
-          "text_config": {
-            "hidden_size": 4096, "vocab_size": 128259,
-            "num_hidden_layers": 2, "num_attention_heads": 32,
-            "num_key_value_heads": 8, "intermediate_size": 14336
-          }
-        }
-        """
-        try cfgJSON.write(to: dir.appendingPathComponent("config.json"),
-                          atomically: true, encoding: .utf8)
+            {
+              "architectures": ["Idefics3ForConditionalGeneration"],
+              "model_type": "idefics3",
+              "scale_factor": 2,
+              "image_token_id": 49153,
+              "vocab_size": 128259,
+              "vision_config": {
+                "hidden_size": 1152, "patch_size": 14, "image_size": 364,
+                "num_hidden_layers": 27, "num_attention_heads": 16
+              },
+              "text_config": {
+                "hidden_size": 4096, "vocab_size": 128259,
+                "num_hidden_layers": 2, "num_attention_heads": 32,
+                "num_key_value_heads": 8, "intermediate_size": 14336
+              }
+            }
+            """
+        try cfgJSON.write(
+            to: dir.appendingPathComponent("config.json"),
+            atomically: true, encoding: .utf8)
 
         let cfg = try ModelConfig.load(from: dir)
         #expect(cfg.architecture == "Idefics3ForConditionalGeneration")
@@ -361,24 +363,25 @@ struct Idefics3ConfigTests {
         try Self.writeMinimalBundle(in: dir)
 
         let cfgJSON = """
-        {
-          "model_type": "idefics3",
-          "scale_factor": 2,
-          "image_token_id": 49153,
-          "vocab_size": 128259,
-          "vision_config": {
-            "hidden_size": 1152, "patch_size": 14, "image_size": 364,
-            "num_hidden_layers": 1, "num_attention_heads": 16
-          },
-          "text_config": {
-            "hidden_size": 4096, "vocab_size": 128259,
-            "num_hidden_layers": 1, "num_attention_heads": 32,
-            "num_key_value_heads": 8, "intermediate_size": 14336
-          }
-        }
-        """
-        try cfgJSON.write(to: dir.appendingPathComponent("config.json"),
-                          atomically: true, encoding: .utf8)
+            {
+              "model_type": "idefics3",
+              "scale_factor": 2,
+              "image_token_id": 49153,
+              "vocab_size": 128259,
+              "vision_config": {
+                "hidden_size": 1152, "patch_size": 14, "image_size": 364,
+                "num_hidden_layers": 1, "num_attention_heads": 16
+              },
+              "text_config": {
+                "hidden_size": 4096, "vocab_size": 128259,
+                "num_hidden_layers": 1, "num_attention_heads": 32,
+                "num_key_value_heads": 8, "intermediate_size": 14336
+              }
+            }
+            """
+        try cfgJSON.write(
+            to: dir.appendingPathComponent("config.json"),
+            atomically: true, encoding: .utf8)
 
         let cfg = try ModelConfig.load(from: dir)
         let bundle = try SafeTensorsBundle(directory: dir)

@@ -19,6 +19,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("SileroVAD")
@@ -138,7 +139,7 @@ struct SileroVADTests {
         // (20 chunks = 640 ms) are speech above threshold — well past
         // minSpeechDurationMs=250 ms.
         var probs = [Float](repeating: 0.02, count: 30)
-        for i in 5..<25 { probs[i] = 0.95 }
+        for i in 5 ..< 25 { probs[i] = 0.95 }
         let segs = SileroVADModel.probsToSegments(
             probs, audioLen: 30 * 512, sampleRate: 16_000,
             chunkSize: 512, threshold: 0.5,
@@ -174,8 +175,9 @@ struct SileroVADTests {
 
     @Test("VADModelRegistry.detectKind — recognizes silero_vad model_type")
     func registryDetectKindSilero() throws {
-        let dir = try writeTempConfig(["model_type": "silero_vad"],
-                                      named: "silero-vad-checkpoint")
+        let dir = try writeTempConfig(
+            ["model_type": "silero_vad"],
+            named: "silero-vad-checkpoint")
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(try VADModelRegistry.detectKind(in: dir) == .sileroVAD)
     }
@@ -192,8 +194,10 @@ struct SileroVADTests {
 
     // ─── Helpers ─────────────────────────────────────────────────────────
 
-    private func writeTempConfig(_ config: [String: Any],
-                                 named: String) throws -> URL {
+    private func writeTempConfig(
+        _ config: [String: Any],
+        named: String
+    ) throws -> URL {
         let base = FileManager.default.temporaryDirectory
         let dir = base.appendingPathComponent("\(named)-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

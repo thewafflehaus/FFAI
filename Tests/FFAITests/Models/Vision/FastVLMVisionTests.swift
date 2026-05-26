@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // Config-parse unit tests for the FastVLM family (Apple's FastViTHD
@@ -66,8 +67,9 @@ struct FastVLMTests {
             "vocab_size": 151936,
             "vision_config": visionConfig,
         ]
-        return ModelConfig(architecture: "LlavaQwen2ForCausalLM",
-                           modelType: "llava_qwen2", raw: raw)
+        return ModelConfig(
+            architecture: "LlavaQwen2ForCausalLM",
+            modelType: "llava_qwen2", raw: raw)
     }
 
     @Test("routes as a vision-language checkpoint via architecture string")
@@ -76,8 +78,9 @@ struct FastVLMTests {
         #expect(cfg.architecture == "LlavaQwen2ForCausalLM")
         #expect(FastVLM.architectures.contains("LlavaQwen2ForCausalLM"))
         #expect(VisionLanguageArchitectures.isVisionLanguage(cfg))
-        #expect(VisionLanguageArchitectures.architectures
-            .contains("LlavaQwen2ForCausalLM"))
+        #expect(
+            VisionLanguageArchitectures.architectures
+                .contains("LlavaQwen2ForCausalLM"))
     }
 
     @Test("routes as a vision-language checkpoint via model_type")
@@ -104,8 +107,11 @@ struct FastVLMTests {
         let parsed = try FastVLMVisionConfig.decode(vc)
         #expect(parsed.embedDims == [96, 192, 384, 768, 1536])
         #expect(parsed.layers == [2, 12, 24, 4, 2])
-        #expect(parsed.tokenMixers == ["repmixer", "repmixer", "repmixer",
-                                       "attention", "attention"])
+        #expect(
+            parsed.tokenMixers == [
+                "repmixer", "repmixer", "repmixer",
+                "attention", "attention",
+            ])
         #expect(parsed.downSamples == [true, true, true, true, true])
         #expect(parsed.imageSize == 1024)
         #expect(parsed.patchSize == 64)
@@ -158,17 +164,19 @@ struct FastVLMTests {
     @Test("vision config defaults fall back gracefully")
     func visionConfigDefaults() throws {
         // Minimal config — only the absolutely required fields.
-        let minimal = ModelConfig(architecture: nil, modelType: nil, raw: [
-            "embed_dims": [64, 128],
-            "layers": [2, 2],
-            "token_mixers": ["repmixer", "attention"],
-            "downsamples": [true, true],
-            "mlp_ratios": [4, 4],
-            "image_size": 256,
-            "patch_size": 16,
-            "down_patch_size": 7,
-            "down_stride": 2,
-        ])
+        let minimal = ModelConfig(
+            architecture: nil, modelType: nil,
+            raw: [
+                "embed_dims": [64, 128],
+                "layers": [2, 2],
+                "token_mixers": ["repmixer", "attention"],
+                "downsamples": [true, true],
+                "mlp_ratios": [4, 4],
+                "image_size": 256,
+                "patch_size": 16,
+                "down_patch_size": 7,
+                "down_stride": 2,
+            ])
         let parsed = try FastVLMVisionConfig.decode(minimal)
         // cls_ratio defaults to 2.0; mm_hidden_size = 128 * 2 = 256.
         #expect(parsed.clsRatio == 2.0)

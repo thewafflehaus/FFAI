@@ -29,9 +29,10 @@
 
 import Foundation
 import Metal
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Ops — special-path wrappers")
 struct OpsSpecialPathTests {
@@ -114,8 +115,9 @@ struct OpsSpecialPathTests {
             let out = Tensor.empty(shape: [4], dtype: .f32)
             out.zero()
             runAndWait { cb in
-                Ops.sigmoidScalarFMA(gate: gate, value: value, base: base,
-                                     into: out, on: cb)
+                Ops.sigmoidScalarFMA(
+                    gate: gate, value: value, base: base,
+                    into: out, on: cb)
             }
             // sigmoid(0) = 0.5 → out[i] = base[i] + 0.5 * value[i]
             let r = out.toArray(as: Float.self)
@@ -131,28 +133,33 @@ struct OpsSpecialPathTests {
     @Test("kvCacheUpdate f32 — writes one row into [nKV, maxSeq, headDim]")
     func kvCacheUpdateF32() {
         autoreleasepool {
-            let nKV = 2, headDim = 4, maxSeq = 3
+            let nKV = 2
+            let headDim = 4
+            let maxSeq = 3
             let src = Tensor.empty(shape: [nKV, headDim], dtype: .f32)
-            src.copyIn(from: [Float(1), 2, 3, 4,   // head 0
-                              5, 6, 7, 8])         // head 1
+            src.copyIn(from: [
+                Float(1), 2, 3, 4,  // head 0
+                5, 6, 7, 8,
+            ])  // head 1
             let cache = Tensor.empty(shape: [nKV, maxSeq, headDim], dtype: .f32)
             cache.zero()
             runAndWait { cb in
-                Ops.kvCacheUpdate(src: src, into: cache,
-                                  nKVHeads: nKV, headDim: headDim,
-                                  maxSeq: maxSeq, position: 1, on: cb)
+                Ops.kvCacheUpdate(
+                    src: src, into: cache,
+                    nKVHeads: nKV, headDim: headDim,
+                    maxSeq: maxSeq, position: 1, on: cb)
             }
             // Expect head 0 row 1 = [1,2,3,4], head 1 row 1 = [5,6,7,8],
             // all other slots still zero.
             let got = cache.toArray(as: Float.self)
             // head 0
-            #expect(got[0..<4] == [0, 0, 0, 0])           // row 0
-            #expect(Array(got[4..<8]) == [1, 2, 3, 4])    // row 1
-            #expect(got[8..<12] == [0, 0, 0, 0])          // row 2
+            #expect(got[0 ..< 4] == [0, 0, 0, 0])  // row 0
+            #expect(Array(got[4 ..< 8]) == [1, 2, 3, 4])  // row 1
+            #expect(got[8 ..< 12] == [0, 0, 0, 0])  // row 2
             // head 1
-            #expect(got[12..<16] == [0, 0, 0, 0])         // row 0
-            #expect(Array(got[16..<20]) == [5, 6, 7, 8])  // row 1
-            #expect(got[20..<24] == [0, 0, 0, 0])         // row 2
+            #expect(got[12 ..< 16] == [0, 0, 0, 0])  // row 0
+            #expect(Array(got[16 ..< 20]) == [5, 6, 7, 8])  // row 1
+            #expect(got[20 ..< 24] == [0, 0, 0, 0])  // row 2
         }
     }
 
@@ -166,9 +173,12 @@ struct OpsSpecialPathTests {
     @Test("quantizeKVInt8 + bulkDequantKVInt8 — round-trip recovers input")
     func quantizeBulkDequantKVInt8RoundTrip() {
         autoreleasepool {
-            let nKV = 1, headDim = 32, maxSeq = 4, groupSize = 32
+            let nKV = 1
+            let headDim = 32
+            let maxSeq = 4
+            let groupSize = 32
             // src has known per-element values; one row only is written.
-            let srcVals: [Float] = (0..<headDim).map { Float($0) * 0.05 - 0.7 }
+            let srcVals: [Float] = (0 ..< headDim).map { Float($0) * 0.05 - 0.7 }
             let src = Tensor.empty(shape: [nKV, headDim], dtype: .f32)
             src.copyIn(from: srcVals)
             // int8 packs 4 values per uint32.
@@ -177,15 +187,18 @@ struct OpsSpecialPathTests {
             let w = Tensor.empty(shape: [nKV, maxSeq, packs], dtype: .u32)
             let s = Tensor.empty(shape: [nKV, maxSeq, groups], dtype: .f32)
             let b = Tensor.empty(shape: [nKV, maxSeq, groups], dtype: .f32)
-            w.zero(); s.zero(); b.zero()
+            w.zero()
+            s.zero()
+            b.zero()
 
             let pos = 2
             runAndWait { cb in
-                Ops.quantizeKVInt8(src: src,
-                                   weights: w, scales: s, biases: b,
-                                   nKVHeads: nKV, headDim: headDim,
-                                   maxSeq: maxSeq, groupSize: groupSize,
-                                   position: pos, on: cb)
+                Ops.quantizeKVInt8(
+                    src: src,
+                    weights: w, scales: s, biases: b,
+                    nKVHeads: nKV, headDim: headDim,
+                    maxSeq: maxSeq, groupSize: groupSize,
+                    position: pos, on: cb)
             }
             // Bulk-dequant into a working buffer of the same layout as
             // the cache (`[nKV, maxSeq, headDim]`) for `pos+1` positions
@@ -193,21 +206,23 @@ struct OpsSpecialPathTests {
             let working = Tensor.empty(shape: [nKV, maxSeq, headDim], dtype: .f32)
             working.zero()
             runAndWait { cb in
-                Ops.bulkDequantKVInt8(weights: w, scales: s, biases: b,
-                                      into: working,
-                                      nKVHeads: nKV, headDim: headDim,
-                                      maxSeq: maxSeq, groupSize: groupSize,
-                                      nPositions: pos + 1, on: cb)
+                Ops.bulkDequantKVInt8(
+                    weights: w, scales: s, biases: b,
+                    into: working,
+                    nKVHeads: nKV, headDim: headDim,
+                    maxSeq: maxSeq, groupSize: groupSize,
+                    nPositions: pos + 1, on: cb)
             }
             let got = working.toArray(as: Float.self)
             // Recovered slice for (head 0, pos 2) lives at offset
             // `pos * headDim`.
-            for i in 0..<headDim {
+            for i in 0 ..< headDim {
                 let want = srcVals[i]
                 let recovered = got[pos * headDim + i]
                 // int8 affine quant ≈ src/255 ≈ 0.005 abs tolerance.
-                #expect(abs(recovered - want) < 0.01,
-                        "i=\(i): got \(recovered) vs \(want)")
+                #expect(
+                    abs(recovered - want) < 0.01,
+                    "i=\(i): got \(recovered) vs \(want)")
             }
         }
     }
@@ -215,8 +230,11 @@ struct OpsSpecialPathTests {
     @Test("quantizeKVInt4 + bulkDequantKVInt4 — round-trip stays in tolerance")
     func quantizeBulkDequantKVInt4RoundTrip() {
         autoreleasepool {
-            let nKV = 1, headDim = 32, maxSeq = 4, groupSize = 32
-            let srcVals: [Float] = (0..<headDim).map { Float($0) * 0.05 - 0.7 }
+            let nKV = 1
+            let headDim = 32
+            let maxSeq = 4
+            let groupSize = 32
+            let srcVals: [Float] = (0 ..< headDim).map { Float($0) * 0.05 - 0.7 }
             let src = Tensor.empty(shape: [nKV, headDim], dtype: .f32)
             src.copyIn(from: srcVals)
             // int4 packs 8 values per uint32.
@@ -225,32 +243,37 @@ struct OpsSpecialPathTests {
             let w = Tensor.empty(shape: [nKV, maxSeq, packs], dtype: .u32)
             let s = Tensor.empty(shape: [nKV, maxSeq, groups], dtype: .f32)
             let b = Tensor.empty(shape: [nKV, maxSeq, groups], dtype: .f32)
-            w.zero(); s.zero(); b.zero()
+            w.zero()
+            s.zero()
+            b.zero()
 
             let pos = 1
             runAndWait { cb in
-                Ops.quantizeKVInt4(src: src,
-                                   weights: w, scales: s, biases: b,
-                                   nKVHeads: nKV, headDim: headDim,
-                                   maxSeq: maxSeq, groupSize: groupSize,
-                                   position: pos, on: cb)
+                Ops.quantizeKVInt4(
+                    src: src,
+                    weights: w, scales: s, biases: b,
+                    nKVHeads: nKV, headDim: headDim,
+                    maxSeq: maxSeq, groupSize: groupSize,
+                    position: pos, on: cb)
             }
             let working = Tensor.empty(shape: [nKV, maxSeq, headDim], dtype: .f32)
             working.zero()
             runAndWait { cb in
-                Ops.bulkDequantKVInt4(weights: w, scales: s, biases: b,
-                                      into: working,
-                                      nKVHeads: nKV, headDim: headDim,
-                                      maxSeq: maxSeq, groupSize: groupSize,
-                                      nPositions: pos + 1, on: cb)
+                Ops.bulkDequantKVInt4(
+                    weights: w, scales: s, biases: b,
+                    into: working,
+                    nKVHeads: nKV, headDim: headDim,
+                    maxSeq: maxSeq, groupSize: groupSize,
+                    nPositions: pos + 1, on: cb)
             }
             let got = working.toArray(as: Float.self)
             // int4 affine quant: range/15 ≈ 0.11 step → 0.06 abs tolerance.
-            for i in 0..<headDim {
+            for i in 0 ..< headDim {
                 let want = srcVals[i]
                 let recovered = got[pos * headDim + i]
-                #expect(abs(recovered - want) < 0.07,
-                        "i=\(i): got \(recovered) vs \(want)")
+                #expect(
+                    abs(recovered - want) < 0.07,
+                    "i=\(i): got \(recovered) vs \(want)")
             }
         }
     }
@@ -258,8 +281,11 @@ struct OpsSpecialPathTests {
     @Test("quantizeKVAffine + bulkDequantKVAffine — bits=8 dispatch round-trips")
     func quantizeBulkDequantKVAffineBits8() {
         autoreleasepool {
-            let nKV = 1, headDim = 32, maxSeq = 2, groupSize = 32
-            let srcVals: [Float] = (0..<headDim).map { Float($0) * 0.04 - 0.5 }
+            let nKV = 1
+            let headDim = 32
+            let maxSeq = 2
+            let groupSize = 32
+            let srcVals: [Float] = (0 ..< headDim).map { Float($0) * 0.04 - 0.5 }
             let src = Tensor.empty(shape: [nKV, headDim], dtype: .f32)
             src.copyIn(from: srcVals)
             let packs = headDim / 4
@@ -267,28 +293,33 @@ struct OpsSpecialPathTests {
             let w = Tensor.empty(shape: [nKV, maxSeq, packs], dtype: .u32)
             let s = Tensor.empty(shape: [nKV, maxSeq, groups], dtype: .f32)
             let b = Tensor.empty(shape: [nKV, maxSeq, groups], dtype: .f32)
-            w.zero(); s.zero(); b.zero()
+            w.zero()
+            s.zero()
+            b.zero()
 
             runAndWait { cb in
-                Ops.quantizeKVAffine(src: src,
-                                     weights: w, scales: s, biases: b,
-                                     nKVHeads: nKV, headDim: headDim,
-                                     maxSeq: maxSeq, groupSize: groupSize,
-                                     position: 0, bits: 8, on: cb)
+                Ops.quantizeKVAffine(
+                    src: src,
+                    weights: w, scales: s, biases: b,
+                    nKVHeads: nKV, headDim: headDim,
+                    maxSeq: maxSeq, groupSize: groupSize,
+                    position: 0, bits: 8, on: cb)
             }
             let working = Tensor.empty(shape: [nKV, maxSeq, headDim], dtype: .f32)
             working.zero()
             runAndWait { cb in
-                Ops.bulkDequantKVAffine(weights: w, scales: s, biases: b,
-                                        into: working,
-                                        nKVHeads: nKV, headDim: headDim,
-                                        maxSeq: maxSeq, groupSize: groupSize,
-                                        nPositions: 1, bits: 8, on: cb)
+                Ops.bulkDequantKVAffine(
+                    weights: w, scales: s, biases: b,
+                    into: working,
+                    nKVHeads: nKV, headDim: headDim,
+                    maxSeq: maxSeq, groupSize: groupSize,
+                    nPositions: 1, bits: 8, on: cb)
             }
             let got = working.toArray(as: Float.self)
-            for i in 0..<headDim {
-                #expect(abs(got[i] - srcVals[i]) < 0.01,
-                        "i=\(i): got \(got[i]) vs \(srcVals[i])")
+            for i in 0 ..< headDim {
+                #expect(
+                    abs(got[i] - srcVals[i]) < 0.01,
+                    "i=\(i): got \(got[i]) vs \(srcVals[i])")
             }
         }
     }
@@ -302,22 +333,24 @@ struct OpsSpecialPathTests {
             //   y, z, out : [Hv, Dv] (Dv % 4 == 0)
             //   w         : [Dv]
             //   epsBuf    : [1] f32
-            let hv = 2, dv = 8
+            let hv = 2
+            let dv = 8
             let y = Tensor.empty(shape: [hv, dv], dtype: .f32)
-            let yVals: [Float] = (0..<(hv * dv)).map { Float($0) * 0.05 + 0.1 }
+            let yVals: [Float] = (0 ..< (hv * dv)).map { Float($0) * 0.05 + 0.1 }
             y.copyIn(from: yVals)
             let z = Tensor.empty(shape: [hv, dv], dtype: .f32)
-            z.copyIn(from: (0..<(hv * dv)).map { Float($0) * 0.03 - 0.2 })
+            z.copyIn(from: (0 ..< (hv * dv)).map { Float($0) * 0.03 - 0.2 })
             let weight = Tensor.empty(shape: [dv], dtype: .f32)
-            weight.copyIn(from: (0..<dv).map { _ in Float(1) })
+            weight.copyIn(from: (0 ..< dv).map { _ in Float(1) })
             let epsBuf = Tensor.empty(shape: [1], dtype: .f32)
             epsBuf.copyIn(from: [Float(1e-5)])
             let out = Tensor.empty(shape: [hv, dv], dtype: .f32)
             out.zero()
             runAndWait { cb in
-                Ops.gatedMixerNorm(y: y, z: z, weight: weight, epsBuf: epsBuf,
-                                   into: out,
-                                   numValueHeads: hv, valueHeadDim: dv, on: cb)
+                Ops.gatedMixerNorm(
+                    y: y, z: z, weight: weight, epsBuf: epsBuf,
+                    into: out,
+                    numValueHeads: hv, valueHeadDim: dv, on: cb)
             }
             let got = out.toArray(as: Float.self)
             #expect(got.count == hv * dv)
@@ -329,24 +362,28 @@ struct OpsSpecialPathTests {
     func gatedDeltaPrepStepSmoke() {
         autoreleasepool {
             // dk and dv must be multiples of 32; hv % hk == 0.
-            let b = 1, dk = 32, dv = 32, hv = 2, hk = 1
+            let b = 1
+            let dk = 32
+            let dv = 32
+            let hv = 2
+            let hk = 1
             // convOut layout: [B, 2·Hk·Dk + Hv·Dv].
             let convOutLen = 2 * hk * dk + hv * dv
             let convOut = Tensor.empty(shape: [b, convOutLen], dtype: .f32)
-            convOut.copyIn(from: (0..<convOutLen).map { Float($0) * 0.01 })
+            convOut.copyIn(from: (0 ..< convOutLen).map { Float($0) * 0.01 })
             let aLog = Tensor.empty(shape: [hv], dtype: .f32)
-            aLog.copyIn(from: (0..<hv).map { _ in Float(-0.5) })
+            aLog.copyIn(from: (0 ..< hv).map { _ in Float(-0.5) })
             let dtBias = Tensor.empty(shape: [hv], dtype: .f32)
-            dtBias.copyIn(from: (0..<hv).map { _ in Float(0.0) })
+            dtBias.copyIn(from: (0 ..< hv).map { _ in Float(0.0) })
             // aRaw / bRaw are [B, Hv] (or [Hv] for B=1, same buffer).
             let aRaw = Tensor.empty(shape: [hv], dtype: .f32)
-            aRaw.copyIn(from: (0..<hv).map { _ in Float(0.1) })
+            aRaw.copyIn(from: (0 ..< hv).map { _ in Float(0.1) })
             let bRaw = Tensor.empty(shape: [hv], dtype: .f32)
-            bRaw.copyIn(from: (0..<hv).map { _ in Float(0.2) })
+            bRaw.copyIn(from: (0 ..< hv).map { _ in Float(0.2) })
             let qNorm = Tensor.empty(shape: [hk * dk], dtype: .f32)
-            qNorm.copyIn(from: (0..<(hk * dk)).map { _ in Float(1) })
+            qNorm.copyIn(from: (0 ..< (hk * dk)).map { _ in Float(1) })
             let kNorm = Tensor.empty(shape: [hk * dk], dtype: .f32)
-            kNorm.copyIn(from: (0..<(hk * dk)).map { _ in Float(1) })
+            kNorm.copyIn(from: (0 ..< (hk * dk)).map { _ in Float(1) })
             // GDN state shape per GDNStateCache: [Hv, Dv, Dk].
             let stateIn = Tensor.empty(shape: [hv, dv, dk], dtype: .f32)
             stateIn.zero()
@@ -379,17 +416,21 @@ struct OpsSpecialPathTests {
         // reimplemented in Swift. Smoke-test: assert dispatch finishes
         // and outputs are finite / correctly sized.
         autoreleasepool {
-            let tSteps = 2, hk = 1, hv = 1, dk = 32, dv = 32
+            let tSteps = 2
+            let hk = 1
+            let hv = 1
+            let dk = 32
+            let dv = 32
             let q = Tensor.empty(shape: [tSteps, hk, dk], dtype: .f32)
-            q.copyIn(from: (0..<(tSteps * hk * dk)).map { Float($0) * 0.01 })
+            q.copyIn(from: (0 ..< (tSteps * hk * dk)).map { Float($0) * 0.01 })
             let k = Tensor.empty(shape: [tSteps, hk, dk], dtype: .f32)
-            k.copyIn(from: (0..<(tSteps * hk * dk)).map { Float($0) * 0.02 })
+            k.copyIn(from: (0 ..< (tSteps * hk * dk)).map { Float($0) * 0.02 })
             let v = Tensor.empty(shape: [tSteps, hv, dv], dtype: .f32)
-            v.copyIn(from: (0..<(tSteps * hv * dv)).map { Float($0) * 0.03 })
+            v.copyIn(from: (0 ..< (tSteps * hv * dv)).map { Float($0) * 0.03 })
             let g = Tensor.empty(shape: [tSteps, hv], dtype: .f32)
-            g.copyIn(from: (0..<(tSteps * hv)).map { _ in Float(0.9) })
+            g.copyIn(from: (0 ..< (tSteps * hv)).map { _ in Float(0.9) })
             let beta = Tensor.empty(shape: [tSteps, hv], dtype: .f32)
-            beta.copyIn(from: (0..<(tSteps * hv)).map { _ in Float(0.3) })
+            beta.copyIn(from: (0 ..< (tSteps * hv)).map { _ in Float(0.3) })
             let stateIn = Tensor.empty(shape: [hv, dv, dk], dtype: .f32)
             stateIn.zero()
             let stateOut = Tensor.empty(shape: [hv, dv, dk], dtype: .f32)
@@ -424,16 +465,23 @@ struct OpsSpecialPathTests {
         // GPU correctness test already validates against. Smoke-test:
         // dispatch a 32-aligned qLen and assert the output is finite.
         autoreleasepool {
-            let nQHeads = 4, nKVHeads = 2, headDim = 64, qLen = 32, kLen = 32
+            let nQHeads = 4
+            let nKVHeads = 2
+            let headDim = 64
+            let qLen = 32
+            let kLen = 32
             let q = Tensor.empty(shape: [nQHeads, qLen, headDim], dtype: .f32)
-            q.copyIn(from: (0..<(nQHeads * qLen * headDim))
-                .map { Float($0 % 11) * 0.01 })
+            q.copyIn(
+                from: (0 ..< (nQHeads * qLen * headDim))
+                    .map { Float($0 % 11) * 0.01 })
             let k = Tensor.empty(shape: [nKVHeads, kLen, headDim], dtype: .f32)
-            k.copyIn(from: (0..<(nKVHeads * kLen * headDim))
-                .map { Float($0 % 13) * 0.01 })
+            k.copyIn(
+                from: (0 ..< (nKVHeads * kLen * headDim))
+                    .map { Float($0 % 13) * 0.01 })
             let v = Tensor.empty(shape: [nKVHeads, kLen, headDim], dtype: .f32)
-            v.copyIn(from: (0..<(nKVHeads * kLen * headDim))
-                .map { Float($0 % 17) * 0.01 })
+            v.copyIn(
+                from: (0 ..< (nKVHeads * kLen * headDim))
+                    .map { Float($0 % 17) * 0.01 })
             let scale = 1.0 / Float(headDim).squareRoot()
             var out: Tensor!
             runAndWait { cb in
@@ -460,7 +508,9 @@ struct OpsSpecialPathTests {
         // asserts the dispatch produces correctly-sized finite output.
         autoreleasepool {
             let nExperts = 2
-            let mTotal = 8, nOut = 32, kIn = 32
+            let mTotal = 8
+            let nOut = 32
+            let kIn = 32
             let groupSize = 32
             // weight packed: [nExperts, nOut, kIn/8] u32; one expert per
             // row is selected via `indices` (CSR offsets aren't used by
@@ -470,15 +520,17 @@ struct OpsSpecialPathTests {
             weight.zero()
             let groups = kIn / groupSize
             let scales = Tensor.empty(shape: [nExperts, nOut, groups], dtype: .f32)
-            scales.copyIn(from: (0..<(nExperts * nOut * groups))
-                .map { Float($0) * 0.01 + 0.1 })
+            scales.copyIn(
+                from: (0 ..< (nExperts * nOut * groups))
+                    .map { Float($0) * 0.01 + 0.1 })
             let biases = Tensor.empty(shape: [nExperts, nOut, groups], dtype: .f32)
-            biases.copyIn(from: (0..<(nExperts * nOut * groups))
-                .map { Float($0) * -0.005 })
+            biases.copyIn(
+                from: (0 ..< (nExperts * nOut * groups))
+                    .map { Float($0) * -0.005 })
             let indices = Tensor.empty(shape: [mTotal], dtype: .u32)
-            indices.copyIn(from: (0..<mTotal).map { UInt32($0 % nExperts) })
+            indices.copyIn(from: (0 ..< mTotal).map { UInt32($0 % nExperts) })
             let input = Tensor.empty(shape: [mTotal, kIn], dtype: .f32)
-            input.copyIn(from: (0..<(mTotal * kIn)).map { Float($0) * 0.001 })
+            input.copyIn(from: (0 ..< (mTotal * kIn)).map { Float($0) * 0.001 })
             let out = Tensor.empty(shape: [mTotal, nOut], dtype: .f32)
             out.zero()
             runAndWait { cb in
@@ -504,23 +556,28 @@ struct OpsSpecialPathTests {
         // correctly-sized finite output.
         autoreleasepool {
             let nExperts = 2
-            let tRows = 1, mOut = 32, kIn = 32, groupSize = 32
+            let tRows = 1
+            let mOut = 32
+            let kIn = 32
+            let groupSize = 32
             let packs = kIn / 8
             let weight = Tensor.empty(shape: [nExperts, mOut, packs], dtype: .u32)
             weight.zero()
             let groups = kIn / groupSize
             let scales = Tensor.empty(shape: [nExperts, mOut, groups], dtype: .f32)
-            scales.copyIn(from: (0..<(nExperts * mOut * groups))
-                .map { Float($0) * 0.01 + 0.1 })
+            scales.copyIn(
+                from: (0 ..< (nExperts * mOut * groups))
+                    .map { Float($0) * 0.01 + 0.1 })
             let biases = Tensor.empty(shape: [nExperts, mOut, groups], dtype: .f32)
-            biases.copyIn(from: (0..<(nExperts * mOut * groups))
-                .map { Float($0) * -0.005 })
+            biases.copyIn(
+                from: (0 ..< (nExperts * mOut * groups))
+                    .map { Float($0) * -0.005 })
             // CSR expertOffsets: tRows rows total mapped expert 0..0
             // (all rows route to expert 0). Layout: [n_experts + 1].
             let expertOffsets = Tensor.empty(shape: [nExperts + 1], dtype: .u32)
             expertOffsets.copyIn(from: [UInt32(0), UInt32(tRows), UInt32(tRows)])
             let x = Tensor.empty(shape: [tRows, kIn], dtype: .f32)
-            x.copyIn(from: (0..<(tRows * kIn)).map { Float($0) * 0.01 })
+            x.copyIn(from: (0 ..< (tRows * kIn)).map { Float($0) * 0.01 })
             let out = Tensor.empty(shape: [tRows, mOut], dtype: .f32)
             out.zero()
             runAndWait { cb in
@@ -543,14 +600,16 @@ struct OpsSpecialPathTests {
         // here asserts dispatch produces correctly-sized output that
         // matches a hand-computed two-token case.
         autoreleasepool {
-            let nRows = 2, hidden = 4, k = 2
+            let nRows = 2
+            let hidden = 4
+            let k = 2
             // expertOutputs: [nRows·k, hidden] — easy values per slot.
             let expertOutputs = Tensor.empty(shape: [nRows * k, hidden], dtype: .f32)
             expertOutputs.copyIn(from: [
-                Float(1), 1, 1, 1,      // row 0 slot 0 → at pos 0
-                Float(2), 2, 2, 2,      // row 0 slot 1 → at pos 1
-                Float(3), 3, 3, 3,      // row 1 slot 0 → at pos 2
-                Float(4), 4, 4, 4,      // row 1 slot 1 → at pos 3
+                Float(1), 1, 1, 1,  // row 0 slot 0 → at pos 0
+                Float(2), 2, 2, 2,  // row 0 slot 1 → at pos 1
+                Float(3), 3, 3, 3,  // row 1 slot 0 → at pos 2
+                Float(4), 4, 4, 4,  // row 1 slot 1 → at pos 3
             ])
             // Identity permutation: slot (row, k) lives at position
             // row*k + k.
@@ -571,7 +630,7 @@ struct OpsSpecialPathTests {
             let got = out.toArray(as: Float.self)
             #expect(got.count == nRows * hidden)
             // Expected: row 0 = 0.5*1 + 0.5*2 = 1.5; row 1 = 0.5*3 + 0.5*4 = 3.5
-            for c in 0..<hidden {
+            for c in 0 ..< hidden {
                 #expect(abs(got[c] - 1.5) < 1e-4, "row0 col\(c): \(got[c])")
                 #expect(abs(got[hidden + c] - 3.5) < 1e-4, "row1 col\(c): \(got[hidden + c])")
             }
@@ -589,21 +648,26 @@ struct OpsSpecialPathTests {
         // dispatches the 32-aligned fast path and asserts output is
         // correctly sized and finite.
         autoreleasepool {
-            let t = 32, nOut = 32, kIn = 32, groupSize = 32
+            let t = 32
+            let nOut = 32
+            let kIn = 32
+            let groupSize = 32
             let packs = kIn / 8
             let weight = Tensor.empty(shape: [nOut, packs], dtype: .u32)
             // Non-zero quantized payload so the dequant path produces
             // varying outputs.
-            weight.copyIn(from: (0..<(nOut * packs)).map { UInt32($0 + 1) })
+            weight.copyIn(from: (0 ..< (nOut * packs)).map { UInt32($0 + 1) })
             let groups = kIn / groupSize
             let scales = Tensor.empty(shape: [nOut, groups], dtype: .f32)
-            scales.copyIn(from: (0..<(nOut * groups))
-                .map { Float($0) * 0.01 + 0.05 })
+            scales.copyIn(
+                from: (0 ..< (nOut * groups))
+                    .map { Float($0) * 0.01 + 0.05 })
             let biases = Tensor.empty(shape: [nOut, groups], dtype: .f32)
-            biases.copyIn(from: (0..<(nOut * groups))
-                .map { Float($0) * -0.005 })
+            biases.copyIn(
+                from: (0 ..< (nOut * groups))
+                    .map { Float($0) * -0.005 })
             let input = Tensor.empty(shape: [t, kIn], dtype: .f32)
-            input.copyIn(from: (0..<(t * kIn)).map { Float($0) * 0.001 })
+            input.copyIn(from: (0 ..< (t * kIn)).map { Float($0) * 0.001 })
             let out = Tensor.empty(shape: [t, nOut], dtype: .f32)
             out.zero()
             runAndWait { cb in

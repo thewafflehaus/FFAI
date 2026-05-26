@@ -20,6 +20,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Granite4 Family Root")
@@ -37,16 +38,18 @@ struct Granite4RootTests {
 
     @Test("variant(for:) returns Granite4Hybrid")
     func variantDispatch() throws {
-        let cfg = ModelConfig(architecture: "Granite4ForCausalLM",
-                              modelType: "granitemoehybrid", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "Granite4ForCausalLM",
+            modelType: "granitemoehybrid", raw: [:])
         let v = try Granite4.variant(for: cfg)
         #expect(String(describing: v) == String(describing: Granite4Hybrid.self))
     }
 
     @Test("Granite4Error stringifies every case with its payload")
     func errorDescriptions() {
-        #expect(Granite4Error.missingConfig("layer_types").description
-            .contains("layer_types"))
+        #expect(
+            Granite4Error.missingConfig("layer_types").description
+                .contains("layer_types"))
         #expect(Granite4Error.unsupportedConfig("bad").description.contains("bad"))
         #expect(Granite4Error.missingConfig("x").description.contains("Granite4"))
     }

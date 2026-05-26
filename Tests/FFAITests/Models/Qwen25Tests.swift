@@ -21,6 +21,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Qwen25VL Family Root")
@@ -44,7 +45,8 @@ struct Qwen25VLRootTests {
     @Test("Qwen25VLError stringifies every case with its payload")
     func errorDescriptions() {
         #expect(Qwen25VLError.missingConfig.description.contains("Qwen25VL"))
-        #expect(Qwen25VLError.missingTensor("vision_tower.x").description
-            .contains("vision_tower.x"))
+        #expect(
+            Qwen25VLError.missingTensor("vision_tower.x").description
+                .contains("vision_tower.x"))
     }
 }

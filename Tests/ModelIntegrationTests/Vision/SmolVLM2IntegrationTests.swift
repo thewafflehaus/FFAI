@@ -29,9 +29,10 @@
 
 import CoreImage
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("SmolVLM2 Vision Integration (image + video)", .serialized)
 struct SmolVLM2IntegrationTests {
@@ -45,8 +46,10 @@ struct SmolVLM2IntegrationTests {
     /// Resize an `RGBImage` to `size × size` and apply SmolVLM2
     /// normalization (mean=0.5, std=0.5 → `pixel * 2 - 1`).
     /// Returns a flat HWC Float32 array (`size * size * 3` elements).
-    private static func preprocessFrame(_ image: RGBImage,
-                                         size: Int) -> [Float] {
+    private static func preprocessFrame(
+        _ image: RGBImage,
+        size: Int
+    ) -> [Float] {
         let resized = ImagePreprocessing.resize(
             image, targetW: size, targetH: size)
         // Normalize: (x - 0.5) / 0.5 = 2*x - 1
@@ -72,24 +75,29 @@ struct SmolVLM2IntegrationTests {
     /// Load dog.jpeg from the test Fixtures directory.
     static func dogImagePixels(imageSize: Int) -> [Float]? {
         // The Fixtures directory is bundled alongside ModelIntegrationTests via .copy("../Fixtures")
-        guard let bundle = Bundle.allBundles.first(where: {
-            $0.bundlePath.contains("ModelIntegrationTests")
-        }) else { return nil }
-        let fixturesURL = bundle.resourceURL?
+        guard
+            let bundle = Bundle.allBundles.first(where: {
+                $0.bundlePath.contains("ModelIntegrationTests")
+            })
+        else { return nil }
+        let fixturesURL =
+            bundle.resourceURL?
             .appendingPathComponent("Fixtures")
             .appendingPathComponent("dog.jpeg")
             ?? URL(fileURLWithPath: NSHomeDirectory())
-                .appendingPathComponent("Development/personal/ai/FFAI/Tests/Fixtures/dog.jpeg")
+            .appendingPathComponent("Development/personal/ai/FFAI/Tests/Fixtures/dog.jpeg")
 
         guard FileManager.default.fileExists(atPath: fixturesURL.path),
-              let ciImage = CIImage(contentsOf: fixturesURL) else {
+            let ciImage = CIImage(contentsOf: fixturesURL)
+        else {
             // Fallback: look for the fixture relative to the project root
             let fallback = URL(fileURLWithPath: #filePath)
-                .deletingLastPathComponent()   // ModelIntegrationTests/
-                .deletingLastPathComponent()   // Tests/
+                .deletingLastPathComponent()  // ModelIntegrationTests/
+                .deletingLastPathComponent()  // Tests/
                 .appendingPathComponent("Fixtures/dog.jpeg")
             guard FileManager.default.fileExists(atPath: fallback.path),
-                  let ci = CIImage(contentsOf: fallback) else {
+                let ci = CIImage(contentsOf: fallback)
+            else {
                 return nil
             }
             return normalizeAndResize(ci, to: imageSize)
@@ -112,17 +120,18 @@ struct SmolVLM2IntegrationTests {
         // Render to a Float32 RGBA bitmap
         var rgba = [Float](repeating: 0, count: size * size * 4)
         rgba.withUnsafeMutableBytes { ptr in
-            context.render(cropped,
-                           toBitmap: ptr.baseAddress!,
-                           rowBytes: size * 4 * MemoryLayout<Float>.size,
-                           bounds: CGRect(origin: .zero, size: targetSize),
-                           format: .RGBAf,
-                           colorSpace: CGColorSpaceCreateDeviceRGB())
+            context.render(
+                cropped,
+                toBitmap: ptr.baseAddress!,
+                rowBytes: size * 4 * MemoryLayout<Float>.size,
+                bounds: CGRect(origin: .zero, size: targetSize),
+                format: .RGBAf,
+                colorSpace: CGColorSpaceCreateDeviceRGB())
         }
 
         // Extract RGB, normalize: (x - 0.5) / 0.5 = 2*x - 1
         var rgb = [Float](repeating: 0, count: size * size * 3)
-        for i in 0..<(size * size) {
+        for i in 0 ..< (size * size) {
             rgb[i * 3 + 0] = rgba[i * 4 + 0] * 2.0 - 1.0  // R
             rgb[i * 3 + 1] = rgba[i * 4 + 1] * 2.0 - 1.0  // G
             rgb[i * 3 + 2] = rgba[i * 4 + 2] * 2.0 - 1.0  // B
@@ -132,35 +141,37 @@ struct SmolVLM2IntegrationTests {
 
     @Test("load SmolVLM2-500M + shape check + image encode + generate")
     func loadAndGenerate() async throws {
-        let dir = try #require(Self.snapshotDir(),
-                               "SmolVLM2 checkpoint not found in HF cache")
+        let dir = try #require(
+            Self.snapshotDir(),
+            "SmolVLM2 checkpoint not found in HF cache")
 
         // ─── Load model ──────────────────────────────────────────────────────
         let m = try await Model.load(dir.path)
 
         // Verify the engine is a SmolVLM2Model
-        let smolVLM2 = try #require(m.smolVLM2,
-                                    "expected engine to be SmolVLM2Model, got \(type(of: m.engine))")
+        let smolVLM2 = try #require(
+            m.smolVLM2,
+            "expected engine to be SmolVLM2Model, got \(type(of: m.engine))")
 
         // ─── Shape checks (500M config values) ───────────────────────────────
         let tc = smolVLM2.cfg.textConfig
         let vc = smolVLM2.cfg.visionConfig
 
-        #expect(tc.hiddenSize        == 960,   "text hidden_size")
-        #expect(tc.numHiddenLayers   == 32,    "text num_hidden_layers")
-        #expect(tc.numAttentionHeads == 15,    "text num_attention_heads")
-        #expect(tc.numKeyValueHeads  == 5,     "text num_kv_heads")
-        #expect(tc.headDim           == 64,    "text head_dim")
-        #expect(tc.vocabSize         == 49280, "text vocab_size")
+        #expect(tc.hiddenSize == 960, "text hidden_size")
+        #expect(tc.numHiddenLayers == 32, "text num_hidden_layers")
+        #expect(tc.numAttentionHeads == 15, "text num_attention_heads")
+        #expect(tc.numKeyValueHeads == 5, "text num_kv_heads")
+        #expect(tc.headDim == 64, "text head_dim")
+        #expect(tc.vocabSize == 49280, "text vocab_size")
 
-        #expect(vc.hiddenSize        == 768,  "vision hidden_size")
-        #expect(vc.numHiddenLayers   == 12,   "vision num_hidden_layers")
-        #expect(vc.numAttentionHeads == 12,   "vision num_attention_heads")
-        #expect(vc.patchSize         == 16,   "vision patch_size")
-        #expect(vc.imageSize         == 512,  "vision image_size")
+        #expect(vc.hiddenSize == 768, "vision hidden_size")
+        #expect(vc.numHiddenLayers == 12, "vision num_hidden_layers")
+        #expect(vc.numAttentionHeads == 12, "vision num_attention_heads")
+        #expect(vc.patchSize == 16, "vision patch_size")
+        #expect(vc.imageSize == 512, "vision image_size")
 
-        #expect(smolVLM2.cfg.scaleFactor   == 4,     "scale_factor")
-        #expect(smolVLM2.cfg.imageTokenId  == 49190, "image_token_id")
+        #expect(smolVLM2.cfg.scaleFactor == 4, "scale_factor")
+        #expect(smolVLM2.cfg.imageTokenId == 49190, "image_token_id")
 
         // ─── Pure text forward (sanity check without image) ──────────────────
         let caches = m.engine.makeLayerCaches()
@@ -171,8 +182,9 @@ struct SmolVLM2IntegrationTests {
         #expect(topTokens[0].1 != 0)
 
         // ─── Image encoding ───────────────────────────────────────────────────
-        let pixels = try #require(Self.dogImagePixels(imageSize: vc.imageSize),
-                                  "SmolVLM2 integration test: dog.jpeg fixture not found")
+        let pixels = try #require(
+            Self.dogImagePixels(imageSize: vc.imageSize),
+            "SmolVLM2 integration test: dog.jpeg fixture not found")
 
         let imageEmbeds = smolVLM2.encodeImage(
             pixels: pixels,
@@ -182,10 +194,12 @@ struct SmolVLM2IntegrationTests {
 
         // Scale factor 4 → numImageTokens = numPatches / 16
         // numPatches = (512/16)² = 1024, numImageTokens = 64
-        let expectedImageTokens = (vc.imageSize / vc.patchSize) * (vc.imageSize / vc.patchSize)
+        let expectedImageTokens =
+            (vc.imageSize / vc.patchSize) * (vc.imageSize / vc.patchSize)
             / (smolVLM2.cfg.scaleFactor * smolVLM2.cfg.scaleFactor)
-        #expect(imageEmbeds.count == expectedImageTokens * tc.hiddenSize,
-                "image embeds count should be nImageTokens * textHidden")
+        #expect(
+            imageEmbeds.count == expectedImageTokens * tc.hiddenSize,
+            "image embeds count should be nImageTokens * textHidden")
 
         // ─── Generate a caption ───────────────────────────────────────────────
         // Build a minimal prompt: [BOS] <image...×64> "Describe this image."
@@ -221,7 +235,7 @@ struct SmolVLM2IntegrationTests {
         var generatedTokens: [Int] = []
         var nextToken = Sampling.argmax(lastLogits)
         let eosId = m.config.eosTokenId ?? 2
-        for step in 0..<32 {
+        for step in 0 ..< 32 {
             if nextToken == eosId { break }
             generatedTokens.append(nextToken)
             nextToken = m.engine.forwardSample(
@@ -231,49 +245,59 @@ struct SmolVLM2IntegrationTests {
             )
         }
 
-        let generatedText = m.tokenizer.decode(tokens: generatedTokens,
-                                                skipSpecialTokens: true)
+        let generatedText = m.tokenizer.decode(
+            tokens: generatedTokens,
+            skipSpecialTokens: true)
 
         // Verify the generated text is non-empty and contains something coherent.
         // For a dog image with "Describe this image." we expect mention of "dog"
         // or at least some animal-related content.
         #expect(!generatedText.isEmpty, "generated text should be non-empty")
         let lower = generatedText.lowercased()
-        let containsDog = lower.contains("dog") || lower.contains("animal")
+        let containsDog =
+            lower.contains("dog") || lower.contains("animal")
             || lower.contains("puppy") || lower.contains("canine")
             || lower.contains("pet")
-        #expect(containsDog,
-                "expected generated text to contain 'dog' or related term, got: \(generatedText)")
+        #expect(
+            containsDog,
+            "expected generated text to contain 'dog' or related term, got: \(generatedText)")
     }
 
     // ─── Video ───────────────────────────────────────────────────────────
 
     @Test("load — SmolVLM2 family declares videoIn capability")
     func loadCheckpoint() async throws {
-        let dir = try #require(Self.snapshotDir(),
-                               "SmolVLM2 snapshot not found in HF cache — skip")
+        let dir = try #require(
+            Self.snapshotDir(),
+            "SmolVLM2 snapshot not found in HF cache — skip")
         let m = try await Model.load(dir.path)
         // SmolVLM2Dense.availableCapabilities now includes .videoIn.
         // Note: Model.swift currently hardcodes .imageIn for SmolVLM2;
         // the family declaration is the ground truth checked here.
-        #expect(SmolVLM2Dense.availableCapabilities.contains(.imageIn),
-                "SmolVLM2 family should declare .imageIn")
-        #expect(SmolVLM2Dense.availableCapabilities.contains(.videoIn),
-                "SmolVLM2 family should declare .videoIn")
-        let smol = try #require(m.smolVLM2,
-                                "engine should be SmolVLM2Model")
+        #expect(
+            SmolVLM2Dense.availableCapabilities.contains(.imageIn),
+            "SmolVLM2 family should declare .imageIn")
+        #expect(
+            SmolVLM2Dense.availableCapabilities.contains(.videoIn),
+            "SmolVLM2 family should declare .videoIn")
+        let smol = try #require(
+            m.smolVLM2,
+            "engine should be SmolVLM2Model")
         // imageTokensPerFrame = (512/16)² / 4² = 1024 / 16 = 64.
-        #expect(smol.imageTokensPerFrame == 64,
-                "imageTokensPerFrame should be 64 for the 500M config")
+        #expect(
+            smol.imageTokensPerFrame == 64,
+            "imageTokensPerFrame should be 64 for the 500M config")
     }
 
     @Test("video + text prompt — describes the cat clip")
     func videoTextGeneration() async throws {
-        let dir = try #require(Self.snapshotDir(),
-                               "SmolVLM2 snapshot not found in HF cache — skip")
+        let dir = try #require(
+            Self.snapshotDir(),
+            "SmolVLM2 snapshot not found in HF cache — skip")
         let m = try await Model.load(dir.path)
-        let smol = try #require(m.smolVLM2,
-                                "engine should be SmolVLM2Model for this checkpoint")
+        let smol = try #require(
+            m.smolVLM2,
+            "engine should be SmolVLM2Model for this checkpoint")
 
         let vc = smol.cfg.visionConfig
 
@@ -306,7 +330,8 @@ struct SmolVLM2IntegrationTests {
         let textAfter = m.tokenizer.encode(
             text: " What's in this video?\nAssistant:")
 
-        let promptTokens = textBefore
+        let promptTokens =
+            textBefore
             + Array(repeating: imageTokenId, count: totalImageTokens)
             + textAfter
 
@@ -332,7 +357,7 @@ struct SmolVLM2IntegrationTests {
         let stopSet: Set<Int> = Set(m.config.eosTokenIds)
             .union([eosId])
 
-        for step in 0..<200 {
+        for step in 0 ..< 200 {
             if stopSet.contains(nextToken) { break }
             generatedTokens.append(nextToken)
             nextToken = m.engine.forwardSample(
@@ -341,8 +366,9 @@ struct SmolVLM2IntegrationTests {
                 caches: freshCaches)
         }
 
-        let text = m.tokenizer.decode(tokens: generatedTokens,
-                                       skipSpecialTokens: true)
+        let text = m.tokenizer.decode(
+            tokens: generatedTokens,
+            skipSpecialTokens: true)
         print("SmolVLM2 video generated: \(text)")
         #expect(!text.isEmpty, "generated text should be non-empty")
         VisionTestHelpers.expectMentionsCat(text, label: "SmolVLM2 video")

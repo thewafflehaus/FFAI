@@ -99,7 +99,10 @@ public struct MossTTSLanguageConfig: Sendable {
             if let v = raw[k] as? Int { return Float(v) }
             // rope_theta may be nested under rope_parameters
             if let rp = raw["rope_parameters"] as? [String: Any],
-               let inner = rp[k] as? Double { return Float(inner) }
+                let inner = rp[k] as? Double
+            {
+                return Float(inner)
+            }
             return d
         }
         let hidden = i("hidden_size", 4096)
@@ -189,7 +192,8 @@ public struct MossTTSConfig: Sendable {
             imStartTokenID: i("im_start_token_id", 151_644),
             imEndTokenID: i("im_end_token_id", 151_645),
             samplingRate: i("sampling_rate", i("sample_rate", 24_000)),
-            audioTokenizerPretrainedNameOrPath: raw["audio_tokenizer_pretrained_name_or_path"] as? String
+            audioTokenizerPretrainedNameOrPath: raw["audio_tokenizer_pretrained_name_or_path"]
+                as? String
         )
     }
 }
@@ -257,8 +261,9 @@ extension MossTTSModel {
         if let arch = config.architecture, architectures.contains(arch) { return true }
         // Structural fallback: Qwen3 language_config sub-block + n_vq.
         if let langRaw = config.raw["language_config"] as? [String: Any],
-           langRaw["model_type"] as? String == "qwen3",
-           config.raw["n_vq"] != nil {
+            langRaw["model_type"] as? String == "qwen3",
+            config.raw["n_vq"] != nil
+        {
             return true
         }
         return false

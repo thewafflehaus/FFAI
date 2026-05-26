@@ -35,9 +35,10 @@
 // locally.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Gemma4 Text Integration", .serialized)
 struct Gemma4TextIntegrationTests {
@@ -107,8 +108,9 @@ struct Gemma4TextIntegrationTests {
         )
         print("Gemma 4 E2B decoded: \"\(prompt)\(result.text)\"")
         #expect(result.tokensPerSecond > 0)
-        expectCoherentOutput(result.generatedTokens, minTokens: maxTokens,
-                             label: "Gemma 4 E2B-it bf16")
+        expectCoherentOutput(
+            result.generatedTokens, minTokens: maxTokens,
+            label: "Gemma 4 E2B-it bf16")
     }
 
     @Test(
@@ -137,8 +139,9 @@ struct Gemma4TextIntegrationTests {
             prompt: prompt,
             parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
-        expectCoherentOutput(result.generatedTokens, minTokens: 48,
-                             label: "Gemma 4 31B-it 4bit")
+        expectCoherentOutput(
+            result.generatedTokens, minTokens: 48,
+            label: "Gemma 4 31B-it 4bit")
     }
 
     @Test(
@@ -170,7 +173,8 @@ struct Gemma4TextIntegrationTests {
             parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
         #expect(result.tokensPerSecond > 0)
-        expectCoherentOutput(result.generatedTokens, minTokens: 24,
-                             label: "Gemma 4 26B-A4B-it 8bit")
+        expectCoherentOutput(
+            result.generatedTokens, minTokens: 24,
+            label: "Gemma 4 26B-A4B-it 8bit")
     }
 }

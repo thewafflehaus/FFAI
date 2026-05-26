@@ -19,6 +19,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Debug", .serialized)
@@ -89,12 +90,22 @@ struct DebugTests {
         defer { clearAllDebugEnv() }
         // Off — closure must NOT fire.
         var called = false
-        Debug.log(.kvcache, { () -> String in called = true; return "x" }())
+        Debug.log(
+            .kvcache,
+            { () -> String in
+                called = true
+                return "x"
+            }())
         #expect(called == false)
 
         // On — closure DOES fire.
         setenv("FFAI_DEBUG_KVCACHE", "1", 1)
-        Debug.log(.kvcache, { () -> String in called = true; return "x" }())
+        Debug.log(
+            .kvcache,
+            { () -> String in
+                called = true
+                return "x"
+            }())
         #expect(called == true)
     }
 
@@ -134,7 +145,7 @@ struct DebugTests {
         // blocking until every iteration completes — so the assertions
         // below run on a stable post-state.
         DispatchQueue.concurrentPerform(iterations: workerCount) { i in
-            for _ in 0..<iterations {
+            for _ in 0 ..< iterations {
                 // Half the workers flip subsystems; half read.
                 // Both paths take Debug.lock.
                 if i % 2 == 0 {

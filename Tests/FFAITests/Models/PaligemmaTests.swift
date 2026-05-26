@@ -21,6 +21,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Paligemma Family Root — variant + defaults")
@@ -28,11 +29,13 @@ struct PaligemmaRootTests {
 
     @Test("variant(for:) returns PaligemmaStandard")
     func variantDispatch() throws {
-        let cfg = ModelConfig(architecture: "PaliGemmaForConditionalGeneration",
-                              modelType: "paligemma", raw: [:])
+        let cfg = ModelConfig(
+            architecture: "PaliGemmaForConditionalGeneration",
+            modelType: "paligemma", raw: [:])
         let v = try Paligemma.variant(for: cfg)
-        #expect(String(describing: v)
-            == String(describing: PaligemmaStandard.self))
+        #expect(
+            String(describing: v)
+                == String(describing: PaligemmaStandard.self))
     }
 
     @Test("PaligemmaStandard advertises text + imageIn")
@@ -54,8 +57,9 @@ struct PaligemmaRootTests {
 
     @Test("PaligemmaError stringifies every case with its payload")
     func errorDescriptions() {
-        #expect(PaligemmaError.missingConfig("vision_config").description
-            .contains("vision_config"))
+        #expect(
+            PaligemmaError.missingConfig("vision_config").description
+                .contains("vision_config"))
         #expect(PaligemmaError.imageNotSet.description.contains("setImagePixels"))
         #expect(PaligemmaError.missingConfig("x").description.contains("Paligemma"))
     }

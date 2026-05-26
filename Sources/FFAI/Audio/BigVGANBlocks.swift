@@ -45,8 +45,9 @@ enum BigVGANFilter {
     /// Modified Bessel function of the first kind, order 0.
     private static func besselI0(_ x: Double) -> Double {
         let y = (x * x) / 4.0
-        var term = 1.0, sum = 1.0
-        for k in 1...40 {
+        var term = 1.0
+        var sum = 1.0
+        for k in 1 ... 40 {
             let kk = Double(k)
             term *= y / (kk * kk)
             sum += term
@@ -60,15 +61,17 @@ enum BigVGANFilter {
         if size <= 1 { return [1.0] }
         let denom = besselI0(beta)
         let half = Double(size - 1) / 2.0
-        return (0..<size).map { idx in
+        return (0 ..< size).map { idx in
             let ratio = (Double(idx) - half) / half
             return besselI0(beta * (max(0.0, 1.0 - ratio * ratio)).squareRoot()) / denom
         }
     }
 
     /// The Kaiser-sinc low-pass kernel `[kernelSize]`, sum-normalized.
-    static func kaiserSinc(cutoff: Double, halfWidth: Double,
-                           kernelSize: Int) -> [Float] {
+    static func kaiserSinc(
+        cutoff: Double, halfWidth: Double,
+        kernelSize: Int
+    ) -> [Float] {
         let even = kernelSize % 2 == 0
         let halfSize = kernelSize / 2
         let deltaF = 4.0 * halfWidth
@@ -86,16 +89,19 @@ enum BigVGANFilter {
         }
         let window = kaiserWindow(size: kernelSize, beta: beta)
         var filter = [Float](repeating: 0, count: kernelSize)
-        for idx in 0..<kernelSize {
-            let time = even ? Double(idx - halfSize) + 0.5
-                            : Double(idx - halfSize)
-            filter[idx] = Float(2.0 * cutoff * window[idx]
-                                * sinc(2.0 * cutoff * time))
+        for idx in 0 ..< kernelSize {
+            let time =
+                even
+                ? Double(idx - halfSize) + 0.5
+                : Double(idx - halfSize)
+            filter[idx] = Float(
+                2.0 * cutoff * window[idx]
+                    * sinc(2.0 * cutoff * time))
         }
         var sum: Float = 0
         for v in filter { sum += v }
         let inv = 1.0 / max(sum, 1e-12)
-        for i in 0..<kernelSize { filter[i] *= inv }
+        for i in 0 ..< kernelSize { filter[i] *= inv }
         return filter
     }
 }
@@ -106,15 +112,18 @@ enum BigVGANFilter {
 /// plain Snake, `β == α`. With `snakeLogscale`, the stored `alpha`/
 /// `beta` are log-domain (exponentiated at use).
 struct BigVGANPeriodicActivation {
-    let alpha: [Float]       // per-channel
-    let beta: [Float]        // per-channel (== alpha for plain snake)
+    let alpha: [Float]  // per-channel
+    let beta: [Float]  // per-channel (== alpha for plain snake)
     let logscale: Bool
 
-    init(weights w: BigVGANWeights, prefix: String, channels: Int,
-         config: BigVGANConfig) throws {
+    init(
+        weights w: BigVGANWeights, prefix: String, channels: Int,
+        config: BigVGANConfig
+    ) throws {
         let a = try w.floats("\(prefix).alpha")
         let useBeta = config.activation == .snakebeta
-        let b = (useBeta && w.has("\(prefix).beta"))
+        let b =
+            (useBeta && w.has("\(prefix).beta"))
             ? try w.floats("\(prefix).beta") : a
         self.alpha = a
         self.beta = b
@@ -126,13 +135,13 @@ struct BigVGANPeriodicActivation {
         let (n, c, l) = (shape[0], shape[1], shape[2])
         precondition(alpha.count == c, "BigVGANPeriodicActivation: channel count")
         var out = [Float](repeating: 0, count: x.count)
-        for b in 0..<n {
-            for ch in 0..<c {
+        for b in 0 ..< n {
+            for ch in 0 ..< c {
                 let a = logscale ? expf(alpha[ch]) : alpha[ch]
                 let bt = logscale ? expf(beta[ch]) : beta[ch]
                 let recip = 1.0 / (bt + 1e-9)
                 let base = (b * c + ch) * l
-                for i in 0..<l {
+                for i in 0 ..< l {
                     let v = x[base + i]
                     let s = sinf(a * v)
                     out[base + i] = v + recip * s * s
@@ -157,8 +166,10 @@ struct BigVGANActivation {
     private let downKernelSize: Int
     private static let ratio = 2
 
-    init(weights w: BigVGANWeights, prefix: String, channels: Int,
-         config: BigVGANConfig) throws {
+    init(
+        weights w: BigVGANWeights, prefix: String, channels: Int,
+        config: BigVGANConfig
+    ) throws {
         self.act = try BigVGANPeriodicActivation(
             weights: w, prefix: prefix, channels: channels, config: config)
         // Fixed up/down filters (kernelSize 12, default ratios).
@@ -172,8 +183,10 @@ struct BigVGANActivation {
     }
 
     /// Upsample an NCL tensor 2× with the Kaiser-sinc filter.
-    private func upsample(_ x: [Float],
-                          shape: [Int]) -> (data: [Float], shape: [Int]) {
+    private func upsample(
+        _ x: [Float],
+        shape: [Int]
+    ) -> (data: [Float], shape: [Int]) {
         let (n, c, _) = (shape[0], shape[1], shape[2])
         let stride = Self.ratio
         let pad = upKernelSize / stride - 1
@@ -183,8 +196,8 @@ struct BigVGANActivation {
         let (padded, ps) = edgePad(x, shape: shape, left: pad, right: pad)
         // Depthwise weight: [C, 1, K].
         var w = [Float](repeating: 0, count: c * upKernelSize)
-        for ch in 0..<c {
-            for k in 0..<upKernelSize { w[ch * upKernelSize + k] = upFilter[k] }
+        for ch in 0 ..< c {
+            for k in 0 ..< upKernelSize { w[ch * upKernelSize + k] = upFilter[k] }
         }
         var (out, os) = AudioMath.convTransposed1d(
             x: padded, xShape: ps, weight: w, wShape: [c, 1, upKernelSize],
@@ -192,7 +205,7 @@ struct BigVGANActivation {
             outputPadding: 0, groups: c)
         // Scale by the ratio, then trim the transient padding.
         let ratioF = Float(Self.ratio)
-        for i in 0..<out.count { out[i] *= ratioF }
+        for i in 0 ..< out.count { out[i] *= ratioF }
         let end = os[2] - padRight
         if end > padLeft {
             (out, os) = sliceTime(out, shape: os, start: padLeft, end: end)
@@ -202,16 +215,18 @@ struct BigVGANActivation {
     }
 
     /// Downsample an NCL tensor 2× with the Kaiser-sinc low-pass filter.
-    private func downsample(_ x: [Float],
-                            shape: [Int]) -> (data: [Float], shape: [Int]) {
+    private func downsample(
+        _ x: [Float],
+        shape: [Int]
+    ) -> (data: [Float], shape: [Int]) {
         let (_, c, _) = (shape[0], shape[1], shape[2])
         let even = downKernelSize % 2 == 0
         let padLeft = downKernelSize / 2 - (even ? 1 : 0)
         let padRight = downKernelSize / 2
         let (padded, ps) = edgePad(x, shape: shape, left: padLeft, right: padRight)
         var w = [Float](repeating: 0, count: c * downKernelSize)
-        for ch in 0..<c {
-            for k in 0..<downKernelSize { w[ch * downKernelSize + k] = downFilter[k] }
+        for ch in 0 ..< c {
+            for k in 0 ..< downKernelSize { w[ch * downKernelSize + k] = downFilter[k] }
         }
         return AudioMath.conv1d(
             x: padded, xShape: ps, weight: w, wShape: [c, 1, downKernelSize],
@@ -220,16 +235,18 @@ struct BigVGANActivation {
     }
 
     /// Edge-replication padding on the time axis of an NCL tensor.
-    private func edgePad(_ x: [Float], shape: [Int], left: Int,
-                         right: Int) -> (data: [Float], shape: [Int]) {
+    private func edgePad(
+        _ x: [Float], shape: [Int], left: Int,
+        right: Int
+    ) -> (data: [Float], shape: [Int]) {
         let (n, c, l) = (shape[0], shape[1], shape[2])
         let lOut = l + left + right
         var out = [Float](repeating: 0, count: n * c * lOut)
-        for b in 0..<n {
-            for ch in 0..<c {
+        for b in 0 ..< n {
+            for ch in 0 ..< c {
                 let inBase = (b * c + ch) * l
                 let outBase = (b * c + ch) * lOut
-                for t in 0..<lOut {
+                for t in 0 ..< lOut {
                     let src = min(max(t - left, 0), l - 1)
                     out[outBase + t] = x[inBase + src]
                 }
@@ -239,24 +256,28 @@ struct BigVGANActivation {
     }
 
     /// Crop an NCL tensor to `[start, end)` on the time axis.
-    private func sliceTime(_ x: [Float], shape: [Int], start: Int,
-                           end: Int) -> (data: [Float], shape: [Int]) {
+    private func sliceTime(
+        _ x: [Float], shape: [Int], start: Int,
+        end: Int
+    ) -> (data: [Float], shape: [Int]) {
         let (n, c, l) = (shape[0], shape[1], shape[2])
         let lOut = max(end - start, 0)
         var out = [Float](repeating: 0, count: n * c * lOut)
-        for b in 0..<n {
-            for ch in 0..<c {
+        for b in 0 ..< n {
+            for ch in 0 ..< c {
                 let inBase = (b * c + ch) * l
                 let outBase = (b * c + ch) * lOut
-                for t in 0..<lOut { out[outBase + t] = x[inBase + start + t] }
+                for t in 0 ..< lOut { out[outBase + t] = x[inBase + start + t] }
             }
         }
         return (out, [n, c, lOut])
     }
 
     /// downsample(act(upsample(x))).
-    func callAsFunction(_ x: [Float],
-                        shape: [Int]) -> (data: [Float], shape: [Int]) {
+    func callAsFunction(
+        _ x: [Float],
+        shape: [Int]
+    ) -> (data: [Float], shape: [Int]) {
         var (h, s) = upsample(x, shape: shape)
         h = act(h, shape: s)
         return downsample(h, shape: s)
@@ -280,8 +301,10 @@ struct BigVGANAMPBlock {
     }
     let branches: [Branch]
 
-    init(weights w: BigVGANWeights, prefix: String, channels: Int,
-         kernelSize: Int, dilations: [Int], config: BigVGANConfig) throws {
+    init(
+        weights w: BigVGANWeights, prefix: String, channels: Int,
+        kernelSize: Int, dilations: [Int], config: BigVGANConfig
+    ) throws {
         var bs: [Branch] = []
         if config.resblock == .one {
             // AMPBlock1: convs1[j] (dilated) + convs2[j] (dilation 1).
@@ -300,8 +323,10 @@ struct BigVGANAMPBlock {
                 let act2 = try BigVGANActivation(
                     weights: w, prefix: "\(prefix).activations.\(2 * j + 1).act",
                     channels: channels, config: config)
-                bs.append(Branch(act1: act1, conv1: conv1,
-                                 act2: act2, conv2: conv2))
+                bs.append(
+                    Branch(
+                        act1: act1, conv1: conv1,
+                        act2: act2, conv2: conv2))
             }
         } else {
             // AMPBlock2: a single dilated conv per branch.
@@ -313,15 +338,19 @@ struct BigVGANAMPBlock {
                 let act = try BigVGANActivation(
                     weights: w, prefix: "\(prefix).activations.\(j).act",
                     channels: channels, config: config)
-                bs.append(Branch(act1: act, conv1: conv,
-                                 act2: nil, conv2: nil))
+                bs.append(
+                    Branch(
+                        act1: act, conv1: conv,
+                        act2: nil, conv2: nil))
             }
         }
         self.branches = bs
     }
 
-    func callAsFunction(_ x: [Float],
-                        shape: [Int]) -> (data: [Float], shape: [Int]) {
+    func callAsFunction(
+        _ x: [Float],
+        shape: [Int]
+    ) -> (data: [Float], shape: [Int]) {
         var (out, s) = (x, shape)
         for branch in branches {
             var (h, hs) = branch.act1(out, shape: s)
@@ -330,9 +359,10 @@ struct BigVGANAMPBlock {
                 h = act2(h, shape: hs).data
                 (h, hs) = conv2(h, shape: hs)
             }
-            precondition(h.count == out.count,
-                         "BigVGANAMPBlock: branch length mismatch")
-            for i in 0..<out.count { out[i] += h[i] }
+            precondition(
+                h.count == out.count,
+                "BigVGANAMPBlock: branch length mismatch")
+            for i in 0 ..< out.count { out[i] += h[i] }
             _ = hs
         }
         return (out, s)

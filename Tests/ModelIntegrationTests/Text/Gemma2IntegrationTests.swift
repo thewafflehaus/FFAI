@@ -23,9 +23,10 @@
 // few minutes on first run and is cached after.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Gemma2 Integration", .serialized)
 struct Gemma2IntegrationTests {
@@ -62,8 +63,9 @@ struct Gemma2IntegrationTests {
         )
         #expect(result.tokensPerSecond > 0)
         expectCoherentOutput(result.generatedTokens, label: "Gemma 2 2B-it")
-        let text = m.tokenizer.decode(tokens: result.generatedTokens,
-                                       skipSpecialTokens: true)
+        let text = m.tokenizer.decode(
+            tokens: result.generatedTokens,
+            skipSpecialTokens: true)
         print("Gemma 2 2B-it generated: \(text)")
     }
 }

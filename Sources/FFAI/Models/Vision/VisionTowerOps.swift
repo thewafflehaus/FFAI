@@ -64,12 +64,14 @@ let gemmKTileWidth: Int = 16
 /// Broadcast-add a `[rowSize]` bias to each of `nRows` rows of a flat
 /// `[nRows, rowSize]` tensor. CPU-side tile + one `Ops.add` dispatch —
 /// not in the hot path, runs at most a few hundred ops per encode.
-func addRowBias(_ x: Tensor, bias: Tensor, nRows: Int,
-                rowSize: Int, on cmd: MTLCommandBuffer) -> Tensor {
+func addRowBias(
+    _ x: Tensor, bias: Tensor, nRows: Int,
+    rowSize: Int, on cmd: MTLCommandBuffer
+) -> Tensor {
     let biasVals = bias.toFloatArray()
     var flat = [Float](repeating: 0, count: nRows * rowSize)
-    for r in 0..<nRows {
-        for c in 0..<rowSize { flat[r * rowSize + c] = biasVals[c] }
+    for r in 0 ..< nRows {
+        for c in 0 ..< rowSize { flat[r * rowSize + c] = biasVals[c] }
     }
     let tiled = Tensor.empty(shape: [nRows, rowSize], dtype: x.dtype)
     ImagePreprocessing.copyFloats(flat, into: tiled)
@@ -86,12 +88,13 @@ func padLinearRows(_ linear: Linear, toRows: Int, device: Device) -> Linear {
     let outOld = linear.weight.shape[0]
     let inDim = linear.weight.shape[1]
     if outOld == toRows { return linear }
-    precondition(toRows >= outOld,
-                 "padLinearRows: target \(toRows) < \(outOld)")
+    precondition(
+        toRows >= outOld,
+        "padLinearRows: target \(toRows) < \(outOld)")
     let src = linear.weight.toFloatArray()
     var dst = [Float](repeating: 0, count: toRows * inDim)
-    for r in 0..<outOld {
-        for c in 0..<inDim { dst[r * inDim + c] = src[r * inDim + c] }
+    for r in 0 ..< outOld {
+        for c in 0 ..< inDim { dst[r * inDim + c] = src[r * inDim + c] }
     }
     let w = ImagePreprocessing.makeTensor(
         from: dst, shape: [toRows, inDim], dtype: linear.weight.dtype,
@@ -100,7 +103,7 @@ func padLinearRows(_ linear: Linear, toRows: Int, device: Device) -> Linear {
     if let bias = linear.bias {
         let bs = bias.toFloatArray()
         var bd = [Float](repeating: 0, count: toRows)
-        for i in 0..<outOld { bd[i] = bs[i] }
+        for i in 0 ..< outOld { bd[i] = bs[i] }
         b = ImagePreprocessing.makeTensor(
             from: bd, shape: [toRows], dtype: bias.dtype, device: device)
     }
@@ -116,12 +119,13 @@ func padLinearCols(_ linear: Linear, toCols: Int, device: Device) -> Linear {
     let outDim = linear.weight.shape[0]
     let inOld = linear.weight.shape[1]
     if inOld == toCols { return linear }
-    precondition(toCols >= inOld,
-                 "padLinearCols: target \(toCols) < \(inOld)")
+    precondition(
+        toCols >= inOld,
+        "padLinearCols: target \(toCols) < \(inOld)")
     let src = linear.weight.toFloatArray()
     var dst = [Float](repeating: 0, count: outDim * toCols)
-    for r in 0..<outDim {
-        for c in 0..<inOld { dst[r * toCols + c] = src[r * inOld + c] }
+    for r in 0 ..< outDim {
+        for c in 0 ..< inOld { dst[r * toCols + c] = src[r * inOld + c] }
     }
     let w = ImagePreprocessing.makeTensor(
         from: dst, shape: [outDim, toCols], dtype: linear.weight.dtype,
@@ -138,12 +142,13 @@ func padLinearColsTo(_ w: Tensor, toCols: Int, device: Device) -> Tensor {
     let outDim = w.shape[0]
     let inOld = w.shape[1]
     if inOld == toCols { return w }
-    precondition(toCols >= inOld,
-                 "padLinearColsTo: target \(toCols) < \(inOld)")
+    precondition(
+        toCols >= inOld,
+        "padLinearColsTo: target \(toCols) < \(inOld)")
     let src = w.toFloatArray()
     var dst = [Float](repeating: 0, count: outDim * toCols)
-    for r in 0..<outDim {
-        for c in 0..<inOld { dst[r * toCols + c] = src[r * inOld + c] }
+    for r in 0 ..< outDim {
+        for c in 0 ..< inOld { dst[r * toCols + c] = src[r * inOld + c] }
     }
     return ImagePreprocessing.makeTensor(
         from: dst, shape: [outDim, toCols], dtype: w.dtype, device: device)
@@ -162,24 +167,29 @@ func padLinearColsTo(_ w: Tensor, toCols: Int, device: Device) -> Tensor {
 /// trailing dim → PyTorch channel-first `[hidden, inCh, tP, py, px]`.
 /// Used by every dynamic-resolution Qwen-VL vision tower (and any
 /// future tower with a Conv3d patch-embed of the same shape).
-func flattenPatchEmbed(_ w: Tensor, hidden: Int, patchDim: Int,
-                       patchDimPadded: Int, device: Device) -> Tensor {
-    precondition(w.shape.count == 5,
-                 "flattenPatchEmbed: patch-embed weight must be 5D Conv3d, "
-                 + "got \(w.shape)")
+func flattenPatchEmbed(
+    _ w: Tensor, hidden: Int, patchDim: Int,
+    patchDimPadded: Int, device: Device
+) -> Tensor {
+    precondition(
+        w.shape.count == 5,
+        "flattenPatchEmbed: patch-embed weight must be 5D Conv3d, "
+            + "got \(w.shape)")
     let src = w.toFloatArray()
     // Zero-initialized — the pad columns stay zero.
     var dst = [Float](repeating: 0, count: hidden * patchDimPadded)
     // dst column order: (((t·inCh + ch)·p + py)·p + px).
-    let mlxLayout = w.shape[4] <= 4   // trailing dim is in_channels
+    let mlxLayout = w.shape[4] <= 4  // trailing dim is in_channels
     if mlxLayout {
         // src `[hidden, tP, py, px, inCh]` — channel last.
-        let tP = w.shape[1], p = w.shape[2], inCh = w.shape[4]
-        for o in 0..<hidden {
-            for t in 0..<tP {
-                for py in 0..<p {
-                    for px in 0..<p {
-                        for ch in 0..<inCh {
+        let tP = w.shape[1]
+        let p = w.shape[2]
+        let inCh = w.shape[4]
+        for o in 0 ..< hidden {
+            for t in 0 ..< tP {
+                for py in 0 ..< p {
+                    for px in 0 ..< p {
+                        for ch in 0 ..< inCh {
                             let s = ((((o * tP + t) * p + py) * p + px) * inCh + ch)
                             let col = (((t * inCh + ch) * p + py) * p + px)
                             dst[o * patchDimPadded + col] = src[s]
@@ -190,12 +200,14 @@ func flattenPatchEmbed(_ w: Tensor, hidden: Int, patchDim: Int,
         }
     } else {
         // src `[hidden, inCh, tP, py, px]` — PyTorch channel-first.
-        let inCh = w.shape[1], tP = w.shape[2], p = w.shape[3]
-        for o in 0..<hidden {
-            for ch in 0..<inCh {
-                for t in 0..<tP {
-                    for py in 0..<p {
-                        for px in 0..<p {
+        let inCh = w.shape[1]
+        let tP = w.shape[2]
+        let p = w.shape[3]
+        for o in 0 ..< hidden {
+            for ch in 0 ..< inCh {
+                for t in 0 ..< tP {
+                    for py in 0 ..< p {
+                        for px in 0 ..< p {
                             let s = ((((o * inCh + ch) * tP + t) * p + py) * p + px)
                             let col = (((t * inCh + ch) * p + py) * p + px)
                             dst[o * patchDimPadded + col] = src[s]

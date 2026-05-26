@@ -17,6 +17,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("GenerationParameters")
@@ -68,7 +69,7 @@ struct GenerationParametersTests {
         let edited = base.with { $0.maxTokens = 128 }
         #expect(edited.maxTokens == 128)
         #expect(edited.temperature == base.temperature)
-        #expect(base.maxTokens == 64)   // base immutable
+        #expect(base.maxTokens == 64)  // base immutable
     }
 
     @Test("Equatable")

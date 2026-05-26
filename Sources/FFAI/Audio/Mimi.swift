@@ -127,7 +127,8 @@ struct MimiWeights {
     /// Reproduce the reference `Mimi.sanitize` key rewriting so logical
     /// names like `encoder.layers.0.downsample.conv.weight` resolve.
     static func sanitizeKey(_ rawKey: String) -> String {
-        var k = rawKey
+        var k =
+            rawKey
             .split(separator: ".")
             .map { seg -> String in
                 seg.hasPrefix("_") ? String(seg.dropFirst()) : String(seg)
@@ -191,9 +192,9 @@ struct MimiWeights {
         let s = try shape(key)
         let (cOut, k, cIn) = (s[0], s[1], s[2])
         var out = [Float](repeating: 0, count: raw.count)
-        for o in 0..<cOut {
-            for kk in 0..<k {
-                for ic in 0..<cIn {
+        for o in 0 ..< cOut {
+            for kk in 0 ..< k {
+                for ic in 0 ..< cIn {
                     out[(o * cIn + ic) * k + kk] = raw[(o * k + kk) * cIn + ic]
                 }
             }
@@ -220,8 +221,10 @@ public final class Mimi: @unchecked Sendable {
     /// Load a Mimi model from a Hugging Face snapshot directory holding a
     /// `*.safetensors` weights file. Mimi checkpoints carry no
     /// `config.json`; the `mimi_202407` preset is assumed (overridable).
-    public static func fromPretrained(directory: URL,
-                                      config: MimiConfig = .mimi202407) throws -> Mimi {
+    public static func fromPretrained(
+        directory: URL,
+        config: MimiConfig = .mimi202407
+    ) throws -> Mimi {
         let bundle = try SafeTensorsBundle(directory: directory)
         return try Mimi(config: config, bundle: bundle)
     }
@@ -230,10 +233,12 @@ public final class Mimi: @unchecked Sendable {
         self.config = config
         let w = MimiWeights(bundle: bundle)
 
-        self.encoder = try MimiSeanet(weights: w, config: config,
-                                      prefix: "encoder", isDecoder: false)
-        self.decoder = try MimiSeanet(weights: w, config: config,
-                                      prefix: "decoder", isDecoder: true)
+        self.encoder = try MimiSeanet(
+            weights: w, config: config,
+            prefix: "encoder", isDecoder: false)
+        self.decoder = try MimiSeanet(
+            weights: w, config: config,
+            prefix: "decoder", isDecoder: true)
         self.encoderTransformer = try MimiProjectedTransformer(
             weights: w, config: config, prefix: "encoder_transformer")
         self.decoderTransformer = try MimiProjectedTransformer(

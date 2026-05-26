@@ -14,6 +14,7 @@
 //
 import Foundation
 import Testing
+
 @testable import FFAI
 
 // Unit tests for the LFMAudio family — config parsing, registry
@@ -42,7 +43,7 @@ struct LFMAudioTests {
                 "window_stride": 0.01,
                 "preemph": 0.97,
                 "dither": 1e-5,
-                "normalize": "per_feature"
+                "normalize": "per_feature",
             ] as [String: Any],
             "encoder": [
                 "feat_in": 128,
@@ -53,14 +54,14 @@ struct LFMAudioTests {
                 "subsampling_factor": 8,
                 "subsampling_conv_channels": 256,
                 "pos_emb_max_len": 5000,
-                "conv_kernel_size": 9
+                "conv_kernel_size": 9,
             ] as [String: Any],
             "lfm": [
                 "hidden_size": 2048,
                 "num_hidden_layers": 16,
                 "num_attention_heads": 16,
-                "vocab_size": 32_000
-            ] as [String: Any]
+                "vocab_size": 32_000,
+            ] as [String: Any],
         ]
     }
 
@@ -85,8 +86,8 @@ struct LFMAudioTests {
         #expect(cfg.preprocessor.sampleRate == 16_000)
         #expect(cfg.preprocessor.nMels == 128)
         #expect(cfg.preprocessor.nFFT == 512)
-        #expect(cfg.preprocessor.winLength == 400)   // 0.025 * 16000
-        #expect(cfg.preprocessor.hopLength == 160)   // 0.01  * 16000
+        #expect(cfg.preprocessor.winLength == 400)  // 0.025 * 16000
+        #expect(cfg.preprocessor.hopLength == 160)  // 0.01  * 16000
         #expect(cfg.preprocessor.preemph == 0.97)
         #expect(cfg.preprocessor.normalise == "per_feature")
 
@@ -102,8 +103,8 @@ struct LFMAudioTests {
         #expect(cfg.encoder.convKernelSize == 9)
 
         // Derived properties
-        #expect(cfg.encoder.headDim == 64)            // 512 / 8
-        #expect(cfg.encoder.ffHidden == 2048)         // 512 * 4
+        #expect(cfg.encoder.headDim == 64)  // 512 / 8
+        #expect(cfg.encoder.ffHidden == 2048)  // 512 * 4
     }
 
     @Test("LFMAudioConfig — falls back to defaults for omitted fields")
@@ -113,7 +114,7 @@ struct LFMAudioTests {
             "model_type": "lfm_audio",
             "preprocessor": ["sample_rate": 16_000] as [String: Any],
             "encoder": [:] as [String: Any],
-            "lfm": ["hidden_size": 2048] as [String: Any]
+            "lfm": ["hidden_size": 2048] as [String: Any],
         ]
         let modelConfig = ModelConfig(
             architecture: nil, modelType: "lfm_audio", raw: raw)
@@ -132,7 +133,7 @@ struct LFMAudioTests {
         let raw: [String: Any] = [
             "model_type": "lfm_audio",
             "encoder": [:] as [String: Any],
-            "lfm": ["hidden_size": 2048] as [String: Any]
+            "lfm": ["hidden_size": 2048] as [String: Any],
         ]
         let modelConfig = ModelConfig(
             architecture: nil, modelType: "lfm_audio", raw: raw)
@@ -146,7 +147,7 @@ struct LFMAudioTests {
         let raw: [String: Any] = [
             "model_type": "lfm_audio",
             "preprocessor": ["sample_rate": 16_000] as [String: Any],
-            "encoder": [:] as [String: Any]
+            "encoder": [:] as [String: Any],
         ]
         let modelConfig = ModelConfig(
             architecture: nil, modelType: "lfm_audio", raw: raw)
@@ -205,24 +206,32 @@ struct LFMAudioTests {
         let whisper = ModelConfig(
             architecture: "WhisperForConditionalGeneration",
             modelType: "whisper",
-            raw: ["d_model": 512, "encoder_layers": 6,
-                  "encoder_attention_heads": 8, "decoder_layers": 6,
-                  "decoder_attention_heads": 8, "vocab_size": 51865])
+            raw: [
+                "d_model": 512, "encoder_layers": 6,
+                "encoder_attention_heads": 8, "decoder_layers": 6,
+                "decoder_attention_heads": 8, "vocab_size": 51865,
+            ])
         #expect(AudioModelRegistry.handles(whisper))
-        #expect(AudioModelRegistry.capabilities(for: whisper)
+        #expect(
+            AudioModelRegistry.capabilities(for: whisper)
                 == Capability.speechToText)
 
         let qwenOmni = ModelConfig(
             architecture: "Qwen2_5OmniForConditionalGeneration",
             modelType: "qwen2_5_omni",
-            raw: ["model_type": "qwen2_5_omni",
-                  "audio_config": ["d_model": 1280, "encoder_layers": 32,
-                                   "encoder_attention_heads": 20,
-                                   "num_mel_bins": 128],
-                  "text_config": ["hidden_size": 3584]])
+            raw: [
+                "model_type": "qwen2_5_omni",
+                "audio_config": [
+                    "d_model": 1280, "encoder_layers": 32,
+                    "encoder_attention_heads": 20,
+                    "num_mel_bins": 128,
+                ],
+                "text_config": ["hidden_size": 3584],
+            ])
         #expect(AudioModelRegistry.handles(qwenOmni))
         // QwenOmni is checked before LFMAudio in the registry.
-        #expect(AudioModelRegistry.capabilities(for: qwenOmni)
+        #expect(
+            AudioModelRegistry.capabilities(for: qwenOmni)
                 == Capability.omniAudio)
         #expect(!LFMAudioModel.handles(qwenOmni))
     }
@@ -237,14 +246,14 @@ struct LFMAudioTests {
                 "sample_rate": 16_000,
                 "features": 80,
                 "n_fft": 400,
-                "window_size": 0.025,    // 400 samples
-                "window_stride": 0.01,   // 160 samples
+                "window_size": 0.025,  // 400 samples
+                "window_stride": 0.01,  // 160 samples
                 "preemph": 0.97,
                 "dither": 0.0,
-                "normalize": "per_feature"
+                "normalize": "per_feature",
             ] as [String: Any],
             "encoder": [:] as [String: Any],
-            "lfm": ["hidden_size": 2048] as [String: Any]
+            "lfm": ["hidden_size": 2048] as [String: Any],
         ]
         let cfg = try LFMAudioConfig.from(
             ModelConfig(architecture: nil, modelType: "lfm_audio", raw: raw))

@@ -29,9 +29,10 @@
 // canonical config.
 
 import Foundation
-import Testing
-@testable import FFAI
 import TestHelpers
+import Testing
+
+@testable import FFAI
 
 @Suite("Kokoro Integration", .serialized)
 struct KokoroIntegrationTests {
@@ -66,12 +67,12 @@ struct KokoroIntegrationTests {
         // A predicted complex spectrogram (the acoustic decoder's
         // output) — frequency-sweep content so the reconstruction is
         // a real, non-constant utterance-length waveform.
-        let nFrames = 200   // ~ a short utterance at hop 5
+        let nFrames = 200  // ~ a short utterance at hop 5
         let nFreq = model.vocoder.nFFT / 2 + 1
         var re = [Float](repeating: 0, count: nFrames * nFreq)
         var im = [Float](repeating: 0, count: nFrames * nFreq)
-        for f in 0..<nFrames {
-            for k in 0..<nFreq {
+        for f in 0 ..< nFrames {
+            for k in 0 ..< nFreq {
                 let phase = 2.0 * Float.pi * Float(k) * Float(f) / Float(nFrames)
                 re[f * nFreq + k] = 0.4 * cos(phase)
                 im[f * nFreq + k] = 0.4 * sin(phase)
@@ -83,7 +84,8 @@ struct KokoroIntegrationTests {
         imT.copyIn(from: im)
 
         let waveform = model.synthesizeFromSpectrogram(specRe: reT, specIm: imT)
-        let expectedLen = (nFrames - 1) * model.vocoder.hopLength
+        let expectedLen =
+            (nFrames - 1) * model.vocoder.hopLength
             + model.vocoder.nFFT
         #expect(waveform.shape == [expectedLen])
 
@@ -94,7 +96,8 @@ struct KokoroIntegrationTests {
         #expect(energy > 1e-4, "Kokoro vocoder produced a silent waveform")
         let distinct = Set(samples.map { ($0 * 1000).rounded() }).count
         #expect(distinct > 10, "Kokoro vocoder produced a constant waveform")
-        print("Kokoro synthesized \(expectedLen) samples, "
-              + "energy=\(energy), distinct=\(distinct)")
+        print(
+            "Kokoro synthesized \(expectedLen) samples, "
+                + "energy=\(energy), distinct=\(distinct)")
     }
 }

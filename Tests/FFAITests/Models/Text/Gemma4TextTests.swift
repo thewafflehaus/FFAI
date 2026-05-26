@@ -23,6 +23,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("Gemma4 Text Variant Surface + Config Helpers")
@@ -74,9 +75,10 @@ struct Gemma4TextTests {
     @Test("Gemma4Config.textConfig falls back to the root when no text_config")
     func textConfigRootFallback() {
         // Plain text checkpoint — fields live at the top level.
-        let cfg = ModelConfig(architecture: "Gemma4ForCausalLM",
-                              modelType: "gemma4_text",
-                              raw: ["hidden_size": 2048])
+        let cfg = ModelConfig(
+            architecture: "Gemma4ForCausalLM",
+            modelType: "gemma4_text",
+            raw: ["hidden_size": 2048])
         let tc = Gemma4Config.textConfig(cfg)
         #expect((tc["hidden_size"] as? Int) == 2048)
     }
@@ -90,11 +92,14 @@ struct Gemma4TextTests {
         let raw: [String: Any] = [
             "hidden_size": 1152, "num_hidden_layers": 4,
             "num_attention_heads": 4,
-            "layer_types": ["sliding_attention", "sliding_attention",
-                            "full_attention", "sliding_attention"],
+            "layer_types": [
+                "sliding_attention", "sliding_attention",
+                "full_attention", "sliding_attention",
+            ],
         ]
-        let cfg = ModelConfig(architecture: "Gemma4ForCausalLM",
-                              modelType: "gemma4", raw: raw)
+        let cfg = ModelConfig(
+            architecture: "Gemma4ForCausalLM",
+            modelType: "gemma4", raw: raw)
         let p = try Gemma4Params(cfg)
         #expect(p.numKvSharedLayers == 0)
         #expect(p.previousKVs == [0, 1, 2, 3])
@@ -116,8 +121,9 @@ struct Gemma4TextTests {
                 "sliding_attention", "sliding_attention", "full_attention",
             ],
         ]
-        let cfg = ModelConfig(architecture: "Gemma4ForCausalLM",
-                              modelType: "gemma4", raw: raw)
+        let cfg = ModelConfig(
+            architecture: "Gemma4ForCausalLM",
+            modelType: "gemma4", raw: raw)
         let p = try Gemma4Params(cfg)
         #expect(p.numKvSharedLayers == 2)
         #expect(p.firstKvSharedIdx == 4)
@@ -130,8 +136,9 @@ struct Gemma4TextTests {
 
     @Test("Gemma4Error.missingTensor + unalignedNorm carry the offending value")
     func errorDescriptionsExtra() {
-        #expect(Gemma4Error.missingTensor("model.embed_tokens").description
-            .contains("embed_tokens"))
+        #expect(
+            Gemma4Error.missingTensor("model.embed_tokens").description
+                .contains("embed_tokens"))
         #expect(Gemma4Error.unalignedNorm(960).description.contains("960"))
     }
 }

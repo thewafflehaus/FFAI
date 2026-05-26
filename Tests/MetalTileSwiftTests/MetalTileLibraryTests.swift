@@ -22,6 +22,7 @@
 import Foundation
 import Metal
 import Testing
+
 @testable import MetalTileSwift
 
 @Suite("MetalTileLibrary")
@@ -73,19 +74,22 @@ struct MetalTileLibraryTests {
         // A name that can't possibly exist — MTLLibrary.makeFunction(name:)
         // returns nil rather than throwing.
         let fn = lib.library.makeFunction(name: "absolutely_not_a_real_kernel_xyz")
-        #expect(fn == nil,
-                "library.makeFunction(name:) should return nil for a garbage kernel name")
+        #expect(
+            fn == nil,
+            "library.makeFunction(name:) should return nil for a garbage kernel name")
     }
 
     @Test("library.functionNames enumerates the bundled kernel surface")
     func functionNamesIsNonEmpty() throws {
         let lib = try MetalTileLibrary()
         let names = lib.library.functionNames
-        #expect(!names.isEmpty,
-                "library.functionNames is empty — the metallib has no kernels?")
+        #expect(
+            !names.isEmpty,
+            "library.functionNames is empty — the metallib has no kernels?")
         // vector_add_f32 should appear in the enumeration.
-        #expect(names.contains("vector_add_f32"),
-                "expected vector_add_f32 in library.functionNames; got first few: \(names.prefix(5))")
+        #expect(
+            names.contains("vector_add_f32"),
+            "expected vector_add_f32 in library.functionNames; got first few: \(names.prefix(5))")
     }
 
     @Test("shared singleton loads the same metallib as a fresh init")

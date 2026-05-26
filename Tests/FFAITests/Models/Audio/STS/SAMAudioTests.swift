@@ -21,6 +21,7 @@
 
 import Foundation
 import Testing
+
 @testable import FFAI
 
 @Suite("SAMAudio")
@@ -54,16 +55,16 @@ struct SAMAudioTests {
     @Test("SAMAudioConfig decodes custom transformer dimensions")
     func configCustomTransformer() throws {
         let json = """
-        {
-          "transformer": {
-            "dim": 1024,
-            "n_heads": 8,
-            "n_layers": 12,
-            "context_dim": 1024,
-            "out_channels": 256
-          }
-        }
-        """
+            {
+              "transformer": {
+                "dim": 1024,
+                "n_heads": 8,
+                "n_layers": 12,
+                "context_dim": 1024,
+                "out_channels": 256
+              }
+            }
+            """
         let data = json.data(using: .utf8)!
         let config = try JSONDecoder().decode(SAMAudioConfig.self, from: data)
 
@@ -76,12 +77,12 @@ struct SAMAudioTests {
     @Test("SAMAudioConfig decodes inChannels from JSON")
     func configInChannels() throws {
         let json = """
-        {
-          "in_channels": 768,
-          "num_anchors": 3,
-          "anchor_embedding_dim": 128
-        }
-        """
+            {
+              "in_channels": 768,
+              "num_anchors": 3,
+              "anchor_embedding_dim": 128
+            }
+            """
         let data = json.data(using: .utf8)!
         let config = try JSONDecoder().decode(SAMAudioConfig.self, from: data)
         #expect(config.inChannels == 768)
@@ -142,8 +143,8 @@ struct SAMAudioTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         let configJSON = """
-        {"model_type": "sam_audio"}
-        """
+            {"model_type": "sam_audio"}
+            """
         try configJSON.write(
             to: dir.appendingPathComponent("config.json"),
             atomically: true, encoding: .utf8
@@ -163,8 +164,8 @@ struct SAMAudioTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         let configJSON = """
-        {"architectures": ["NotAudioModel"], "model_type": "unknown_audio_xyz_not_real"}
-        """
+            {"architectures": ["NotAudioModel"], "model_type": "unknown_audio_xyz_not_real"}
+            """
         try configJSON.write(
             to: dir.appendingPathComponent("config.json"),
             atomically: true, encoding: .utf8
@@ -242,8 +243,10 @@ struct SAMAudioTests {
             try model.loadWeights(from: bundle)
             Issue.record("Expected SAMAudioError.noCompatibleWeights")
         } catch let e as SAMAudioError {
-            if case .noCompatibleWeights = e { /* expected */ }
-            else { Issue.record("Unexpected: \(e)") }
+            if case .noCompatibleWeights = e { /* expected */
+            } else {
+                Issue.record("Unexpected: \(e)")
+            }
         }
     }
 }

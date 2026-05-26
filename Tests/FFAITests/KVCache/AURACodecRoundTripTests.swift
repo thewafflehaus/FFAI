@@ -36,6 +36,7 @@
 import Foundation
 import Metal
 import Testing
+
 @testable import FFAI
 
 @Suite("AURA codec round-trip")
@@ -51,7 +52,7 @@ struct AURACodecRoundTripTests {
         // (rotated K/V rows are approximately unit-norm Gaussian).
         var state = seed
         @inline(__always) func next() -> Float {
-            state = state &* 6364136223846793005 &+ 1442695040888963407
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
             return Float(state >> 32) / Float(UInt32.max) * 2.0 - 1.0
         }
         var vals = [Float](repeating: 0, count: n)
@@ -132,7 +133,7 @@ struct AURACodecRoundTripTests {
 
         let reconstructed = outT.toArray(as: Float.self)
         var maxErr: Float = 0
-        for i in 0..<headDim {
+        for i in 0 ..< headDim {
             let err = abs(reconstructed[i] - input[i])
             if err > maxErr { maxErr = err }
         }
@@ -173,7 +174,8 @@ struct AURACodecRoundTripTests {
             packedOut: packedT, normsOut: normsT,
             rows: 1, dim: headDim, packedWidth: packedWidth, bits: bits,
             on: cmd1)
-        cmd1.commit(); cmd1.waitUntilCompleted()
+        cmd1.commit()
+        cmd1.waitUntilCompleted()
 
         let outT = Tensor.empty(shape: [1, 1, headDim], dtype: .f32, device: device)
         outT.zero()
@@ -183,11 +185,12 @@ struct AURACodecRoundTripTests {
             into: outT,
             nKVHeads: 1, dim: headDim, packedWidth: packedWidth,
             tokens: 1, bits: bits, on: cmd2)
-        cmd2.commit(); cmd2.waitUntilCompleted()
+        cmd2.commit()
+        cmd2.waitUntilCompleted()
 
         let reconstructed = outT.toArray(as: Float.self)
         var sumErr: Float = 0
-        for i in 0..<headDim {
+        for i in 0 ..< headDim {
             sumErr += abs(reconstructed[i] - input[i])
         }
         return sumErr / Float(headDim)
@@ -231,13 +234,15 @@ struct AURACodecRoundTripTests {
             #expect(centroids.count == levels)
             #expect(boundaries.count == levels - 1)
             // Monotonic.
-            for i in 1..<centroids.count {
-                #expect(centroids[i] > centroids[i-1],
-                        "centroids[\(i)]=\(centroids[i]) ≤ centroids[\(i-1)]=\(centroids[i-1])")
+            for i in 1 ..< centroids.count {
+                #expect(
+                    centroids[i] > centroids[i - 1],
+                    "centroids[\(i)]=\(centroids[i]) ≤ centroids[\(i-1)]=\(centroids[i-1])")
             }
-            for i in 1..<boundaries.count {
-                #expect(boundaries[i] > boundaries[i-1],
-                        "boundaries[\(i)]=\(boundaries[i]) ≤ boundaries[\(i-1)]=\(boundaries[i-1])")
+            for i in 1 ..< boundaries.count {
+                #expect(
+                    boundaries[i] > boundaries[i - 1],
+                    "boundaries[\(i)]=\(boundaries[i]) ≤ boundaries[\(i-1)]=\(boundaries[i-1])")
             }
 
             // Build a synthetic input where each dim has a known value.
@@ -248,7 +253,7 @@ struct AURACodecRoundTripTests {
             input[1] = 0.1
             input[2] = -0.05
             input[3] = 0.32  // near max
-            input[4] = -0.32 // near min
+            input[4] = -0.32  // near min
             // L2-normalise so the encoder's per-vector norm step
             // doesn't mangle our injected values. The codec stores
             // values in unit-norm space + a norm-correction scalar.
@@ -301,17 +306,21 @@ struct AURACodecRoundTripTests {
                 let shift = bitOff & 31
                 return Int((packed[wordIdx] >> shift) & mask)
             }
-            for d in 0..<5 {
+            for d in 0 ..< 5 {
                 let actual = extract(dim: d)
                 let expected = expectedIndices[d]
                 let actualCentroid = centroids[actual]
                 let expectedCentroid = centroids[expected]
-                print("[aura8 idx d=\(d)] input=\(input[d]) expected_idx=\(expected) (centroid=\(expectedCentroid)) actual_idx=\(actual) (centroid=\(actualCentroid))")
+                print(
+                    "[aura8 idx d=\(d)] input=\(input[d]) expected_idx=\(expected) (centroid=\(expectedCentroid)) actual_idx=\(actual) (centroid=\(actualCentroid))"
+                )
                 // Allow ±1 off (closest neighbour on either side of a
                 // boundary is acceptable rounding). Off by more than
                 // that = real bug.
-                #expect(abs(actual - expected) <= 1,
-                        "dim \(d): actual_idx=\(actual) vs expected_idx=\(expected) — off by \(actual - expected)")
+                #expect(
+                    abs(actual - expected) <= 1,
+                    "dim \(d): actual_idx=\(actual) vs expected_idx=\(expected) — off by \(actual - expected)"
+                )
             }
         }
     }
@@ -330,12 +339,15 @@ struct AURACodecRoundTripTests {
             // The 8-bit codec MUST do at least as well as 4-bit. If
             // it doesn't, the codec is broken — which is exactly the
             // aura8v8 model-level regression we're chasing.
-            #expect(mean8 <= mean4,
-                    "aura8 reconstruction error \(mean8) should be ≤ aura4's \(mean4) — 8-bit has 16× more levels")
+            #expect(
+                mean8 <= mean4,
+                "aura8 reconstruction error \(mean8) should be ≤ aura4's \(mean4) — 8-bit has 16× more levels"
+            )
             // Absolute mean tolerance. 8-bit on a unit Beta slice
             // should easily reach <0.005.
-            #expect(mean8 < 0.01,
-                    "aura8 mean reconstruction error \(mean8) > 0.01 — codec is broken")
+            #expect(
+                mean8 < 0.01,
+                "aura8 mean reconstruction error \(mean8) > 0.01 — codec is broken")
         }
     }
 }

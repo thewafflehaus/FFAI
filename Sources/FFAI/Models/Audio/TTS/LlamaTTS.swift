@@ -132,9 +132,11 @@ public final class LlamaTTSModel: @unchecked Sendable {
     /// The SNAC codec decoder — `nil` until the codec port lands.
     public var snacDecoder: (any SNACDecoding)?
 
-    public init(config: LlamaTTSConfig, backbone: LlamaModel,
-                tokenizer: any Tokenizer,
-                snacDecoder: (any SNACDecoding)? = nil) {
+    public init(
+        config: LlamaTTSConfig, backbone: LlamaModel,
+        tokenizer: any Tokenizer,
+        snacDecoder: (any SNACDecoding)? = nil
+    ) {
         self.config = config
         self.backbone = backbone
         self.tokenizer = tokenizer
@@ -172,7 +174,7 @@ public final class LlamaTTSModel: @unchecked Sendable {
         var layer2: [Int] = []
         var layer3: [Int] = []
         let groups = usable / frameSize
-        for g in 0..<groups {
+        for g in 0 ..< groups {
             let base = frameSize * g
             layer1.append(tokens[base])
             layer2.append(tokens[base + 1] - stride)
@@ -193,19 +195,22 @@ public final class LlamaTTSModel: @unchecked Sendable {
     /// the three SNAC planes.
     ///
     /// `maxFrames` caps generation; each SNAC frame is 7 code tokens.
-    public func generateCodes(text: String, voice: String? = nil,
-                              maxFrames: Int = 1200,
-                              temperature: Float = 0.6,
-                              seed: UInt64 = 0,
-                              device: Device = .shared) throws -> [[Int]] {
+    public func generateCodes(
+        text: String, voice: String? = nil,
+        maxFrames: Int = 1200,
+        temperature: Float = 0.6,
+        seed: UInt64 = 0,
+        device: Device = .shared
+    ) throws -> [[Int]] {
         let prompt = promptTokens(text: text, voice: voice)
         let caches = backbone.makeLayerCaches(device: device)
 
         // Prefill — feed every prompt token; keep the last logits.
         var position = 0
         for tok in prompt.dropLast() {
-            _ = backbone.forward(tokenId: tok, position: position,
-                                 caches: caches, device: device)
+            _ = backbone.forward(
+                tokenId: tok, position: position,
+                caches: caches, device: device)
             position += 1
         }
         var nextInput = prompt.last ?? OrpheusTokens.endOfHuman
@@ -215,10 +220,10 @@ public final class LlamaTTSModel: @unchecked Sendable {
         var codeTokens: [Int] = []
         let maxTokens = maxFrames * 7
         var inSpeech = false
-        for _ in 0..<(maxTokens + prompt.count) {
+        for _ in 0 ..< (maxTokens + prompt.count) {
             let token: Int
             if temperature > 0 {
-                let draw = Float.random(in: 0..<1, using: &rng)
+                let draw = Float.random(in: 0 ..< 1, using: &rng)
                 token = backbone.forwardSampleCategorical(
                     tokenId: nextInput, position: position, caches: caches,
                     temperature: temperature, uniformDraw: draw,
@@ -231,7 +236,10 @@ public final class LlamaTTSModel: @unchecked Sendable {
             position += 1
             nextInput = token
 
-            if token == OrpheusTokens.startOfSpeech { inSpeech = true; continue }
+            if token == OrpheusTokens.startOfSpeech {
+                inSpeech = true
+                continue
+            }
             if token == OrpheusTokens.endOfSpeech { break }
             if inSpeech, token >= OrpheusTokens.audioTokenOffset {
                 codeTokens.append(token - OrpheusTokens.audioTokenOffset)
@@ -246,18 +254,21 @@ public final class LlamaTTSModel: @unchecked Sendable {
     /// Full text→waveform synthesis. Requires a SNAC decoder; throws
     /// `LlamaTTSError.codecUnavailable` when one is not wired (see the
     /// scope note at the top of this file).
-    public func synthesize(text: String, voice: String? = nil,
-                           maxFrames: Int = 1200,
-                           temperature: Float = 0.6,
-                           seed: UInt64 = 0,
-                           device: Device = .shared) throws -> Tensor {
+    public func synthesize(
+        text: String, voice: String? = nil,
+        maxFrames: Int = 1200,
+        temperature: Float = 0.6,
+        seed: UInt64 = 0,
+        device: Device = .shared
+    ) throws -> Tensor {
         guard let decoder = snacDecoder else {
             throw LlamaTTSError.codecUnavailable
         }
-        let codes = try generateCodes(text: text, voice: voice,
-                                      maxFrames: maxFrames,
-                                      temperature: temperature,
-                                      seed: seed, device: device)
+        let codes = try generateCodes(
+            text: text, voice: voice,
+            maxFrames: maxFrames,
+            temperature: temperature,
+            seed: seed, device: device)
         return decoder.decode(codes: codes, device: device)
     }
 }
@@ -267,7 +278,7 @@ public final class LlamaTTSModel: @unchecked Sendable {
 extension LlamaTTSModel {
     public static let modelTypes: Set<String> = ["llama_tts", "orpheus"]
     public static let architectures: Set<String> = [
-        "OrpheusForConditionalGeneration",
+        "OrpheusForConditionalGeneration"
     ]
 
     /// Whether a decoded `config.json` describes a LlamaTTS / Orpheus
@@ -282,9 +293,11 @@ extension LlamaTTSModel {
         // Structural fallback: a Llama causal LM whose vocabulary is
         // large enough to hold the Orpheus audio-codec tokens and which
         // declares a TTS sample rate.
-        let isLlama = (config.modelType == "llama")
+        let isLlama =
+            (config.modelType == "llama")
             || (config.architecture == "LlamaForCausalLM")
-        let hasAudioVocab = (config.vocabSize ?? 0)
+        let hasAudioVocab =
+            (config.vocabSize ?? 0)
             > OrpheusTokens.audioTokenOffset
         return isLlama && hasAudioVocab && config.has("sample_rate")
     }
@@ -292,17 +305,21 @@ extension LlamaTTSModel {
     /// Load a LlamaTTS checkpoint from a resolved snapshot directory.
     /// The Llama backbone reuses FFAI's `LlamaDense` loader; the SNAC
     /// codec decoder is left unset (separate port — see scope note).
-    public static func load(directory: URL,
-                            options: LoadOptions = LoadOptions(),
-                            device: Device = .shared) async throws
-        -> LlamaTTSModel {
+    public static func load(
+        directory: URL,
+        options: LoadOptions = LoadOptions(),
+        device: Device = .shared
+    ) async throws
+        -> LlamaTTSModel
+    {
         let config = try ModelConfig.load(from: directory)
         let ttsConfig = LlamaTTSConfig.from(config)
         let bundle = try SafeTensorsBundle(directory: directory, device: device)
         let backbone = try LlamaDense.loadModel(
             config: config, weights: bundle, options: options, device: device)
         let tokenizer = try await TokenizerLoader().load(from: directory)
-        return LlamaTTSModel(config: ttsConfig, backbone: backbone,
-                             tokenizer: tokenizer)
+        return LlamaTTSModel(
+            config: ttsConfig, backbone: backbone,
+            tokenizer: tokenizer)
     }
 }
