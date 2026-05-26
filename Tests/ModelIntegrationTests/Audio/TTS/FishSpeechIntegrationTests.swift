@@ -1,6 +1,7 @@
 // FishSpeech integration test — load mlx-community/fish-audio-s2-pro-8bit
-// from the HuggingFace cache (pre-downloaded at ~/.cache/huggingface/hub/)
-// and run a Stage-1 + Stage-2 synthesis pass.
+// from the HuggingFace cache (resolved through the standard
+// ModelLocator + ModelLoadLock pattern) and run a Stage-1 + Stage-2
+// synthesis pass.
 //
 // Coverage:
 //   - Config parsed from real config.json
@@ -18,17 +19,40 @@
 import Foundation
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("FishSpeech Integration", .serialized)
 struct FishSpeechIntegrationTests {
 
-    // Resolved HuggingFace snapshot directory (pre-cached).
-    // Uses the standard HF hub layout: blobs are symlinked from snapshots/.
-    private static let repoID = "mlx-community/fish-audio-s2-pro-8bit"
+    /// Canonical HF repo id — the 8-bit MLX conversion of fish-audio-s2-pro.
+    private static let repoId = "mlx-community/fish-audio-s2-pro-8bit"
+
+    /// Resolve the cached snapshot directory through the standard
+    /// ModelLocator path, serialised by ModelLoadLock so concurrent
+    /// integration tests don't double-resolve the same checkpoint.
+    private func resolveDirectory() async throws -> URL {
+        try await ModelLoadLock.shared.loadSerially {
+            try await ModelLocator().resolve(idOrPath: Self.repoId)
+        }
+    }
+
+    /// Build a FishSpeechModel from the resolved snapshot — the helper
+    /// keeps the codec-path-aware FishSpeechModel.load surface intact
+    /// (the codec lives alongside the model in `codec/` or `vocoder/`
+    /// sub-folders, which `load(config:weights:directory:device:)`
+    /// discovers automatically).
+    private func loadModel() async throws -> FishSpeechModel {
+        let dir = try await resolveDirectory()
+        let config = try ModelConfig.load(from: dir)
+        let weights = try SafeTensorsBundle(directory: dir)
+        return try FishSpeechModel.load(
+            config: config, weights: weights, directory: dir, device: .shared
+        )
+    }
 
     @Test("load config + weights from cached checkpoint")
-    func loadModel() async throws {
-        let dir = try await resolveSnapshotDirectory(repoID: Self.repoID)
+    func loadCheckpoint() async throws {
+        let dir = try await resolveDirectory()
 
         // Load config
         let config = try ModelConfig.load(from: dir)
@@ -66,13 +90,7 @@ struct FishSpeechIntegrationTests {
 
     @Test("synthesize produces a waveform (Stage-2) or throws codecNotAvailable")
     func synthesizeStage2() async throws {
-        let dir = try await resolveSnapshotDirectory(repoID: Self.repoID)
-
-        let config = try ModelConfig.load(from: dir)
-        let weights = try SafeTensorsBundle(directory: dir)
-        let model = try FishSpeechModel.load(
-            config: config, weights: weights, directory: dir, device: .shared
-        )
+        let model = try await loadModel()
 
         // Stage-2: when FishS1DAC codec weights are present in the snapshot
         // directory (or a codec/ sub-folder), synthesize returns a non-empty
@@ -103,13 +121,7 @@ struct FishSpeechIntegrationTests {
 
     @Test("generateCodes produces non-empty code frames for short text (Stage-1)")
     func generateCodesSmoke() async throws {
-        let dir = try await resolveSnapshotDirectory(repoID: Self.repoID)
-
-        let config = try ModelConfig.load(from: dir)
-        let weights = try SafeTensorsBundle(directory: dir)
-        let model = try FishSpeechModel.load(
-            config: config, weights: weights, directory: dir, device: .shared
-        )
+        let model = try await loadModel()
 
         // generateCodes is the pre-codec stage; it should complete without
         // throwing and return at least one frame.
@@ -125,42 +137,5 @@ struct FishSpeechIntegrationTests {
         // codes is [numCodebooks][numFrames]; both dimensions > 0.
         #expect(codes.count == model.fishConfig.numCodebooks)
         #expect(codes.first?.isEmpty == false)
-    }
-
-    // ─── Helper ─────────────────────────────────────────────────────────
-
-    /// Find the snapshot directory for a HuggingFace repo in the local cache.
-    /// Searches `$HF_HOME/hub` → `~/.cache/huggingface/hub` for the
-    /// standard `models--<org>--<repo>/snapshots/<hash>/` layout.
-    private func resolveSnapshotDirectory(repoID: String) async throws -> URL {
-        let cacheRoot: URL
-        if let hfHome = ProcessInfo.processInfo.environment["HF_HOME"] {
-            cacheRoot = URL(fileURLWithPath: hfHome).appendingPathComponent("hub")
-        } else {
-            cacheRoot = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".cache/huggingface/hub")
-        }
-
-        // Convert "org/repo" → "models--org--repo"
-        let folderName = "models--" + repoID.replacingOccurrences(of: "/", with: "--")
-        let snapshotsDir = cacheRoot
-            .appendingPathComponent(folderName)
-            .appendingPathComponent("snapshots")
-
-        guard FileManager.default.fileExists(atPath: snapshotsDir.path) else {
-            throw CocoaError(.fileNoSuchFile,
-                             userInfo: [NSFilePathErrorKey: snapshotsDir.path])
-        }
-
-        let hashes = try FileManager.default.contentsOfDirectory(
-            at: snapshotsDir,
-            includingPropertiesForKeys: [.isDirectoryKey]
-        ).filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true }
-
-        guard let snap = hashes.first else {
-            throw CocoaError(.fileNoSuchFile,
-                             userInfo: [NSFilePathErrorKey: snapshotsDir.path])
-        }
-        return snap
     }
 }
