@@ -870,6 +870,50 @@ struct QuantizedOpsTests {
         }
     }
 
+    @Test("dequantGemvInt4Many: N projections with distinct inputs match standalone calls")
+    func dequantGemvInt4ManyCorrectness() {
+        autoreleasepool {
+            // N=3 projections, each with its own input + output.
+            let outDim = 4
+            let inDim = 128
+            let gs = 64
+            let inputs: [[Float]] = [
+                (0 ..< inDim).map { Float($0) * 0.05 - 3.2 },
+                (0 ..< inDim).map { Float($0) * 0.04 - 2.5 },
+                (0 ..< inDim).map { Float($0) * 0.03 - 1.8 },
+            ]
+            var experts: [(weight: Tensor, scales: Tensor, biases: Tensor, expected: [Float])] = []
+            for i in 0 ..< 3 {
+                let p = Self.makeInt4Projection(
+                    outDim: outDim, inDim: inDim, gs: gs,
+                    rowSeed: 7 + i * 5, scaleStep: 0.01 + Float(i) * 0.005,
+                    biasStep: -0.005 + Float(i) * 0.002, input: inputs[i])
+                experts.append(p)
+            }
+            var inputTs: [Tensor] = []
+            for i in 0 ..< 3 {
+                let t = Tensor.empty(shape: [inDim], dtype: .f32)
+                t.copyIn(from: inputs[i])
+                inputTs.append(t)
+            }
+            let outs = (0 ..< 3).map { _ in Tensor.empty(shape: [outDim], dtype: .f32) }
+            runAndWait { cb in
+                Ops.dequantGemvInt4Many(
+                    weights: experts.map { $0.weight },
+                    scales: experts.map { $0.scales },
+                    biases: experts.map { $0.biases },
+                    inputs: inputTs, outputs: outs,
+                    groupSize: gs, on: cb)
+            }
+            for i in 0 ..< 3 {
+                let got = outs[i].toArray(as: Float.self)
+                for j in 0 ..< outDim {
+                    #expect(abs(got[j] - experts[i].expected[j]) < 1e-2)
+                }
+            }
+        }
+    }
+
     @Test("dequantGemvInt4ExpertIndexed: matches standalone dequantGemvInt4 for the picked expert")
     func dequantGemvInt4ExpertIndexedCorrectness() {
         autoreleasepool {

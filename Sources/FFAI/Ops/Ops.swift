@@ -1807,6 +1807,64 @@ public enum Ops {
         enc.endEncoding()
     }
 
+    /// Batched int4 dequant-GEMV on N projections with DIFFERENT
+    /// inputs sharing ONE compute encoder. Unlike `dequantGemvInt4Two`
+    /// / `Three` / `Four` (which all share a single input), the per-
+    /// expert MoE down phase has N independent activations — one per
+    /// chosen expert — but all projections share PSO, `inDim`, and
+    /// `groupSize`. The wrapper sets the constexprs once and rotates
+    /// `(weight, scales, biases, input, output)` per dispatch. Saves
+    /// N-1 encoder begin/end pairs versus N independent
+    /// `dequantGemvInt4` calls.
+    public static func dequantGemvInt4Many(
+        weights: [Tensor], scales: [Tensor], biases: [Tensor],
+        inputs: [Tensor], outputs: [Tensor],
+        groupSize: Int = 64,
+        on cmd: MTLCommandBuffer
+    ) {
+        let n = weights.count
+        precondition(
+            scales.count == n && biases.count == n && inputs.count == n && outputs.count == n,
+            "Ops.dequantGemvInt4Many: count mismatch")
+        guard n > 0 else { return }
+        let dtype = inputs[0].dtype
+        let psoName: String
+        switch dtype {
+        case .f32: psoName = "dequant_gemv_int4_f32"
+        case .f16: psoName = "dequant_gemv_int4_f16"
+        case .bf16: psoName = "dequant_gemv_int4_bf16"
+        default: fatalError("Ops.dequantGemvInt4Many: unsupported dtype \(dtype)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        let packedPerRow = weights[0].shape[1]
+        let inDim = packedPerRow * 32 / 4  // bits = 4 → 8 weights / u32
+        var inDimV = UInt32(inDim)
+        var groupSizeV = UInt32(groupSize)
+        enc.setBytes(&inDimV, length: 4, index: 5)
+        enc.setBytes(&groupSizeV, length: 4, index: 6)
+        let tgWidth = 256
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+        for i in 0 ..< n {
+            precondition(
+                weights[i].shape[1] == packedPerRow,
+                "Ops.dequantGemvInt4Many: inDim varies at index \(i)")
+            precondition(
+                inputs[i].dtype == dtype && outputs[i].dtype == dtype,
+                "Ops.dequantGemvInt4Many: dtype varies at index \(i)")
+            enc.setBuffer(weights[i].buffer, offset: weights[i].offset, index: 0)
+            enc.setBuffer(scales[i].buffer, offset: scales[i].offset, index: 1)
+            enc.setBuffer(biases[i].buffer, offset: biases[i].offset, index: 2)
+            enc.setBuffer(inputs[i].buffer, offset: inputs[i].offset, index: 3)
+            enc.setBuffer(outputs[i].buffer, offset: outputs[i].offset, index: 4)
+            let outDim = weights[i].shape[0]
+            let grid = MTLSize(width: outDim * tgWidth, height: 1, depth: 1)
+            enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        }
+        enc.endEncoding()
+    }
+
     /// Per-expert indexed int4 dequant-GEMV. The caller stacks every
     /// expert's weight slab into one `[nExperts, outDim, inDim/8]`
     /// u32-packed tensor (and matching scales / biases stacks); the
