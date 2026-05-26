@@ -63,7 +63,7 @@ Then generate text in five lines:
 ```swift
 import FFAI
 
-let model = try await Model.load("mlx-community/Qwen3.5-0.8B-MLX-bf16")
+let model = try await Model.load("mlx-community/Qwen3.5-0.8B-MLX-4bit")
 let result = try await model.generate(
     prompt: "Once upon a time",
     parameters: model.defaultGenerationParameters.with { $0.maxTokens = 64 }
@@ -81,7 +81,7 @@ of the same repo are near-instant.
 CLI equivalent (the `ffai` executable target):
 
 ```bash
-ffai --model mlx-community/Qwen3.5-0.8B-MLX-bf16 --prompt "Once upon a time"
+ffai --model mlx-community/Qwen3.5-0.8B-MLX-4bit --prompt "Once upon a time"
 ```
 
 See [`quickstart.md`](documentation/quickstart.md) for

@@ -86,7 +86,7 @@ the corresponding subnet only if the user opts in.
 
 ```swift
 let model = try await Model.load(
-    "mlx-community/Qwen3.5-0.8B-MLX-bf16",
+    "mlx-community/Qwen3.5-0.8B-MLX-4bit",
     options: LoadOptions(
         capabilities: [.textIn, .textOut],
         kvCache: .raw,
@@ -135,7 +135,7 @@ each transition. The stream is multi-consumer-safe and finishes when
 the `Model` is deinitialized.
 
 ```swift
-let model = try await Model.load("mlx-community/Qwen3.5-0.8B-MLX-bf16")
+let model = try await Model.load("mlx-community/Qwen3.5-0.8B-MLX-4bit")
 
 Task {
     for await event in model.events {

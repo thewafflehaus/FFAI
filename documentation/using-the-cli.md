@@ -24,14 +24,14 @@ on ergonomics.
 
 ```bash
 # (a) Via SwiftPM — no setup, recompiles if the source changed.
-swift run -c release ffai generate -m mlx-community/Qwen3.5-0.8B-MLX-bf16 -p "Once upon a time"
+swift run -c release ffai generate -m mlx-community/Qwen3.5-0.8B-MLX-4bit -p "Once upon a time"
 
 # (b) Direct binary path — no recompile check, fastest start-up.
-.build/release/ffai generate -m mlx-community/Qwen3.5-0.8B-MLX-bf16 -p "Once upon a time"
+.build/release/ffai generate -m mlx-community/Qwen3.5-0.8B-MLX-4bit -p "Once upon a time"
 
 # (c) Symlink onto PATH (one-time) so plain `ffai …` works from anywhere.
 ln -s "$PWD/.build/release/ffai" /usr/local/bin/ffai
-ffai generate -m mlx-community/Qwen3.5-0.8B-MLX-bf16 -p "Once upon a time"
+ffai generate -m mlx-community/Qwen3.5-0.8B-MLX-4bit -p "Once upon a time"
 ```
 
 `generate` is the default subcommand, so the `-m / -p` flags can be

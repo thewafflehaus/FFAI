@@ -125,7 +125,7 @@ floors (regression detection, not hard targets).
 For a manual sanity check:
 
 ```bash
-ffai --model mlx-community/Qwen3.5-0.8B-MLX-bf16 --prompt "Once upon a time" --max-tokens 64
+ffai --model mlx-community/Qwen3.5-0.8B-MLX-4bit --prompt "Once upon a time" --max-tokens 64
 ffai --model mlx-community/Qwen3-4B-4bit --prompt "Once upon a time" --max-tokens 64
 ```
 

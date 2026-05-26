@@ -6,7 +6,7 @@ in the markdown + JSON sidecar so analysis tooling stays
 cross-compatible.
 
 ```bash
-ffai bench --method simple --model mlx-community/Qwen3.5-0.8B-MLX-bf16 \
+ffai bench --method simple --model mlx-community/Qwen3.5-0.8B-MLX-4bit \
            --prompt "Once upon a time" --max-tokens 64 --quantization bf16
 ```
 
@@ -40,7 +40,7 @@ Stubs fail fast with the dependency name they're waiting on rather
 than producing garbage:
 
 ```
-$ ffai bench --method niah --model mlx-community/Qwen3.5-0.8B-MLX-bf16
+$ ffai bench --method niah --model mlx-community/Qwen3.5-0.8B-MLX-4bit
 Error: ffai bench --method niah: not implemented yet — needs
 sliding-window attention mask + needle-position bookkeeping. Tracked
 alongside its parent feature in planning/plan.md.
