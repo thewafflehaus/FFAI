@@ -417,7 +417,7 @@ public struct Qwen35Hybrid: Qwen35Variant {
                     qNorm: qNorm, kNorm: kNorm,
                     nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
                     rotaryDim: rotaryDim, ropeTheta: ropeTheta,
-                    attnOutputGate: attnOutputGate)
+                    attnOutputGate: attnOutputGate, device: device)
                 layers.append(
                     Qwen35AttentionLayer(
                         inputNorm: inputNorm, postNorm: postNorm,
@@ -1499,12 +1499,64 @@ public final class Qwen35AttentionMixer: Module {
     let ropeTheta: Float
     let attnOutputGate: Bool
     let scale: Float
+    /// ITER 22 (PR10): cached row-index tensors for sliceHeadHalves35.
+    /// The indices are constant per `nHeads` (even rows = queries, odd
+    /// rows = gates) — previously rebuilt + memcpy'd into a fresh
+    /// MTLBuffer per attn layer per decode token.
+    let sliceFirstIdx: Tensor?  // [nHeads] u32 — 0, 2, 4, ...
+    let sliceSecondIdx: Tensor?  // [nHeads] u32 — 1, 3, 5, ...
+    /// ITER 24 (PR10): batched QKV-projection fast-path detection. When
+    /// all 3 projections (q, k, v) are QuantizedLinear int4 with same
+    /// groupSize, the mixer routes through `Ops.dequantGemvInt4Three`
+    /// — 3 qmms on one shared encoder.
+    private var batchedQKV:
+        (
+            qW: Tensor, qS: Tensor, qB: Tensor,
+            kW: Tensor, kS: Tensor, kB: Tensor,
+            vW: Tensor, vS: Tensor, vB: Tensor,
+            groupSize: Int
+        )?
+    private var qOutScratch: Tensor?
+    private var kOutScratch: Tensor?
+    private var vOutScratch: Tensor?
+    /// ITER 78 (PR10): fused-QKV single-dispatch fast path. When set,
+    /// `forward` uses `Ops.batchedQkvQgemvInt4Fast` (1 dispatch) instead
+    /// of `dequantGemvInt4Three` (3 dispatches on shared encoder).
+    /// Backing scratch is one contiguous `[qDim+kDim+vDim]` buffer.
+    private var fusedQKVEligible: Bool = false
+    private var qkvFusedScratch: Tensor?
+    /// ITER 35 (PR10): cached q_norm + k_norm outputs (was fresh per call).
+    private var qNormedScratch: Tensor?
+    private var kNormedScratch: Tensor?
+    /// ITER 40 (PR10): cached sliceHeadHalves35 gather outputs.
+    private var queriesScratch: Tensor?
+    private var gateSliceScratch: Tensor?
+    /// ITER 43 (PR10): cached sdpaDecode output + sigmoidMul output.
+    private var attnOutScratch: Tensor?
+    private var attnFlatGatedScratch: Tensor?
+    /// ITER 53 (PR10): cached Flash-Decoding 2-pass partial buffers.
+    /// Allocated lazily on first 2-pass dispatch (when kv.length ≥
+    /// threshold). Sized for (nHeads, blocks=32, headDim) — ~192KB
+    /// per attn layer on Qwen3.6 bf16.
+    private var partialOScratch: Tensor?
+    private var partialMScratch: Tensor?
+    private var partialLScratch: Tensor?
+    private let sdpa2PassBlocks: Int = 32
+    private let sdpa2PassThreshold: Int = {
+        if let raw = ProcessInfo.processInfo.environment["FFAI_SDPA_2PASS_THRESHOLD"],
+            let n = Int(raw)
+        {
+            return n
+        }
+        return 1024  // default: only kick in at long KV
+    }()
 
     init(
         qProj: AnyLinear, kProj: AnyLinear, vProj: AnyLinear, oProj: AnyLinear,
         qNorm: RMSNorm, kNorm: RMSNorm,
         nHeads: Int, nKVHeads: Int, headDim: Int, rotaryDim: Int,
-        ropeTheta: Float, attnOutputGate: Bool
+        ropeTheta: Float, attnOutputGate: Bool,
+        device: Device = .shared
     ) {
         self.qProj = qProj
         self.kProj = kProj
@@ -1519,6 +1571,61 @@ public final class Qwen35AttentionMixer: Module {
         self.ropeTheta = ropeTheta
         self.attnOutputGate = attnOutputGate
         self.scale = 1.0 / Float(Double(headDim).squareRoot())
+        if attnOutputGate {
+            // ITER 22: pre-build the row-index tensors for the gate split
+            // gather. Even rows = queries, odd rows = gates.
+            var firstRows = [UInt32](repeating: 0, count: nHeads)
+            var secondRows = [UInt32](repeating: 0, count: nHeads)
+            for h in 0 ..< nHeads {
+                firstRows[h] = UInt32(2 * h)
+                secondRows[h] = UInt32(2 * h + 1)
+            }
+            let firstBuf = device.makeBuffer(length: nHeads * 4)
+            let secondBuf = device.makeBuffer(length: nHeads * 4)
+            firstRows.withUnsafeBytes {
+                _ = memcpy(firstBuf.contents(), $0.baseAddress!, nHeads * 4)
+            }
+            secondRows.withUnsafeBytes {
+                _ = memcpy(secondBuf.contents(), $0.baseAddress!, nHeads * 4)
+            }
+            self.sliceFirstIdx = Tensor(
+                buffer: firstBuf, offset: 0, shape: [nHeads], dtype: .u32)
+            self.sliceSecondIdx = Tensor(
+                buffer: secondBuf, offset: 0, shape: [nHeads], dtype: .u32)
+            // ITER 28: pin idx scratches to the residency set.
+            device.markWeightsResident([firstBuf, secondBuf])
+        } else {
+            self.sliceFirstIdx = nil
+            self.sliceSecondIdx = nil
+        }
+        // ITER 24: detect batched-qkv fast path.
+        if let qQL = qProj.inner as? QuantizedLinear,
+            let kQL = kProj.inner as? QuantizedLinear,
+            let vQL = vProj.inner as? QuantizedLinear,
+            qQL.bits == 4 && kQL.bits == 4 && vQL.bits == 4,
+            qQL.groupSize == kQL.groupSize, qQL.groupSize == vQL.groupSize
+        {
+            self.batchedQKV = (
+                qW: qQL.weight, qS: qQL.scales, qB: qQL.biases,
+                kW: kQL.weight, kS: kQL.scales, kB: kQL.biases,
+                vW: vQL.weight, vS: vQL.scales, vB: vQL.biases,
+                groupSize: qQL.groupSize
+            )
+            // ITER 78: fused single-dispatch QKV gemv. Constraints:
+            // in_dim multiple of 512, each out_dim multiple of 8,
+            // group_size=64.
+            let inDim = qQL.weight.shape[1] * 8
+            let qDim = qQL.weight.shape[0]
+            let kDim = kQL.weight.shape[0]
+            let vDim = vQL.weight.shape[0]
+            if inDim % 512 == 0
+                && qDim % 8 == 0 && kDim % 8 == 0 && vDim % 8 == 0
+                && qQL.groupSize == 64
+                && ProcessInfo.processInfo.environment["FFAI_NO_FUSED_QKV"] == nil
+            {
+                self.fusedQKVEligible = true
+            }
+        }
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -1542,42 +1649,127 @@ public final class Qwen35AttentionMixer: Module {
         // q_proj projects 2× heads when attn_output_gate is set: the
         // first `nHeads · headDim` elements are the queries, the second
         // half is the per-head sigmoid gate.
-        let qOut = qProj(xNorm, on: cmd)
+        // ITER 24 (PR10): batch q+k+v projections into one encoder when
+        // all 3 are QuantizedLinear int4. ITER 78: when constraints
+        // match, fuse all three into a single dispatch.
+        let qOut: Tensor
+        let kPre: Tensor
+        let vPre: Tensor
+        if let bq = batchedQKV {
+            let qDim = bq.qW.shape[0]
+            let kDim = bq.kW.shape[0]
+            let vDim = bq.vW.shape[0]
+            if fusedQKVEligible {
+                // ITER 78: ONE dispatch into a [qDim+kDim+vDim] scratch.
+                // qOut / kPre / vPre are offset views into the same buffer.
+                let total = qDim + kDim + vDim
+                if qkvFusedScratch == nil
+                    || qkvFusedScratch!.elementCount != total
+                    || qkvFusedScratch!.dtype != xNorm.dtype
+                {
+                    qkvFusedScratch = Tensor.empty(
+                        shape: [total], dtype: xNorm.dtype, device: device)
+                    qOutScratch = qkvFusedScratch!.slicedRows(start: 0, count: qDim)
+                    kOutScratch = qkvFusedScratch!.slicedRows(start: qDim, count: kDim)
+                    vOutScratch = qkvFusedScratch!.slicedRows(
+                        start: qDim + kDim, count: vDim)
+                }
+                qOut = qOutScratch!
+                kPre = kOutScratch!
+                vPre = vOutScratch!
+                Ops.batchedQkvQgemvInt4Fast(
+                    x: xNorm,
+                    wQ: bq.qW, scalesQ: bq.qS, biasesQ: bq.qB,
+                    wK: bq.kW, scalesK: bq.kS, biasesK: bq.kB,
+                    wV: bq.vW, scalesV: bq.vS, biasesV: bq.vB,
+                    outQ: qDim, outK: kDim, outV: vDim,
+                    on: cmd, into: qkvFusedScratch!)
+            } else {
+                // Legacy 3-dispatch shared-encoder path (ITER 24).
+                if qOutScratch == nil || qOutScratch!.elementCount != qDim {
+                    qOutScratch = Tensor.empty(
+                        shape: [qDim], dtype: xNorm.dtype, device: device)
+                }
+                if kOutScratch == nil || kOutScratch!.elementCount != kDim {
+                    kOutScratch = Tensor.empty(
+                        shape: [kDim], dtype: xNorm.dtype, device: device)
+                }
+                if vOutScratch == nil || vOutScratch!.elementCount != vDim {
+                    vOutScratch = Tensor.empty(
+                        shape: [vDim], dtype: xNorm.dtype, device: device)
+                }
+                qOut = qOutScratch!
+                kPre = kOutScratch!
+                vPre = vOutScratch!
+                Ops.dequantGemvInt4Three(
+                    input: xNorm,
+                    w0: bq.qW, s0: bq.qS, b0: bq.qB, out0: qOut,
+                    w1: bq.kW, s1: bq.kS, b1: bq.kB, out1: kPre,
+                    w2: bq.vW, s2: bq.vS, b2: bq.vB, out2: vPre,
+                    groupSize: bq.groupSize, on: cmd)
+            }
+        } else {
+            qOut = qProj(xNorm, on: cmd)
+            kPre = kProj(xNorm, on: cmd)
+            vPre = vProj(xNorm, on: cmd)
+        }
         let queries: Tensor
         let gate: Tensor?
         if attnOutputGate {
             // Layout is [nHeads, 2 · headDim] — per head the first
             // `headDim` is the query, the next `headDim` the gate.
+            // ITER 22: use cached idx tensors.
             let q2 = qOut.reshaped(to: [nHeads, 2 * headDim])
-            queries = sliceHeadHalves35(
-                q2, nHeads: nHeads, headDim: headDim, takeFirst: true,
-                on: cmd, device: device)
-            gate = sliceHeadHalves35(
-                q2, nHeads: nHeads, headDim: headDim, takeFirst: false,
-                on: cmd, device: device)
+            let table = q2.reshaped(to: [nHeads * 2, headDim])
+            if queriesScratch == nil
+                || queriesScratch!.elementCount != nHeads * headDim
+                || queriesScratch!.dtype != qOut.dtype
+            {
+                queriesScratch = Tensor.empty(
+                    shape: [nHeads, headDim], dtype: qOut.dtype, device: device)
+                gateSliceScratch = Tensor.empty(
+                    shape: [nHeads, headDim], dtype: qOut.dtype, device: device)
+            }
+            // ITER 65: batched two-gather on shared encoder, saves
+            // 1 encoder begin/end pair per attn layer × 10 = ~170 µs/token.
+            Ops.gatherTwo(
+                table: table,
+                ids1: sliceFirstIdx!, into: queriesScratch!,
+                ids2: sliceSecondIdx!, into: gateSliceScratch!,
+                on: cmd)
+            queries = queriesScratch!.reshaped(to: [nHeads * headDim])
+            gate = gateSliceScratch!.reshaped(to: [nHeads * headDim])
         } else {
             queries = qOut
             gate = nil
         }
-        let k = kProj(xNorm, on: cmd)
-        let v = vProj(xNorm, on: cmd)
+        let k = kPre
+        let v = vPre
 
         // Per-head q_norm / k_norm (weighted RMSNorm over headDim).
-        let qNormed = Ops.rmsNormRows(
-            queries, weight: qNorm.weight, eps: qNorm.eps,
-            nRows: nHeads, rowSize: headDim, on: cmd)
-        let kNormed = Ops.rmsNormRows(
-            k, weight: kNorm.weight, eps: kNorm.eps,
-            nRows: nKVHeads, rowSize: headDim, on: cmd)
+        // ITER 12 + ITER 35: shared encoder + cached scratches.
+        if qNormedScratch == nil
+            || qNormedScratch!.elementCount != queries.elementCount
+            || qNormedScratch!.dtype != queries.dtype
+        {
+            qNormedScratch = Tensor.empty(
+                shape: queries.shape, dtype: queries.dtype, device: device)
+            kNormedScratch = Tensor.empty(
+                shape: k.shape, dtype: k.dtype, device: device)
+        }
+        let qNormed = qNormedScratch!
+        let kNormed = kNormedScratch!
+        Ops.rmsNormRowsTwo(
+            queries, weight: qNorm.weight, eps1: qNorm.eps,
+            nRows1: nHeads, rowSize1: headDim, into: qNormed,
+            k, weight: kNorm.weight, eps2: kNorm.eps,
+            nRows2: nKVHeads, rowSize2: headDim, into: kNormed,
+            on: cmd)
 
         // Partial RoPE — rotate only the first `rotaryDim` dims of each
-        // head, in place.
-        Ops.ropePartial(
-            qNormed, position: position,
-            headDim: headDim, rotaryDim: rotaryDim,
-            thetaBase: ropeTheta, on: cmd)
-        Ops.ropePartial(
-            kNormed, position: position,
+        // head, in place. ITER 21: q + k on shared encoder.
+        Ops.ropePartialTwo(
+            qNormed, kNormed, position: position,
             headDim: headDim, rotaryDim: rotaryDim,
             thetaBase: ropeTheta, on: cmd)
 
@@ -1587,16 +1779,60 @@ public final class Qwen35AttentionMixer: Module {
             vFlat: v.reshaped(to: [nKVHeads, headDim]), on: cmd)
 
         let (cacheK, cacheV) = kv.prepareForAttention(on: cmd)
-        let attnOut = Ops.sdpaDecode(
-            q: qNormed.reshaped(to: [nHeads, headDim]), k: cacheK, v: cacheV,
-            nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: kv.length, kvStride: kv.maxSeq,
-            scale: scale, on: cmd)
+        // ITER 43: cached sdpaDecode output + sigmoidMul output scratches.
+        if attnOutScratch == nil
+            || attnOutScratch!.elementCount != nHeads * headDim
+            || attnOutScratch!.dtype != qNormed.dtype
+        {
+            attnOutScratch = Tensor.empty(
+                shape: [nHeads, headDim], dtype: qNormed.dtype, device: device)
+            attnFlatGatedScratch = Tensor.empty(
+                shape: [nHeads * headDim], dtype: qNormed.dtype, device: device)
+        }
+        // ITER 53: Flash-Decoding 2-pass at long KV. Splits KV across
+        // `blocks` threadgroups in pass1, merges in pass2. Wins over
+        // single-pass when nKV ≥ ~1024 (default threshold); env var
+        // `FFAI_SDPA_2PASS_THRESHOLD` overrides.
+        let attnOut: Tensor
+        if kv.length >= sdpa2PassThreshold {
+            if partialOScratch == nil
+                || partialOScratch!.elementCount
+                    != nHeads * sdpa2PassBlocks * headDim
+                || partialOScratch!.dtype != qNormed.dtype
+            {
+                partialOScratch = Tensor.empty(
+                    shape: [nHeads, sdpa2PassBlocks, headDim],
+                    dtype: qNormed.dtype, device: device)
+                partialMScratch = Tensor.empty(
+                    shape: [nHeads, sdpa2PassBlocks], dtype: .f32, device: device)
+                partialLScratch = Tensor.empty(
+                    shape: [nHeads, sdpa2PassBlocks], dtype: .f32, device: device)
+            }
+            Ops.sdpaDecode2Pass(
+                q: qNormed.reshaped(to: [nHeads, headDim]), k: cacheK, v: cacheV,
+                nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
+                nKV: kv.length, kvStride: kv.maxSeq, blocks: sdpa2PassBlocks,
+                scale: scale,
+                partialO: partialOScratch!,
+                partialM: partialMScratch!,
+                partialL: partialLScratch!,
+                into: attnOutScratch!, on: cmd)
+            attnOut = attnOutScratch!
+        } else {
+            attnOut = Ops.sdpaDecode(
+                q: qNormed.reshaped(to: [nHeads, headDim]), k: cacheK, v: cacheV,
+                nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
+                nKV: kv.length, kvStride: kv.maxSeq,
+                scale: scale, on: cmd, into: attnOutScratch)
+        }
 
         // Gated output: attnOut * sigmoid(gate), then o_proj.
+        // ITER 11 + 40: fused sigmoidMul via mt_sigmoid_mul into cached
+        // scratch — saves 1 encoder per attn layer × 10 ≈ 170 µs/token.
         var attnFlat = attnOut.reshaped(to: [nHeads * headDim])
         if let gate {
-            attnFlat = Ops.mul(attnFlat, Ops.sigmoid(gate, on: cmd), on: cmd)
+            attnFlat = Ops.sigmoidMul(
+                attnFlat, gate, on: cmd, into: attnFlatGatedScratch)
         }
         return oProj(attnFlat, on: cmd)
     }
