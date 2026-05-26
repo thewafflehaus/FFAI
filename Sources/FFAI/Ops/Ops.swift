@@ -1044,6 +1044,134 @@ public enum Ops {
         enc.endEncoding()
     }
 
+    /// Batched per-row RoPE: applies position-dependent rotation to T
+    /// rows of `qk` in ONE dispatch. `positions` is a `[T]` u32 buffer
+    /// (per-row physical slot index). In-place rotation. Saves T-1
+    /// encoder begin/end pairs versus a per-row `ropePartial` T-loop;
+    /// at Qwen3.6-A3B prefill T=512 × 10 attn layers that's ≈ 5100
+    /// fewer dispatches per prefill call.
+    public static func ropePartialMany(
+        _ qk: Tensor, positions: Tensor,
+        t: Int, nHeads: Int,
+        headDim: Int, rotaryDim: Int,
+        rowStride: Int,
+        thetaBase: Float,
+        scaling: RoPEScaling = .none,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            positions.dtype == .u32,
+            "Ops.ropePartialMany: positions must be .u32")
+        precondition(
+            positions.elementCount == t,
+            "Ops.ropePartialMany: positions count must equal T")
+        precondition(
+            qk.elementCount == t * rowStride,
+            "Ops.ropePartialMany: qk size \(qk.elementCount) ≠ T·rowStride = \(t * rowStride)")
+        precondition(
+            rotaryDim > 0 && rotaryDim <= headDim && rotaryDim % 2 == 0,
+            "Ops.ropePartialMany: rotaryDim must be even and in 1...headDim")
+        let halfRotary = rotaryDim / 2
+        let psoName: String
+        switch qk.dtype {
+        case .f32: psoName = "ffai_rope_llama_many_f32"
+        case .f16: psoName = "ffai_rope_llama_many_f16"
+        case .bf16: psoName = "ffai_rope_llama_many_bf16"
+        default: fatalError("Ops.ropePartialMany: unsupported dtype \(qk.dtype)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        enc.setBuffer(qk.buffer, offset: qk.offset, index: 0)
+        enc.setBuffer(positions.buffer, offset: positions.offset, index: 1)
+        enc.setBuffer(qk.buffer, offset: qk.offset, index: 2)
+        var hd = UInt32(headDim)
+        var half = UInt32(halfRotary)
+        var stride = UInt32(rowStride)
+        var theta = thetaBase
+        var sf = scaling.scaleFactor
+        var lf = scaling.lowFreqFactor
+        var hf = scaling.highFreqFactor
+        var om = scaling.originalMaxPosition
+        enc.setBytes(&hd, length: 4, index: 3)
+        enc.setBytes(&half, length: 4, index: 4)
+        enc.setBytes(&stride, length: 4, index: 5)
+        enc.setBytes(&theta, length: 4, index: 6)
+        enc.setBytes(&sf, length: 4, index: 7)
+        enc.setBytes(&lf, length: 4, index: 8)
+        enc.setBytes(&hf, length: 4, index: 9)
+        enc.setBytes(&om, length: 4, index: 10)
+        let grid = MTLSize(width: t, height: nHeads, depth: halfRotary)
+        let tg = MTLSize(width: 1, height: 1, depth: 1)
+        enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        enc.endEncoding()
+    }
+
+    /// Pair of `ropePartialMany` calls (Q + K) sharing ONE compute
+    /// encoder. Both buffers consume the same `positions`, `headDim`,
+    /// `rotaryDim`, `thetaBase`, and `scaling`; only the per-buffer
+    /// `nHeads` × `rowStride` differs.
+    public static func ropePartialManyTwo(
+        q: Tensor, qNHeads: Int, qRowStride: Int,
+        k: Tensor, kNHeads: Int, kRowStride: Int,
+        positions: Tensor, t: Int,
+        headDim: Int, rotaryDim: Int,
+        thetaBase: Float,
+        scaling: RoPEScaling = .none,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(q.dtype == k.dtype, "Ops.ropePartialManyTwo: dtype mismatch")
+        precondition(
+            positions.dtype == .u32,
+            "Ops.ropePartialManyTwo: positions must be .u32")
+        precondition(
+            positions.elementCount == t,
+            "Ops.ropePartialManyTwo: positions count must equal T")
+        precondition(
+            rotaryDim > 0 && rotaryDim <= headDim && rotaryDim % 2 == 0,
+            "Ops.ropePartialManyTwo: rotaryDim must be even and in 1...headDim")
+        let halfRotary = rotaryDim / 2
+        let psoName: String
+        switch q.dtype {
+        case .f32: psoName = "ffai_rope_llama_many_f32"
+        case .f16: psoName = "ffai_rope_llama_many_f16"
+        case .bf16: psoName = "ffai_rope_llama_many_bf16"
+        default: fatalError("Ops.ropePartialManyTwo: unsupported dtype \(q.dtype)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        // Shared bindings: positions + constants set ONCE.
+        enc.setBuffer(positions.buffer, offset: positions.offset, index: 1)
+        var hd = UInt32(headDim)
+        var half = UInt32(halfRotary)
+        var theta = thetaBase
+        var sf = scaling.scaleFactor
+        var lf = scaling.lowFreqFactor
+        var hf = scaling.highFreqFactor
+        var om = scaling.originalMaxPosition
+        enc.setBytes(&hd, length: 4, index: 3)
+        enc.setBytes(&half, length: 4, index: 4)
+        enc.setBytes(&theta, length: 4, index: 6)
+        enc.setBytes(&sf, length: 4, index: 7)
+        enc.setBytes(&lf, length: 4, index: 8)
+        enc.setBytes(&hf, length: 4, index: 9)
+        enc.setBytes(&om, length: 4, index: 10)
+        let tg = MTLSize(width: 1, height: 1, depth: 1)
+        @inline(__always)
+        func dispatch(_ buf: Tensor, _ nHeads: Int, _ rowStride: Int) {
+            var stride = UInt32(rowStride)
+            enc.setBuffer(buf.buffer, offset: buf.offset, index: 0)
+            enc.setBuffer(buf.buffer, offset: buf.offset, index: 2)
+            enc.setBytes(&stride, length: 4, index: 5)
+            let grid = MTLSize(width: t, height: nHeads, depth: halfRotary)
+            enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        }
+        dispatch(q, qNHeads, qRowStride)
+        dispatch(k, kNHeads, kRowStride)
+        enc.endEncoding()
+    }
+
     /// YaRN RoPE parameters. `low` / `high` are the correction-range
     /// bounds — precomputed via `RoPEYaRN.from(...)` since they need a
     /// `floor`/`ceil`/`ln` computation that is constant across the
@@ -1960,6 +2088,79 @@ public enum Ops {
         }
     }
 
+    /// Batched depthwise causal conv1d + SiLU + cast-to-f32. Sweeps
+    /// `t` tokens in ONE dispatch with the conv state held in
+    /// per-channel registers across the sweep — `stateIn` is read
+    /// once at the top, `stateOut` is written once at the bottom.
+    /// Replaces the per-token `conv1dCausalStep` + `siluCastToF32`
+    /// T-loop in `Qwen35GDNMixer.forwardManyChunked`.
+    ///
+    /// `convKernel` must be 4 (Qwen3.5 / 3.6, Mamba 2, NemotronH all
+    /// use kernel=4; the kernel signature carries it as a constexpr
+    /// for shape uniformity but the body is K=4 hardcoded).
+    ///
+    /// State in-place safety: each grid thread owns one channel;
+    /// reads `stateIn[*, c]` once at the start of the sweep and
+    /// writes `stateOut[*, c]` once at the end. Passing the same
+    /// buffer for both is safe.
+    public static func conv1dCausalStepSiluCastMany(
+        src: Tensor, w: Tensor, b: Tensor,
+        stateIn: Tensor, outF32: Tensor, stateOut: Tensor,
+        t: Int, convDim: Int, convKernel: Int,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            convKernel == 4,
+            "Ops.conv1dCausalStepSiluCastMany: requires conv_kernel = 4")
+        precondition(
+            src.dtype == w.dtype && src.dtype == b.dtype
+                && src.dtype == stateIn.dtype && src.dtype == stateOut.dtype,
+            "Ops.conv1dCausalStepSiluCastMany: dtype mismatch")
+        precondition(
+            outF32.dtype == .f32,
+            "Ops.conv1dCausalStepSiluCastMany: outF32 must be .f32")
+        let grid = MTLSize(width: convDim, height: 1, depth: 1)
+        let tg = MTLSize(width: min(convDim, 256), height: 1, depth: 1)
+        let tLenU = UInt32(t)
+        let cdU = UInt32(convDim)
+        let ckU = UInt32(convKernel)
+        switch src.dtype {
+        case .f32:
+            MetalTileKernels.ffai_conv1d_causal_step_silu_cast_many_f32(
+                src: src.buffer, srcOffset: src.offset,
+                w: w.buffer, wOffset: w.offset,
+                b: b.buffer, bOffset: b.offset,
+                state_in: stateIn.buffer, state_inOffset: stateIn.offset,
+                out_f32: outF32.buffer, out_f32Offset: outF32.offset,
+                state_out: stateOut.buffer, state_outOffset: stateOut.offset,
+                t_len: tLenU, conv_dim: cdU, conv_kernel: ckU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.ffai_conv1d_causal_step_silu_cast_many_f16(
+                src: src.buffer, srcOffset: src.offset,
+                w: w.buffer, wOffset: w.offset,
+                b: b.buffer, bOffset: b.offset,
+                state_in: stateIn.buffer, state_inOffset: stateIn.offset,
+                out_f32: outF32.buffer, out_f32Offset: outF32.offset,
+                state_out: stateOut.buffer, state_outOffset: stateOut.offset,
+                t_len: tLenU, conv_dim: cdU, conv_kernel: ckU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.ffai_conv1d_causal_step_silu_cast_many_bf16(
+                src: src.buffer, srcOffset: src.offset,
+                w: w.buffer, wOffset: w.offset,
+                b: b.buffer, bOffset: b.offset,
+                state_in: stateIn.buffer, state_inOffset: stateIn.offset,
+                out_f32: outF32.buffer, out_f32Offset: outF32.offset,
+                state_out: stateOut.buffer, state_outOffset: stateOut.offset,
+                t_len: tLenU, conv_dim: cdU, conv_kernel: ckU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError(
+                "Ops.conv1dCausalStepSiluCastMany: unsupported dtype \(src.dtype)")
+        }
+    }
+
     /// Mamba 2 selective-scan single-token decode step. Updates the
     /// per-layer recurrent state `h` in place and writes the output
     /// channel vector `y`. `h` lives in fp32 (state accumulates over
@@ -2556,6 +2757,66 @@ public enum Ops {
             enc.setBytes(&headDimV, length: 4, index: 2)
             enc.setBytes(&maxSeqV, length: 4, index: 3)
             enc.setBytes(&positionV, length: 4, index: 4)
+            enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        }
+        dispatch(kSrc, kCache)
+        dispatch(vSrc, vCache)
+        enc.endEncoding()
+    }
+
+    /// Batched K + V cache append: writes T tokens' K rows AND V rows
+    /// into their respective caches in ONE shared encoder (2 batched
+    /// dispatches). Each per-token write goes to a slot indexed by
+    /// `positions[t]`. Replaces the per-token `kvCacheUpdateKV` loop
+    /// at `decodeMany` / `forwardMany` prefill — at T=512 × 10 attn
+    /// layers that's ≈ 5100 fewer dispatches per prefill call.
+    ///
+    /// Shapes:
+    ///   - `kSrc` / `vSrc`: `[T, nKVHeads, headDim]` (flat).
+    ///   - `kCache` / `vCache`: `[nKVHeads, maxSeq, headDim]`.
+    ///   - `positions`: `[T]` u32 slot indices into the caches.
+    public static func kvCacheUpdateKVMany(
+        kSrc: Tensor, kCache: Tensor,
+        vSrc: Tensor, vCache: Tensor,
+        positions: Tensor, t: Int,
+        nKVHeads: Int, headDim: Int, maxSeq: Int,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            kSrc.dtype == kCache.dtype && vSrc.dtype == vCache.dtype
+                && kSrc.dtype == vSrc.dtype,
+            "Ops.kvCacheUpdateKVMany: dtype mismatch")
+        precondition(
+            positions.dtype == .u32,
+            "Ops.kvCacheUpdateKVMany: positions must be .u32")
+        precondition(
+            positions.elementCount == t,
+            "Ops.kvCacheUpdateKVMany: positions count must equal T")
+        let elementsPerRow = nKVHeads * headDim
+        let total = t * elementsPerRow
+        let (grid, tg) = elementwiseGrid(total)
+        let psoName: String
+        switch kSrc.dtype {
+        case .f32: psoName = "kv_cache_update_many_f32"
+        case .f16: psoName = "kv_cache_update_many_f16"
+        case .bf16: psoName = "kv_cache_update_many_bf16"
+        default: fatalError("Ops.kvCacheUpdateKVMany: unsupported dtype \(kSrc.dtype)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        // Shared bindings: positions + scalars set ONCE.
+        enc.setBuffer(positions.buffer, offset: positions.offset, index: 1)
+        var hd = UInt32(headDim)
+        var ms = UInt32(maxSeq)
+        var nhd = UInt32(elementsPerRow)
+        enc.setBytes(&hd, length: 4, index: 3)
+        enc.setBytes(&ms, length: 4, index: 4)
+        enc.setBytes(&nhd, length: 4, index: 5)
+        @inline(__always)
+        func dispatch(_ src: Tensor, _ cache: Tensor) {
+            enc.setBuffer(src.buffer, offset: src.offset, index: 0)
+            enc.setBuffer(cache.buffer, offset: cache.offset, index: 2)
             enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
         }
         dispatch(kSrc, kCache)
@@ -4193,6 +4454,116 @@ public enum Ops {
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         default:
             fatalError("Ops.gatedDeltaPrepStep: unsupported dtype \(convOut.dtype)")
+        }
+    }
+
+    /// Chunked-prefill counterpart to `gatedDeltaPrepStep`. Runs the
+    /// fused GDN prep + recurrence over a contiguous range of tokens
+    /// in one dispatch instead of looping the single-token kernel,
+    /// keeping the per-head recurrent state in registers across the
+    /// chunk. `tLen` is a GPU-resident `[1]` u32 scalar so the host
+    /// can chain chunked dispatches without a CPU readback for the
+    /// chunk-size constant.
+    ///
+    /// Shape contract (all share dtype except `tLen`):
+    ///   - `convOut`   : `[batchSize, tLen, hv·dv]`
+    ///   - `aLog`      : `[hv]` per-head log-decay
+    ///   - `dtBias`    : `[hv]` per-head delta-t bias
+    ///   - `aRaw`/`bRaw` : `[batchSize, tLen, hv]` chunk gates
+    ///   - `qNormWeight` / `kNormWeight` : `[dk]` Q-norm / K-norm
+    ///     applied before the recurrence
+    ///   - `stateIn` / `stateOut` : `[batchSize, hv, dv, dk]` fp32
+    ///     recurrent state (read-once / write-once across the chunk)
+    ///   - `y`         : `[batchSize, tLen, hv·dv]` output activations
+    public static func gatedDeltaPrepChunk(
+        convOut: Tensor,
+        aLog: Tensor, dtBias: Tensor,
+        aRaw: Tensor, bRaw: Tensor,
+        qNormWeight: Tensor, kNormWeight: Tensor,
+        stateIn: Tensor, stateOut: Tensor, y: Tensor,
+        tLen: Tensor,
+        batchSize: Int, dk: Int, dv: Int, hv: Int, hk: Int,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            convOut.dtype == aLog.dtype && aLog.dtype == dtBias.dtype
+                && dtBias.dtype == aRaw.dtype && aRaw.dtype == bRaw.dtype
+                && bRaw.dtype == qNormWeight.dtype && qNormWeight.dtype == kNormWeight.dtype
+                && kNormWeight.dtype == stateIn.dtype && stateIn.dtype == stateOut.dtype
+                && stateOut.dtype == y.dtype,
+            "Ops.gatedDeltaPrepChunk: every tensor must share dtype")
+        precondition(
+            dk % 32 == 0,
+            "Ops.gatedDeltaPrepChunk: dk (\(dk)) must be a multiple of 32")
+        precondition(
+            dv % 32 == 0,
+            "Ops.gatedDeltaPrepChunk: dv (\(dv)) must be a multiple of 32")
+        precondition(
+            hv % hk == 0,
+            "Ops.gatedDeltaPrepChunk: hv (\(hv)) must be a multiple of hk (\(hk)) (GQA)")
+        precondition(
+            tLen.dtype == .u32 && tLen.elementCount == 1,
+            "Ops.gatedDeltaPrepChunk: tLen must be a [1] u32 scalar buffer")
+        // One simdgroup per (head, dv index) ; grid sweeps batch · hv
+        // along Y. Kernel walks tLen tokens internally.
+        let tgWidth = 32
+        let grid = MTLSize(
+            width: dv * tgWidth,
+            height: batchSize * hv,
+            depth: 1)
+        let tg = MTLSize(width: tgWidth, height: 1, depth: 1)
+        let dkU = UInt32(dk)
+        let dvU = UInt32(dv)
+        let hvU = UInt32(hv)
+        let hkU = UInt32(hk)
+        switch convOut.dtype {
+        case .f32:
+            MetalTileKernels.mt_gated_delta_prep_chunk_f32(
+                conv_out: convOut.buffer, conv_outOffset: convOut.offset,
+                a_log: aLog.buffer, a_logOffset: aLog.offset,
+                dt_bias: dtBias.buffer, dt_biasOffset: dtBias.offset,
+                a_raw: aRaw.buffer, a_rawOffset: aRaw.offset,
+                b_raw: bRaw.buffer, b_rawOffset: bRaw.offset,
+                q_norm_weight: qNormWeight.buffer, q_norm_weightOffset: qNormWeight.offset,
+                k_norm_weight: kNormWeight.buffer, k_norm_weightOffset: kNormWeight.offset,
+                state_in: stateIn.buffer, state_inOffset: stateIn.offset,
+                state_out: stateOut.buffer, state_outOffset: stateOut.offset,
+                y: y.buffer, yOffset: y.offset,
+                t_len: tLen.buffer, t_lenOffset: tLen.offset,
+                dk: dkU, dv: dvU, hv: hvU, hk: hkU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_gated_delta_prep_chunk_f16(
+                conv_out: convOut.buffer, conv_outOffset: convOut.offset,
+                a_log: aLog.buffer, a_logOffset: aLog.offset,
+                dt_bias: dtBias.buffer, dt_biasOffset: dtBias.offset,
+                a_raw: aRaw.buffer, a_rawOffset: aRaw.offset,
+                b_raw: bRaw.buffer, b_rawOffset: bRaw.offset,
+                q_norm_weight: qNormWeight.buffer, q_norm_weightOffset: qNormWeight.offset,
+                k_norm_weight: kNormWeight.buffer, k_norm_weightOffset: kNormWeight.offset,
+                state_in: stateIn.buffer, state_inOffset: stateIn.offset,
+                state_out: stateOut.buffer, state_outOffset: stateOut.offset,
+                y: y.buffer, yOffset: y.offset,
+                t_len: tLen.buffer, t_lenOffset: tLen.offset,
+                dk: dkU, dv: dvU, hv: hvU, hk: hkU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_gated_delta_prep_chunk_bf16(
+                conv_out: convOut.buffer, conv_outOffset: convOut.offset,
+                a_log: aLog.buffer, a_logOffset: aLog.offset,
+                dt_bias: dtBias.buffer, dt_biasOffset: dtBias.offset,
+                a_raw: aRaw.buffer, a_rawOffset: aRaw.offset,
+                b_raw: bRaw.buffer, b_rawOffset: bRaw.offset,
+                q_norm_weight: qNormWeight.buffer, q_norm_weightOffset: qNormWeight.offset,
+                k_norm_weight: kNormWeight.buffer, k_norm_weightOffset: kNormWeight.offset,
+                state_in: stateIn.buffer, state_inOffset: stateIn.offset,
+                state_out: stateOut.buffer, state_outOffset: stateOut.offset,
+                y: y.buffer, yOffset: y.offset,
+                t_len: tLen.buffer, t_lenOffset: tLen.offset,
+                dk: dkU, dv: dvU, hv: hvU, hk: hkU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.gatedDeltaPrepChunk: unsupported dtype \(convOut.dtype)")
         }
     }
 

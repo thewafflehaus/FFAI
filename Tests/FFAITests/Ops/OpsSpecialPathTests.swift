@@ -473,6 +473,49 @@ struct OpsSpecialPathTests {
 
     // MARK: - KV cache append
 
+    @Test("kvCacheUpdateKVMany f32 — writes T rows at the right positions")
+    func kvCacheUpdateKVManyF32() {
+        autoreleasepool {
+            let t = 2
+            let nKV = 2
+            let headDim = 4
+            let maxSeq = 4
+            let kSrc = Tensor.empty(shape: [t, nKV, headDim], dtype: .f32)
+            // Token 0: heads [1..4, 5..8]; token 1: heads [9..12, 13..16]
+            kSrc.copyIn(from: (0 ..< t * nKV * headDim).map { Float($0 + 1) })
+            let vSrc = Tensor.empty(shape: [t, nKV, headDim], dtype: .f32)
+            vSrc.copyIn(from: (0 ..< t * nKV * headDim).map { Float($0 + 1) * 10 })
+            let kCache = Tensor.empty(shape: [nKV, maxSeq, headDim], dtype: .f32)
+            kCache.zero()
+            let vCache = Tensor.empty(shape: [nKV, maxSeq, headDim], dtype: .f32)
+            vCache.zero()
+            let positions = Tensor.empty(shape: [t], dtype: .u32)
+            positions.copyIn(from: [UInt32(1), UInt32(2)])
+            runAndWait { cb in
+                Ops.kvCacheUpdateKVMany(
+                    kSrc: kSrc, kCache: kCache,
+                    vSrc: vSrc, vCache: vCache,
+                    positions: positions, t: t,
+                    nKVHeads: nKV, headDim: headDim, maxSeq: maxSeq, on: cb)
+            }
+            let kGot = kCache.toArray(as: Float.self)
+            // head 0 row 1 ← token0 head0 = [1,2,3,4]
+            #expect(Array(kGot[4 ..< 8]) == [1, 2, 3, 4])
+            // head 0 row 2 ← token1 head0 = [9,10,11,12]
+            #expect(Array(kGot[8 ..< 12]) == [9, 10, 11, 12])
+            // head 1 row 1 ← token0 head1 = [5,6,7,8]
+            #expect(Array(kGot[20 ..< 24]) == [5, 6, 7, 8])
+            // head 1 row 2 ← token1 head1 = [13,14,15,16]
+            #expect(Array(kGot[24 ..< 28]) == [13, 14, 15, 16])
+            // Untouched slots stay zero.
+            #expect(Array(kGot[0 ..< 4]) == [0, 0, 0, 0])
+            #expect(Array(kGot[12 ..< 16]) == [0, 0, 0, 0])
+            let vGot = vCache.toArray(as: Float.self)
+            #expect(Array(vGot[4 ..< 8]) == [10, 20, 30, 40])
+            #expect(Array(vGot[8 ..< 12]) == [90, 100, 110, 120])
+        }
+    }
+
     @Test("kvCacheUpdateKV f32 — appends K and V rows on one encoder")
     func kvCacheUpdateKVF32() {
         autoreleasepool {

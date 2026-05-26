@@ -149,6 +149,54 @@ struct OpsTests {
         }
     }
 
+    @Test("ropePartialMany f32 — T=3 matches three sequential ropePartial calls")
+    func ropePartialManyMatchesSequential() {
+        autoreleasepool {
+            let t = 3
+            let nHeads = 2
+            let headDim = 4
+            let rotaryDim = 2
+            let rowStride = nHeads * headDim
+            let total = t * rowStride
+            let data: [Float] = (0 ..< total).map { Float($0 + 1) * 0.1 }
+            // Reference: T sequential single-token rotations against
+            // T separate buffers (positions 0, 1, 2).
+            var refRows: [[Float]] = []
+            for tt in 0 ..< t {
+                let slice = Tensor.empty(shape: [nHeads, headDim], dtype: .f32)
+                slice.copyIn(from: Array(data[tt * rowStride ..< (tt + 1) * rowStride]))
+                runAndWait { cb in
+                    Ops.ropePartial(
+                        slice, position: tt, headDim: headDim, rotaryDim: rotaryDim,
+                        thetaBase: 10000, on: cb)
+                }
+                refRows.append(slice.toArray(as: Float.self))
+            }
+            // Batched: single dispatch with positions [0, 1, 2].
+            let qk = Tensor.empty(shape: [t, nHeads, headDim], dtype: .f32)
+            qk.copyIn(from: data)
+            let positions = Tensor.empty(shape: [t], dtype: .u32)
+            positions.copyIn(from: (0 ..< t).map { UInt32($0) })
+            runAndWait { cb in
+                Ops.ropePartialMany(
+                    qk, positions: positions,
+                    t: t, nHeads: nHeads,
+                    headDim: headDim, rotaryDim: rotaryDim,
+                    rowStride: rowStride,
+                    thetaBase: 10000, on: cb)
+            }
+            let got = qk.toArray(as: Float.self)
+            for tt in 0 ..< t {
+                let row = refRows[tt]
+                for i in 0 ..< rowStride {
+                    #expect(
+                        abs(got[tt * rowStride + i] - row[i]) < 1e-5,
+                        "t=\(tt) i=\(i): \(got[tt * rowStride + i]) vs \(row[i])")
+                }
+            }
+        }
+    }
+
     @Test("ropePartial f32 — rotaryDim == headDim matches full rope")
     func ropePartialFullEqualsRope() {
         autoreleasepool {
