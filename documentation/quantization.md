@@ -56,22 +56,7 @@ biases fp16 buffer        →  per-group bias (zero point)
                   per-(out_row, group) sum  →  reduce  →  output (1 × out)
 ```
 
-On 4-bit and 8-bit, the uint32-packed layout means each thread can fetch a packed word and emit `pack_factor` partial-products inside the inner loop — the kernel parallelizes over both rows and packs. On 3 / 5 / 6-bit, the unpack happens byte-by-byte; the **sub-group split** trick (one SIMD subgroup per pack within a row) was the Phase 4 wave-2 optimization that closed the gap to the uint32-aligned widths.
-
-## Performance
-
-Phase 4 perf table for Qwen 3 4B (M1 Max, single-stream decode, batch 1, ~32-token prompts):
-
-| Width | Phase 3 baseline | Phase 4 (wave 1) | Phase 4 (wave 2) | Speedup |
-|---|---|---|---|---|
-| bf16 | 5.0 tok/s | ~24 tok/s | 28.0 tok/s | 5.6× |
-| 8-bit | 4.7 tok/s | ~21 tok/s | 27.5 tok/s | 5.9× |
-| 6-bit | 4.2 tok/s | ~19 tok/s | 26.1 tok/s | 6.2× |
-| 5-bit | 4.0 tok/s | ~18 tok/s | 25.4 tok/s | 6.4× |
-| 4-bit | 5.0 tok/s | ~22 tok/s | 29.8 tok/s | 6.0× |
-| 3-bit | 3.6 tok/s | ~17 tok/s | 24.1 tok/s | 6.7× |
-
-See [performance.md](performance.md) for the full picture (Llama 3.2 1B + Qwen 3 4B across phases) and what each wave changed.
+On 4-bit and 8-bit, the uint32-packed layout means each thread can fetch a packed word and emit `pack_factor` partial-products inside the inner loop — the kernel parallelizes over both rows and packs. On 3 / 5 / 6-bit, the unpack happens byte-by-byte; the **sub-group split** trick (one SIMD subgroup per pack within a row) closes the gap to the uint32-aligned widths.
 
 ## Choosing a bit width
 
@@ -101,13 +86,14 @@ GPT-OSS-20B publishes its MoE experts **MXFP4**-quantized (Microscaling FP4 with
 
 ## What's not supported (yet)
 
-- **Native mxfp4 / nvfp4 inference** — FFAI transcodes GPT-OSS's MXFP4 experts to affine-int4 at load (see above). A native MXFP4-scale-layout decode kernel — keeping the FP8-block scales rather than transcoding — is not implemented.
-- **gguf** quantizations (`Q4_K_M`, `Q5_K_M`, `Q8_0`, …) — different binary layout, different per-block scales, different tensor naming. Planned for Phase 8+ if community demand justifies a per-arch name mapper.
-- **Mixed-bit per-layer** — config-driven per-layer bit budgets (`quantization_config` block). Planned alongside the Phase 9 autotuner.
+- **2-bit affine quantization** — the Ops-layer 2-bit affine quantize / dequantize wrappers exist (parity sweep across f32/f16/bf16) but the inference-side `dequant_gemv_2bit` kernel + loader path haven't landed. Tracked in [`planning/plan.md`](../planning/plan.md).
+- **GGUF** quantizations (`Q4_K_M`, `Q5_K_M`, `Q8_0`, …) — different binary layout, different per-block scales, different tensor naming. Planned: a per-arch name mapper alongside the GGUF reader. Not currently scheduled.
+- **Native mxfp4 / nvfp4 inference** — FFAI transcodes GPT-OSS's MXFP4 experts to affine-int4 at load (see above). A native MXFP4-scale-layout decode kernel — keeping the FP8-block scales rather than transcoding — is not implemented. `nvfp4` is not handled at all.
+- **Mixed-bit per-layer** — config-driven per-layer bit budgets (`quantization_config` block). Planned alongside the autotuner.
 
 ## See also
 
 - [Models](models.md) — checkpoints regression-swept per family.
-- [Performance](performance.md) — full perf numbers and the Phase 4 wave-by-wave breakdown.
+- [Performance](performance.md) — current `tok/s` baseline and the perf history.
 - [KV cache](kv-cache.md) — runtime quantization of the attention K/V (a different axis).
 - [Architecture](architecture.md) — where dequant-gemv sits in the per-token dispatch loop.

@@ -115,7 +115,7 @@ public final class <Family>Model: LanguageModel, @unchecked Sendable {
 
 Key invariants the implementation must preserve:
 
-1. **One `MTLCommandBuffer` per token.** Open it at the start of `forward` / `forwardSample`, commit + wait at the end. No mid-token sync.
+1. **One `MTLCommandBuffer` per decode token.** Open it at the start of `forward` / `forwardSample`, commit + wait at the end. No mid-token sync. The cost is a single 4-byte CPU↔GPU crossing per token (the sampled token id) and it lines up with Apple's recommended dispatch granularity for autoregressive single-stream decode. Prefill follows the same one-cmdbuf-per-call shape via `forwardMulti(tokenIds:startingAt:…)` so a long prompt is a handful of dispatches rather than thousands. Multi-token-per-cmdbuf batching is *not* a goal for plain decode — it only pays off where there's other work to fuse alongside it, which is exactly the case for speculative decoding and chunked-prefill verification (see [`planning/plan.md`](../../planning/plan.md) Phase 8 / 8.14).
 2. **No CPU readback inside the forward pass.** `forwardSample` returns a sampled token id; `forward` returns logits but does the readback at the end, not mid-layer.
 3. **Per-tensor MTLBuffers, allocated once at load.** Weights are immutable. Activations come from `BufferPool`.
 4. **Capability-gated loading.** If the family supports `.imageIn` etc., skip those weights when the user didn't enable the capability.

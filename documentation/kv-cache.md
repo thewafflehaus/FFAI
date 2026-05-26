@@ -6,13 +6,13 @@ The KV cache holds per-layer K and V tensors so subsequent decode steps don't re
 
 | Algorithm | When to use | Memory ratio | Status |
 |---|---|---|---|
-| **Raw fp16 / bf16** (`KVCache`, default) | All current models. | 1× | ✅ Shipped (Phase 2). |
-| **`affine8`** (`AffineQuantizedKVCache`, 8-bit) | Memory-constrained; ~7% decode-tok/s tax. | ~0.55× (45% smaller) measured on Qwen3 1.7B | ✅ Shipped (Phase 5c). |
-| **`affine4`** (`AffineQuantizedKVCache`, 4-bit) | Tight memory; same speed as `affine8`. | ~0.31× (69% smaller, group_size=32) | ✅ Shipped (Phase 5c). |
-| **AURA** (Adaptive Unified Rotated Activations, `AURAQuantizedKVCache`) | Best memory ratio at minimal quality loss. | ~6–8× at `aura4v2` | ✅ Shipped (Phase 5d — per-layer SRHT rotation; decodes coherently across `aura4v4` / `aura4v2` / `aura8v4` / `aura8v8`). See [`papers/aura-compression-algorithm.md`](../papers/aura-compression-algorithm.md). |
+| **Raw fp16 / bf16** (`KVCache`, default) | All current models. | 1× | ✅ Shipped. |
+| **`affine8`** (`AffineQuantizedKVCache`, 8-bit) | Memory-constrained; ~7% decode-tok/s tax. | ~0.55× (45% smaller) measured on Qwen3 1.7B | ✅ Shipped. |
+| **`affine4`** (`AffineQuantizedKVCache`, 4-bit) | Tight memory; same speed as `affine8`. | ~0.31× (69% smaller, group_size=32) | ✅ Shipped. |
+| **AURA** (Adaptive Unified Rotated Activations, `AURAQuantizedKVCache`) | Best memory ratio at minimal quality loss. | ~6–8× at `aura4v2` | ✅ Shipped — per-layer SRHT rotation; decodes coherently across `aura4v4` / `aura4v2` / `aura8v4` / `aura8v8`. See [`papers/aura-compression-algorithm.md`](../papers/aura-compression-algorithm.md). |
 | **Sliding window / FIFO eviction** (`.window(maxSize:keep:)`) | Long-running streams; capped memory regardless of context length. | Caps each layer's KV at `maxSize` positions independent of model `max_position_embeddings`. | ✅ Shipped — composes with every cache scheme above. |
-| **SSM / Hybrid** (`Mamba2LayerCache` / `GDNStateCache` / …) | Mamba / GatedDeltaNet families (Qwen 3.5, NemotronH, Jamba, Granite4, FalconH1) | n/a — stores recurrent + conv state | ✅ Shipped (Phase 5e). |
-| **Batched** | Multi-stream decode (speculative, B>1 serving) | linear in B | ⏳ Planned (Phase 8). |
+| **SSM / Hybrid** (`Mamba2LayerCache` / `GDNStateCache` / …) | Mamba / GatedDeltaNet families (Qwen 3.5, NemotronH, Jamba, Granite4, FalconH1) | n/a — stores recurrent + conv state | ✅ Shipped. |
+| **Batched** | Multi-stream decode (speculative, B>1 serving) | linear in B | 🚧 planned — see [`planning/plan.md`](../planning/plan.md) for the batched cache + speculative-decode work. |
 
 Every attention-cache scheme (raw, `affine8`, `affine4`, AURA — and any of them under sliding-window eviction) is exercised by the `ModelKVCacheMatrixIntegrationTests` cross-product; the recurrent SSM/GDN caches ride the hybrid families' integration tests.
 
@@ -78,12 +78,12 @@ Per attention layer the cache holds three packed buffers per K (and V): `kWeight
 | Scheme | Default `groupSize` | Why |
 |---|---|---|
 | `affine8` | 64 | Plenty of precision per group; matches mlx-format weight-quant convention. |
-| `affine4` | **32** | 4 bits per element ÷ a wider group loses too much discriminative power on K/V — decode degenerates into repetition at group_size=64. AURA-style rotation (Phase 5d) would let larger groups work. |
+| `affine4` | **32** | 4 bits per element ÷ a wider group loses too much discriminative power on K/V — decode degenerates into repetition at group_size=64. AURA-style rotation lets larger groups work; that's the AURA cache. |
 
 ### Affine follow-ups
 
 - **`affine6` variant** — byte-packed sub-byte storage (mirror the existing `dequant_gather_int6` pattern). Memory between `affine4` and `affine8`.
-- **Fused dequant-into-SDPA** — today each attention step pays one extra dequant kernel dispatch. A fused `bulk_dequant + sdpa_decode` kernel removes the working-buffer materialisation. Part of the Phase 6.3 AURA-performance pass.
+- **Fused dequant-into-SDPA** — today each attention step pays one extra dequant kernel dispatch. A fused `bulk_dequant + sdpa_decode` kernel removes the working-buffer materialisation. Tracked alongside the AURA-performance work in [`planning/plan.md`](../planning/plan.md).
 
 ## Sliding window / FIFO eviction
 
@@ -156,13 +156,12 @@ func respond(_ prompt: String, position: inout Int) -> String {
 
 From [`planning/plan.md`](../planning/plan.md):
 
-- **AURA performance (Phase 6.3)** — compressed-domain attention (`aura_flash_p1` / `aura_flash_pass2`) as the *default* decode path, dropping the persistent dequant working-buffer; two independent K/V codecs; two-phase prefill. Perf only — AURA correctness ships today.
-- **Compressed-domain prefix KV cache (Phase 8.3)** — reuse the AURA encode at snapshot time for cross-request prefix caching.
-- **Batched / hybrid batched cache (Phase 8.4)** — `BatchedKVCache`
-  + `BatchedHybridCache` (slot-based admission) for speculative decoding and multi-stream / continuous-batch serving.
+- **AURA performance** — compressed-domain attention (`aura_flash_p1` / `aura_flash_pass2`) as the *default* decode path, dropping the persistent dequant working-buffer; two independent K/V codecs; two-phase prefill. Perf only — AURA correctness ships today.
+- **Compressed-domain prefix KV cache** — reuse the AURA encode at snapshot time for cross-request prefix caching.
+- **Batched / hybrid batched cache** — `BatchedKVCache` + `BatchedHybridCache` (slot-based admission) for speculative decoding and multi-stream / continuous-batch serving.
 
 ## See also
 
 - [Architecture](architecture.md) — where the cache sits in the per-token dispatch loop.
-- [Performance](performance.md) — current `tok/s` numbers, including what `kv_cache_update` (Phase 4 wave 1) bought us vs the original CPU-memcpy append.
+- [Performance](performance.md) — current `tok/s` numbers, including what `kv_cache_update` bought us vs the original CPU-memcpy append.
 - [Quantization](quantization.md) — weight quantization (a different axis from KV cache compression).
