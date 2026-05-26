@@ -21,6 +21,18 @@ help: ## show this help
 setup: ## one-time dev environment setup (toolchains, deps, first build)
 	./scripts/setup-dev.sh
 
+# ─── Git hooks ────────────────────────────────────────────────────────
+# `core.hooksPath = scripts/hooks` is per-clone — every contributor runs
+# `make install-hooks` once after cloning. The hooks themselves are
+# version-controlled under scripts/hooks/ so updates propagate via pull.
+.PHONY: install-hooks
+install-hooks: ## set core.hooksPath -> scripts/hooks (pre-commit / commit-msg / pre-push)
+	./scripts/install-hooks.sh
+
+.PHONY: uninstall-hooks
+uninstall-hooks: ## clear core.hooksPath (disables the in-tree hooks)
+	git config --unset core.hooksPath && echo "✓ Uninstalled hooks"
+
 # ─── Build ────────────────────────────────────────────────────────────
 .PHONY: build
 build: regenerate-kernels ## swift build (debug)
@@ -47,9 +59,6 @@ regenerate-kernels: ## run `tile build --emit` to regenerate metallib + Swift wr
 	@#   $(KERNEL_OUT)/Resources/manifest.json            IR descriptor
 	@#   $(KERNEL_OUT)/Generated/MetalTileKernels.swift   dispatch wrappers
 	@#
-	@# History: `tile emit` was a separate subcommand until metaltile
-	@# PR #169 (2026-05-24) folded it back into `tile build --emit` so
-	@# the build pipeline owns codegen.
 	cd $(METALTILE_DIR) && cargo run --release \
 	  --bin tile -- build --emit all --out $(KERNEL_OUT)
 

@@ -1,6 +1,6 @@
 name: Commit hygiene
 
-# Run .github/scripts/commit_hygiene.py against every commit in the PR
+# Run scripts/commit_hygiene.py against every commit in the PR
 # range. Guards AI-attribution pollution — `Co-Authored-By:` /
 # `Generated-by:` trailers, `🤖 Generated with <tool>` footers, etc.
 # Bare mentions are fine; only attribution credit is rejected. See the
@@ -37,4 +37,4 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           REPO: ${{ github.repository }}
-        run: python3 .github/scripts/commit_hygiene.py
+        run: python3 scripts/commit_hygiene.py
