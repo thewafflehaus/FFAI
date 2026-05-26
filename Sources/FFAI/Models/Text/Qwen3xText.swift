@@ -1,15 +1,24 @@
-// Qwen 3.5 / Qwen 3.6 family — the "Qwen3x" hybrid architecture.
+// Qwen 3.5 / Qwen 3.6 text — concrete variants + the hybrid decoder
+// for the "Qwen3x" architecture (Qwen 3.5 + Qwen 3.6 share it).
+//
+// The family enum (`enum Qwen35`), variant protocol (`Qwen35Variant`),
+// and unified error type (`Qwen35Error`) live in `Models/Qwen35.swift`
+// (the family root / main interface). The Qwen 3.6 anchor lives in
+// `Models/Qwen36.swift` and reuses the same types. This file holds the
+// text-only impl:
+//
+//   • `Qwen35Hybrid` — the single variant (dense-vs-MoE is decided per
+//     checkpoint from `num_experts` inside `loadModel`),
+//   • `Qwen35Model` — the full LanguageModel decoder.
 //
 // This file is named `Qwen3xText.swift` rather than `Qwen35Text.swift`
 // because the same architecture covers both the Qwen 3.5 line (where
 // the design was introduced) and the Qwen 3.6 line (which kept the
 // `qwen3_5*` model_type strings and adds quantized embeddings + larger
-// MoE checkpoints). Both `Models/Qwen35.swift` (the Qwen3-VL-MoE
-// orchestrator) and `Models/Qwen36.swift` (the Qwen 3.6 root anchor)
-// reference the types defined here. The type names retain the
-// `Qwen35*` prefix because the architecture WAS introduced in Qwen
-// 3.5; renaming to `Qwen3X*` would churn every loader, test, and model
-// accessor for purely cosmetic gain.
+// MoE checkpoints). The type names retain the `Qwen35*` prefix because
+// the architecture WAS introduced in Qwen 3.5; renaming to `Qwen3X*`
+// would churn every loader, test, and model accessor for purely
+// cosmetic gain.
 //
 // The architecture is a *stack-interleaved hybrid* that alternates a
 // Gated Delta Net (GDN) recurrent mixer with full multi-head attention.
@@ -100,48 +109,6 @@
 
 import Foundation
 import Metal
-
-// ─── Family entry point ──────────────────────────────────────────────
-
-public enum Qwen35 {
-    public static let modelTypes: Set<String> = [
-        "qwen3_5", "qwen3_5_text", "qwen3_5_moe", "qwen3_5_moe_text",
-    ]
-    public static let architectures: Set<String> = [
-        "Qwen3_5ForConditionalGeneration", "Qwen3_5ForCausalLM",
-        "Qwen3_5MoeForConditionalGeneration", "Qwen3_5MoeForCausalLM",
-    ]
-
-    public static func variant(for _: ModelConfig) throws -> any Qwen35Variant.Type {
-        // A single variant covers all three forms — dense vs MoE is
-        // decided per-checkpoint from `num_experts` inside `loadModel`.
-        return Qwen35Hybrid.self
-    }
-}
-
-public protocol Qwen35Variant {
-    static var availableCapabilities: Set<Capability> { get }
-    static var defaultGenerationParameters: GenerationParameters { get }
-    static func loadModel(
-        config: ModelConfig,
-        weights: SafeTensorsBundle,
-        options: LoadOptions,
-        device: Device
-    ) throws -> Qwen35Model
-}
-
-public enum Qwen35Error: Error, CustomStringConvertible {
-    case missingConfig(String)
-    case unsupportedConfig(String)
-    public var description: String {
-        switch self {
-        case .missingConfig(let f):
-            return "Qwen3.5: required config field missing: \(f)"
-        case .unsupportedConfig(let m):
-            return "Qwen3.5: unsupported config: \(m)"
-        }
-    }
-}
 
 // ─── Layer kind ──────────────────────────────────────────────────────
 

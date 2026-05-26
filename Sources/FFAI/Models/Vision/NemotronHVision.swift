@@ -1,9 +1,12 @@
-// Nemotron-VLM — vision tower internals.
+// Nemotron-VLM — vision tower internals + family orchestrator.
 //
 // The multi-modal projector, composed encoder, and helper types for
-// Nemotron Nano VL live here. The family orchestrator (load entrypoint,
-// `NemotronVLError`, `NemotronVL` with constants and `load()`) lives in
-// `Models/NemotronH.swift`.
+// Nemotron Nano VL live here, alongside the Nemotron Nano VL
+// vision-language orchestrator (`enum NemotronVL`) — which ties the
+// NemotronH hybrid text backbone to this vision tower. The family
+// entry-point (`enum NemotronH`, `NemotronHVariant`, the unified
+// `NemotronHError`) lives in `Models/Nemotron.swift` — `NemotronVL.load`
+// raises the same unified `NemotronHError` as the text path.
 //
 // Coherence-first port: the vision tower's bidirectional attention runs
 // on the CPU (the shared `VisionEncoder` already does this — vision
@@ -30,7 +33,7 @@ func nemotronVLLoadVisionEncoder(
           let nLayers = config.int("num_hidden_layers"),
           let nHeads = config.int("num_attention_heads")
     else {
-        throw NemotronVLError.missingConfig
+        throw NemotronHError.missingConfig("vision_config")
     }
     let eps = Float(config.float("layer_norm_eps") ?? 1e-6)
     let encConfig = VisionEncoderConfig(
@@ -113,7 +116,7 @@ public final class NemotronVLProjector: @unchecked Sendable {
         weights: SafeTensorsBundle, device: Device
     ) throws -> NemotronVLProjector {
         guard let visionHidden = visionConfig.int("hidden_size") else {
-            throw NemotronVLError.missingConfig
+            throw NemotronHError.missingConfig("vision_config")
         }
         // The projector is namespaced under `multi_modal_projector.`
         // (the HF convention) — probe both possible prefixes.
@@ -208,5 +211,76 @@ final class NemotronVLComposedEncoder: VisionEncoder {
     override func encode(image: Tensor, device: Device = .shared) -> Tensor {
         let raw = tower.encoder.encode(image: image, device: device)
         return tower.projector.project(encoderTokens: raw, device: device)
+    }
+}
+
+// ─── NemotronVL — vision-language family orchestrator ────────────────
+//
+// Composes the ViT vision tower + multi-modal projector above with the
+// NemotronH hybrid text backbone (`NemotronHHybrid` in
+// `Models/Text/NemotronHText.swift`) for Nemotron Nano VL checkpoints.
+// The VL checkpoints actually carry `text_config.model_type =
+// nemotron_h` and the registry routes them via the vision-config sniff
+// — there's no distinct `model_type` for NemotronVL.
+
+public enum NemotronVL {
+    /// `model_type` labels this orchestrator recognises (the VL
+    /// checkpoints actually carry `text_config.model_type = nemotron_h`
+    /// — the union here is mostly for documentation / future
+    /// dispatch flexibility).
+    public static let modelTypes: Set<String> = []
+
+    /// `image_token_id` fallback for Nemotron Nano VL checkpoints.
+    public static let defaultImageTokenId = 131_072
+
+    /// Build a `VisionModel` from a Nemotron Nano VL checkpoint: the ViT
+    /// vision tower + multi-modal projector + the NemotronH hybrid text
+    /// backbone, joined by the cross-modal splice.
+    public static func load(
+        config: ModelConfig, weights: SafeTensorsBundle,
+        options: LoadOptions, device: Device
+    ) throws -> VisionModel {
+        guard let visionConfig = config.subConfig("vision_config"),
+              let textConfigRaw = config.nested("text_config")
+        else {
+            throw NemotronHError.missingConfig("vision_config")
+        }
+
+        // ── Text backbone — NemotronH hybrid engine ──
+        // The standalone `NemotronHHybrid` loader reads top-level config
+        // keys, so re-wrap the `text_config` sub-tree as a flat
+        // `ModelConfig`.
+        let textConfig = ModelConfig(
+            architecture: "NemotronHForCausalLM",
+            modelType: "nemotron_h",
+            raw: textConfigRaw)
+        let textWeights = weights.prefixed("language_model.")
+        let textEngine = try NemotronHHybrid.loadModel(
+            config: textConfig, weights: textWeights,
+            options: options, device: device)
+
+        // ── ViT vision tower ──
+        // The vision weights are namespaced under `vision_model.` (the
+        // C-RADIO / SigLIP encoder); load straight into the shared
+        // `VisionEncoder` core.
+        let visionEncoder = try nemotronVLLoadVisionEncoder(
+            config: visionConfig, weights: weights, device: device)
+
+        // ── Multi-modal projector ──
+        let projector = try NemotronVLProjector.load(
+            visionConfig: visionConfig, textHidden: textEngine.hidden,
+            weights: weights, device: device)
+
+        let composedTower = NemotronVLVisionTower(
+            encoder: visionEncoder, projector: projector,
+            textHidden: textEngine.hidden, dtype: textEngine.dtype)
+
+        let imageTokenId = config.int("image_token_id")
+            ?? config.int("image_token_index") ?? defaultImageTokenId
+        return try VisionModel(
+            visionEncoder: composedTower.asVisionEncoder(),
+            engine: textEngine, imageTokenId: imageTokenId,
+            normalization: .siglip,
+            imageTokenCount: visionEncoder.config.numPatches)
     }
 }

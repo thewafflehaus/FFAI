@@ -1,144 +1,78 @@
-// Qwen 3 family root — covers Qwen 3 dense text + Qwen 3-VL.
+// Qwen 3 family root — Alibaba's Qwen 3 line.
 //
-// Sibling files for later lineage:
-//   - Models/Qwen35.swift     — Qwen 3.5 root (Qwen3-VL-MoE orchestrator
-//                                + the Qwen3x hybrid backbone reference).
-//   - Models/Qwen36.swift     — Qwen 3.6 root (same Qwen3x backbone as
-//                                Qwen 3.5; thin doc anchor for now).
-//   - Models/Text/Qwen3Text.swift   — Qwen 3 dense text decoder.
-//   - Models/Text/Qwen3xText.swift  — Qwen 3.5 / 3.6 stack-interleaved
-//                                      GDN + attention hybrid; one set
-//                                      of types covers both releases.
-//   - Models/Vision/Qwen3Vision.swift — shared ViT tower used by both
-//                                        the Qwen3-VL dense wrapper
-//                                        below AND the Qwen3-VL-MoE
-//                                        wrapper in Models/Qwen35.swift.
+// This file is the **main model interface** for the family:
+//   • the family enum `Qwen3` (modelTypes, architectures, variant
+//     dispatch),
+//   • the `Qwen3Variant` protocol every concrete variant conforms to,
+//   • the unified `Qwen3Error` type every loader / decode site raises
+//     (covers both the text and Qwen3-VL paths).
 //
-// This file orchestrates **Qwen 3-VL** — Alibaba's Qwen3-VL
-// vision-language model (the `Qwen3VLForConditionalGeneration`
-// checkpoints).
+// Concrete variants + the dense decoder + per-layer impl live under
+// `Models/Text/Qwen3Text.swift`:
+//   - `Qwen3Dense` — the dense Qwen 3 transformer with per-head q_norm /
+//     k_norm. Future variants (Qwen 3.5 hybrid / MoE, Qwen 3.5-Omni)
+//     plug in here by adding a struct + a `Qwen3.variant(for:)` arm.
+//   - `Qwen3Layer`, `Qwen3Model` — per-layer + full-model impl.
 //
-// Composition:
-//   • Qwen 3-VL vision tower — a dynamic-resolution ViT that, unlike the
-//     Qwen 2.5-VL tower, uses:
-//       – patch-embed via a flattened Conv3d (each input patch is a
-//         `in_ch · temporalPatch · patch · patch` row, projected by a
-//         single GEMM),
-//       – LayerNorm (not RMSNorm) pre-norms,
-//       – a learned, bilinearly-interpolated position embedding looked
-//         up from a `[numPositionEmbeddings, hidden]` table,
-//       – 2D rotary position embedding (M-RoPE) over the patch grid,
-//       – full bidirectional attention on every block (no windowing —
-//         Qwen3-VL dropped the windowed-attention schedule),
-//       – a GELU-MLP feed-forward (`linear_fc1` / `linear_fc2`), not the
-//         Qwen 2.5-VL SwiGLU,
-//       – a patch-merger that pools each `mergeSize × mergeSize`
-//         neighbourhood and projects into the text hidden dim.
-//   • Qwen 3 text backbone — the existing `Qwen3Model` dense engine,
-//     loaded from the `language_model.`-prefixed sub-tree (Qwen3-VL
-//     stores text weights under `language_model.model.*` /
-//     `language_model.lm_head.*`).
-//
-// The two are joined by `VisionModel`'s cross-modal token splice: each
-// `<|image_pad|>` placeholder (`image_token_id`) in the prompt takes one
-// of the merged vision tokens.
-//
-// Coherence-first port: the vision tower's attention + M-RoPE run on the
-// CPU (vision token counts are at most a few thousand, so an O(n²·d)
-// attention is cheap next to the GPU projection GEMMs and is
-// unambiguously correct). The text M-RoPE — Qwen's 3D position scheme —
-// is approximated by `VisionModel`'s sequential scalar positions; the splice
-// itself is exact. The Qwen3-VL `deepstack` feature (injecting
-// intermediate vision features into the text stack) is omitted in this
-// coherence-first port — only the final merged tokens are spliced. A
-// head-dim-agnostic GPU vision SDPA, true text M-RoPE, and deepstack are
-// later performance / fidelity passes.
-//
-// The vision tower internals live in `Models/Vision/Qwen3Vision.swift` —
-// this file is the family orchestrator (load entrypoint + the
-// `<|image_pad|>` / `<|video_pad|>` token ids the splice needs).
+// The Qwen 3-VL vision-language orchestrator (`enum Qwen3VL`) — which
+// ties the Qwen 3 text backbone to the Qwen 3-VL ViT vision tower —
+// lives in `Models/Vision/Qwen3Vision.swift` alongside the tower
+// internals.
 
 import Foundation
-import Metal
 
-public enum Qwen3VLError: Error, CustomStringConvertible {
+// ─── Family entry point ──────────────────────────────────────────────
+
+public enum Qwen3 {
+    /// HuggingFace `model_type` strings this family handles. Qwen 3-VL
+    /// ships only as an architecture string (no distinct model_type).
+    public static let modelTypes: Set<String> = ["qwen3"]
+    /// HuggingFace `architectures[0]` strings this family handles —
+    /// the union of the dense text path and the Qwen 3-VL path.
+    public static let architectures: Set<String> = [
+        "Qwen3ForCausalLM", "Qwen3VLForConditionalGeneration",
+    ]
+
+    /// Pick the concrete variant for a config. Only `Qwen3Dense` ships
+    /// today; future variants dispatch here.
+    public static func variant(for config: ModelConfig) throws -> any Qwen3Variant.Type {
+        _ = config
+        return Qwen3Dense.self
+    }
+}
+
+// ─── Variant protocol ────────────────────────────────────────────────
+
+public protocol Qwen3Variant {
+    static var availableCapabilities: Set<Capability> { get }
+    /// Generation defaults for this variant. The user can override any
+    /// field; absent overrides fall back to the values declared here.
+    /// See planning/roadmap.md for which fields are honored today vs
+    /// staged for planned (sampling kernels).
+    static var defaultGenerationParameters: GenerationParameters { get }
+    static func loadModel(
+        config: ModelConfig,
+        weights: SafeTensorsBundle,
+        options: LoadOptions,
+        device: Device
+    ) throws -> Qwen3Model
+}
+
+// ─── Errors ──────────────────────────────────────────────────────────
+
+/// Unified Qwen 3 family error — raised by both the text loaders
+/// (`Qwen3Dense.loadModel`) and the Qwen 3-VL orchestrator (`Qwen3VL.load`
+/// in `Models/Vision/Qwen3Vision.swift`).
+public enum Qwen3Error: Error, CustomStringConvertible {
     case missingConfig
     case missingTensor(String)
 
     public var description: String {
         switch self {
         case .missingConfig:
-            return "Qwen3VL: checkpoint config is missing required fields"
+            return "Qwen3: required config field missing"
         case .missingTensor(let name):
-            return "Qwen3VL: checkpoint is missing tensor '\(name)'"
+            return "Qwen3: checkpoint is missing tensor '\(name)'"
         }
-    }
-}
-
-public enum Qwen3VL {
-    /// `image_token_id` default for Qwen 3-VL checkpoints.
-    public static let defaultImageTokenId = 151_655
-    /// `video_token_id` default for Qwen 3-VL checkpoints
-    /// (`<|video_pad|>` — same id as Qwen 2.5-VL and Qwen 2-VL).
-    public static let defaultVideoTokenId = 151_656
-
-    /// Capabilities a Qwen 3-VL checkpoint declares to the loader.
-    /// Text + image + video — the vision tower's Conv3d patch embed and
-    /// temporal-patch unfold handle both single-image and multi-frame
-    /// video paths.
-    public static let availableCapabilities: Set<Capability> =
-        Capability.textOnly.union([.visionIn, .videoIn])
-
-    /// Build a `VisionModel` from a `Qwen3VLForConditionalGeneration`
-    /// checkpoint: the dynamic-resolution vision tower + the Qwen 3
-    /// text backbone, joined by the cross-modal splice.
-    public static func load(
-        config: ModelConfig, weights: SafeTensorsBundle,
-        options: LoadOptions, device: Device
-    ) throws -> VisionModel {
-        guard let visionConfig = config.subConfig("vision_config"),
-              let textConfigRaw = config.nested("text_config")
-        else {
-            throw Qwen3VLError.missingConfig
-        }
-
-        // ── Text backbone — Qwen 3 dense engine ──
-        // Qwen3-VL stores text hyper-parameters under `text_config`; the
-        // standalone `Qwen3Dense` loader reads top-level config keys, so
-        // re-wrap the `text_config` sub-tree as a flat `ModelConfig`.
-        let textConfig = ModelConfig(
-            architecture: "Qwen3ForCausalLM",
-            modelType: "qwen3",
-            raw: textConfigRaw)
-        let textWeights = weights.prefixed("language_model.")
-        let textEngine = try Qwen3Dense.loadModel(
-            config: textConfig, weights: textWeights,
-            options: options, device: device)
-
-        // ── Vision tower ──
-        // Vision weights live under `vision_tower.*` on the current
-        // mlx-community Qwen3-VL conversion (e.g. `vision_tower.patch_embed.
-        // proj.weight`, `vision_tower.merger.*`). Older preview snapshots
-        // used `model.visual.*`; fall back to that prefix when the new
-        // one isn't present so both naming conventions load.
-        let visionWeights: SafeTensorsBundle = {
-            if weights.has("vision_tower.patch_embed.proj.weight") {
-                return weights.prefixed("vision_tower.")
-            }
-            return weights.prefixed("model.visual.")
-        }()
-        let vision = try Qwen3VLVisionModel.load(
-            visionConfig: visionConfig, textHidden: textEngine.hidden,
-            weights: visionWeights, dtype: textEngine.dtype, device: device)
-
-        let imageTokenId = config.int("image_token_id")
-            ?? config.int("image_token_index") ?? defaultImageTokenId
-        let videoTokenId = config.int("video_token_id") ?? defaultVideoTokenId
-        return try VisionModel(
-            visionEncoder: vision.asVisionEncoder(),
-            engine: textEngine, imageTokenId: imageTokenId,
-            videoTokenId: videoTokenId,
-            normalization: .clip,
-            imageTokenCount: vision.mergedTokenCount)
     }
 }
