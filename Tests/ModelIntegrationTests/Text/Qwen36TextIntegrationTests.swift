@@ -1,11 +1,12 @@
-// Temporary smoke test for Qwen3.6-35B-A3B local checkpoint.
-// Verifies the load path succeeds end-to-end (no precondition trap).
+// Integration tests covering the Qwen3.6-35B-A3B local checkpoint —
+// end-to-end load, prefill/decode bench, batched forwardMany
+// equivalence, and first-token greedy decode.
 //
 // The whole suite is gated on the local-checkpoint path existing —
-// it's a developer-machine smoke test that ships with FFAI as a
-// reference for how to load Qwen3.6-A3B from a local snapshot. When
-// the path doesn't resolve, the suite is disabled (visibly, by Swift
-// Testing) rather than silently returning from each test.
+// it ships with FFAI as a reference for how to load Qwen3.6-A3B from
+// a local snapshot. When the path doesn't resolve, the suite is
+// disabled (visibly, by Swift Testing) rather than silently returning
+// from each test.
 
 import Foundation
 import Testing
@@ -17,12 +18,12 @@ private let qwen36CheckpointAvailable =
     FileManager.default.fileExists(atPath: qwen36LocalPath)
 
 @Suite(
-    "Qwen36 Smoke", .serialized,
+    "Qwen3.6 Text Integration", .serialized,
     .enabled(
         if: qwen36CheckpointAvailable,
-        "Qwen3.6 smoke requires a local checkpoint at \(qwen36LocalPath)")
+        "Qwen3.6 integration requires a local checkpoint at \(qwen36LocalPath)")
 )
-struct Qwen36SmokeTests {
+struct Qwen36TextIntegrationTests {
 
     @Test("Qwen3.6-35B-A3B local checkpoint loads")
     func loadLocal() async throws {
