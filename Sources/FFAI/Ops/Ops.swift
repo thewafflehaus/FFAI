@@ -5913,6 +5913,229 @@ public enum Ops {
         }
     }
 
+    // ─── Fused RMSNorm + int4 dequant-GEMV ────────────────────────────
+    //
+    // Wraps `ffai_rms_norm_qgemv_fast` (RMSNorm-fused) and
+    // `ffai_gated_rms_norm_qgemv_int4_fast` (Mamba2-gated-RMSNorm-
+    // fused). Both keep the normalised activation in registers and
+    // feed it straight into the int4 dequant-GEMV, replacing a
+    // 2-dispatch chain (`Ops.rmsNorm` / `Ops.gatedRmsNorm` + `Ops.
+    // dequantGemvInt4`) with a single kernel. Saves a full `[in_dim]`
+    // DRAM roundtrip on the intermediate `normed` per call.
+    //
+    // Use at every site where a pre-norm immediately precedes a
+    // single int4 qmm projection — most notably the finalNorm + lmHead
+    // boundary (one dispatch per token) and the GDN mixer's
+    // post-recurrence gatedRmsNorm + outProj pair.
+
+    /// Fused RMSNorm + int4 dequant-GEMV in ONE dispatch via
+    /// `ffai_rms_norm_qgemv_fast`. Computes
+    ///   `y[row] = Σ_i (q[row,i]·scale + bias) ·
+    ///            (x[i] · norm_weight[i] · inv_rms)`
+    /// with `inv_rms = rsqrt(mean(x²) + eps)` and the normalised
+    /// activation never leaving registers.
+    ///
+    /// Kernel constraints (`ffai_rms_norm_qgemv_fast`):
+    /// - `in_dim` MUST be a multiple of 512 (kernel block size = 512
+    ///   K-elements per outer iter).
+    /// - `out_dim` MUST be a multiple of 8 (kernel processes 8 output
+    ///   rows per TG).
+    /// - `group_size` MUST equal 64.
+    /// - TPG = 64 (2 simdgroups × 32 lanes).
+    public static func rmsNormQgemvInt4Fast(
+        x: Tensor, normWeight: Tensor, eps: Float,
+        qWeight: Tensor, qScales: Tensor, qBiases: Tensor,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor
+    ) {
+        precondition(
+            qWeight.dtype == .u32,
+            "Ops.rmsNormQgemvInt4Fast: qWeight must be u32-packed")
+        precondition(
+            qWeight.shape.count == 2,
+            "Ops.rmsNormQgemvInt4Fast: qWeight must be [outDim, inDim/8]")
+        let outDim = qWeight.shape[0]
+        let packedPerRow = qWeight.shape[1]
+        let inDim = packedPerRow * 8
+        precondition(
+            x.elementCount == inDim,
+            "Ops.rmsNormQgemvInt4Fast: x.elementCount \(x.elementCount) ≠ inDim \(inDim)")
+        precondition(
+            normWeight.elementCount == inDim,
+            "Ops.rmsNormQgemvInt4Fast: normWeight.elementCount \(normWeight.elementCount) ≠ inDim \(inDim)")
+        precondition(
+            out.elementCount == outDim,
+            "Ops.rmsNormQgemvInt4Fast: out.elementCount \(out.elementCount) ≠ outDim \(outDim)")
+        precondition(
+            x.dtype == normWeight.dtype && normWeight.dtype == qScales.dtype
+                && qScales.dtype == qBiases.dtype && qBiases.dtype == out.dtype,
+            "Ops.rmsNormQgemvInt4Fast: all non-weight tensors must share dtype")
+        precondition(
+            inDim % 512 == 0,
+            "Ops.rmsNormQgemvInt4Fast: in_dim \(inDim) must be a multiple of 512 (fast variant)")
+        precondition(
+            outDim % 8 == 0,
+            "Ops.rmsNormQgemvInt4Fast: out_dim \(outDim) must be a multiple of 8")
+        // INVARIANT: kernel pins group_size=64 + TPG=64 for the fast
+        // 8-rows-per-TG variant. group_size is checked as a constexpr
+        // by the kernel; we re-assert here for early failure.
+        let groupSize = 64
+        precondition(
+            inDim % groupSize == 0,
+            "Ops.rmsNormQgemvInt4Fast: in_dim must divide group_size=64")
+        // eps as a 1-element f32 buffer.
+        var epsValue = eps
+        let epsBuf = device.makeBuffer(length: 4)
+        memcpy(epsBuf.contents(), &epsValue, 4)
+        let tg = MTLSize(width: 64, height: 1, depth: 1)
+        let nTiles = outDim / 8
+        let grid = MTLSize(width: nTiles * 64, height: 1, depth: 1)
+        switch x.dtype {
+        case .f32:
+            MetalTileKernels.ffai_rms_norm_qgemv_fast_f32(
+                x: x.buffer, xOffset: x.offset,
+                norm_weight: normWeight.buffer, norm_weightOffset: normWeight.offset,
+                weight: qWeight.buffer, weightOffset: qWeight.offset,
+                scales: qScales.buffer, scalesOffset: qScales.offset,
+                biases: qBiases.buffer, biasesOffset: qBiases.offset,
+                output: out.buffer, outputOffset: out.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                in_dim: UInt32(inDim), group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.ffai_rms_norm_qgemv_fast_f16(
+                x: x.buffer, xOffset: x.offset,
+                norm_weight: normWeight.buffer, norm_weightOffset: normWeight.offset,
+                weight: qWeight.buffer, weightOffset: qWeight.offset,
+                scales: qScales.buffer, scalesOffset: qScales.offset,
+                biases: qBiases.buffer, biasesOffset: qBiases.offset,
+                output: out.buffer, outputOffset: out.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                in_dim: UInt32(inDim), group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.ffai_rms_norm_qgemv_fast_bf16(
+                x: x.buffer, xOffset: x.offset,
+                norm_weight: normWeight.buffer, norm_weightOffset: normWeight.offset,
+                weight: qWeight.buffer, weightOffset: qWeight.offset,
+                scales: qScales.buffer, scalesOffset: qScales.offset,
+                biases: qBiases.buffer, biasesOffset: qBiases.offset,
+                output: out.buffer, outputOffset: out.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                in_dim: UInt32(inDim), group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.rmsNormQgemvInt4Fast: unsupported dtype \(x.dtype)")
+        }
+    }
+
+    /// Fused Mamba2-style gated RMSNorm + int4 dequant-GEMV in ONE
+    /// dispatch via `ffai_gated_rms_norm_qgemv_int4_fast`. Computes
+    /// the GDN mixer's `silu(z) · w · rmsnorm(y)` and feeds the result
+    /// straight into the int4 outProj — replaces the 2-dispatch
+    /// chain (`Ops.gatedRmsNorm` + `Ops.dequantGemvInt4`) with a
+    /// single kernel. Saves a full `[Hv·Dv]` DRAM roundtrip on the
+    /// intermediate gated-norm output per call.
+    ///
+    /// Use at the GDN mixer post-recurrence boundary, where the
+    /// gated-norm output is the direct input to the outProj projection.
+    ///
+    /// Kernel constraints:
+    /// - `Hv·Dv` (in_dim) MUST be a multiple of 512.
+    /// - `Hv·Dv` MUST be ≤ 8192 (kernel TG-memory cap; the gated-norm
+    ///   pass stages the full input in TG memory).
+    /// - `out_dim` MUST be a multiple of 8.
+    /// - `group_size` MUST be 64. TPG = 64.
+    public static func gatedRmsNormQgemvInt4Fast(
+        y: Tensor,  // [Hv, Dv] f32 (GDN recurrence output)
+        z: Tensor,  // [Hv*Dv] T
+        normWeight: Tensor,  // [Dv] T
+        eps: Float,
+        qWeight: Tensor,  // [out_dim, in_dim/8] u32
+        qScales: Tensor,  // [out_dim, in_dim/group_size] T
+        qBiases: Tensor,
+        hv: Int, dv: Int, outDim: Int, groupSize: Int = 64,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor  // [out_dim] T
+    ) {
+        precondition(
+            y.dtype == .f32,
+            "Ops.gatedRmsNormQgemvInt4Fast: y must be f32")
+        precondition(
+            z.dtype == normWeight.dtype && normWeight.dtype == out.dtype,
+            "Ops.gatedRmsNormQgemvInt4Fast: z/weight/out dtype mismatch")
+        precondition(
+            qWeight.dtype == .u32,
+            "Ops.gatedRmsNormQgemvInt4Fast: q_weight must be u32-packed")
+        let inDim = hv * dv
+        precondition(
+            inDim % 512 == 0,
+            "Ops.gatedRmsNormQgemvInt4Fast: Hv·Dv (\(inDim)) must be multiple of 512")
+        precondition(
+            inDim <= 8192,
+            "Ops.gatedRmsNormQgemvInt4Fast: Hv·Dv (\(inDim)) must be ≤ 8192 (kernel TG-mem cap)")
+        precondition(
+            outDim % 8 == 0,
+            "Ops.gatedRmsNormQgemvInt4Fast: out_dim must be multiple of 8")
+        precondition(
+            groupSize == 64,
+            "Ops.gatedRmsNormQgemvInt4Fast: group_size must be 64")
+        precondition(
+            out.elementCount == outDim,
+            "Ops.gatedRmsNormQgemvInt4Fast: out element count mismatch")
+        let tpg = 64
+        let nTiles = outDim / 8
+        let grid = MTLSize(width: nTiles * tpg, height: 1, depth: 1)
+        let tg = MTLSize(width: tpg, height: 1, depth: 1)
+        // eps as a 1-element f32 buffer.
+        var epsValue = eps
+        let epsBuf = device.makeBuffer(length: 4)
+        memcpy(epsBuf.contents(), &epsValue, 4)
+        switch out.dtype {
+        case .f32:
+            MetalTileKernels.ffai_gated_rms_norm_qgemv_int4_fast_f32(
+                y: y.buffer, yOffset: y.offset,
+                z: z.buffer, zOffset: z.offset,
+                norm_weight: normWeight.buffer, norm_weightOffset: normWeight.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                q_weight: qWeight.buffer, q_weightOffset: qWeight.offset,
+                q_scales: qScales.buffer, q_scalesOffset: qScales.offset,
+                q_biases: qBiases.buffer, q_biasesOffset: qBiases.offset,
+                out: out.buffer, outOffset: out.offset,
+                hv: UInt32(hv), dv: UInt32(dv),
+                out_dim: UInt32(outDim), group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.ffai_gated_rms_norm_qgemv_int4_fast_f16(
+                y: y.buffer, yOffset: y.offset,
+                z: z.buffer, zOffset: z.offset,
+                norm_weight: normWeight.buffer, norm_weightOffset: normWeight.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                q_weight: qWeight.buffer, q_weightOffset: qWeight.offset,
+                q_scales: qScales.buffer, q_scalesOffset: qScales.offset,
+                q_biases: qBiases.buffer, q_biasesOffset: qBiases.offset,
+                out: out.buffer, outOffset: out.offset,
+                hv: UInt32(hv), dv: UInt32(dv),
+                out_dim: UInt32(outDim), group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.ffai_gated_rms_norm_qgemv_int4_fast_bf16(
+                y: y.buffer, yOffset: y.offset,
+                z: z.buffer, zOffset: z.offset,
+                norm_weight: normWeight.buffer, norm_weightOffset: normWeight.offset,
+                eps_buf: epsBuf, eps_bufOffset: 0,
+                q_weight: qWeight.buffer, q_weightOffset: qWeight.offset,
+                q_scales: qScales.buffer, q_scalesOffset: qScales.offset,
+                q_biases: qBiases.buffer, q_biasesOffset: qBiases.offset,
+                out: out.buffer, outOffset: out.offset,
+                hv: UInt32(hv), dv: UInt32(dv),
+                out_dim: UInt32(outDim), group_size: UInt32(groupSize),
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.gatedRmsNormQgemvInt4Fast: unsupported dtype \(out.dtype)")
+        }
+    }
+
     // ─── Fused scalar-sigmoid fan-out + FMA ───────────────────────────
     //
     // Wraps `mt_sigmoid_scalar_fma_{f32,f16,bf16}`. Computes
