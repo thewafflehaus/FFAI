@@ -1,5 +1,7 @@
 // Shared GPU-test helper: encode + commit + wait inside an
-// autoreleasepool.
+// autoreleasepool. Lives in the shared `TestHelpers` target so every
+// test target depending on it (FFAITests, ModelIntegrationTests) can
+// invoke `runAndWait { ... }` without duplicating the source file.
 //
 // Why the pool: `commandQueue.makeCommandBuffer()` returns an
 // Objective-C bridged class. Under ARC the local `cb` reference is
@@ -19,7 +21,7 @@
 
 import Foundation
 import Metal
-@testable import FFAI
+import FFAI
 
 /// Run `block` on a fresh `MTLCommandBuffer`, commit it, and wait for
 /// completion. Wrapped in an autoreleasepool so cmdbuf retention drains
@@ -33,7 +35,7 @@ import Metal
 ///         runAndWait { cb in out = Ops.silu(a, on: cb) }
 ///         #expect(...)
 ///     }
-func runAndWait(_ block: (MTLCommandBuffer) -> Void) {
+public func runAndWait(_ block: (MTLCommandBuffer) -> Void) {
     autoreleasepool {
         let cb = Device.shared.makeCommandBuffer()
         block(cb)

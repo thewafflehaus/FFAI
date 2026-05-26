@@ -7,6 +7,7 @@ import Foundation
 import Metal
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("GDNStateCache + gated_delta_step kernel")
 struct GDNStateCacheTests {

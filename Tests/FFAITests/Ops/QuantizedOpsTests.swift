@@ -6,6 +6,7 @@ import Foundation
 import Metal
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Quantized GEMV (int4)")
 struct QuantizedOpsTests {

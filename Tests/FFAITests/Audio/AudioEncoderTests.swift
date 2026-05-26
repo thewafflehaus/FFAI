@@ -2,6 +2,7 @@ import Foundation
 import Metal
 import Testing
 @testable import FFAI
+import TestHelpers
 
 // AudioEncoder — exercises the Whisper-style audio-encoder stack
 // end-to-end on synthetic weights. The contract is structural: a

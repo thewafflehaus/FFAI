@@ -2,6 +2,7 @@ import Foundation
 import Metal
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Layers")
 struct LayersTests {

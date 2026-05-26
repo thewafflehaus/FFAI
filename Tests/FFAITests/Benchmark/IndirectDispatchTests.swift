@@ -28,6 +28,7 @@ import Foundation
 import Metal
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Indirect dispatch — dequant gemv int4")
 struct IndirectDispatchTests {

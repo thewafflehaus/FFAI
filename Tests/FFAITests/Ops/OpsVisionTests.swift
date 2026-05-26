@@ -2,6 +2,7 @@ import Foundation
 import Metal
 import Testing
 @testable import FFAI
+import TestHelpers
 
 // Vision Op wrappers — conv2d, patchEmbed, rope2D. Each kernel is a
 // Grid3D one-thread-per-output kernel from metaltile-std/src/ffai/.

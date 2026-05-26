@@ -20,6 +20,7 @@ import Foundation
 import Metal
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("AURA SRHT round-trip")
 struct AURASRHTRoundTripTests {

@@ -7,6 +7,7 @@ import Foundation
 import Metal
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("SSMStateCache + ssm_step kernel")
 struct SSMStateCacheTests {

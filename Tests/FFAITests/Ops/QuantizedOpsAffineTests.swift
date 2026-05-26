@@ -8,6 +8,7 @@ import Foundation
 import Metal
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("QuantizedOps — affine quant/dequant round-trip")
 struct QuantizedOpsAffineTests {

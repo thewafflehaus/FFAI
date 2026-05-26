@@ -14,6 +14,7 @@ import Foundation
 import Metal
 import Testing
 @testable import FFAI
+import TestHelpers
 import MetalTileSwift
 
 @Suite("MoE bm64_mpp wrapper correctness")

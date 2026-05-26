@@ -6,6 +6,7 @@ import Foundation
 import Metal
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("Ops dtypes (f16 + bf16)")
 struct OpsDtypeTests {

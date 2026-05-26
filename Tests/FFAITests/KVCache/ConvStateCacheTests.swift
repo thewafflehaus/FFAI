@@ -6,6 +6,7 @@ import Foundation
 import Metal
 import Testing
 @testable import FFAI
+import TestHelpers
 
 @Suite("ConvStateCache + conv1d_causal_step kernel")
 struct ConvStateCacheTests {
