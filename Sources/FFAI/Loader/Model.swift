@@ -414,11 +414,34 @@ public enum ModelRegistry {
                     availableCapabilities: Capability.textOnly.union([.imageIn]),
                     vlModel: vlm)
             }
+            // Qwen 3.5-VL — the VL variant of Qwen 3.5. Shares the
+            // `Qwen3_5ForConditionalGeneration` architecture string with
+            // the text-only Qwen 3.5 release; the only signal we have to
+            // disambiguate is the presence of an actual vision tower in
+            // the safetensors (vision_config alone is unreliable since
+            // some text-only Qwen 3.5 checkpoints ship a vestigial copy).
+            // Probe both published vision-tower layouts: `model.visual.*`
+            // (raw HF release) and `vision_tower.*` (mlx-community
+            // restructured conversions).
+            if let arch = config.architecture, Qwen35.architectures.contains(arch),
+                config.subConfig("vision_config") != nil,
+                weights.has("model.visual.patch_embed.proj.weight")
+                    || weights.has("vision_tower.patch_embed.proj.weight")
+            {
+                let vlm = try Qwen35VL.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: Qwen35Hybrid.defaultGenerationParameters,
+                    availableCapabilities: Qwen35VL.availableCapabilities,
+                    vlModel: vlm)
+            }
             // Text-only Qwen3.5 / 3.6 checkpoints with a vestigial
-            // `vision_config` block. The architecture string is a Qwen3.5
-            // MoE family name and we have a text-only loader — route to
-            // it instead of throwing the VL-not-integrated error. The
-            // vision tower is not used.
+            // `vision_config` block (no vision tensors). The architecture
+            // string is a Qwen3.5 MoE family name and we have a text-only
+            // loader — route to it instead of throwing the
+            // VL-not-integrated error.
             //
             // (Rebase note 2026-05-23: this is the merge of two parallel
             // changes — our `826ae2a` hand-listed the architecture

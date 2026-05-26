@@ -297,7 +297,10 @@ public struct Qwen35Hybrid: Qwen35Variant {
 
         // ── Weight prefix — VLM-wrapped checkpoints prefix every text
         //    weight with `language_model.model.`; a text-only conversion
-        //    would use `model.`. Detect from the embedding key. ──────────
+        //    would use `model.`. Detect from the embedding key. The raw
+        //    HF Qwen 3.5-VL release uses a different `model.language_model.`
+        //    wrapper which `Qwen35VL.load` rewrites to this layout before
+        //    calling in, so no extra prefix candidate is needed here. ─────
         let prefixCandidates = ["language_model.model", "model"]
         guard
             let modelPrefix = prefixCandidates.first(where: {
@@ -315,6 +318,35 @@ public struct Qwen35Hybrid: Qwen35Variant {
         })
 
         let quant = config.quantization
+
+        // ── Centered-RMSNorm detection ──────────────────────────────────
+        // Raw HF Qwen 3.5 ships outer RMSNorm weights *centered around 0*
+        // (the kernel-side `1.0 +` is implicit in the published
+        // checkpoint — matches the Gemma convention). mlx-community
+        // pre-folds the +1 during conversion so downstream loaders can
+        // use a standard RMSNorm kernel. We follow mlx-community's
+        // convention; detect the raw centered layout and fold +1 at
+        // load time when needed.
+        //
+        // Signal: raw HF stores the GDN inner `linear_attn.norm.weight`
+        // as F32; mlx-community downcasts it to BF16 during conversion.
+        // The dtype is a reliable origin marker independent of value
+        // magnitudes (the actual `linear_attn.norm.weight` values cluster
+        // near 1.0 in both layouts — it's the *outer* norms that get
+        // the +1 shift).
+        let needsCenteredNormFold: Bool = {
+            guard let gdnNorm = try? weights.tensor(named: "\(modelPrefix).layers.0.linear_attn.norm.weight")
+            else { return false }
+            return gdnNorm.dtype == .f32
+        }()
+
+        // Wrap `weights.tensor(...)` for RMSNorm tensors that need the
+        // +1 fold under the centered convention.
+        func loadRMSNorm(_ name: String) throws -> RMSNorm {
+            let raw = try weights.tensor(named: name)
+            let weight = needsCenteredNormFold ? foldGemmaRMSNormWeight(raw) : raw
+            return RMSNorm(weight: weight, eps: eps)
+        }
 
         // ── Activation dtype — from the embedding table ───────────────
         // Qwen3.6 ships a *quantized* embedding (uint32-packed weight +
@@ -345,12 +377,8 @@ public struct Qwen35Hybrid: Qwen35Variant {
         layers.reserveCapacity(nLayers)
         for (i, kind) in kinds.enumerated() {
             let p = "\(modelPrefix).layers.\(i)"
-            let inputNorm = RMSNorm(
-                weight: try weights.tensor(named: "\(p).input_layernorm.weight"),
-                eps: eps)
-            let postNorm = RMSNorm(
-                weight: try weights.tensor(named: "\(p).post_attention_layernorm.weight"),
-                eps: eps)
+            let inputNorm = try loadRMSNorm("\(p).input_layernorm.weight")
+            let postNorm = try loadRMSNorm("\(p).post_attention_layernorm.weight")
 
             // ── Feed-forward half ─────────────────────────────────────
             // A layer in `mlp_only_layers`, or one off the sparse-step
@@ -406,12 +434,8 @@ public struct Qwen35Hybrid: Qwen35Variant {
                     base: "\(p).self_attn.v_proj", in: weights, quantization: quant)
                 let oProj = try loadLinear(
                     base: "\(p).self_attn.o_proj", in: weights, quantization: quant)
-                let qNorm = RMSNorm(
-                    weight: try weights.tensor(named: "\(p).self_attn.q_norm.weight"),
-                    eps: eps)
-                let kNorm = RMSNorm(
-                    weight: try weights.tensor(named: "\(p).self_attn.k_norm.weight"),
-                    eps: eps)
+                let qNorm = try loadRMSNorm("\(p).self_attn.q_norm.weight")
+                let kNorm = try loadRMSNorm("\(p).self_attn.k_norm.weight")
                 let mixer = Qwen35AttentionMixer(
                     qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
                     qNorm: qNorm, kNorm: kNorm,
@@ -425,8 +449,7 @@ public struct Qwen35Hybrid: Qwen35Variant {
             }
         }
 
-        let finalNorm = RMSNorm(
-            weight: try weights.tensor(named: "\(modelPrefix).norm.weight"), eps: eps)
+        let finalNorm = try loadRMSNorm("\(modelPrefix).norm.weight")
 
         // lm_head — most Qwen3.5 dense checkpoints tie to the embedding
         // table; Qwen3.6 ships an UNTIED quantized lm_head under

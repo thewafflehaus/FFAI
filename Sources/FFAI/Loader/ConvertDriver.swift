@@ -56,6 +56,11 @@ public struct ConvertOptions: Sendable {
     /// tied to embed_tokens, so quantizing would double the error for the
     /// output distribution).
     public var quantizeLmHead: Bool = false
+    /// Quantize the vision tower's Linears too (mlx-lm default: false —
+    /// FFAI's VL towers run plain `Linear`, not `QuantizedLinear`, so
+    /// quantized vision weights would crash the loader. Vision-tower
+    /// params are a small fraction of the model size anyway).
+    public var quantizeVision: Bool = false
 
     public init() {}
 }
@@ -220,6 +225,23 @@ public enum ConvertDriver {
         // embed_tokens, so quantizing it would apply error twice).
         if key.contains("lm_head.weight") {
             return options.quantizeLmHead
+        }
+
+        // Vision tower weights — skip unless explicitly requested.
+        // FFAI's VL towers (Qwen3VL, Pixtral, SigLIP, Idefics3, etc.)
+        // use plain `Linear`, not `QuantizedLinear`, so quantized vision
+        // weights crash the tower loader. mlx-lm follows the same
+        // convention. Matches the common HF storage prefixes:
+        //   `model.visual.*` (Qwen3-VL, Qwen3.5-VL)
+        //   `vision_tower.*` (newer Qwen3-VL, MiniCPM-V, Pixtral, SigLIP)
+        //   `vision_model.*` (older HF transformers convention)
+        //   `visual.*`       (some older Qwen / Qwen2-VL drops)
+        if !options.quantizeVision {
+            if key.contains(".visual.") || key.hasPrefix("visual.")
+                || key.contains("vision_tower.") || key.contains("vision_model.")
+            {
+                return false
+            }
         }
 
         return true

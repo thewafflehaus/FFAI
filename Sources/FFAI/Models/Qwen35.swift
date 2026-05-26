@@ -32,8 +32,9 @@
 // The Qwen 3-VL-MoE vision-language orchestrator (`enum Qwen3VLMoe`) —
 // which ties the Qwen 3.5-MoE text backbone to the shared Qwen 3-VL ViT
 // vision tower — lives in `Models/Vision/Qwen3Vision.swift` alongside
-// its dense Qwen3-VL sibling. See `Models/Qwen36.swift` for the Qwen 3.6
-// root anchor; the underlying types are the same.
+// its dense Qwen3-VL sibling and the dense Qwen 3.5-VL orchestrator
+// (`enum Qwen35VL`, same file). See `Models/Qwen36.swift` for the Qwen
+// 3.6 root anchor; the underlying types are the same.
 
 import Foundation
 
@@ -70,9 +71,10 @@ public protocol Qwen35Variant {
 
 // ─── Errors ──────────────────────────────────────────────────────────
 
-/// Unified Qwen 3.5 family error — raised by both the text loaders
-/// (`Qwen35Hybrid.loadModel`) and the Qwen 3-VL-MoE orchestrator
-/// (`Qwen3VLMoe.load` in `Models/Vision/Qwen3Vision.swift`).
+/// Unified Qwen 3.5 family error — raised by the text loaders
+/// (`Qwen35Hybrid.loadModel`), the Qwen 3-VL-MoE orchestrator
+/// (`Qwen3VLMoe.load`), and the dense Qwen 3.5-VL orchestrator
+/// (`Qwen35VL.load`) — both VL siblings in `Models/Vision/Qwen3Vision.swift`.
 public enum Qwen35Error: Error, CustomStringConvertible {
     case missingConfig(String)
     case unsupportedConfig(String)

@@ -54,6 +54,11 @@ struct ConvertCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Quantize lm_head too (mlx-lm default: skip when tied).")
     var quantizeLmHead: Bool = false
 
+    @Flag(
+        name: .long,
+        help: "Quantize vision-tower weights too (default: skip — FFAI VL towers use plain Linear).")
+    var quantizeVision: Bool = false
+
     @Option(name: .long, help: "Revision (branch/tag/commit) to download from HF. Default: main.")
     var revision: String = "main"
 
@@ -93,6 +98,7 @@ struct ConvertCommand: AsyncParsableCommand {
         opts.bits = bits
         opts.quantizeEmbeddings = quantizeEmbeddings
         opts.quantizeLmHead = quantizeLmHead
+        opts.quantizeVision = quantizeVision
 
         // ─── Run conversion ──────────────────────────────────────────
         // Swift 6 strict concurrency: the progress closure is @Sendable so
