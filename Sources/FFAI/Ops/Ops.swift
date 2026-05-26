@@ -345,6 +345,54 @@ public enum Ops {
         return result
     }
 
+    /// Two embedding lookups against the SAME `table` on one compute
+    /// encoder. Used when two parallel id streams need to read the
+    /// same embedding (or, in Qwen3 attention, when a single linear
+    /// projection result is split into two head-half slices via
+    /// `ids = [0..nHeads]` + `ids = [nHeads..2·nHeads]`). The table
+    /// binding + `dim` constant are set once and the per-call
+    /// `(ids, out)` pair rotates per dispatch.
+    public static func gatherTwo(
+        table: Tensor,
+        ids1: Tensor, into out1: Tensor,
+        ids2: Tensor, into out2: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(table.shape.count == 2, "Ops.gatherTwo: table must be 2D")
+        precondition(
+            ids1.dtype == .u32 && ids2.dtype == .u32,
+            "Ops.gatherTwo: ids must be u32")
+        precondition(
+            out1.dtype == table.dtype && out2.dtype == table.dtype,
+            "Ops.gatherTwo: out dtype must match table")
+        let dim = table.shape[1]
+        let psoName: String
+        switch table.dtype {
+        case .f32: psoName = "ffai_gather_f32"
+        case .f16: psoName = "ffai_gather_f16"
+        case .bf16: psoName = "ffai_gather_bf16"
+        default: fatalError("Ops.gatherTwo: unsupported dtype \(table.dtype)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        var dimV = UInt32(dim)
+        enc.setBytes(&dimV, length: 4, index: 3)
+        enc.setBuffer(table.buffer, offset: table.offset, index: 0)
+        @inline(__always)
+        func dispatch(_ ids: Tensor, _ out: Tensor) {
+            let n = ids.elementCount
+            let totalThreads = n * dim
+            let (grid, tg) = elementwiseGrid(totalThreads)
+            enc.setBuffer(ids.buffer, offset: ids.offset, index: 1)
+            enc.setBuffer(out.buffer, offset: out.offset, index: 2)
+            enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        }
+        dispatch(ids1, out1)
+        dispatch(ids2, out2)
+        enc.endEncoding()
+    }
+
     /// Cooperative-thread matrix-vector multiply. weight: [out_dim, in_dim],
     /// input: [in_dim], output: [out_dim]. One threadgroup per output row;
     /// threads cooperate on the dot-product reduction.

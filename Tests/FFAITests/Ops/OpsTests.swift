@@ -268,6 +268,29 @@ struct OpsTests {
         }
     }
 
+    @Test("gatherTwo f32 — two ids streams against one table on one encoder")
+    func gatherTwoF32() {
+        autoreleasepool {
+            let table = Tensor.empty(shape: [3, 2], dtype: .f32)
+            table.copyIn(from: [Float(10), 11, 20, 21, 30, 31])
+            let ids1 = Tensor.empty(shape: [2], dtype: .u32)
+            ids1.copyIn(from: [UInt32(2), 0])
+            let ids2 = Tensor.empty(shape: [3], dtype: .u32)
+            ids2.copyIn(from: [UInt32(1), 1, 2])
+            let out1 = Tensor.empty(shape: [2, 2], dtype: .f32)
+            let out2 = Tensor.empty(shape: [3, 2], dtype: .f32)
+            runAndWait { cb in
+                Ops.gatherTwo(
+                    table: table,
+                    ids1: ids1, into: out1,
+                    ids2: ids2, into: out2,
+                    on: cb)
+            }
+            #expect(out1.toArray(as: Float.self) == [30, 31, 10, 11])
+            #expect(out2.toArray(as: Float.self) == [20, 21, 20, 21, 30, 31])
+        }
+    }
+
     @Test("gemv f32 — out[i] = sum_j W[i,j] * x[j]")
     func gemvF32() {
         autoreleasepool {
