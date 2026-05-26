@@ -90,6 +90,35 @@ forward APIs. Using a non-default cache directory (external SSD,
 shared cache between Python tools, etc.)? See
 [Custom model cache path](documentation/quickstart.md#custom-model-cache-path).
 
+## Models Supported
+
+FFAI ships the most comprehensive Apple Silicon model coverage of
+any single library — **LLMs, VLMs, vision, STT, STS, TTS, and Omni
+models** all running real HuggingFace checkpoints end-to-end through
+one loader. Pass a repo ID, the registry resolves the architecture,
+downloads the snapshot, and routes to the right family.
+
+Run `ffai models` for the live list with copy-paste repo IDs, or
+browse the full breakdown by family + capability in
+[`documentation/models.md`](documentation/models.md).
+
+**Quantization.** Affine 3 / 4 / 5 / 6 / 8-bit (mlx-community
+packed-uint32 format) ships today, with per-tensor bit-width
+derivation for mixed-precision checkpoints. **2-bit, fully
+mixed-quantization recipes, and GGUF format are coming soon** — see
+[`quantization.md`](documentation/quantization.md) for what's wired
+up now vs queued.
+
+### Adding a model
+
+Porting a new family is **one Swift file plus an integration test**.
+The Models/ tree mirrors itself in Tests/ so the diff lands in two
+focused places, and the loader auto-routes on the `model_type` /
+`architectures[0]` strings the family enum advertises.
+
+Step-by-step walkthrough with copy-pasteable templates:
+[`documentation/developing/adding-a-model.md`](documentation/developing/adding-a-model.md).
+
 ### Quantize your own checkpoints
 
 `ffai convert` quantizes any bf16/fp16 HuggingFace checkpoint to MLX
@@ -109,53 +138,6 @@ ffai convert HuggingFaceTB/SmolLM2-360M-Instruct \
 
 Full flag list + recipes:
 [`using-the-cli.md` § `convert`](documentation/using-the-cli.md#convert--quantize-a-checkpoint-to-mlx-4-bit).
-
-## Models Supported
-
-The full text-LLM family set ships today — dense, mixture-of-experts,
-and SSM/GDN hybrid architectures, all running real HuggingFace
-checkpoints end-to-end. Run `ffai models` for the live list with
-copy-paste repo IDs. Adding a family is one Swift file plus an
-integration test — see
-[`adding-a-model.md`](documentation/developing/adding-a-model.md).
-
-| Family | `model_type` | Example repo (bf16 · 8-bit · 4-bit) |
-|---|---|---|
-| **Llama 3.x** | `llama` | `unsloth/Llama-3.2-1B` · `mlx-community/Meta-Llama-3.1-8B-Instruct-4bit` |
-| **Llama-compatible zoo** | `smollm` / `olmo2` / `starcoder2` / … | `mlx-community/SmolLM2-360M-Instruct-bf16` |
-| **Qwen 2** | `qwen2` | `Qwen/Qwen2.5-0.5B-Instruct` |
-| **Qwen 3** | `qwen3` | `mlx-community/Qwen3-1.7B-bf16` · `-8bit` · `-4bit` |
-| **Qwen 3.5** (GDN hybrid · MoE) | `qwen3_5` | `mlx-community/Qwen3.5-0.8B-MLX-bf16` · `-MLX-8bit` · `-MLX-4bit` |
-| **Mistral** | `mistral` | `mlx-community/Mistral-7B-Instruct-v0.3-4bit` |
-| **Phi 3** | `phi3` | `mlx-community/Phi-3-mini-4k-instruct-4bit` |
-| **Gemma 3** | `gemma3` | `mlx-community/gemma-3-1b-it-bf16` |
-| **Gemma 4** (Dense · E-PLE · MoE) | `gemma4` | `mlx-community/gemma-4-e2b-it-bf16` · `gemma-4-26b-a4b-it-8bit` · `gemma-4-31b-it-4bit` |
-| **GPT-OSS-20B** (MoE) | `gpt_oss` | `mlx-community/gpt-oss-20b-MXFP4-Q8` |
-| **Mamba 2** | `mamba2` | `mlx-community/mamba2-130m` |
-| **FalconH1** (hybrid) | `falcon_h1` | `mlx-community/Falcon-H1-Tiny-90M-Instruct-bf16` |
-| **NemotronH** (hybrid) | `nemotron_h` | `nvidia/Nemotron-H-4B-Base-8K` |
-| **GraniteMoeHybrid** | `granitemoehybrid` | `mlx-community/granite-4.0-h-350m-bf16` |
-| **Jamba** (hybrid) | `jamba` | `mlx-community/AI21-Jamba-Reasoning-3B-bf16` |
-| **LFM2 / LFM2.5** (conv+attention hybrid · MoE) | `lfm2` / `lfm2_moe` | `LiquidAI/LFM2-1.2B` · `LiquidAI/LFM2-8B-A1B` |
-| **Nemotron-Labs-Diffusion** | `nemotron_labs_diffusion` | `nvidia/Nemotron-Labs-Diffusion-3B` |
-
-Quantization follows the **mlx-community** packed-uint32 format
-(3/4/5/6/8-bit affine — weights + scales + biases per group), with
-per-tensor bit-width derivation for mixed-precision checkpoints. Pass
-any HuggingFace repo ID and the loader resolves architecture,
-downloads the snapshot, and routes to the right family. See
-[`models.md`](documentation/models.md) for sizes exercised + known
-gaps (hybrid families load raw bf16/f16 only).
-
-Vision-language families (Gemma 3/4-VL, Qwen 2.5/3-VL, Qwen3-VL-MoE,
-Nemotron-VLM) and audio families (Whisper STT, SenseVoice STT, Kokoro
-TTS, LlamaTTS / Marvis / Qwen3-TTS, Qwen-Omni, Silero/SmartTurn VAD)
-plus seven neural audio codecs are all in tree — see
-[`models.md`](documentation/models.md).
-
-**Coming next** (per [`planning/roadmap.md`](planning/roadmap.md)):
-chunked (batched) prefill, AURA compressed-domain attention,
-speculative decoding + serving (Phase 8).
 
 ## High Level Architecture
 
