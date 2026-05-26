@@ -51,6 +51,14 @@ public final class ICBRecorder {
     // executeCommandsInBuffer's enclosing encoder can call useResource
     // on each — Metal cannot infer this from ICB bindings.
     private var usedResources: [(MTLResource, MTLResourceUsage)] = []
+    // Group boundaries: command indices where the recorder splits
+    // execution into dependency groups separated by buffer-memory
+    // barriers. `MTLIndirectCommandBuffer.concurrentDispatch` makes
+    // commands within a single `executeCommandsInBuffer` call run in
+    // parallel, so dependent producer→consumer chains MUST be split
+    // across boundary calls with `enc.memoryBarrier(scope: .buffers)`
+    // between them. Empty = single concurrent batch (no barriers).
+    private var groupBoundaries: [Int] = []
 
     public init(device: MTLDevice,
                 maxCommands: Int,
@@ -110,11 +118,29 @@ public final class ICBRecorder {
         usedResources.append((resource, usage))
     }
 
+    /// Mark a dependency boundary at the CURRENT recorded command
+    /// position. `execute(on:)` will split the ICB into sub-ranges at
+    /// these boundaries and call `memoryBarrier(scope: .buffers)`
+    /// between them. Use AFTER recording a producer dispatch (or a
+    /// group of independent producers) whose output the next group
+    /// depends on. Boundaries with zero commands between them are
+    /// silently coalesced.
+    public func groupBoundary() {
+        if let last = groupBoundaries.last, last == nextIndex { return }
+        groupBoundaries.append(nextIndex)
+    }
+
     /// Execute the recorded commands on `commandBuffer`. Creates a
     /// compute encoder, calls useResource for every registered
     /// resource (plus paramsBuffer), executes the ICB, ends the
     /// encoder. Does NOT commit the command buffer — caller decides
     /// when to commit.
+    ///
+    /// If `groupBoundary()` has been called between dependent
+    /// dispatches, the encoder issues `memoryBarrier(scope: .buffers)`
+    /// between each `executeCommandsInBuffer` sub-range. Without group
+    /// boundaries the entire ICB runs as one concurrent batch — only
+    /// safe when no command reads another's output.
     public func execute(on commandBuffer: MTLCommandBuffer) {
         guard nextIndex > 0 else { return }
         guard let enc = commandBuffer.makeComputeCommandEncoder() else {
@@ -124,7 +150,19 @@ public final class ICBRecorder {
         for (res, usage) in usedResources {
             enc.useResource(res, usage: usage)
         }
-        enc.executeCommandsInBuffer(icb, range: 0..<nextIndex)
+        if groupBoundaries.isEmpty {
+            enc.executeCommandsInBuffer(icb, range: 0..<nextIndex)
+        } else {
+            var prev = 0
+            for b in groupBoundaries where b > prev {
+                enc.executeCommandsInBuffer(icb, range: prev..<b)
+                enc.memoryBarrier(scope: .buffers)
+                prev = b
+            }
+            if prev < nextIndex {
+                enc.executeCommandsInBuffer(icb, range: prev..<nextIndex)
+            }
+        }
         enc.endEncoding()
     }
 
