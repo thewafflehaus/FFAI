@@ -39,7 +39,7 @@ Runs once per build (or whenever a Rust `#[kernel]` definition changes). Produce
                       │
                       ▼
   ┌──────────────────────────────────────────────────────────────┐
-  │  tile build --emit all --out Sources/MetalTileSwift                      │
+  │  tile build --emit all --out Sources/MetalTileSwift          │
   │  (metaltile-cli, dev sibling repo)                           │
   │                                                              │
   │  Walks the inventory of `BenchSpec`-registered kernels,      │
@@ -151,8 +151,7 @@ Models are organized into **family files** (one per major architectural lineage:
 
   Sources/FFAI/Models/
    ├─ Llama.swift          (Llama 3.x: 1B, 3B, 8B, 70B)
-   ├─ Qwen3.swift          (Qwen3, Qwen3.5 dense+hybrid+MoE+VL+Omni,
-   │                        Qwen3.6 …)
+   ├─ Qwen35.swift          (Qwen3.5 dense+hybrid+MoE+VL+Omni)
    ├─ Mistral.swift        (Mistral 7B, Mixtral 8x7B/8x22B)
    ├─ Phi.swift            (Phi-3, Phi-3.5)
    ├─ GPTOSS.swift         (GPT-OSS 20B, …)
@@ -165,24 +164,30 @@ Models are organized into **family files** (one per major architectural lineage:
    └─ SileroVAD.swift      (VAD family — see also SmartTurn, Sortformer,
                             TenVAD, FireRedVAD)
 
-  Inside Qwen3.swift:
-  ┌──────────────────────────────────────────────────────────┐
-  │ public enum Qwen3: ModelFamily {                         │
-  │   static func variant(for: ModelConfig) -> any           │
-  │       Qwen3Variant.Type { … }                            │
-  │ }                                                        │
-  │                                                          │
-  │ protocol Qwen3Variant {                                  │
-  │   static var availableCapabilities: Set<Capability>      │
-  │   static func load(...) async throws -> Module           │
-  │ }                                                        │
-  │                                                          │
-  │ struct Qwen3Dense:         Qwen3Variant { … }            │
-  │ struct Qwen35HybridDense:  Qwen3Variant { … }            │
-  │ struct Qwen35HybridMoE:    Qwen3Variant { … }            │
-  │ struct Qwen35VL:           Qwen3Variant { … }  // text+vision
-  │ struct Qwen35Omni:         Qwen3Variant { … }  // text+vision+audio
-  └──────────────────────────────────────────────────────────┘
+  Every family root is the **main interface** for that family
+  (the enum, the variant protocol, the unified error type). The
+  modality-specific impl lives one folder down — Models/Text/
+  for the decoder, Models/Vision/ for the tower internals,
+  Models/Audio/<sub>/ for STT/TTS/Omni/VAD/STS. Examples:
+
+  Models/Qwen3.swift              — Qwen 3 family root.
+    enum Qwen3 { modelTypes, architectures, variant(for:) }
+    protocol Qwen3Variant { availableCapabilities, loadModel }
+    enum Qwen3Error
+    impl: Models/Text/Qwen3Text.swift (Qwen3Dense), and the
+    Qwen3-VL orchestrator lives in Models/Vision/Qwen3Vision.swift.
+
+  Models/Qwen35.swift             — Qwen 3.5 family root. SEPARATE
+    from Qwen3 — different architecture (GDN + attention hybrid,
+    optional MoE FFN). Owns its own enum / variant protocol / error.
+    impl: Models/Text/Qwen3xText.swift (Qwen35Hybrid handles both
+    dense + MoE FFN per-checkpoint via num_experts); the Qwen3.5-VL-MoE
+    orchestrator lives in Models/Vision/Qwen3Vision.swift alongside
+    the dense Qwen3-VL orchestrator (the two share the tower).
+
+  Models/Qwen36.swift             — Qwen 3.6. Architecturally the
+    Qwen3x backbone; the family root is a thin anchor pointing at
+    Qwen3xText.swift.
 ```
 
 ```
@@ -190,9 +195,9 @@ Models are organized into **family files** (one per major architectural lineage:
                        ────────────
 
   user provides:
-   • repo id "Qwen/Qwen3.5-9B-VL"          OR
+   • repo id "mlx-community/Qwen3-VL-2B-Instruct-4bit"  OR
    • local path "/path/to/local-model"
-   • LoadOptions(capabilities: [.textIn, .textOut],
+   • LoadOptions(capabilities: [.textIn, .textOut, .imageIn],
                  kvCache: .auraQuantized(scheme: "aura4v2"),
                  lazyCapabilities: true)
        │
@@ -208,7 +213,7 @@ Models are organized into **family files** (one per major architectural lineage:
   │  STAGE: downloading(Progress)                          │
   │                                                        │
   │  ModelLocator.resolve(id-or-path) →                    │
-  │    ModelDownloader (swift-huggingface HubClient)            │
+  │    ModelDownloader (swift-huggingface HubClient)       │
   │    HubClient.downloadSnapshot(                         │
   │      of: repoID, matching: [...],                      │
   │      progressHandler: → emits .downloading events)     │
@@ -216,7 +221,7 @@ Models are organized into **family files** (one per major architectural lineage:
   └─────────────────┬──────────────────────────────────────┘
                     │
                     ▼
-   /Users/.../hub/models--Qwen--Qwen3.5-9B-VL/snapshots/<sha>/
+   /Users/.../hub/models--mlx-community--Qwen3-VL-2B-Instruct-4bit/snapshots/<sha>/
      config.json
      tokenizer.json, tokenizer_config.json, *.jinja
      model-00001-of-00004.safetensors, …, model.safetensors.index.json
@@ -231,10 +236,14 @@ Models are organized into **family files** (one per major architectural lineage:
   │    → has("vision_config")? has("audio_config")?        │
   │                                                        │
   │  ModelRegistry.family(for: config) → Qwen3.self        │
-  │  Qwen3.variant(for: config) → Qwen35VL.self            │
+  │  Qwen3.variant(for: config) → Qwen3Dense.self          │
+  │  // VL routing: vision_config present → Qwen3VL.load() │
+  │  //   in Models/Vision/Qwen3Vision.swift wraps Qwen3   │
+  │  //   text backbone + the ViT tower into a VisionModel │
   │                                                        │
-  │  Qwen35VL.availableCapabilities                        │
-  │    = [.textIn, .textOut, .visionIn, .toolCalling]      │
+  │  Qwen3VL.availableCapabilities                         │
+  │    = [.textIn, .textOut, .imageIn, .videoIn,           │
+  │       .toolCalling]                                    │
   │                                                        │
   │  effectiveCaps = options.capabilities                  │
   │                ∩ availableCapabilities                 │
@@ -254,19 +263,20 @@ Models are organized into **family files** (one per major architectural lineage:
   │  sub-module and bind only its weights:                 │
   │                                                        │
   │   ┌─ ALWAYS ───────────────────────────────────────┐   │
-  │   │ backbone (Qwen35HybridDense):                  │   │
-  │   │   embed_tokens, layers (GDN+attn hybrid),      │   │
+  │   │ backbone (Qwen3Dense, prefixed                 │   │
+  │   │   "language_model." under a VL checkpoint):    │   │
+  │   │   embed_tokens, layers (attention),            │   │
   │   │   norm, lm_head                                │   │
-  │   │   weight keys: "model.embed_tokens.*",         │   │
-  │   │     "model.layers.*", "model.norm.*",          │   │
-  │   │     "lm_head.*"                                │   │
+  │   │   weight keys: "language_model.model.*",       │   │
+  │   │     "language_model.lm_head.*"                 │   │
   │   └────────────────────────────────────────────────┘   │
-  │   ┌─ IF .visionIn requested ──────────────────────┐    │
+  │   ┌─ IF .imageIn requested (or .videoIn) ──────────┐   │
   │   │ vision encoder:                                │   │
-  │   │   patch_embed, vision layers, vision_norm     │   │
-  │   │   weight keys: "vision_model.*"                │   │
+  │   │   patch_embed, vision layers, vision_norm      │   │
+  │   │   weight keys: "vision_tower.*" /              │   │
+  │   │   "model.visual.*" (per family convention)     │   │
   │   └────────────────────────────────────────────────┘   │
-  │   ┌─ IF .audioIn requested ───────────────────────┐    │
+  │   ┌─ IF .audioIn requested ────────────────────────┐   │
   │   │ audio encoder: "audio_model.*"                 │   │
   │   └────────────────────────────────────────────────┘   │
   │                                                        │
@@ -328,14 +338,14 @@ Models are organized into **family files** (one per major architectural lineage:
             │
             │ — generation happens here —
             │
-            │ user later: await model.enable(.visionIn)
+            │ user later: await model.enable(.imageIn)
             ▼
-       loading(LoadProgress, capability: .visionIn)
+       loading(LoadProgress, capability: .imageIn)
             │
             │ vision weights mmap'd, encoder built, vision
             │ PSOs prewarmed, vision pages touched
             ▼
-          ready (now with .visionIn)
+          ready (now with .imageIn)
 
 
   Any state can transition to:
@@ -394,7 +404,7 @@ Models are organized into **family files** (one per major architectural lineage:
                           │            textOut]      │
                           └──────────────────────────┘
                                      │
-                                     │  await model.enable(.visionIn)
+                                     │  await model.enable(.imageIn)
                                      ▼
                           ┌──────────────────────────┐
                           │ Model (Qwen35VL)         │
@@ -403,10 +413,10 @@ Models are organized into **family files** (one per major architectural lineage:
                           │  └─ audio       —        │
                           │ enabled = [textIn,       │
                           │            textOut,      │
-                          │            visionIn]     │
+                          │            imageIn]     │
                           └──────────────────────────┘
                                      │
-                                     │  await model.disable(.visionIn)
+                                     │  await model.disable(.imageIn)
                                      ▼
                           ┌──────────────────────────┐
                           │ Model (Qwen35VL)         │
@@ -430,7 +440,7 @@ Models are organized into **family files** (one per major architectural lineage:
 - Download: dominated by network. First time a 1B model: ~30s on reasonable bandwidth. Cached: ~1s (just metadata revalidation).
 - mmap: O(1). The 1.2GB of fp16 weights live in the page cache; Metal reads them on demand.
 - Module instantiation: O(num_layers), microseconds.
-- `enable(.visionIn)` on warm cache: ~100ms (mostly module construction). Cold cache (after disable + GC): re-mmap is fast.
+- `enable(.imageIn)` on warm cache: ~100ms (mostly module construction). Cold cache (after disable + GC): re-mmap is fast.
 
 ### 3c. Modality strip — vision + audio encoders hooking into the backbone
 
@@ -511,7 +521,7 @@ Multi-modal models compose a text backbone with optional `VisionEncoder` and `Au
 
 **What the Capability system gates:**
 
-- `.visionIn` → builds `VisionEncoder`, mmaps `vision_model.*` weights, prewarms vision PSOs.
+- `.imageIn` → builds `VisionEncoder`, mmaps `vision_model.*` weights, prewarms vision PSOs.
 - `.audioIn` → builds `AudioEncoder`, mmaps `audio_model.*` weights, prewarms audio PSOs.
 - `.audioOut` → builds `AudioDecoder` (vocoder + decoder layers), mmaps `audio_decoder.*` weights.
 - `.toolCalling` → no weight load; toggles the chat template's tool-call grammar.
@@ -778,7 +788,7 @@ FFAI runs sampling on the GPU as a final kernel in the per-token command buffer:
    Swift advances the loop with next_token
 ```
 
-This is a **Phase 1 deliverable** (alongside the other foundation kernels), not a Phase 5 optimization. It costs us very little to implement up front and removes the biggest per-token sync point from day one.
+✅ **Shipped.** `Ops.softmaxCategoricalSample(...)` (Sources/FFAI/Ops/Ops.swift) and `Ops.argmax(...)` run inside the per-token command buffer; the only CPU↔GPU readback is the 4-byte chosen-token id. The legacy CPU-readback path (`forwardCPUSample`) is kept behind a debug flag for repro / comparison but is not on the hot path. `GenerationParameters.temperature` / `topP` / `topK` / `minP` all dispatch through GPU kernels.
 
 ---
 
@@ -1039,7 +1049,7 @@ The throughput win comes from amortising one verifier forward over multiple acce
   ┌──────────────────────────────────────────────────────────┐
   │  metaltile (Rust workspace, sibling repo)                │
   │  Generates kernels.metallib + manifest + Swift wrappers  │
-  │  via the `tile build --emit all --out <dir>` CLI command             │
+  │  via the `tile build --emit all --out <dir>` CLI command │
   │  (metaltile-cli).                                        │
   └──────────────────────────────────────────────────────────┘
 ```

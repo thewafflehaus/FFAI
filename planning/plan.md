@@ -67,19 +67,18 @@ After Phase 6.5 (Vision) and Phase 7 (Audio) landed, this is the honest list of 
 2. **Sliding-window SDPA full-attention fall-through** — `Ops.sdpaDecode` passes `sink_end = 0`, `window_start = 0` even when the cache is sliding-window. 4×–8× decode tax at 16K–32K context. Closed by Phase 6.1.
 3. **VLM cold inference on Idefics3 / PaliGemma / GlmOcr / FastVLM** — vision-tower attention + depthwise conv run on parallelised CPU, not GPU. Minutes-per-first-image at 1024px on FastVLM. Closed by Phase 6.5b.
 4. **AURA persistent K/V mirror** — Stage 1a snapshots a full `[maxSeq, kvHeads, headDim]` mirror per layer. Closed by Phase 6.3 Stage 1b (compressed-domain `aura_flash` as default decode path).
-5. **GPU 100% pin (unknown root cause)** — deferred per user; needs a Metal System Trace to localise. Mitigation: `FFAI_MAX_COMMAND_BUFFERS=16` caps the queue so it stays annoying-but-survivable.
+5. **GPU 100% pin (unknown root cause, cannot reproduce anymore)** — deferred per user; needs a Metal System Trace to localise. Mitigation: `FFAI_MAX_COMMAND_BUFFERS=16` caps the queue so it stays annoying-but-survivable.
 6. **Per-token `commit + wait` + 4-byte readback** [#93] — partially shipped under Phase C #6 (1-cmdbuf default path); full GPU-resident decode is a Phase 9 dispatch-mode win.
 7. **FishSpeech Conv1d on CPU** — codec ports run dilated / transposed Conv1d in Swift until the metaltile kernels land. Synthesise path produces a waveform but slowly.
 8. **Marvis Mimi codec — not wired** — `MarvisModel` frame-generates but `mimiDecoder` is nil. Hook in `Audio/Mimi.swift`.
 
 ### Testing
 1. **Integration tests written but unrun** — every family added in the Phase 6.5 (16 VLMs) + Phase 7 (35+ audio families) wave ships an assertive integration test that has not yet been run against a cached checkpoint. The first `make test-integration --filter <Family>` pass against each gives the real coherence verdict.
-2. **No GPU correctness tests** for the CPU vision towers (Phase 6.5b prerequisite). Each new metaltile kernel under that phase needs its paired `*_gpu_correctness.rs`.
+2. **No GPU correctness tests** for the CPU vision towers (Phase 6.5b prerequisite). Each new metaltile kernel under that phase needs its paired `*_gpu_correctness.rs`. (need to verify this is still required)
 3. **No per-layer forward tests** for most new families — they ship config-parse + registry-detection unit tests but no `<Family>ForwardTests.swift` running one decoder layer against a known input. These catch regressions earlier than the integration suite.
 4. **No AURA MSL snapshots** — Phase 6.2 still open.
 5. **FishSpeech integration test asserts the staged path** — flip the assertion once the Conv1d codec primitives land.
 6. **VLMTestSupport has one fixture** — `dog.jpeg`. A text-rendering fixture (for GLM-OCR) and an alpha-channel fixture (for SmolVLM) would harden the preprocessing pipeline.
-7. **`steel_gemm_splitk` flakiness** [#92] — intermittent under the full suite; needs a deterministic repro.
 
 **Test layout:**
 
@@ -103,7 +102,7 @@ Every PR that adds production code without corresponding tests is rejected at re
 
 ## Model architecture conventions
 
-**One file per family**, not per variant. A "family" is a major architectural lineage: `Qwen3.swift` covers Qwen3, Qwen3.5 dense, Qwen3.5 MoE, Qwen3.5-VL, Qwen3.5-Omni, Qwen3.6, etc. Different major generations get separate files (Qwen2 ≠ Qwen3).
+**One file per family**, not per variant. A "family" is a major architectural lineage: `Qwen35.swift` covers Qwen3.5 dense, Qwen3.5 MoE, Qwen3.5-VL, Qwen3.5-Omni, Qwen3.6, etc. Different major generations get separate files (Qwen2 ≠ Qwen3).
 
 Each family file uses **protocol + per-variant struct** internally so adding a variant doesn't bloat a giant switch statement. See `architecture.md` for the diagram.
 
@@ -126,12 +125,14 @@ Full API surface lands in **Phase 2** (with only `.textIn`/`.textOut` exercised)
 
 ## Model file formats
 
-| Format | What | When |
+| Format | What | Status |
 |---|---|---|
-| **safetensors** (fp16/bf16) | HF default. Header (JSON) + raw tensor bytes. mmap-friendly. | **Phase 2** — required |
-| **mlx-format** (quantized safetensors) | Same file format; mlx-community quant layout (weight + scale + zero per group). | **Phase 3** alongside our quant kernels |
-| **gguf** | llama.cpp single-file format, embeds quant + tokenizer, different naming convention. | **Phase 7+** if there's user demand |
-| **onnx** | Graph format, embedded weights. Wrong fit — would need a graph executor. | **Skip.** Doesn't align with static-kernel approach. |
+| **safetensors** (fp16/bf16) | HF default. Header (JSON) + raw tensor bytes. mmap-friendly. | ✅ shipped |
+| **mlx-format** (quantized safetensors, 3/4/5/6/8-bit affine) | Same file format; mlx-community quant layout (weight + scale + bias per group). | ✅ shipped |
+| **mlx-format** (2-bit affine) | Same group-affine layout, 16 codes per uint32 word. Needs a `dequant_gemv` kernel variant + `loadLinear` bits decoder update. | 🚧 planned (see `session-plan.md`) |
+| **mixed quantization** (per-tensor / per-layer bit-width recipes) | Different layers carry different bit-widths in a single checkpoint (e.g. K/V cache at 4-bit while attention is 8-bit). Loader needs per-tensor `quantization` block parsing; today only the top-level `quantization.bits` is honored uniformly. | 🚧 planned (see `session-plan.md`) |
+| **gguf** | llama.cpp single-file format, embeds quant + tokenizer + per-arch name mapping. | 🚧 planned (see `session-plan.md`) |
+| **onnx** | Graph format, embedded weights. Wrong fit — would need a graph executor. | ❌ skipped (doesn't align with static-kernel approach) |
 
 ---
 
@@ -139,11 +140,11 @@ Full API surface lands in **Phase 2** (with only `.textIn`/`.textOut` exercised)
 
 Three CPU-side dispatch strategies, selectable per-load via `LoadOptions.dispatchMode`. We architect for all three from Phase 2 but only ship Mode 1 initially. See `architecture.md §4a` for the diagrams and tradeoffs.
 
-| Mode | What | Phase |
+| Mode | What | Status |
 |---|---|---|
-| `.eager` | Standard MTLComputeCommandEncoder per kernel call. Simple, debuggable. | **Phase 2 — default and only mode** |
-| `.argumentBuffers` | Per-layer argument buffers pre-bind weights. Per-token, only activations + KV offset are bound. ~5x fewer setBuffer calls. | **Phase 5** if profiles justify |
-| `.icb` | Indirect Command Buffer pre-records the entire forward pass. Per-token, only an arg buffer update + one execute. | **Phase 5+** if `.argumentBuffers` isn't enough |
+| `.eager` | Standard MTLComputeCommandEncoder per kernel call. Simple, debuggable. | ✅ shipped — default + only mode today |
+| `.argumentBuffers` | Per-layer argument buffers pre-bind weights. Per-token, only activations + KV offset are bound. ~5× fewer setBuffer calls. | 🚧 planned (Phase 9 — only land once profiles justify) |
+| `.icb` | Indirect Command Buffer pre-records the entire forward pass. Per-token, only an arg buffer update + one execute. | 🚧 planned (Phase 9 — only if `.argumentBuffers` isn't enough) |
 
 **Architecture invariants we maintain from day 1 to keep all three modes viable:** (1) weight MTLBuffers are immutable post-load, (2) activation MTLBuffers come from a `BufferPool` with stable handles, (3) no CPU readback during forward pass — sampling runs on the GPU, (4) fused kernels for hot paths to minimize memory bandwidth.
 
@@ -554,7 +555,7 @@ Real wins still available in this space (re-scoping Phase 6.1):
 1. **Port `has_sink + sink_logit` to head_dim=64 in metaltile.** GPT-OSS today commits the cmdbuf mid-attention, reads K + Q back to CPU, computes a per-head sink-correction factor, scales the SDPA output on the host. The kernel feature exists on head_dim=128; porting it to head_dim=64 eliminates one per-token CPU readback per attention layer.
 2. **Switch sliding-window cache to linear-grow-with-skip.** Enables the existing head_dim=128 kernel fast path on Llama / Mistral / Phi / Qwen. Cost: cache memory grows from `min(maxSize, length)` to `length` (up to `maxSeq`). Probably not worth it for our memory constraints; revisit only if the head_dim=128 sliding-window layers become a measurable bottleneck.
 
-Decision: drop the "Phase 6.1" milestone from the active plan, leave the rescoped wins (#1, #2) on the backlog. The architecturally-moot nature of the original phase is documented here so a future reader doesn't re-pick it up under the old framing.
+Decision: drop the "Phase 6.1" milestone from the active plan, leave the rescoped wins (#1, #2) on the backlog. The architecturally-moot nature of the original phase is documented here so a future reader doesn't re-pick it up under the old framing. **This may no longer be moot and is something we should revisit.**
 
 ---
 
@@ -633,9 +634,23 @@ Original 6.5 goal text preserved for context below.
 
 ---
 
-## Phase 6.5b — VLM vision-tower GPU port
+## Phase 6.5b — VLM vision-tower GPU port  🟡 PARTIAL
 
-**Why this exists.** Phase 6.5 shipped 16 VL families, but four of them — Idefics3, PaliGemma, GlmOcr, FastVLM — still run their vision-tower attention + depthwise conv on CPU (parallelised via `DispatchQueue.concurrentPerform`, but not GPU). FastVLM cold inference at 1024px is flagged at minutes per first-image in the agent return notes; the others have similar tails.
+**Shipped so far** (commits in the `ek/aura-port` line):
+- `Ops.sdpaBidirectional(headDim:)` ported with the d64 / d72 / d80 / d96 variants for the SigLIP / CLIP / PaliGemma / Qwen2-VL / Qwen2.5-VL towers.
+- Idefics3 / Paligemma / GlmOcr / SmolVLM2 / FastVLM CPU attention → `Ops.sdpaBidirectional`.
+- Per-VLM `Linear` calls → GPU GEMM (`Ops.gemm`) inside the tower bodies (Paligemma / Idefics3 / GlmOcr / SmolVLM2 / Pixtral / FastVLM).
+- Gemma 3-VL + Gemma 4-VL vision towers fully migrated to `sdpaBidirectional(headDim: 72)`.
+- GraniteSpeech encoder CPU attention → `sdpaBidirectional` / `sdpaDecode`.
+
+**Still pending** (see `session-plan.md`):
+- Paligemma SigLIP encoder CPU→GPU rewrite (Step §D).
+- Pixtral vision tower remaining CPU paths (RoPE2D + transpose + Q/K/V reshape).
+- FastVLM depthwise conv (metaltile kernel).
+- Mistral3 spatial unfold + GlmOcr attention reshape.
+- MiniCPMV / SmolVLM2 / Qwen2-VL / Qwen3-VL / Gemma4-VL remaining CPU paths.
+
+**Why this exists.** Phase 6.5 shipped 16 VL families, but four of them — Idefics3, PaliGemma, GlmOcr, FastVLM — still ran their vision-tower attention + depthwise conv on CPU (parallelised via `DispatchQueue.concurrentPerform`, but not GPU). FastVLM cold inference at 1024px was flagged at minutes per first-image in the agent return notes; the others had similar tails.
 
 The Phase 6.5 vision encoder reused FFAI's `VisionEncoder` for any VL family whose tower is a standard ViT + LayerNorm + GELU stack. The four CPU-bound stragglers each ship a custom tower:
 - **Idefics3** — bidirectional pre-norm SigLIP-ish with pixel-shuffle connector; CPU bidirectional attention in `Idefics3VisionEncoder`.
@@ -657,13 +672,20 @@ The Phase 6.5 vision encoder reused FFAI's `VisionEncoder` for any VL family who
 
 ---
 
-## Phase 6.6 — Chunked (batched) prefill  🟡 SCAFFOLD SHIPPED (2026-05-23)
+## Phase 6.6 — Chunked (batched) prefill  🟡 PARTIAL
 
-**Scaffold shipped** (commit `017e954`):
-- `LanguageModel.forwardMulti(tokenIds:startingAt:caches:on:device:) -> Tensor` protocol method (default loop on a single command buffer, returns tail-position logits).
+**Scaffold + Llama backbone shipped:**
+- `LanguageModel.forwardMulti(tokenIds:startingAt:caches:on:device:) -> Tensor` protocol method (commit `017e954`). Default loop runs one command buffer, returns tail-position logits.
 - `Generate.driveGeneration` prefill restructured to call `engine.forwardMulti(chunk, startingAt: pos, on: cmd)` per `prefillStepSize`-sized chunk, then `sampleNext` only on the final position. **Commit count drops from N to ceil(N/chunkSize) + 1** — for a 1024-token prompt with the default `prefillStepSize=1024` that's 1024 → 2 commits, eliminating ~milliseconds of CPU↔GPU sync per discarded commit.
+- ✅ Family-optimised `LlamaLayer.forwardMulti` shipped (Llama backbone batched: QKV via `Ops.gemm`, attention via `Ops.sdpaMulti(causal:true)`, MLP gate/up/down via `Ops.gemm`, RMSNorm via `Ops.rmsNormRows`).
+- ✅ `AnyLinear.gemm` batched-Linear surface shipped (every family's `Linear` can dispatch the `[N, hidden]` batched GEMM path).
+- ✅ Per-family `defaultPrefillStepSize` wired through `GenerationParameters` (Gemma 4: 4096, GPT-OSS: 2048, dense default: 1024, hybrid families: 256–512).
 
-**Next session — family-optimised `forwardMulti` overrides.** The default loop calls `forward(tokenId:)` N times on the same cmdbuf; the real Phase 6.6 perf win is overriding `forwardMulti` per family to batch the QKV / MLP projections via `Ops.gemm(weight:, input: [N, hidden], nRows: N)` and collapse the N per-token SDPA dispatches into one `Ops.sdpaMulti(causal: true)` call. All primitives exist (`Ops.gemm` ships batched matmul; `Ops.rmsNormRows` ships batched RMSNorm; `Ops.sdpaMulti` ships causal multi-query SDPA). The work is:
+**Still pending** (tracked in `session-plan.md`):
+- Per-attention-layer `decodeMulti` overrides for hybrid families (NemotronH / Jamba / GraniteMoeHybrid / FalconH1 / LFM2 / Qwen3.5 GDN). The attention layers can chunk; the SSM / GDN recurrent layers stay per-token because their recurrence is inherently sequential until the deferred chunked-scan kernels land.
+- Chunked `forwardMulti` for Gemma 3 / Gemma 4 / GPT-OSS (the three families with the largest default `prefillStepSize` but not yet on the batched layer path).
+
+**Next session — family-optimised `forwardMulti` overrides for the remaining families.** The default loop calls `forward(tokenId:)` N times on the same cmdbuf; the real Phase 6.6 perf win is overriding `forwardMulti` per family to batch the QKV / MLP projections via `Ops.gemm(weight:, input: [N, hidden], nRows: N)` and collapse the N per-token SDPA dispatches into one `Ops.sdpaMulti(causal: true)` call. All primitives exist (`Ops.gemm` ships batched matmul; `Ops.rmsNormRows` ships batched RMSNorm; `Ops.sdpaMulti` ships causal multi-query SDPA). The work is:
 
 1. **`LlamaLayer.forwardMulti(chunk:positions:cache:cmd:device:)`** — restructure the per-token layer forward to take `[N, hidden]` inputs and produce `[N, hidden]` outputs. The hot wins are `Ops.gemm(...)` for {q,k,v,o,gate,up,down}_proj, `Ops.sdpaMulti` for attention, `Ops.rmsNormRows` for the two layer norms.
 2. **`KVCacheProtocol.appendChunkOnGPU(kChunk:vChunk:positions:on:)`** — loop the existing single-position `kv_cache_update` N times on the same cmdbuf (cheap; the K/V append isn't the bottleneck) OR add a batched kernel to metaltile if the loop overhead shows up in profiles.
