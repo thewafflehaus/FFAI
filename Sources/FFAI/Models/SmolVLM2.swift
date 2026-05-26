@@ -70,7 +70,7 @@ public struct SmolVLM2Dense {
     /// a prompt with `frameCount × imageTokensPerFrame` image-token
     /// placeholders, then pass the concatenated per-frame embeddings to
     /// `SmolVLM2Model.prefillWithImage`.
-    public static let availableCapabilities: Set<Capability> = [.textIn, .textOut, .visionIn, .videoIn]
+    public static let availableCapabilities: Set<Capability> = [.textIn, .textOut, .imageIn, .videoIn]
     public static let defaultGenerationParameters = GenerationParameters(
         maxTokens: 256,
         prefillStepSize: 1024,

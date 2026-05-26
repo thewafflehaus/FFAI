@@ -33,7 +33,7 @@ struct LlamaTextTests {
         #expect(LlamaDense.availableCapabilities.contains(.textIn))
         #expect(LlamaDense.availableCapabilities.contains(.textOut))
         // Llama dense is text-only — never vision / audio.
-        #expect(!LlamaDense.availableCapabilities.contains(.visionIn))
+        #expect(!LlamaDense.availableCapabilities.contains(.imageIn))
         #expect(!LlamaDense.availableCapabilities.contains(.audioIn))
     }
 

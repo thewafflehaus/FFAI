@@ -34,7 +34,7 @@ struct Qwen35HybridTests {
     func capabilities() {
         #expect(Qwen35Hybrid.availableCapabilities.contains(.textIn))
         #expect(Qwen35Hybrid.availableCapabilities.contains(.textOut))
-        #expect(!Qwen35Hybrid.availableCapabilities.contains(.visionIn))
+        #expect(!Qwen35Hybrid.availableCapabilities.contains(.imageIn))
     }
 
     /// Qwen 3.5 ships base + instruction-tuned checkpoints. Greedy by

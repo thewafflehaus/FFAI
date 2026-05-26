@@ -33,7 +33,7 @@ struct Gemma3TextTests {
     func capabilities() {
         #expect(Gemma3Dense.availableCapabilities.contains(.textIn))
         #expect(Gemma3Dense.availableCapabilities.contains(.textOut))
-        #expect(!Gemma3Dense.availableCapabilities.contains(.visionIn))
+        #expect(!Gemma3Dense.availableCapabilities.contains(.imageIn))
     }
 
     @Test("Gemma3Dense default generation parameters track Gemma family")

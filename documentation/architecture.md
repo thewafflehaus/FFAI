@@ -123,7 +123,7 @@ User: model.engine.forwardSample(tokenId: t, position: pos, caches: caches)
 
 A `Model` has two `Capability` sets:
 
-- `availableCapabilities` — what the family declares it can do (`Llama` is `[.textIn, .textOut]`; the VL families add `.visionIn`).
+- `availableCapabilities` — what the family declares it can do (`Llama` is `[.textIn, .textOut]`; the VL families add `.imageIn`, video-capable VL families add `.imageIn + .videoIn`).
 - `enabledCapabilities` — what the user opted into via `LoadOptions.capabilities`.
 
 Disabled modalities skip weight allocation entirely — the vision encoder of a 9B VL model is ~600MB you don't pay for if you only need text. The infrastructure has been in place since Phase 2; the vision-language and audio families now exercise it end-to-end.
@@ -148,7 +148,7 @@ Sources/
     ModelDownloader.swift  HF Hub snapshot download/cache
     ModelLocator.swift     Repo id ↔ local dir resolver
     ModelLifecycle.swift   AsyncStream<Event> state machine
-    Capability.swift       .textIn / .visionIn / etc.
+    Capability.swift       .textIn / .imageIn / etc.
     LoadOptions.swift      What the user requests at load
     LanguageModel.swift    Protocol implemented by family models
     TokenizerLoader.swift  AutoTokenizer.from(modelFolder:) wrapper

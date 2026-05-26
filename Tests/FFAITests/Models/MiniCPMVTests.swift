@@ -45,7 +45,7 @@ struct MiniCPMVRootTests {
         let caps = MiniCPMV4_6.availableCapabilities
         #expect(caps.contains(.textIn))
         #expect(caps.contains(.textOut))
-        #expect(caps.contains(.visionIn))
+        #expect(caps.contains(.imageIn))
         #expect(caps.contains(.videoIn))
     }
 

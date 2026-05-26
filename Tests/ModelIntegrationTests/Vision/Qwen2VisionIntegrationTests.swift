@@ -47,10 +47,10 @@ struct Qwen2VisionIntegrationTests {
             try await Model.load(Self.modelId)
         }
 
-        // The checkpoint is a VLM — vlModel is present, .visionIn is
+        // The checkpoint is a VLM — vlModel is present, .imageIn is
         // available, and the text backbone supports the splice.
         #expect(m.vlModel != nil)
-        #expect(m.availableCapabilities.contains(.visionIn))
+        #expect(m.availableCapabilities.contains(.imageIn))
         #expect(m.engine.supportsEmbeddingInput)  // VLM splice prerequisite
 
         let vlm = try #require(m.vlModel)
@@ -58,16 +58,16 @@ struct Qwen2VisionIntegrationTests {
         #expect(vlm.imageTokenCount > 0)
     }
 
-    @Test("enable / disable .visionIn — runtime capability flip")
+    @Test("enable / disable .imageIn — runtime capability flip")
     func capabilityFlip() async throws {
         let m = try await ModelLoadLock.shared.loadSerially {
             try await Model.load(Self.modelId)
         }
-        #expect(m.availableCapabilities.contains(.visionIn))
-        m.disable(.visionIn)
-        #expect(!m.isEnabled(.visionIn))
-        m.enable(.visionIn)
-        #expect(m.isEnabled(.visionIn))
+        #expect(m.availableCapabilities.contains(.imageIn))
+        m.disable(.imageIn)
+        #expect(!m.isEnabled(.imageIn))
+        m.enable(.imageIn)
+        #expect(m.isEnabled(.imageIn))
     }
 
     @Test("image + text prompt — describes the dog photo")
@@ -113,7 +113,7 @@ struct Qwen2VisionIntegrationTests {
         }
         // The Qwen 2-VL family now declares text + vision + video.
         #expect(m.vlModel != nil)
-        #expect(m.availableCapabilities.contains(.visionIn))
+        #expect(m.availableCapabilities.contains(.imageIn))
         #expect(m.availableCapabilities.contains(.videoIn))
 
         let vlm = try #require(m.vlModel)

@@ -48,10 +48,10 @@ struct MiniCPMVIntegrationTests {
         let modelId = "mlx-community/MiniCPM-V-4.6-4bit"
         let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
-        // The checkpoint is a VLM — vlModel is present, .visionIn is
+        // The checkpoint is a VLM — vlModel is present, .imageIn is
         // available, and the text backbone is Qwen 3.5 (hidden 1024).
         #expect(m.vlModel != nil)
-        #expect(m.availableCapabilities.contains(.visionIn))
+        #expect(m.availableCapabilities.contains(.imageIn))
         #expect(m.engine.hidden == 1024)
         #expect(m.engine.supportsEmbeddingInput)
         // Qwen 3.5 is the text backbone (`qwen3_5_text` text_config).

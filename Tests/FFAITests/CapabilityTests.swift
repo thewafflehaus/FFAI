@@ -33,7 +33,7 @@ struct CapabilityTests {
         let s = Set(Capability.allCases)
         #expect(s.contains(.textIn))
         #expect(s.contains(.textOut))
-        #expect(s.contains(.visionIn))
+        #expect(s.contains(.imageIn))
         #expect(s.contains(.videoIn))
         #expect(s.contains(.audioIn))
         #expect(s.contains(.audioOut))
@@ -128,7 +128,7 @@ struct CapabilityTests {
 
     @Test("Codable round-trip via raw value")
     func codable() throws {
-        let original: Capability = .visionIn
+        let original: Capability = .imageIn
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(Capability.self, from: data)
         #expect(decoded == original)
@@ -146,9 +146,9 @@ struct CapabilityTests {
         _ = params
     }
 
-    @Test("visionIn is a distinct, non-text capability")
-    func visionInDistinct() {
-        #expect(!Capability.textOnly.contains(.visionIn))
-        #expect(Capability.visionIn.rawValue == "visionIn")
+    @Test("imageIn is a distinct, non-text capability")
+    func imageInDistinct() {
+        #expect(!Capability.textOnly.contains(.imageIn))
+        #expect(Capability.imageIn.rawValue == "imageIn")
     }
 }

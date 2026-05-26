@@ -35,12 +35,12 @@ struct PaligemmaRootTests {
             == String(describing: PaligemmaStandard.self))
     }
 
-    @Test("PaligemmaStandard advertises text + visionIn")
+    @Test("PaligemmaStandard advertises text + imageIn")
     func capabilities() {
         let caps = PaligemmaStandard.availableCapabilities
         #expect(caps.contains(.textIn))
         #expect(caps.contains(.textOut))
-        #expect(caps.contains(.visionIn))
+        #expect(caps.contains(.imageIn))
     }
 
     @Test("PaligemmaStandard.defaultGenerationParameters are greedy by default")

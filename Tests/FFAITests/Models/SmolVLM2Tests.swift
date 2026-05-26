@@ -39,7 +39,7 @@ struct SmolVLM2RootTests {
         let caps = SmolVLM2Dense.availableCapabilities
         #expect(caps.contains(.textIn))
         #expect(caps.contains(.textOut))
-        #expect(caps.contains(.visionIn))
+        #expect(caps.contains(.imageIn))
         #expect(caps.contains(.videoIn))
     }
 

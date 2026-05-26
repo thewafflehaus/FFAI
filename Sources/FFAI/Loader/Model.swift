@@ -132,7 +132,7 @@ public enum ModelRegistry {
         public let engine: any LanguageModel
         public let defaultGenerationParameters: GenerationParameters
         /// Capabilities the loaded variant supports. Text-only families
-        /// report `Capability.textOnly`; VL variants add `.visionIn`.
+        /// report `Capability.textOnly`; VL variants add `.imageIn`.
         public let availableCapabilities: Set<Capability>
         /// The composed vision-language model, when the checkpoint is a
         /// VLM. `nil` for text-only families. The `engine` is the VL
@@ -169,7 +169,7 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: vlm.engine,
                     defaultGenerationParameters: Gemma3Dense.defaultGenerationParameters,
-                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    availableCapabilities: Capability.textOnly.union([.imageIn]),
                     vlModel: vlm)
             }
             // LFM2-VL — SigLIP2 ViT + LiquidAI LFM2 conv+attention text
@@ -186,7 +186,7 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: vlm.engine,
                     defaultGenerationParameters: lfm2DefaultParams,
-                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    availableCapabilities: Capability.textOnly.union([.imageIn]),
                     vlModel: vlm)
             }
             // Qwen 2.5-VL — dynamic-resolution windowed-attention ViT
@@ -252,7 +252,7 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: vlm.engine,
                     defaultGenerationParameters: Gemma4Dense.defaultGenerationParameters,
-                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    availableCapabilities: Capability.textOnly.union([.imageIn]),
                     vlModel: vlm)
             }
             // FastVLM — Apple's FastViTHD vision tower + mlp2x_gelu projector
@@ -267,7 +267,7 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: vlm.engine,
                     defaultGenerationParameters: LlamaDense.defaultGenerationParameters,
-                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    availableCapabilities: Capability.textOnly.union([.imageIn]),
                     vlModel: vlm)
             }
             if let mt = config.modelType, FastVLM.modelTypes.contains(mt) {
@@ -277,7 +277,7 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: vlm.engine,
                     defaultGenerationParameters: LlamaDense.defaultGenerationParameters,
-                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    availableCapabilities: Capability.textOnly.union([.imageIn]),
                     vlModel: vlm)
             }
             // Pixtral — Mistral AI's Pixtral-12B vision-language model.
@@ -293,7 +293,7 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: vlm.engine,
                     defaultGenerationParameters: LlamaDense.defaultGenerationParameters,
-                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    availableCapabilities: Capability.textOnly.union([.imageIn]),
                     vlModel: vlm)
             }
             // Mistral3 — Mistral Small 3.1 vision-language model. Shares
@@ -307,7 +307,7 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: vlm.engine,
                     defaultGenerationParameters: LlamaDense.defaultGenerationParameters,
-                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    availableCapabilities: Capability.textOnly.union([.imageIn]),
                     vlModel: vlm)
             }
             // Idefics3 — HuggingFace Idefics3 (SmolVLM ancestor). SigLIP
@@ -327,7 +327,7 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: m,
                     defaultGenerationParameters: LlamaDense.defaultGenerationParameters,
-                    availableCapabilities: Capability.textOnly.union([.visionIn]))
+                    availableCapabilities: Capability.textOnly.union([.imageIn]))
             }
             if Idefics3.modelTypes.contains(config.modelType ?? "")
                 || Idefics3.architectures.contains(config.architecture ?? "")
@@ -385,7 +385,7 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: vlm.engine,
                     defaultGenerationParameters: NemotronHHybrid.defaultGenerationParameters,
-                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    availableCapabilities: Capability.textOnly.union([.imageIn]),
                     vlModel: vlm)
             }
             // Nemotron-Labs-Diffusion VLM — Pixtral ViT vision tower +
@@ -402,7 +402,7 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: vlm.engine,
                     defaultGenerationParameters: NemotronDiffusionDense.defaultGenerationParameters,
-                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    availableCapabilities: Capability.textOnly.union([.imageIn]),
                     vlModel: vlm)
             }
             // Text-only Qwen3.5 / 3.6 checkpoints with a vestigial
@@ -427,7 +427,7 @@ public enum ModelRegistry {
             // (a Llama backbone wrapped with a CPU SigLIP vision tower
             // + pixel-shuffle connector). Does NOT use the VisionModel
             // splice; returns a plain `Loaded` whose `engine` is the
-            // composite `SmolVLM2Model` and exposes `.visionIn`.
+            // composite `SmolVLM2Model` and exposes `.imageIn`.
             if let arch = config.architecture, SmolVLM2.architectures.contains(arch) {
                 let engine = try SmolVLM2Dense.loadModel(
                     config: config, weights: weights,
@@ -872,7 +872,7 @@ public enum ModelRegistry {
 public final class Model: @unchecked Sendable {
     /// The concrete model engine (LlamaModel, Qwen3Model, …). For a VLM
     /// this is the text backbone — text-only generation works
-    /// regardless of whether `.visionIn` is enabled.
+    /// regardless of whether `.imageIn` is enabled.
     public let engine: any LanguageModel
     public let tokenizer: any Tokenizer
     public let config: ModelConfig
@@ -881,7 +881,7 @@ public final class Model: @unchecked Sendable {
 
     /// The composed vision-language model — `nil` unless the checkpoint
     /// is a VLM. Use `vlModel.generate(...)` for an image+text prompt;
-    /// available only when `availableCapabilities` contains `.visionIn`.
+    /// available only when `availableCapabilities` contains `.imageIn`.
     public let vlModel: VisionModel?
 
     /// Currently-enabled capabilities. Mutated via `enable(_:)` /
@@ -1011,7 +1011,7 @@ public final class Model: @unchecked Sendable {
         enabledCapabilities.contains(capability)
     }
 
-    /// Enable a capability at runtime — e.g. `enable(.visionIn)` lights
+    /// Enable a capability at runtime — e.g. `enable(.imageIn)` lights
     /// up the vision path on a model loaded text-only. No-op if the
     /// capability isn't in `availableCapabilities` (a text-only model
     /// can't gain vision) or is already enabled. Emits a lifecycle

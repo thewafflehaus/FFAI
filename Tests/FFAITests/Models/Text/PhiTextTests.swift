@@ -31,7 +31,7 @@ struct PhiTextTests {
     func capabilities() {
         #expect(Phi3Dense.availableCapabilities.contains(.textIn))
         #expect(Phi3Dense.availableCapabilities.contains(.textOut))
-        #expect(!Phi3Dense.availableCapabilities.contains(.visionIn))
+        #expect(!Phi3Dense.availableCapabilities.contains(.imageIn))
     }
 
     @Test("Phi3Dense default generation parameters mirror Llama dense")

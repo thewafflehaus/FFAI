@@ -38,7 +38,7 @@ struct NemotronDiffusionTextTests {
     func capabilities() {
         #expect(NemotronDiffusionDense.availableCapabilities.contains(.textIn))
         #expect(NemotronDiffusionDense.availableCapabilities.contains(.textOut))
-        #expect(!NemotronDiffusionDense.availableCapabilities.contains(.visionIn))
+        #expect(!NemotronDiffusionDense.availableCapabilities.contains(.imageIn))
     }
 
     @Test("NemotronDiffusionDense default generation parameters are greedy")

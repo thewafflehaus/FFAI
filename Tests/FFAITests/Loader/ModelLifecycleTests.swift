@@ -63,9 +63,9 @@ struct ModelLifecycleTests {
 
     @Test("ModelLifecycleEvent can target a specific capability")
     func eventCapability() {
-        let e = ModelLifecycleEvent(capability: .visionIn,
+        let e = ModelLifecycleEvent(capability: .imageIn,
                                     state: .loading(LoadProgress(stage: "vision", completed: 0, total: 1)))
-        #expect(e.capability == .visionIn)
+        #expect(e.capability == .imageIn)
         if case .loading(let p) = e.state {
             #expect(p.stage == "vision")
         } else {

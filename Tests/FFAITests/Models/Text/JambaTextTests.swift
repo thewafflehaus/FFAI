@@ -32,7 +32,7 @@ struct JambaTextVariantTests {
     func capabilities() {
         #expect(JambaHybrid.availableCapabilities.contains(.textIn))
         #expect(JambaHybrid.availableCapabilities.contains(.textOut))
-        #expect(!JambaHybrid.availableCapabilities.contains(.visionIn))
+        #expect(!JambaHybrid.availableCapabilities.contains(.imageIn))
     }
 
     /// Jamba ships base + instruction-tuned checkpoints. Greedy by
