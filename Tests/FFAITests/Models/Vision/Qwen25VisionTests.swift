@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-// Config-parse unit tests for the Qwen 2.5-VL family (the
+// Unit tests for the Qwen 2.5-VL family (the
 // windowed-attention ViT + Qwen 2.x text backbone
 // `Qwen2_5_VLForConditionalGeneration` checkpoint).
 //
@@ -10,7 +10,7 @@ import Testing
 // turns the nested `vision_config` into the windowed-attention ViT
 // geometry (depth, head dim, spatial-merge unit, full-attention block
 // set) the vision tower is built from.
-@Suite("Qwen25 Vision Config")
+@Suite("Qwen25 Vision")
 struct Qwen25VisionConfigTests {
 
     /// A representative `Qwen2_5_VLForConditionalGeneration` config.

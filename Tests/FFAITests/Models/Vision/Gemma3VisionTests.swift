@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-// Config-parse unit tests for the Gemma 3 VL family (the SigLIP +
+// Unit tests for the Gemma 3 VL family (the SigLIP +
 // Gemma 3 `Gemma3ForConditionalGeneration` checkpoint).
 //
 // These run offline on a hand-built `ModelConfig` — no checkpoint — and
@@ -10,7 +10,7 @@ import Testing
 // typed geometry: VL routing, the nested `vision_config` / `text_config`
 // split, the SigLIP `VisionEncoderConfig` geometry, and the sparse
 // `text_config` default-merge.
-@Suite("Gemma3 Vision Config")
+@Suite("Gemma3 Vision")
 struct Gemma3VisionConfigTests {
 
     /// A representative `Gemma3ForConditionalGeneration` config: a

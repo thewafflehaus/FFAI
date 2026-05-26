@@ -2,13 +2,13 @@ import Foundation
 import Testing
 @testable import FFAI
 
-// Config-parse unit tests for the Qwen 2-VL family (the full-attention
+// Unit tests for the Qwen 2-VL family (the full-attention
 // ViT + Qwen 2 text backbone `Qwen2VLForConditionalGeneration` checkpoint).
 //
 // Offline — covers VL routing and `Qwen2VLVisionConfig.decode`, which
 // turns the nested `vision_config` into the ViT geometry (depth, head dim,
 // spatial-merge unit) the vision tower is built from.
-@Suite("Qwen2 Vision Config")
+@Suite("Qwen2 Vision")
 struct Qwen2VisionConfigTests {
 
     /// A representative `Qwen2VLForConditionalGeneration` config matching

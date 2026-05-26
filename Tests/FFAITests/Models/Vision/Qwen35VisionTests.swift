@@ -2,14 +2,14 @@ import Foundation
 import Testing
 @testable import FFAI
 
-// Config-parse unit tests for the Qwen 3-VL-MoE family (the Qwen3-VL ViT
+// Unit tests for the Qwen 3-VL-MoE family (the Qwen3-VL ViT
 // tower + the Qwen 3.5 mixture-of-experts hybrid text backbone, the
 // `Qwen3VLMoeForConditionalGeneration` checkpoint).
 //
 // Offline — covers VL routing and the shared `Qwen3VLVisionConfig.decode`
 // (the MoE variant reuses the dense Qwen3-VL vision tower), plus the
 // MoE-specific `text_config` keys (`num_experts`, `num_experts_per_tok`).
-@Suite("Qwen35 Vision Config")
+@Suite("Qwen35 Vision (MoE)")
 struct Qwen35VisionConfigTests {
 
     /// A representative `Qwen3VLMoeForConditionalGeneration` config.

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-// Config-parse unit tests for the Gemma 4 VL family (the bespoke Gemma 4
+// Unit tests for the Gemma 4 VL family (the bespoke Gemma 4
 // ViT tower + multi-modal embedder + Gemma 4 text backbone, the
 // `Gemma4ForConditionalGeneration` checkpoint).
 //
@@ -11,7 +11,7 @@ import Testing
 // Generation` is shared with text-only Gemma 4) and
 // `Gemma4VLVisionConfig.decode`, which turns the nested `vision_config`
 // into the RoPE-attention ViT geometry.
-@Suite("Gemma4 Vision Config")
+@Suite("Gemma4 Vision")
 struct Gemma4VisionConfigTests {
 
     /// A representative `Gemma4ForConditionalGeneration` VL config.

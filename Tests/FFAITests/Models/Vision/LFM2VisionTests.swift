@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-// Config-parse unit tests for the LFM2-VL family (the SigLIP2 +
+// Unit tests for the LFM2-VL family (the SigLIP2 +
 // LFM2 `Lfm2VlForConditionalGeneration` checkpoint).
 //
 // These run offline on a hand-built `ModelConfig` — no checkpoint — and
@@ -10,7 +10,7 @@ import Testing
 // typed geometry: VL routing, the architecture string, the nested
 // `vision_config` / `text_config` split, and the derived image-token
 // count (numPatches / downsampleFactor²).
-@Suite("LFM2 Vision Config")
+@Suite("LFM2 Vision")
 struct LFM2VisionConfigTests {
 
     /// A representative `Lfm2VlForConditionalGeneration` config matching

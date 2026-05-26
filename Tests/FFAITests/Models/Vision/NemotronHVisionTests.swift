@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-// Config-parse unit tests for the Nemotron-VLM family (NVIDIA's
+// Unit tests for the Nemotron-VLM family (NVIDIA's
 // Nemotron Nano VL — a ViT tower + multi-modal projector + the
 // NemotronH stack-interleaved hybrid text backbone).
 //
@@ -11,7 +11,7 @@ import Testing
 // `model_type == nemotron_h` since the VL conversion carries no single
 // canonical top-level architecture string) and the SigLIP-style
 // `vision_config` → `VisionEncoderConfig` geometry.
-@Suite("NemotronH Vision Config")
+@Suite("NemotronH Vision")
 struct NemotronHVisionConfigTests {
 
     /// A representative Nemotron Nano VL config: a ViT vision tower + a

@@ -1,4 +1,4 @@
-// SmolVLM2VisionConfigTests — unit tests for config parsing and ModelRegistry routing.
+// SmolVLM2VisionTests — unit tests for config parsing and ModelRegistry routing.
 //
 // These tests exercise:
 //   1. SmolVLM2Config.init(from:) parses vision_config and text_config correctly.
@@ -13,7 +13,7 @@ import Foundation
 import Testing
 @testable import FFAI
 
-@Suite("SmolVLM2 Vision Config")
+@Suite("SmolVLM2 Vision")
 struct SmolVLM2VisionConfigTests {
 
     // ─── Minimal valid raw dicts ──────────────────────────────────────────────

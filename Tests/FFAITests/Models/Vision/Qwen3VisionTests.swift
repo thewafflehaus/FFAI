@@ -2,14 +2,14 @@ import Foundation
 import Testing
 @testable import FFAI
 
-// Config-parse unit tests for the Qwen 3-VL family (the full-attention
+// Unit tests for the Qwen 3-VL family (the full-attention
 // ViT + Qwen 3 dense text backbone `Qwen3VLForConditionalGeneration`
 // checkpoint).
 //
 // Offline — covers VL routing and `Qwen3VLVisionConfig.decode`, which
 // turns the nested `vision_config` into the full-attention ViT geometry
 // (depth, head dim, spatial-merge unit, learned position-table size).
-@Suite("Qwen3 Vision Config")
+@Suite("Qwen3 Vision")
 struct Qwen3VisionConfigTests {
 
     /// A representative `Qwen3VLForConditionalGeneration` config.

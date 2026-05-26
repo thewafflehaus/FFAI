@@ -2,14 +2,14 @@ import Foundation
 import Testing
 @testable import FFAI
 
-// Config-parse unit tests for the Pixtral family (the custom 2D-RoPE
+// Unit tests for the Pixtral family (the custom 2D-RoPE
 // ViT + Mistral text backbone `LlavaForConditionalGeneration` /
 // `pixtral` checkpoint).
 //
 // Offline — covers VL routing and `PixtralVisionConfig.decode`, which
 // turns the nested `vision_config` into the 2D-RoPE ViT geometry (depth,
 // head dim, patch count) the vision tower is built from.
-@Suite("Pixtral Vision Config")
+@Suite("Pixtral Vision")
 struct PixtralVisionConfigTests {
 
     /// A representative Pixtral-12B `config.json` structure. The
