@@ -1110,6 +1110,108 @@ struct OpsTests {
         }
     }
 
+    @Test("sdpaMultiTreeMask — all-zero mask reproduces non-causal sdpaMulti output")
+    func sdpaMultiTreeMaskAllowAll() {
+        autoreleasepool {
+            // An all-zero additive mask permits every position →
+            // attention behaves exactly like causal=false sdpaMulti.
+            let headDim = 128
+            let nQHeads = 2
+            let nKVHeads = 1
+            let baseKV = 0
+            let nQuery = 4
+            let kvStride = baseKV + nQuery
+            let scale = 1.0 / Float(Double(headDim).squareRoot())
+            let q = Tensor.empty(shape: [nQuery, nQHeads, headDim], dtype: .f32)
+            q.copyIn(from: (0 ..< nQuery * nQHeads * headDim).map { Float($0 % 7) * 0.1 })
+            let k = Tensor.empty(shape: [nKVHeads, kvStride, headDim], dtype: .f32)
+            k.copyIn(from: [Float](repeating: 0.5, count: nKVHeads * kvStride * headDim))
+            var vData = [Float](repeating: 0, count: nKVHeads * kvStride * headDim)
+            for t in 0 ..< kvStride {
+                for d in 0 ..< headDim { vData[t * headDim + d] = Float(t) }
+            }
+            let v = Tensor.empty(shape: [nKVHeads, kvStride, headDim], dtype: .f32)
+            v.copyIn(from: vData)
+            // Reference: plain non-causal sdpaMulti.
+            var refOut: Tensor!
+            runAndWait { cb in
+                refOut = Ops.sdpaMulti(
+                    q: q, k: k, v: v,
+                    nQHeads: nQHeads, nKVHeads: nKVHeads, headDim: headDim,
+                    baseKV: baseKV, nQuery: nQuery, kvStride: kvStride,
+                    causal: false, scale: scale, on: cb)
+            }
+            // Tree-mask path: all-zero mask = permit everywhere.
+            let mask = Tensor.empty(shape: [nQuery, nQuery], dtype: .f32)
+            mask.copyIn(from: [Float](repeating: 0, count: nQuery * nQuery))
+            var got: Tensor!
+            runAndWait { cb in
+                got = Ops.sdpaMultiTreeMask(
+                    q: q, k: k, v: v, mask: mask,
+                    nQHeads: nQHeads, nKVHeads: nKVHeads, headDim: headDim,
+                    baseKV: baseKV, nQuery: nQuery, kvStride: kvStride,
+                    scale: scale, on: cb)
+            }
+            let r = refOut.toArray(as: Float.self)
+            let g = got.toArray(as: Float.self)
+            for i in 0 ..< r.count {
+                #expect(abs(r[i] - g[i]) < 1e-3, "i=\(i): \(g[i]) vs \(r[i])")
+            }
+        }
+    }
+
+    @Test("sdpaMultiTreeMask — diagonal -inf mask isolates each query to its own row")
+    func sdpaMultiTreeMaskDiagonalOnly() {
+        autoreleasepool {
+            // Mask = -inf off the diagonal, 0 on the diagonal → each
+            // query attends only its own KV slot (assuming the cache
+            // is full and queries are appended at the end). Outputs
+            // collapse to a copy of the matching V row.
+            let headDim = 128
+            let nQHeads = 1
+            let nKVHeads = 1
+            let baseKV = 0
+            let nQuery = 4
+            let kvStride = baseKV + nQuery
+            let scale = 1.0 / Float(Double(headDim).squareRoot())
+            // Make every Q row identical and every K row identical so
+            // attention only depends on the mask, not the dot products.
+            let q = Tensor.empty(shape: [nQuery, nQHeads, headDim], dtype: .f32)
+            q.copyIn(from: [Float](repeating: 0.5, count: nQuery * nQHeads * headDim))
+            let k = Tensor.empty(shape: [nKVHeads, kvStride, headDim], dtype: .f32)
+            k.copyIn(from: [Float](repeating: 0.5, count: nKVHeads * kvStride * headDim))
+            // V row t holds the constant value `t`.
+            var vData = [Float](repeating: 0, count: nKVHeads * kvStride * headDim)
+            for t in 0 ..< kvStride {
+                for d in 0 ..< headDim { vData[t * headDim + d] = Float(t + 1) }
+            }
+            let v = Tensor.empty(shape: [nKVHeads, kvStride, headDim], dtype: .f32)
+            v.copyIn(from: vData)
+            let neg: Float = -1e9
+            var maskData = [Float](repeating: neg, count: nQuery * nQuery)
+            for i in 0 ..< nQuery { maskData[i * nQuery + i] = 0 }
+            let mask = Tensor.empty(shape: [nQuery, nQuery], dtype: .f32)
+            mask.copyIn(from: maskData)
+            var got: Tensor!
+            runAndWait { cb in
+                got = Ops.sdpaMultiTreeMask(
+                    q: q, k: k, v: v, mask: mask,
+                    nQHeads: nQHeads, nKVHeads: nKVHeads, headDim: headDim,
+                    baseKV: baseKV, nQuery: nQuery, kvStride: kvStride,
+                    scale: scale, on: cb)
+            }
+            let g = got.toArray(as: Float.self)
+            for qIdx in 0 ..< nQuery {
+                let expected = Float(qIdx + 1)
+                for d in 0 ..< headDim {
+                    #expect(
+                        abs(g[qIdx * headDim + d] - expected) < 1e-3,
+                        "q=\(qIdx) d=\(d): \(g[qIdx * headDim + d]) vs \(expected)")
+                }
+            }
+        }
+    }
+
     @Test("sdpaMulti — head_dim 256 routes to d256 kernel (uniform K → mean V)")
     func sdpaMultiHeadDim256UniformKMeansV() {
         autoreleasepool {

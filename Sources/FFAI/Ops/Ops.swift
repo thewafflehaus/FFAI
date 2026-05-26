@@ -3237,6 +3237,92 @@ public enum Ops {
         return result
     }
 
+    /// Tree-causal `sdpaMulti` — same dispatch contract but the
+    /// scalar `causal` boolean is replaced by an additive
+    /// `[nQuery, nQuery]` mask tensor consulted only for in-block KV
+    /// positions (positions `< baseKV` — the cached prefix — are
+    /// always fully attended). The mask is `0.0` for "allow" and
+    /// `-inf` for "block"; the kernel adds it directly to the
+    /// pre-softmax scores.
+    ///
+    /// Used by speculative-decode tree-verify: one verifier call
+    /// attends every leaf-to-root path of the draft tree at once,
+    /// gated by a tree-causal mask that lets each leaf only see its
+    /// own ancestors. Companion to `DraftTreeNode.treeCausalMask()`.
+    ///
+    /// Mask dtype must match `q`. `headDim` shares `sdpaMulti`'s
+    /// constraint: only the 128-variant kernel is emitted on dev
+    /// (tree-verify has no d256 use case today).
+    public static func sdpaMultiTreeMask(
+        q: Tensor, k: Tensor, v: Tensor, mask: Tensor,
+        nQHeads: Int, nKVHeads: Int, headDim: Int,
+        baseKV: Int, nQuery: Int, kvStride: Int,
+        scale: Float,
+        on cmd: MTLCommandBuffer,
+        into out: Tensor? = nil
+    ) -> Tensor {
+        if let reason = OpsValidation.validateSdpaMulti(
+            headDim: headDim, nQHeads: nQHeads, nKVHeads: nKVHeads,
+            baseKV: baseKV, nQuery: nQuery, kvStride: kvStride
+        ) {
+            preconditionFailure("Ops.sdpaMultiTreeMask: \(reason)")
+        }
+        precondition(
+            headDim == 128,
+            "Ops.sdpaMultiTreeMask: only headDim=128 has a tree-mask kernel variant")
+        precondition(
+            mask.dtype == q.dtype,
+            "Ops.sdpaMultiTreeMask: mask dtype (\(mask.dtype)) must match q dtype (\(q.dtype))")
+        precondition(
+            mask.elementCount == nQuery * nQuery,
+            "Ops.sdpaMultiTreeMask: mask elementCount \(mask.elementCount) ≠ nQuery·nQuery \(nQuery * nQuery)")
+        let headsPerGroup = nQHeads / nKVHeads
+        let result = out ?? Tensor.empty(shape: [nQuery, nQHeads, headDim], dtype: q.dtype)
+        let threadsPerGroup = 1024
+        let grid = MTLSize(
+            width: nQHeads * nQuery * threadsPerGroup,
+            height: 1, depth: 1)
+        let tg = MTLSize(width: threadsPerGroup, height: 1, depth: 1)
+        switch q.dtype {
+        case .f32:
+            MetalTileKernels.ffai_sdpa_multi_tree_mask_f32(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                mask: mask.buffer, maskOffset: mask.offset,
+                out: result.buffer, outOffset: result.offset,
+                head_dim: UInt32(headDim), n_q_heads: UInt32(nQHeads),
+                base_kv: UInt32(baseKV), n_query: UInt32(nQuery),
+                kv_stride: UInt32(kvStride), heads_per_group: UInt32(headsPerGroup),
+                scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.ffai_sdpa_multi_tree_mask_f16(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                mask: mask.buffer, maskOffset: mask.offset,
+                out: result.buffer, outOffset: result.offset,
+                head_dim: UInt32(headDim), n_q_heads: UInt32(nQHeads),
+                base_kv: UInt32(baseKV), n_query: UInt32(nQuery),
+                kv_stride: UInt32(kvStride), heads_per_group: UInt32(headsPerGroup),
+                scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.ffai_sdpa_multi_tree_mask_bf16(
+                q: q.buffer, qOffset: q.offset, k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                mask: mask.buffer, maskOffset: mask.offset,
+                out: result.buffer, outOffset: result.offset,
+                head_dim: UInt32(headDim), n_q_heads: UInt32(nQHeads),
+                base_kv: UInt32(baseKV), n_query: UInt32(nQuery),
+                kv_stride: UInt32(kvStride), heads_per_group: UInt32(headsPerGroup),
+                scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.sdpaMultiTreeMask: unsupported dtype \(q.dtype)")
+        }
+        return result
+    }
+
     /// Multi-query **bidirectional** SDPA — every query attends the
     /// full `[0, baseKV + nQuery)` range. Specialized variants for
     /// head_dim ∈ {32, 64, 72} cover the VLM vision-tower spectrum
