@@ -114,10 +114,12 @@ User: model.engine.forwardSample(tokenId: t, position: pos, caches: caches)
 
 **Invariants the code maintains:**
 
-1. **One `MTLCommandBuffer` per token.** No mid-token sync. Every layer's kernels enqueue onto the same buffer.
+1. **One `MTLCommandBuffer` per decode token.** No mid-token sync. Every layer's kernels enqueue onto the same buffer, then one `commit + waitUntilCompleted` per token. The cost is a single 4-byte CPU↔GPU crossing per token (the sampled token id), which matches Apple's recommended dispatch granularity for autoregressive single-stream decode and lines up the per-token timeline against Metal System Trace cleanly. Prefill uses the *same* one-cmdbuf-per-call shape via `engine.forwardMulti(tokenIds:startingAt:…)`, called in `prefillStepSize`-sized chunks so a thousand-token prompt is a handful of dispatches, not a thousand.
 2. **No CPU↔GPU sync inside a layer.** KV cache append is the `kv_cache_update` Metal kernel — not a CPU memcpy.
-3. **No logits readback.** Sampling runs on the GPU (`argmax` today; top-k / top-p / temperature land in Phase 5+). Only the chosen token id (4 bytes) crosses CPU↔GPU per token.
+3. **No logits readback on the greedy / GPU-categorical paths.** Sampling runs on the GPU (`argmax` for `temperature == 0`; `softmax_categorical_sample` for `temperature > 0` with no filters). Only the chosen token id (4 bytes) crosses CPU↔GPU per token. Filtered sampling (top-K / top-P / min-P / repetition-penalty) falls back to a CPU path with one logits readback per token — documented in [generation-parameters.md](generation-parameters.md).
 4. **Weights are immutable post-load.** Per-tensor MTLBuffers are allocated once, never resized. Activations come from a `BufferPool` so per-token allocation doesn't grow.
+
+**Why one-cmdbuf-per-decode-token (not multi-token batching).** Single-stream autoregressive decode is data-dependent — each step needs the previous token's id before it can start — so batching multiple decode tokens onto one cmdbuf only pays off when there's something else to fuse onto the same buffer. Speculative decoding and chunked prefill are exactly that case: the draft model emits N tokens, the target model verifies them in one forward pass, and the entire verify pass goes onto a single cmdbuf for a ~2-3× tok/s win on accepted-draft tokens. Those paths are queued under [`planning/plan.md`](../planning/plan.md) Phase 8 (speculative decoding) and Phase 8.14 (DFlash on-GPU draft); chunked prefill (Phase 6.6) already lands multi-token-per-cmdbuf on the prefill side via per-family `forwardMulti(...)`.
 
 ## Capability-driven loading
 
@@ -132,46 +134,65 @@ Disabled modalities skip weight allocation entirely — the vision encoder of a 
 
 ```
 Sources/
-  FFAI/                    User-facing library
-    Tensor.swift           MTLBuffer + shape/dtype/strides
-    BufferPool.swift       Per-token activation slab allocator
-    Device.swift           MTLDevice + MTLCommandQueue singleton
-    Module.swift           Parameter discovery protocol
-    Layers.swift           Linear / Embedding / RMSNorm / etc.
-    Ops.swift              Public ops (gemv, rope, sdpa, argmax, …)
-    KVCache.swift          Raw fp16/bf16 cache + GPU append
-    Sampling.swift         argmax / top-k / top-p (CPU paths)
-    Generate.swift         Prefill + decode loop
-    SafeTensors.swift      *.safetensors loader
-    Model.swift            High-level Model.load(...) entry point
-    ModelConfig.swift      config.json decoder
-    ModelDownloader.swift  HF Hub snapshot download/cache
-    ModelLocator.swift     Repo id ↔ local dir resolver
-    ModelLifecycle.swift   AsyncStream<Event> state machine
-    Capability.swift       .textIn / .imageIn / etc.
-    LoadOptions.swift      What the user requests at load
-    LanguageModel.swift    Protocol implemented by family models
-    TokenizerLoader.swift  AutoTokenizer.from(modelFolder:) wrapper
+  FFAI/                     User-facing library
+    Tensor.swift            MTLBuffer + shape/dtype/strides
+    BufferPool.swift        Per-token activation slab allocator
+    DType.swift             Supported tensor dtypes
+    Module.swift            Parameter discovery protocol
+    Layers.swift            Linear / Embedding / RMSNorm / etc.
+    Capability.swift        .textIn / .imageIn / .videoIn / .audioIn / .textOut / .audioOut
+    LanguageModel.swift     Protocol implemented by text-family models
+    VisionModel.swift       Protocol implemented by VL orchestrators
+    AudioModel.swift        Protocol implemented by audio families
+    FFAI.swift              Public umbrella + version
+    Loader/                 Model.load, ModelConfig, ModelLocator,
+                            ModelDownloader, ModelRegistry, Device, …
+    Ops/                    Public GPU op wrappers (Ops.swift,
+                            OpsValidation.swift, QuantizedOps.swift, …)
+    KVCache/                Raw / affine / AURA caches, eviction policy,
+                            recurrent (Mamba2 / GDN) state caches
+    Generation/             ChatTemplate, Generate, GenerationParameters,
+                            Sampling, SpeculativeAccept
+    Stats/                  GenerationStats, Perplexity, ThinkingSplit
+    Telemetry/              Debug / Profile + signposts
+    Benchmark/              Bench, IndirectDispatch, MemoryStats, …
+    CLI/                    `ffai` subcommands (also linked into the
+                            FFAICLI executable target)
     Models/
-      Llama.swift          Llama 3.x (LlamaDense)
-      Qwen3.swift          Qwen 3 (Qwen3Dense)
+      <Family>.swift        family root (main interface, dispatch
+                            entry point for VL/multi-modal orchestrators)
+      Text/<F>Text.swift    text-modality impl (or <F>.swift for
+                            text-only families)
+      Vision/<F>Vision.swift  image + video tower (one per VL family)
+      Audio/                 audio families grouped by sub-modality
+        Omni/<F>.swift       cross-modal (text + vision + audio)
+        STS/<F>.swift        speech-to-speech (denoise / enhance)
+        STT/<F>.swift        speech-to-text
+        TTS/<F>.swift        text-to-speech
+        VAD/<F>.swift        voice-activity detection
+      DecoderLayer.swift     shared per-layer mixer protocol
+      MoELayer.swift         shared MoE routing + dispatch
 
-  MetalTileSwift/          Pre-compiled kernels + dispatch wrappers
+  MetalTileSwift/           Pre-compiled kernels + dispatch wrappers
     MetalTileLibrary.swift  Singleton MTLDevice + MTLLibrary loader
     PSOCache.swift          (name, function-constants) → PSO
     Resources/              kernels.metallib + manifest.json
     Generated/              MetalTileKernels.swift (typed wrappers)
 
-  FFAICLI/                 ffai executable
-    main.swift
+  FFAICLI/                  ffai executable entry point
 
 Tests/
-  MetalTileSwiftTests/         One file per kernel
-  FFAITests/                   Tensor, Module, KVCache, Sampling, …
-                               (mirrors Sources/FFAI/ — every source file
-                               has a sibling Tests/FFAITests/<X>Tests.swift)
-  ModelIntegrationTests/       Per-family integration tests — load,
-                               greedy-decode, assert coherent output
+  MetalTileSwiftTests/      One file per kernel + KernelManifestSmokeTests
+  FFAITests/                Offline unit tests — mirror Sources/FFAI/
+                            layout (Generation/, KVCache/, Ops/, Stats/, …)
+  ModelIntegrationTests/    Per-family end-to-end checkpoint downloads,
+                            grouped by modality (Text/, Audio/Omni/,
+                            Audio/STT/, …) plus the cross-cutting matrix
+                            suites (ModelKVCacheMatrix…, Quantized*bit…,
+                            ModelDeterminism…, ModelInspection…)
+  Helpers/                  CommonTestHelpers, AudioTestHelpers,
+                            TextTestHelpers, VisionTestHelpers, RunAndWait
+  Resources/                Test inputs (cat.mp4, audio clips, …)
 ```
 
 ## Where to read more

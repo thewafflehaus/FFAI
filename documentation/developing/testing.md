@@ -21,7 +21,7 @@ make test-stress        # production cap, uncapped parallelism — run after dis
 To iterate on a single suite, run `swift test` directly **but keep the memory cap** — `--parallel --num-workers 1` loads one model at a time:
 
 ```bash
-swift test --parallel --num-workers 1 --filter Qwen3IntegrationTests
+swift test --parallel --num-workers 1 --filter Qwen3TextIntegrationTests
 swift test --parallel --num-workers 1 --filter ModelKVCacheMatrixIntegrationTests
 swift test --filter OpsTests          # unit suite — fast, no cap needed
 ```
@@ -32,15 +32,26 @@ swift test --filter OpsTests          # unit suite — fast, no cap needed
 
 ```
 Tests/
-  MetalTileSwiftTests/   One file per kernel wrapper — numerical
-                         correctness vs a CPU reference across
-                         fp32 / fp16 / bf16.
-  FFAITests/             Tensor, Module, Linear, BufferPool, the
-                         Ops* / *StateCache / KVCache / Layers /
-                         Sampling / Capability / ModelConfig units.
-  ModelIntegrationTests/            Flat files — one <Family>IntegrationTests
-                         per model family, plus the cross-cutting
-                         suites (see below).
+  MetalTileSwiftTests/      One file per kernel wrapper — numerical
+                            correctness vs a CPU reference across
+                            fp32 / fp16 / bf16. Plus
+                            KernelManifestSmokeTests.
+  FFAITests/                Mirrors Sources/FFAI/ — every source file
+                            has a sibling test. Audio/, Benchmark/,
+                            Generation/, KVCache/, Loader/, Models/,
+                            Ops/, Stats/, Telemetry/, Vision/ are the
+                            top-level groups.
+  ModelIntegrationTests/    Per-family end-to-end checkpoint runs,
+                            grouped by modality (Text/, Vision/,
+                            Audio/Omni/, Audio/STT/, Audio/STS/,
+                            Audio/TTS/, Audio/VAD/), plus the
+                            cross-cutting suites (see below).
+  Helpers/                  CommonTestHelpers (`loadModel`,
+                            `expectCoherentOutput`, `ModelLoadLock`),
+                            TextTestHelpers, VisionTestHelpers,
+                            AudioTestHelpers, RunAndWait.
+  Resources/                Test inputs (dog.jpeg, cat.mp4, audio
+                            clips, … shared via the helpers).
 ```
 
 There are **no golden fixtures**. Cross-implementation token-parity vs mlx-lm proved to be a measure of rounding-mode alignment, not correctness — it was dropped. Numerical correctness now comes from the metaltile-side per-kernel GPU-correctness tests (compared to a naive CPU oracle); the FFAI integration tests assert that the model *pipeline* produces coherent text.
@@ -53,7 +64,9 @@ Cross-cutting suites:
 
 - `ModelKVCacheMatrixIntegrationTests` — the model family × weight bitwidth × KV-cache scheme cross-product.
 - `Quantized{3,4,5,6,8}bitIntegrationTests` — the weight-bitwidth ladder.
-- `DeterminismSmokeTests` — temp = 0 is stable across runs.
+- `ModelDeterminismIntegrationTests` — temp = 0 greedy decode is stable across runs.
+- `ModelInspectionIntegrationTests` — `ffai inspect` end-to-end against a representative model from each family (verifies every family wired its `InspectTap` hooks).
+- `SlidingWindowIntegrationTests` — sliding-window KV eviction composes correctly across cache schemes.
 
 ### Not every model runs by default — env-gated tests
 
@@ -61,7 +74,7 @@ The largest checkpoints are too heavy (or too slow) for the routine gate, so the
 
 | Env var | Unlocks |
 |---|---|
-| `FFAI_BUILD_MACHINE` | The heavy generation checks — `GPTOSSIntegrationTests` (~20B MoE), the Gemma 4 31B / 26B-A4B decode in `Gemma4IntegrationTests` (load + shape checks still run unconditionally), and every non-smallest cell of `ModelKVCacheMatrixIntegrationTests`. Intended for a dedicated build machine. |
+| `FFAI_BUILD_MACHINE` | The heavy generation checks — `GPTOSSIntegrationTests` (~20B MoE), the Gemma 4 31B / 26B-A4B decode in `Gemma4TextIntegrationTests` (load + shape checks still run unconditionally), and every non-smallest cell of `ModelKVCacheMatrixIntegrationTests`. Intended for a dedicated build machine. |
 | `FFAI_MATRIX_FAMILY=<family>` | Restricts `ModelKVCacheMatrixIntegrationTests` to one family's row (e.g. `FFAI_MATRIX_FAMILY=Gemma4`) — fast targeted re-runs. |
 
 ```bash
@@ -94,24 +107,44 @@ struct OpsAddTests {
 }
 ```
 
-A model integration test loads through `ModelLoadLock.shared` (serializes the multi-GB load across suites) and asserts coherence:
+A model integration test loads through `ModelLoadLock.shared` (serializes the multi-GB load across suites) and asserts coherence. The canonical text-model pattern uses the `loadModel(_:)` helper from [`Tests/Helpers/CommonTestHelpers.swift`](../../Tests/Helpers/CommonTestHelpers.swift) — it wraps `ModelLoadLock.shared.loadSerially { … }` and fails the test on load failure instead of silently skipping:
 
 ```swift
-@Suite("Qwen3 integration", .serialized)
-struct Qwen3IntegrationTests {
+import Testing
+@testable import FFAI
+
+@Suite("Qwen3 Text Integration", .serialized)
+struct Qwen3TextIntegrationTests {
     @Test("load + greedy generate produces coherent output")
     func loadAndGenerate() async throws {
-        let m: Model
-        do { m = try await ModelLoadLock.shared.loadSerially {
-                 try await Model.load("mlx-community/Qwen3-1.7B-bf16") } }
-        catch { print("skipped: \(error)"); return }
+        let m = try await loadModel("mlx-community/Qwen3-1.7B-4bit")
         let r = try await m.generate(
-            prompt: "Once upon a time",
-            parameters: GenerationParameters(maxTokens: 64, temperature: 0))
+            prompt: "Once upon a time, in a quiet village",
+            parameters: GenerationParameters(maxTokens: 200, temperature: 0))
         expectCoherentOutput(r.generatedTokens, label: "Qwen3-1.7B")
     }
 }
 ```
+
+Audio + VL families typically need a typed cast after loading. The pattern is to resolve the snapshot through `ModelLocator()` first, then build the typed model directly so the test can call its modality-specific API (codec decode, vision-tower preprocess, …):
+
+```swift
+@Suite("FishSpeech Integration", .serialized)
+struct FishSpeechIntegrationTests {
+    private static let repoId = "fishaudio/openaudio-s1-mini"
+
+    @Test("synthesises a coherent waveform")
+    func synthesise() async throws {
+        let dir = try await ModelLoadLock.shared.loadSerially {
+            try await ModelLocator().resolve(idOrPath: Self.repoId)
+        }
+        let model = try await Model.load(dir.path)
+        // … call the typed audio API on `model.audio`
+    }
+}
+```
+
+Both patterns serialize through the same lock so the multi-GB downloads / GPU footprint stay capped regardless of how many integration suites the runner picks up.
 
 A non-trivial kernel lands with a paired metaltile GPU-correctness test in the **same commit** (see metaltile `docs/testing.md`).
 

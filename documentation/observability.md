@@ -99,18 +99,18 @@ Memory: both models live resident simultaneously, plus their KV caches. For Qwen
 
 CLI `--ref-model <repo>` plumbing ships with the bench subcommand in the next chunk.
 
-### Think vs gen split
+### Thinking vs Generation Split
 
 Models that emit reasoning segments (Qwen 3 / DeepSeek-R1 ChatML, GPT-OSS Harmony, Gemma 3/4 channels) get a separate `think_tokens / gen_tokens` count line. Format auto-detection runs on every `generate(...)` call via `ThinkingSplit.detectFormat(model:)`:
 
 | Detected from | Format | Implementation |
 |---|---|---|
-| `model_type` contains `gpt-oss` | `.harmony` | TODO — lands with the GPT-OSS family file (Phase 8+). |
-| `model_type` contains `gemma3` / `gemma4` | `.gemmaChannel` | TODO — lands with the Gemma family file (Phase 5+). |
-| Tokenizer has `<think>` / `</think>` ids | `.chatML` | Implemented today. |
+| Tokenizer has `<think>` / `</think>` ids | `.chatML` | ✅ Implemented (Qwen 3, DeepSeek-R1 distills). |
+| `model_type` contains `gpt-oss` | `.harmony` | 🚧 TODO — scanner reaches for the multi-token `<\|channel\|>` `analysis` / `final` `<\|message\|>` subsequence in the Harmony tokenizer; format is detected today but `splitHarmony` returns `nil`. |
+| `model_type` contains `gemma3` / `gemma4` | `.gemmaChannel` | 🚧 TODO — scanner reaches for the `<channel\|reasoning\|>` / `<channel\|final\|>` markers; format is detected today but `splitGemmaChannel` returns `nil`. |
 | Otherwise | `.none` | Whole generation counts as gen. |
 
-For models that don't emit thinking markers, the split is silently omitted. See [`Stats/ThinkingSplit.swift`](../Sources/FFAI/Stats/ThinkingSplit.swift) for the per-format scanners.
+For models that don't emit thinking markers, the split is silently omitted. See [`Stats/ThinkingSplit.swift`](../Sources/FFAI/Stats/ThinkingSplit.swift) for the per-format scanners. Wiring the two TODO scanners is tracked in [`planning/session-plan.md`](../planning/session-plan.md).
 
 Per-segment perplexity is `nil` from `generate(...)` alone — the bench harness will run perplexity over each segment separately when it lands. For now you can do it yourself:
 
@@ -130,8 +130,8 @@ if let s = split {
 
 The `GenerationStats` struct reserves space — currently commented — for capabilities that haven't shipped yet:
 
-- **Batch decoding** (Phase 8+): `batchSize`, `perSequenceDecodeTokensPerSecond`.
-- **Speculative decoding** (Phase 8+): `acceptanceRate`, `draftTokensPerSecond`, `draftAcceptedTokens`.
+- **Batch decoding**: `batchSize`, `perSequenceDecodeTokensPerSecond`.
+- **Speculative decoding**: `acceptanceRate`, `draftTokensPerSecond`, `draftAcceptedTokens`.
 
 When those modes land, uncomment the fields, populate them in `Generate.swift`, and the formatted output + bench writer pick them up automatically.
 
@@ -164,7 +164,7 @@ Sample output (heavily abbreviated):
 | `FFAI_DEBUG_LOADER=1` | `loader` | `ModelLocator` / `ModelDownloader` snapshot resolution + cache hits. |
 | `FFAI_DEBUG_LOAD=1` | `load` | `Model.load` + family loaders, config decode. |
 | `FFAI_DEBUG_GENERATE=1` | `generate` | Prefill + decode loop boundaries, per-call timing summary. |
-| `FFAI_DEBUG_SAMPLING=1` | `sampling` | Sampling decisions (when GPU sampling kernels land in Phase 5). |
+| `FFAI_DEBUG_SAMPLING=1` | `sampling` | Sampling decisions — greedy-GPU / GPU-categorical / CPU-sample path choice + the resulting token. |
 | `FFAI_DEBUG_KVCACHE=1` | `kvcache` | KV cache append + slice events. |
 | `FFAI_DEBUG_KERNELS=1` | `kernels` | Per-kernel dispatch chatter — very loud, opt-in only. |
 | `FFAI_DEBUG_DISPATCH=1` | `dispatch` | Per-`MTLCommandBuffer` commit / wait. |
@@ -249,20 +249,8 @@ print(Profile.shared.phases.formatted())   // [PROFILE] block
 
 `PhaseTimings` is a `Sendable` struct — safe to grab a snapshot from any context.
 
-## Comparison with mlx-swift-lm
-
-FFAI's flags follow mlx-swift-lm's conventions so trace recipes and analysis tooling carry over:
-
-| mlx-swift-lm | FFAI |
-|---|---|
-| `MLX_BENCH_DEBUG=1` | `--debug` / `FFAI_DEBUG=1` |
-| `MLX_BENCH_PROFILE=1` | `--profiling 1` |
-| `MLX_BENCH_PROFILE=2` | `--profiling 2` |
-| signposts under `ai.mlx.metal` | signposts under `ai.ffai`, kernel signposts via Apple's `com.apple.Metal` |
-
 ## See also
 
 - [`generation-parameters.md`](generation-parameters.md) — the knobs that control what gets generated; stats describes how it ran.
-- [`performance.md`](performance.md) — current `tok/s` numbers per model + the Phase 4 wave-by-wave perf history.
+- [`performance.md`](performance.md) — current `tok/s` numbers per model + the wave-by-wave perf history.
 - [`kv-cache.md`](kv-cache.md) — what the `KV cache (alloc)` and `(used)` fields actually account for.
-- mlx-swift-lm's [benchmarks/README.md](https://github.com/ml-explore/mlx-swift-lm/blob/main/benchmarks/README.md) — the upstream schema FFAI's stats fields mirror.

@@ -1,12 +1,14 @@
 # Performance
 
-Phase 4 (perf) closed the gap between the correctness-first Phase 0-3 implementation and what the M-series GPU can actually deliver on single-stream decode. This page captures the current numbers, what each wave changed, and where the remaining headroom is.
+The perf pass closed the gap between the correctness-first early implementation and what the M-series GPU can actually deliver on single-stream decode. This page captures the last-measured numbers, what each wave changed, and where the remaining headroom is.
+
+> **Status note.** The headline numbers below are the **Wave 1 baseline** (last sweep: 2026-05) — they were taken before the AURA-performance, chunked-prefill, and post-bisect kernel-substitution work landed. A fresh benchmark sweep is queued once the AURA compressed-domain default + per-attention-layer `decodeMulti` work settles. Tracking and timeline in [`planning/roadmap.md`](../planning/roadmap.md).
 
 All numbers are **single-stream decode tokens/sec** on **Apple M1 Max**, measured at batch 1 with ~32-token prompts and `maxNewTokens = 64`. They're regression-tracked by `Tests/PerfTests/`; CI publishes the numbers per commit.
 
-## Headline numbers
+## Headline numbers (Wave 1 baseline, 2026-05)
 
-| Model | Quant | Phase 3 baseline | Phase 4 (current) | Speedup |
+| Model | Quant | Pre-perf baseline | Wave 1 result | Speedup |
 |---|---|---|---|---|
 | Llama 3.2 1B | bf16 | 5.45 tok/s | **64.6 tok/s** | 11.9× |
 | Qwen 3 4B | bf16 | 5.0 tok/s | **28.0 tok/s** | 5.6× |
@@ -16,15 +18,15 @@ All numbers are **single-stream decode tokens/sec** on **Apple M1 Max**, measure
 | Qwen 3 4B | 4-bit | 5.0 tok/s | **29.8 tok/s** | 6.0× |
 | Qwen 3 4B | 3-bit | 3.6 tok/s | **24.1 tok/s** | 6.7× |
 
-Llama 3.2 1B sees the biggest win because it's small enough to be encoder-bound at Phase 3 — eliminating the per-layer `commit + waitUntilCompleted` was almost pure profit.
+Llama 3.2 1B sees the biggest win because it's small enough to be encoder-bound pre-perf — eliminating the per-layer `commit + waitUntilCompleted` was almost pure profit.
 
-## What each Phase 4 wave changed
+## What each perf wave changed
 
-Phase 4 was sequenced into two waves; this is what each one bought.
+The perf pass was sequenced into two waves; this is what each one bought.
 
 ### Wave 1 — encoder-bound wins
 
-The Phase 0-3 dispatch loop looked roughly like:
+The pre-perf dispatch loop looked roughly like:
 
 ```
 for each layer:
@@ -64,8 +66,8 @@ The main outstanding gaps vs MLX's hand-tuned fused kernels are:
 - **Fused `RMSNorm + gemv`.** MLX folds the RMSNorm scale into the pre-matmul rescale of the next gemv. We dispatch them separately. Expected ~10-15% on the hot QKV path.
 - **Fused QKV projection.** MLX dispatches one `gemv` for `Q`, `K`, `V` concatenated, instead of three. Expected ~5-10%.
 - **Online-softmax SDPA decode.** Our `sdpa_decode` is correct but not yet using the simdgroup-cooperative online-softmax pattern from metaltile-bench. Largest remaining headroom on long-context decode.
-- **Argument-buffers / ICB dispatch modes.** Pre-bind weights into a per-layer argument buffer (or pre-record the entire forward pass via Indirect Command Buffers), so per-token only the activations + KV offset get bound. ~5× fewer `setBuffer` calls. Phase 8+ if profiles continue to show encoding cost matters.
-- **Autotuner.** Per-shape selection of `(tile_dims, threads, unroll, simd_matrix, async_copy)`. Phase 7.
+- **Argument-buffers / ICB dispatch modes.** Pre-bind weights into a per-layer argument buffer (or pre-record the entire forward pass via Indirect Command Buffers), so per-token only the activations + KV offset get bound. ~5× fewer `setBuffer` calls. Pulled in once profiles show encoding cost still matters after AURA + chunked-prefill land.
+- **Autotuner.** Per-shape selection of `(tile_dims, threads, unroll, simd_matrix, async_copy)`. Tracked in [`planning/plan.md`](../planning/plan.md).
 
 ## How to reproduce
 
@@ -97,6 +99,6 @@ The CLI prints `prompt: N tokens (Xs prefill)` + `generated: N tokens in Ys (Z t
 ## See also
 
 - [Architecture](architecture.md) — the per-token dispatch loop the perf work optimized.
-- [KV cache](kv-cache.md) — Phase 5 will add quantized cache variants on top of the current raw cache.
+- [KV cache](kv-cache.md) — affine-quantized + AURA-compressed cache variants on top of the raw cache.
 - [Quantization](quantization.md) — per-bit-width perf table.
-- [`planning/plan.md` § Phase 4](../planning/plan.md) — the original perf targets and prioritization rationale.
+- [`planning/plan.md`](../planning/plan.md) — full perf-pass targets and prioritization rationale.
