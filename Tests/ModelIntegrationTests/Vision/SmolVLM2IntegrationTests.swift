@@ -254,10 +254,10 @@ struct SmolVLM2IntegrationTests {
                                "SmolVLM2 snapshot not found in HF cache — skip")
         let m = try await Model.load(dir.path)
         // SmolVLM2Dense.availableCapabilities now includes .videoIn.
-        // Note: Model.swift currently hardcodes .visionIn for SmolVLM2;
+        // Note: Model.swift currently hardcodes .imageIn for SmolVLM2;
         // the family declaration is the ground truth checked here.
-        #expect(SmolVLM2Dense.availableCapabilities.contains(.visionIn),
-                "SmolVLM2 family should declare .visionIn")
+        #expect(SmolVLM2Dense.availableCapabilities.contains(.imageIn),
+                "SmolVLM2 family should declare .imageIn")
         #expect(SmolVLM2Dense.availableCapabilities.contains(.videoIn),
                 "SmolVLM2 family should declare .videoIn")
         let smol = try #require(m.smolVLM2,

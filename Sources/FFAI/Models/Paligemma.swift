@@ -85,7 +85,7 @@ public enum PaligemmaError: Error, CustomStringConvertible {
 // ─── Standard variant ────────────────────────────────────────────────────────
 
 public struct PaligemmaStandard: PaligemmaVariant {
-    public static let availableCapabilities: Set<Capability> = [.textIn, .textOut, .visionIn]
+    public static let availableCapabilities: Set<Capability> = [.textIn, .textOut, .imageIn]
 
     /// PaliGemma defaults — conservative for VQA / captioning tasks.
     /// Temperature 0 (greedy) matches the reference implementation's

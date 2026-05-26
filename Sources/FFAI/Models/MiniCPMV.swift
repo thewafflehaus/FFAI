@@ -78,7 +78,7 @@ public enum MiniCPMV4_6 {
     /// concatenates the per-frame token runs and substitutes them at the
     /// `video_token_id` placeholder positions.
     public static let availableCapabilities: Set<Capability> =
-        Capability.textOnly.union([.visionIn, .videoIn])
+        Capability.textOnly.union([.imageIn, .videoIn])
 
     /// Runtime tile resolution for the v1 path. 448 = 32×32 patches at
     /// `patch_size: 14`; `vit_merger` (2,2) → 16×16; `merger` (2,2) →

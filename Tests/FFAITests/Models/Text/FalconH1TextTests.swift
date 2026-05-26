@@ -31,7 +31,7 @@ struct FalconH1TextTests {
     func capabilities() {
         #expect(FalconH1Hybrid.availableCapabilities.contains(.textIn))
         #expect(FalconH1Hybrid.availableCapabilities.contains(.textOut))
-        #expect(!FalconH1Hybrid.availableCapabilities.contains(.visionIn))
+        #expect(!FalconH1Hybrid.availableCapabilities.contains(.imageIn))
     }
 
     /// FalconH1 ships `-Instruct` chat-tuned checkpoints. Greedy by

@@ -2,7 +2,7 @@
 
 FFAI models declare what they *can* do via `Capability`, the user picks what to *enable* at load time via `LoadOptions`, and the model exposes its load progress + hot capability changes via an `AsyncStream<ModelLifecycleEvent>`.
 
-The infrastructure has been in place since Phase 2; the vision-language families (Gemma 3/4-VL, Qwen 2.5/3-VL, Qwen3-VL-MoE, Nemotron-VLM) and audio families now exercise it end-to-end.
+The vision-language families (Gemma 3/4-VL, Qwen 2/2.5/3-VL, Qwen3-VL-MoE, MiniCPM-V, SmolVLM2, Nemotron-VLM, Idefics3, GlmOcr, FastVLM, Mistral3, Paligemma) and audio families exercise it end-to-end.
 
 ## The `Capability` enum
 
@@ -10,20 +10,26 @@ The infrastructure has been in place since Phase 2; the vision-language families
 public enum Capability: String, Sendable, Hashable, CaseIterable, Codable {
     case textIn
     case textOut
-    case visionIn
+    case imageIn
+    case videoIn
     case audioIn
     case audioOut
     case toolCalling
+    case thinking
+    case reasoningLevel
 }
 ```
 
-| Capability | Today | When |
-|---|---|---|
-| `.textIn` / `.textOut` | ✅ Always on for LLMs. | Phase 2 |
-| `.visionIn` | ✅ Gemma 3/4-VL, Qwen 2.5/3-VL, Qwen3-VL-MoE, Nemotron-VLM. | Phase 6.5 |
-| `.audioIn` | ✅ Whisper STT + SenseVoice STT + Qwen-Omni audio-in. | Phase 7 |
-| `.audioOut` | ✅ Kokoro TTS (iSTFTNet vocoder tail). | Phase 7 |
-| `.toolCalling` | Not declared by any family. | Phase 8+ |
+| Capability | Today |
+|---|---|
+| `.textIn` / `.textOut` | ✅ Always on for LLMs. |
+| `.imageIn` | ✅ Image input — image-only VL models (Gemma 3/4-VL, Nemotron-VL, Idefics3, GlmOcr, FastVLM, Mistral3, Paligemma, …). Video-capable families add `.videoIn` separately. |
+| `.videoIn` | ✅ Video input — video-capable VL families (Qwen 2-VL, Qwen 2.5-VL, Qwen 3-VL, MiniCPM-V, SmolVLM2). Always declared together with `.imageIn`. |
+| `.audioIn` | ✅ Whisper STT + SenseVoice STT + Qwen-Omni audio-in. |
+| `.audioOut` | ✅ Kokoro TTS (iSTFTNet vocoder tail). |
+| `.toolCalling` | Not declared by any family. |
+| `.thinking` | Model emits a chain-of-thought trace (Qwen 3 thinking, DeepSeek-R1, etc.). |
+| `.reasoningLevel` | Model honours a user-tunable reasoning-effort dial (GPT-OSS-20B, …). |
 
 Convenience sets:
 
@@ -68,7 +74,7 @@ case .qwenOmni(let m):   ...   // .omniAudio
 | `Gemma4.Gemma4Dense` / `Gemma4E` / `Gemma4MoE` | `[.textIn, .textOut]` |
 | `GPTOSS.GPTOSSMoEVariant` | `[.textIn, .textOut]` |
 
-When a family adds a capability (e.g. the VL families add `.visionIn`), the family file declares it and the loader allocates the corresponding subnet only if the user opts in.
+When a family adds a capability (e.g. the VL families add `.imageIn`, video-capable VL families add both `.imageIn` and `.videoIn`), the family file declares it and the loader allocates the corresponding subnet only if the user opts in.
 
 ## `LoadOptions`
 
@@ -92,7 +98,7 @@ let model = try await Model.load(
 | `kvCache` | `.raw` | Cache compression scheme — see [kv-cache.md](kv-cache.md). |
 | `dispatchMode` | `.eager` | Standard `MTLComputeCommandEncoder` per kernel. `.argumentBuffers` / `.icb` deferred. |
 | `prewarm` | `true` | Run one no-op forward to compile PSOs before the first user-visible decode. |
-| `lazyCapabilities` | `true` | Allow runtime `enable(_:)` / `disable(_:)` after load. Phase 6 wires this end-to-end. |
+| `lazyCapabilities` | `true` | Allow runtime `enable(_:)` / `disable(_:)` after load. |
 | `revision` | `"main"` | HF branch / tag / commit. |
 
 ## Inspecting a loaded model
@@ -106,7 +112,7 @@ print(model.config.modelType)        // "qwen3"
 print(model.modelDirectory)          // resolved local snapshot
 ```
 
-If you ask for a capability the family doesn't expose, the loader throws `ModelError.capabilityNotAvailable(.visionIn)`.
+If you ask for a capability the family doesn't expose, the loader throws `ModelError.capabilityNotAvailable(.imageIn)`.
 
 ## Lifecycle states
 
@@ -140,15 +146,12 @@ print(model.currentState)  // sync snapshot — typically .ready by the time loa
 
 `currentState` is a thread-safe snapshot of the latest emitted event. The stream is the source of truth for fine-grained progress.
 
-## Hot capability changes (Phase 6)
-
-The API surface is in place from Phase 2; the implementation lands alongside the first VL family:
+## Hot capability changes
 
 ```swift
-// Phase 6:
-try await model.enable(.visionIn)    // mmaps vision weights, builds encoder, prewarms
+try await model.enable(.imageIn)    // mmaps vision weights, builds encoder, prewarms
 // ... use the model with images ...
-try await model.disable(.visionIn)   // releases MTLBuffers, frees GPU residency
+try await model.disable(.imageIn)   // releases MTLBuffers, frees GPU residency
 ```
 
 Each call emits per-capability lifecycle events through the same `events` stream. If `lazyCapabilities = false` was passed at load time, both calls throw — capabilities are then frozen at the load-time set.

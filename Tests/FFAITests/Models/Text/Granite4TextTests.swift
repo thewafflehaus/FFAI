@@ -34,7 +34,7 @@ struct Granite4TextVariantTests {
     func capabilities() {
         #expect(Granite4Hybrid.availableCapabilities.contains(.textIn))
         #expect(Granite4Hybrid.availableCapabilities.contains(.textOut))
-        #expect(!Granite4Hybrid.availableCapabilities.contains(.visionIn))
+        #expect(!Granite4Hybrid.availableCapabilities.contains(.imageIn))
     }
 
     /// Granite-4 ships base + instruction-tuned checkpoints. Greedy by

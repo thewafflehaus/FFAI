@@ -44,10 +44,10 @@ struct LFM2VisionIntegrationTests {
             try await Model.load(Self.modelId)
         }
 
-        // The checkpoint is a VLM — vlModel is present, .visionIn is
+        // The checkpoint is a VLM — vlModel is present, .imageIn is
         // available, and the text backbone is an LFM2 hybrid engine.
         #expect(m.vlModel != nil)
-        #expect(m.availableCapabilities.contains(.visionIn))
+        #expect(m.availableCapabilities.contains(.imageIn))
         #expect(m.engine.hidden == 2048)         // LFM2-1.6B text hidden
         #expect(m.engine.supportsEmbeddingInput) // VLM splice prerequisite
 

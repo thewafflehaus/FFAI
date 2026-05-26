@@ -801,7 +801,7 @@ public enum Qwen3VL {
     /// temporal-patch unfold handle both single-image and multi-frame
     /// video paths.
     public static let availableCapabilities: Set<Capability> =
-        Capability.textOnly.union([.visionIn, .videoIn])
+        Capability.textOnly.union([.imageIn, .videoIn])
 
     /// Build a `VisionModel` from a `Qwen3VLForConditionalGeneration`
     /// checkpoint: the dynamic-resolution vision tower + the Qwen 3
@@ -884,7 +884,7 @@ public enum Qwen3VLMoe {
     /// the vision tower (and its multi-frame `encode(frames:)` path) is
     /// shared with `Qwen3VL`.
     public static let availableCapabilities: Set<Capability> =
-        Capability.textOnly.union([.visionIn, .videoIn])
+        Capability.textOnly.union([.imageIn, .videoIn])
 
     /// Build a `VisionModel` from a `Qwen3VLMoeForConditionalGeneration`
     /// checkpoint: the Qwen3-VL vision tower + the Qwen 3.5-MoE text

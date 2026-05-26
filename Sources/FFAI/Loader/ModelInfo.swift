@@ -77,7 +77,7 @@ public struct ModelInfo: Sendable {
 
     // ── Capabilities ────────────────────────────────────────────────────
 
-    /// Capabilities the checkpoint physically supports (e.g. `.visionIn`
+    /// Capabilities the checkpoint physically supports (e.g. `.imageIn`
     /// for a VLM, `.audioIn` for an STT model, always `.textIn`/`.textOut`).
     public let availableCapabilities: Set<Capability>
 

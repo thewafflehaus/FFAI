@@ -74,7 +74,7 @@ public enum Qwen25VL {
     /// gated on the caller passing `videoFrames` to
     /// `VisionModel.generate(...)`.
     public static let availableCapabilities: Set<Capability> =
-        Capability.textOnly.union([.visionIn, .videoIn])
+        Capability.textOnly.union([.imageIn, .videoIn])
 
     /// Build a `VisionModel` from a `Qwen2_5_VLForConditionalGeneration`
     /// checkpoint: the dynamic-resolution vision tower + the Qwen 2.x

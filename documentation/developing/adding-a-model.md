@@ -118,7 +118,7 @@ Key invariants the implementation must preserve:
 1. **One `MTLCommandBuffer` per token.** Open it at the start of `forward` / `forwardSample`, commit + wait at the end. No mid-token sync.
 2. **No CPU readback inside the forward pass.** `forwardSample` returns a sampled token id; `forward` returns logits but does the readback at the end, not mid-layer.
 3. **Per-tensor MTLBuffers, allocated once at load.** Weights are immutable. Activations come from `BufferPool`.
-4. **Capability-gated loading.** If the family supports `.visionIn` etc., skip those weights when the user didn't enable the capability.
+4. **Capability-gated loading.** If the family supports `.imageIn` etc., skip those weights when the user didn't enable the capability.
 
 ## Step 4 — declare family defaults
 

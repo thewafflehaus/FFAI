@@ -31,7 +31,7 @@ struct Mamba2TextTests {
     func capabilities() {
         #expect(Mamba2Dense.availableCapabilities.contains(.textIn))
         #expect(Mamba2Dense.availableCapabilities.contains(.textOut))
-        #expect(!Mamba2Dense.availableCapabilities.contains(.visionIn))
+        #expect(!Mamba2Dense.availableCapabilities.contains(.imageIn))
     }
 
     /// Mamba 2 checkpoints are base-LM only — no chat tuning. Greedy

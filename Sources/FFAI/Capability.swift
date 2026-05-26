@@ -23,14 +23,17 @@ import Foundation
 public enum Capability: String, Sendable, Hashable, CaseIterable, Codable {
     case textIn
     case textOut
-    case visionIn
+    /// Image input — image-only VL models (Gemma 3/4-VL, Nemotron-VL,
+    /// Idefics3, GlmOcr, FastVLM, Mistral3, Paligemma, …). Video-capable
+    /// families declare `.videoIn` in addition to `.imageIn`.
+    case imageIn
     /// A model that can consume video — i.e. a temporally-ordered
-    /// sequence of frames. Distinct from `visionIn` because not every
+    /// sequence of frames. Distinct from `imageIn` because not every
     /// vision-language model wires the multi-frame temporal-patch
     /// path: a `videoIn` model accepts `[Tensor]` (one frame each) via
     /// `VisionEncoder.encode(frames:device:)` and folds them into the
-    /// vision-token stream in temporal-patch chunks, while a
-    /// `visionIn`-only model takes a single image and treats the
+    /// vision-token stream in temporal-patch chunks, while an
+    /// `imageIn`-only model takes a single image and treats the
     /// temporal axis as a degenerate repeat.
     case videoIn
     case audioIn

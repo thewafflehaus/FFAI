@@ -35,8 +35,8 @@ struct LoadOptionsTests {
 
     @Test("requested capabilities are unioned with text mandatory pair")
     func capabilityUnion() {
-        let o = LoadOptions(capabilities: [.visionIn])
-        #expect(o.capabilities.contains(.visionIn))
+        let o = LoadOptions(capabilities: [.imageIn])
+        #expect(o.capabilities.contains(.imageIn))
         #expect(o.capabilities.contains(.textIn))
         #expect(o.capabilities.contains(.textOut))
     }

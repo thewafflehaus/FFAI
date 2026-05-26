@@ -31,7 +31,7 @@ struct Qwen3TextTests {
     func capabilities() {
         #expect(Qwen3Dense.availableCapabilities.contains(.textIn))
         #expect(Qwen3Dense.availableCapabilities.contains(.textOut))
-        #expect(!Qwen3Dense.availableCapabilities.contains(.visionIn))
+        #expect(!Qwen3Dense.availableCapabilities.contains(.imageIn))
     }
 
     @Test("Qwen3Dense default generation parameters track Qwen 3 family")

@@ -83,7 +83,7 @@ public enum Qwen2VL {
     /// temporal-patch unfold handle both single-image and multi-frame
     /// video paths.
     public static let availableCapabilities: Set<Capability> =
-        Capability.textOnly.union([.visionIn, .videoIn])
+        Capability.textOnly.union([.imageIn, .videoIn])
 
     /// Build a `VisionModel` from a `Qwen2VLForConditionalGeneration`
     /// checkpoint: the dynamic-resolution vision tower + the Qwen 2

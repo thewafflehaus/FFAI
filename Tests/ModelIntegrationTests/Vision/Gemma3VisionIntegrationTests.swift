@@ -40,10 +40,10 @@ struct Gemma3VisionIntegrationTests {
             try await Model.load(Self.modelId)
         }
 
-        // The checkpoint is a VLM — vlModel is present, .visionIn is
+        // The checkpoint is a VLM — vlModel is present, .imageIn is
         // available, and the text backbone is a Gemma 3 4B engine.
         #expect(m.vlModel != nil)
-        #expect(m.availableCapabilities.contains(.visionIn))
+        #expect(m.availableCapabilities.contains(.imageIn))
         #expect(m.engine.hidden == 2560)        // 4B text hidden
         #expect(m.engine.supportsEmbeddingInput) // VLM splice prerequisite
 
@@ -52,17 +52,17 @@ struct Gemma3VisionIntegrationTests {
         #expect(vlm.imageTokenCount == 256)
     }
 
-    @Test("enable / disable .visionIn — runtime capability flip")
+    @Test("enable / disable .imageIn — runtime capability flip")
     func capabilityFlip() async throws {
         let m = try await ModelLoadLock.shared.loadSerially {
             try await Model.load(Self.modelId)
         }
-        // A VL checkpoint can toggle .visionIn at runtime.
-        #expect(m.availableCapabilities.contains(.visionIn))
-        m.disable(.visionIn)
-        #expect(!m.isEnabled(.visionIn))
-        m.enable(.visionIn)
-        #expect(m.isEnabled(.visionIn))
+        // A VL checkpoint can toggle .imageIn at runtime.
+        #expect(m.availableCapabilities.contains(.imageIn))
+        m.disable(.imageIn)
+        #expect(!m.isEnabled(.imageIn))
+        m.enable(.imageIn)
+        #expect(m.isEnabled(.imageIn))
         // textIn / textOut are universal — disable is a no-op.
         m.disable(.textIn)
         #expect(m.isEnabled(.textIn))

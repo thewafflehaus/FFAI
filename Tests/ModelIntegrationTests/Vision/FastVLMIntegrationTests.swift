@@ -45,10 +45,10 @@ struct FastVLMIntegrationTests {
             try await Model.load(Self.modelId)
         }
 
-        // The checkpoint is a VLM — vlModel is present, .visionIn is
+        // The checkpoint is a VLM — vlModel is present, .imageIn is
         // available, and the text backbone is a Qwen2-0.5B engine.
         #expect(m.vlModel != nil)
-        #expect(m.availableCapabilities.contains(.visionIn))
+        #expect(m.availableCapabilities.contains(.imageIn))
         #expect(m.engine.hidden == 896)          // Qwen2-0.5B text hidden
         #expect(m.engine.supportsEmbeddingInput) // VLM splice prerequisite
 

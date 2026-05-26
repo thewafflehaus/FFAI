@@ -61,7 +61,7 @@ public enum Idefics3Error: Error, CustomStringConvertible {
 // ─── Dense variant ───────────────────────────────────────────────────────────
 
 public struct Idefics3Dense {
-    public static let availableCapabilities: Set<Capability> = [.textIn, .textOut, .visionIn]
+    public static let availableCapabilities: Set<Capability> = [.textIn, .textOut, .imageIn]
     public static let defaultGenerationParameters = GenerationParameters(
         maxTokens: 256,
         prefillStepSize: 1024,
