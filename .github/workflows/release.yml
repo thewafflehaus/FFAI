@@ -188,6 +188,23 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+      # Ensure the Apache 2.0 header is present on every code + test file
+      # at the tagged commit. Idempotent — a no-op when contributors ran
+      # the pre-commit hook locally (or anyone manually ran the script
+      # earlier). When new files slipped through without the header,
+      # this step adds it + commits the result so the tag points at
+      # source the LICENSE actually applies to.
+      - name: Ensure Apache 2.0 license headers
+        run: |
+          ./scripts/update-license.sh
+          if ! git diff --quiet; then
+            git add -A
+            git commit -m "chore: apply Apache 2.0 license headers"
+            echo "Committed missing license headers."
+          else
+            echo "All source files already carry the license header."
+          fi
+
       - name: Compute version + create branch/tag
         id: bump
         env:
