@@ -113,7 +113,7 @@ private let explicitQwen3TTSBaseJSON = """
 // ─── Tests ───────────────────────────────────────────────────────────
 
 @Suite("Qwen3TTSBase")
-struct Qwen3TTSBaseConfigTests {
+struct Qwen3TTSBaseTests {
 
     // ── Config parsing ────────────────────────────────────────────────
 
