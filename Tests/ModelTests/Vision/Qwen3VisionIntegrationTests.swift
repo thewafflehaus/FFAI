@@ -11,16 +11,24 @@
 // Uses the mlx-community 2B-Instruct 4-bit conversion — the smallest
 // published Qwen3-VL with a complete local snapshot. The checkpoint MUST
 // load — a load failure fails the test.
+// Now also covers the video path for the same checkpoint (merged from the
+// prior Qwen3VisionVideoIntegrationTests.swift).
 
 import Foundation
 import Testing
 @testable import FFAI
 import TestHelpers
 
-@Suite("Qwen3 Vision Integration", .serialized)
+@Suite("Qwen3 Vision Integration (image + video)", .serialized)
 struct Qwen3VisionIntegrationTests {
 
     static let modelId = "mlx-community/Qwen3-VL-2B-Instruct-4bit"
+
+    /// Number of evenly-spaced frames to pull out of `cat.mp4`. Must be
+    /// a multiple of `temporal_patch_size` (2) so the vision tower
+    /// doesn't have to pad with the last frame — keeps the placeholder
+    /// arithmetic exact.
+    static let frameCount = 4
 
     @Test("load — Qwen 3-VL checkpoint loads with vision capability")
     func loadVLCheckpoint() async throws {
@@ -81,5 +89,67 @@ struct Qwen3VisionIntegrationTests {
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("Qwen 3-VL generated: \(text)")
         VisionTestHelpers.expectMentionsDog(text, label: "Qwen 3-VL")
+    }
+
+    // ─── Video ───────────────────────────────────────────────────────────
+
+    @Test("load — checkpoint reports .videoIn capability")
+    func loadVLCheckpointVideo() async throws {
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(Self.modelId)
+        }
+        // The Qwen 3-VL family now declares text + vision + video.
+        #expect(m.vlModel != nil)
+        #expect(m.availableCapabilities.contains(.visionIn))
+        #expect(m.availableCapabilities.contains(.videoIn))
+
+        let vlm = try #require(m.vlModel)
+        // The video splice needs the family loader to thread
+        // `video_token_id` through to VisionModel.init.
+        #expect(vlm.videoTokenId != nil)
+    }
+
+    @Test("video + text prompt — describes the cat clip")
+    func videoTextGeneration() async throws {
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(Self.modelId)
+        }
+        let vlm = try #require(m.vlModel, "Qwen 3-VL checkpoint is not a VLM")
+        let videoTokenId = try #require(vlm.videoTokenId)
+
+        // Pull `frameCount` evenly-spaced frames from cat.mp4.
+        let frames = try VisionTestHelpers.catVideoFrames(maxFrames: Self.frameCount)
+
+        // The merged-token-per-temporal-patch count is the same as one
+        // image's merged token count. With `temporal_patch_size` = 2 and
+        // 4 frames, the splice substitutes 2 × `imageTokenCount` rows.
+        let temporalPatchSize = 2
+        let videoTokenCount = (frames.count / temporalPatchSize) * vlm.imageTokenCount
+
+        // Build the standard Qwen 3-VL video prompt:
+        //   <|im_start|>user\n<|vision_start|><|video_pad|>...<|vision_end|>What's in this video?<|im_end|>\n
+        //   <|im_start|>assistant\n
+        let preTokens = m.tokenizer.encode(
+            text: "<|im_start|>user\n<|vision_start|>")
+        let postTokens = m.tokenizer.encode(
+            text: "<|vision_end|>What's in this video?<|im_end|>\n"
+                + "<|im_start|>assistant\n")
+        let promptTokens = preTokens
+            + Array(repeating: videoTokenId, count: videoTokenCount)
+            + postTokens
+
+        let generated = try vlm.generate(
+            promptTokens: promptTokens, videoFrames: frames,
+            maxTokens: 200,
+            eosTokenId: m.config.eosTokenId,
+            eosTokenIds: m.config.eosTokenIds)
+
+        // Coherence first, then the content check: the caption should
+        // mention a cat (or kitten — model verbosity varies).
+        expectCoherentOutput(generated, minTokens: 8,
+                             label: "Qwen 3-VL video+text")
+        let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
+        print("Qwen 3-VL video generated: \(text)")
+        VisionTestHelpers.expectMentionsCat(text, label: "Qwen 3-VL video")
     }
 }
