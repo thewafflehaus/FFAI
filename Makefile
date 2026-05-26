@@ -17,9 +17,13 @@ help: ## show this help
 	  awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 
 # ─── Setup ────────────────────────────────────────────────────────────
-.PHONY: setup
-setup: ## one-time dev environment setup (toolchains, deps, first build)
+.PHONY: setup-dev
+setup-dev: ## one-time dev environment setup (toolchains, deps, first build)
 	./scripts/setup-dev.sh
+
+# Alias kept for muscle-memory parity with the older `make setup` name.
+.PHONY: setup
+setup: setup-dev
 
 # ─── Git hooks ────────────────────────────────────────────────────────
 # `core.hooksPath = scripts/hooks` is per-clone — every contributor runs
