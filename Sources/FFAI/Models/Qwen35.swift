@@ -1771,26 +1771,45 @@ public final class Qwen35GDNMixer: Module {
         // buffer between conv and silu_cast forces a device-memory
         // round-trip (memory: feedback_gdn_inner_loop_already_bandwidth_optimal —
         // tried batched silu_cast 2026-05-22, lost -4.8% median).
+        // ITER 99 (Bagel 2): when conv_kernel = 4 (Qwen3.5/3.6 + Mamba 2
+        // + NemotronH default), the batched conv1d+silu+cast kernel
+        // sweeps all T tokens in ONE dispatch with the conv state held
+        // in per-channel registers across the sweep — state read once
+        // at start, written once at end. Saves T-1 dispatches per
+        // layer × 30 GDN = ~15K dispatches/prefill at T=512, and conv
+        // state DRAM traffic drops from T·(load+store) to 1·(load+store).
         let convOutAllF32 = Tensor.empty(shape: [t * convDim],
                                          dtype: .f32, device: device)
-        for r in 0..<t {
-            let qkvRow = Tensor(
-                buffer: qkvAll.buffer,
-                offset: qkvAll.offset + r * convDim * dtBytes,
-                shape: [convDim], dtype: dt)
-            Ops.conv1dCausalStep(
-                x: qkvRow, w: convW, b: convB,
-                state: cache.conv.state, into: convOutScratch,
-                nChannels: convDim, kernelSize: convKernel, on: cmd)
-            let convOutRowF32 = Tensor(
-                buffer: convOutAllF32.buffer,
-                offset: convOutAllF32.offset + r * convDim * f32Bytes,
-                shape: [convDim], dtype: .f32)
-            if convOutScratch.dtype == .f32 {
-                _ = Ops.silu(convOutScratch, on: cmd, into: convOutScratch)
-                Ops.castToF32(convOutScratch, into: convOutRowF32, on: cmd)
-            } else {
-                Ops.siluCastToF32(convOutScratch, into: convOutRowF32, on: cmd)
+        if convKernel == 4
+            && ProcessInfo.processInfo.environment["FFAI_NO_CONV1D_MANY"] == nil {
+            Ops.conv1dCausalStepSiluCastMany(
+                src: qkvAll.reshaped(to: [t, convDim]),
+                w: convW, b: convB,
+                stateIn: cache.conv.state,
+                outF32: convOutAllF32,
+                stateOut: cache.conv.state,
+                t: t, convDim: convDim, convKernel: convKernel,
+                on: cmd)
+        } else {
+            for r in 0..<t {
+                let qkvRow = Tensor(
+                    buffer: qkvAll.buffer,
+                    offset: qkvAll.offset + r * convDim * dtBytes,
+                    shape: [convDim], dtype: dt)
+                Ops.conv1dCausalStep(
+                    x: qkvRow, w: convW, b: convB,
+                    state: cache.conv.state, into: convOutScratch,
+                    nChannels: convDim, kernelSize: convKernel, on: cmd)
+                let convOutRowF32 = Tensor(
+                    buffer: convOutAllF32.buffer,
+                    offset: convOutAllF32.offset + r * convDim * f32Bytes,
+                    shape: [convDim], dtype: .f32)
+                if convOutScratch.dtype == .f32 {
+                    _ = Ops.silu(convOutScratch, on: cmd, into: convOutScratch)
+                    Ops.castToF32(convOutScratch, into: convOutRowF32, on: cmd)
+                } else {
+                    Ops.siluCastToF32(convOutScratch, into: convOutRowF32, on: cmd)
+                }
             }
         }
 

@@ -937,6 +937,73 @@ public enum Ops {
         enc.endEncoding()
     }
 
+    /// Batched depthwise causal conv1d + SiLU + cast-to-f32. Sweeps T
+    /// tokens in ONE dispatch with the conv state held in per-channel
+    /// registers across the sweep — state read once at start, written
+    /// once at end. Replaces the per-token `Ops.conv1dCausalStep` +
+    /// `Ops.siluCastToF32` T-loop in `Qwen35GDNMixer.forwardManyChunked`.
+    ///
+    /// Constraints: `conv_kernel` must be 4 (Qwen3.5/3.6 / Mamba 2 /
+    /// NemotronH all use kernel=4 — kernel signature carries it as a
+    /// constexpr for shape uniformity but the body is K=4 hardcoded).
+    ///
+    /// State in-place safety: each grid thread owns one channel; reads
+    /// `state_in[*, c]` once at the top of the sweep, writes
+    /// `state_out[*, c]` once at the bottom. Passing the same buffer
+    /// for both is safe.
+    public static func conv1dCausalStepSiluCastMany(
+        src: Tensor, w: Tensor, b: Tensor,
+        stateIn: Tensor, outF32: Tensor, stateOut: Tensor,
+        t: Int, convDim: Int, convKernel: Int,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(convKernel == 4,
+                     "Ops.conv1dCausalStepSiluCastMany: requires conv_kernel = 4")
+        precondition(src.dtype == w.dtype && src.dtype == b.dtype && src.dtype == stateIn.dtype && src.dtype == stateOut.dtype,
+                     "Ops.conv1dCausalStepSiluCastMany: dtype mismatch")
+        precondition(outF32.dtype == .f32,
+                     "Ops.conv1dCausalStepSiluCastMany: outF32 must be .f32")
+        let grid = MTLSize(width: convDim, height: 1, depth: 1)
+        let tg = MTLSize(width: min(convDim, 256), height: 1, depth: 1)
+        let tLenU = UInt32(t)
+        let cdU = UInt32(convDim)
+        let ckU = UInt32(convKernel)
+        switch src.dtype {
+        case .f32:
+            MetalTileKernels.ffai_conv1d_causal_step_silu_cast_many_f32(
+                src: src.buffer, srcOffset: src.offset,
+                w: w.buffer, wOffset: w.offset,
+                b: b.buffer, bOffset: b.offset,
+                state_in: stateIn.buffer, state_inOffset: stateIn.offset,
+                out_f32: outF32.buffer, out_f32Offset: outF32.offset,
+                state_out: stateOut.buffer, state_outOffset: stateOut.offset,
+                t_len: tLenU, conv_dim: cdU, conv_kernel: ckU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.ffai_conv1d_causal_step_silu_cast_many_f16(
+                src: src.buffer, srcOffset: src.offset,
+                w: w.buffer, wOffset: w.offset,
+                b: b.buffer, bOffset: b.offset,
+                state_in: stateIn.buffer, state_inOffset: stateIn.offset,
+                out_f32: outF32.buffer, out_f32Offset: outF32.offset,
+                state_out: stateOut.buffer, state_outOffset: stateOut.offset,
+                t_len: tLenU, conv_dim: cdU, conv_kernel: ckU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.ffai_conv1d_causal_step_silu_cast_many_bf16(
+                src: src.buffer, srcOffset: src.offset,
+                w: w.buffer, wOffset: w.offset,
+                b: b.buffer, bOffset: b.offset,
+                state_in: stateIn.buffer, state_inOffset: stateIn.offset,
+                out_f32: outF32.buffer, out_f32Offset: outF32.offset,
+                state_out: stateOut.buffer, state_outOffset: stateOut.offset,
+                t_len: tLenU, conv_dim: cdU, conv_kernel: ckU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.conv1dCausalStepSiluCastMany: unsupported dtype \(src.dtype)")
+        }
+    }
+
     /// Batched per-row RoPE: applies position-dependent rotation to T
     /// rows of `qk` in ONE dispatch. `positions` is a `[T]` u32 buffer.
     /// `rowStride` selects the row layout (`nHeads * headDim` for Q,
