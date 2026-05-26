@@ -32,7 +32,7 @@ Fixes #
 
 ## Summary
 
-<!-- One paragraph: what does this PR do, and why. Keep it tight —
+<!-- One short paragraph: what does this PR do, and why. Keep it tight —
      reviewers should know if the change is in their wheelhouse
      without scrolling. -->
 
@@ -92,3 +92,4 @@ Fixes #
 - [ ] CI is green
 - [ ] Tests + docs updated where applicable
 - [ ] I read [`CONTRIBUTING.md`](../blob/main/CONTRIBUTING.md)
+- [ ] I agree with and authorize my contribution to be distributed under the [`LICENSE`](../blob/main/LICENSE)
