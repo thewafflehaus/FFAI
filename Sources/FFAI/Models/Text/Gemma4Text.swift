@@ -1,6 +1,15 @@
-// Gemma 4 family — Google's Gemma 4 text decoder. A dense /
-// PLE / MoE attention family. Three checkpoint shapes ship under the
-// single `gemma4` / `gemma4_text` model_type, distinguished by config:
+// Gemma 4 text — concrete variants + the Gemma 4 text decoder. The
+// family enum (`enum Gemma4`), variant protocol (`Gemma4Variant`), and
+// unified error type (`Gemma4Error`) live in `Models/Gemma4.swift` (the
+// family root / main interface). This file holds the text-only impl:
+//
+//   • `Gemma4Dense` / `Gemma4E` / `Gemma4MoE` — `Gemma4Variant`
+//     conformances + the per-variant `loadModel` entries,
+//   • `Gemma4Model` — the full LanguageModel decoder.
+//
+// A dense / PLE / MoE attention family. Three checkpoint shapes ship
+// under the single `gemma4` / `gemma4_text` model_type, distinguished
+// by config:
 //
 //   • Gemma4Dense  — 31B size. Gemma-style backbone, no PLE.
 //   • Gemma4E      — E2B / E4B sizes. Adds Per-Layer Embeddings (PLE)
@@ -68,44 +77,6 @@
 import Foundation
 import Metal
 import MetalTileSwift
-
-public enum Gemma4 {
-    public static let modelTypes: Set<String> = ["gemma4", "gemma4_text"]
-    public static let architectures: Set<String> = [
-        "Gemma4ForCausalLM", "Gemma4TextForCausalLM",
-        "Gemma4ForConditionalGeneration",
-    ]
-
-    /// Resolve the concrete variant from config. MoE wins over PLE wins
-    /// over plain dense.
-    public static func variant(for config: ModelConfig) throws -> any Gemma4Variant.Type {
-        let tc = Gemma4Config.textConfig(config)
-        if (tc["enable_moe_block"] as? Bool) ?? false {
-            return Gemma4MoE.self
-        }
-        if let ple = tc["hidden_size_per_layer_input"] as? Int, ple > 0 {
-            return Gemma4E.self
-        }
-        return Gemma4Dense.self
-    }
-}
-
-public enum Gemma4Error: Error, CustomStringConvertible {
-    case missingConfig(String)
-    case unsupportedHeadDim(Int)
-    case unalignedNorm(Int)
-
-    public var description: String {
-        switch self {
-        case .missingConfig(let f):
-            return "Gemma4: required config field missing: \(f)"
-        case .unsupportedHeadDim(let d):
-            return "Gemma4: head_dim \(d) unsupported (Ops.sdpaDecode needs 64/128/256/512)"
-        case .unalignedNorm(let n):
-            return "Gemma4: norm row size \(n) must be 128-aligned"
-        }
-    }
-}
 
 // MARK: - Config helpers
 
@@ -256,31 +227,6 @@ struct Gemma4Params {
             }
         }
         return mapping
-    }
-}
-
-// MARK: - Variant protocol
-
-public protocol Gemma4Variant {
-    static var availableCapabilities: Set<Capability> { get }
-    static var defaultGenerationParameters: GenerationParameters { get }
-    static func loadModel(
-        config: ModelConfig,
-        weights: SafeTensorsBundle,
-        options: LoadOptions,
-        device: Device
-    ) throws -> Gemma4Model
-}
-
-public extension Gemma4Variant {
-    static var availableCapabilities: Set<Capability> { [.textIn, .textOut] }
-    static var defaultGenerationParameters: GenerationParameters {
-        // Gemma 4: 4096-token prefill chunk is the audited family
-        // optimum (pure-attention backbone, no SSM bottleneck).
-        GenerationParameters(
-            maxTokens: 256, prefillStepSize: 4096,
-            temperature: 1.0, topP: 0.95, topK: 64,
-            repetitionPenalty: 1.0)
     }
 }
 

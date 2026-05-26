@@ -1,5 +1,15 @@
-// Gemma 3 family — Google's open Gemma 3 text decoder. The smallest
-// Gemma 3 ships as a 1B variant; 4B/12B/27B exist for the VL track.
+// Gemma 3 text — concrete variants + the dense decoder for the Gemma 3
+// family. The family enum (`enum Gemma3`), variant protocol
+// (`Gemma3Variant`), and error type (`Gemma3Error`) live in
+// `Models/Gemma3.swift` (the family root / main interface). This file
+// holds the text-only impl:
+//
+//   • `Gemma3Dense` — `Gemma3Variant` conformance + the per-variant
+//     `loadModel` entry,
+//   • `Gemma3Model` — the full LanguageModel decoder.
+//
+// The smallest Gemma 3 ships as a 1B variant; 4B/12B/27B exist for the
+// VL track.
 //
 // Architectural differences from the 3-series Llama backbone we
 // already ship:
@@ -49,38 +59,6 @@
 
 import Foundation
 import Metal
-
-public enum Gemma3 {
-    public static let modelTypes: Set<String> = ["gemma3", "gemma3_text"]
-    public static let architectures: Set<String> = [
-        "Gemma3ForCausalLM", "Gemma3TextForCausalLM"
-    ]
-
-    public static func variant(for config: ModelConfig) throws -> any Gemma3Variant.Type {
-        return Gemma3Dense.self
-    }
-}
-
-public enum Gemma3Error: Error, CustomStringConvertible {
-    case missingConfig
-    public var description: String {
-        switch self {
-        case .missingConfig:
-            return "Gemma3: required config field missing"
-        }
-    }
-}
-
-public protocol Gemma3Variant {
-    static var availableCapabilities: Set<Capability> { get }
-    static var defaultGenerationParameters: GenerationParameters { get }
-    static func loadModel(
-        config: ModelConfig,
-        weights: SafeTensorsBundle,
-        options: LoadOptions,
-        device: Device
-    ) throws -> Gemma3Model
-}
 
 // MARK: - Gemma3Dense — 1B text decoder
 

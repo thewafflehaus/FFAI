@@ -1,103 +1,73 @@
-// Qwen 3.5 family root — Qwen 3-VL-MoE orchestrator.
+// Qwen 3.5 family root — Alibaba's Qwen 3.5 hybrid line.
 //
-// The Qwen 3.5 *text* backbone (and its Qwen 3.6 sibling) lives in
-// `Models/Text/Qwen3xText.swift` (covers Qwen 3.5 AND Qwen 3.6 since
-// both releases share the same stack-interleaved GDN + attention
-// hybrid architecture and the same `qwen3_5*` model_type strings).
-// This file orchestrates the *VL* wrapper: the Qwen3-VL vision tower
-// plus the Qwen 3.5 MoE text backbone. See `Models/Qwen36.swift` for
-// the Qwen 3.6 root anchor; the underlying types are the same.
+// This file is the **main model interface** for the family:
+//   • the family enum `Qwen35` (modelTypes, architectures, variant
+//     dispatch),
+//   • the `Qwen35Variant` protocol every concrete variant conforms to,
+//   • the unified `Qwen35Error` type every loader / decode site raises
+//     (covers both the text hybrid path and the Qwen3-VL-MoE path).
 //
-// Qwen 3-VL-MoE — Alibaba's mixture-of-experts Qwen3-VL vision-language
-// model (the `Qwen3VLMoeForConditionalGeneration` checkpoints).
+// Concrete variants + the hybrid decoder + per-layer impl live under
+// `Models/Text/Qwen3xText.swift` (the "Qwen3x" file covers BOTH Qwen 3.5
+// AND Qwen 3.6 — they share the same stack-interleaved GDN + attention
+// hybrid architecture and the same `qwen3_5*` model_type strings):
+//   - `Qwen35Hybrid` — the single variant; dense-vs-MoE is decided per
+//     checkpoint inside `loadModel` from `num_experts`.
+//   - `Qwen35Model` — the full LanguageModel decoder.
 //
-// Composition:
-//   • Qwen 3-VL vision tower — bit-identical to the dense Qwen3-VL tower
-//     (`Qwen3VLVisionModel` in `Qwen3VL.swift`): a dynamic-resolution
-//     ViT with a flattened Conv3d patch-embed, LayerNorm pre-norms, a
-//     learned position table, 2D M-RoPE, full bidirectional attention,
-//     a GELU-MLP feed-forward, and a patch-merger into the text hidden
-//     dim. The MoE variant changes only the *text* half.
-//   • Qwen 3.5-MoE text backbone — the existing `Qwen35Model` hybrid
-//     engine (Gated Delta Net ↔ full-attention alternation, block-sparse
-//     MoE FFN with an always-on shared expert). Qwen3-VL-MoE stores its
-//     text hyper-parameters under `text_config`, which `Qwen35.loadModel`
-//     reads natively, so the whole config is forwarded unchanged and the
-//     text weights are taken from the `language_model.`-prefixed
-//     sub-tree.
-//
-// The two are joined by `VisionModel`'s cross-modal token splice. Coherence
-// caveats are the same as the dense Qwen3-VL port (CPU vision attention,
-// scalar text positions, deepstack omitted) — see `Qwen3VL.swift`.
+// The Qwen 3-VL-MoE vision-language orchestrator (`enum Qwen3VLMoe`) —
+// which ties the Qwen 3.5-MoE text backbone to the shared Qwen 3-VL ViT
+// vision tower — lives in `Models/Vision/Qwen3Vision.swift` alongside
+// its dense Qwen3-VL sibling. See `Models/Qwen36.swift` for the Qwen 3.6
+// root anchor; the underlying types are the same.
 
 import Foundation
-import Metal
 
-public enum Qwen3VLMoeError: Error, CustomStringConvertible {
-    case missingConfig
+// ─── Family entry point ──────────────────────────────────────────────
 
-    public var description: String {
-        switch self {
-        case .missingConfig:
-            return "Qwen3VLMoe: checkpoint config is missing required fields"
-        }
+public enum Qwen35 {
+    public static let modelTypes: Set<String> = [
+        "qwen3_5", "qwen3_5_text", "qwen3_5_moe", "qwen3_5_moe_text",
+    ]
+    public static let architectures: Set<String> = [
+        "Qwen3_5ForConditionalGeneration", "Qwen3_5ForCausalLM",
+        "Qwen3_5MoeForConditionalGeneration", "Qwen3_5MoeForCausalLM",
+    ]
+
+    public static func variant(for _: ModelConfig) throws -> any Qwen35Variant.Type {
+        // A single variant covers all three forms — dense vs MoE is
+        // decided per-checkpoint from `num_experts` inside `loadModel`.
+        return Qwen35Hybrid.self
     }
 }
 
-public enum Qwen3VLMoe {
-    /// `image_token_id` default for Qwen 3-VL-MoE checkpoints.
-    public static let defaultImageTokenId = 151_655
+// ─── Variant protocol ────────────────────────────────────────────────
 
-    /// `video_token_id` default for Qwen 3-VL-MoE checkpoints
-    /// (`<|video_pad|>`, same id as the dense Qwen 3-VL).
-    public static let defaultVideoTokenId = 151_656
+public protocol Qwen35Variant {
+    static var availableCapabilities: Set<Capability> { get }
+    static var defaultGenerationParameters: GenerationParameters { get }
+    static func loadModel(
+        config: ModelConfig,
+        weights: SafeTensorsBundle,
+        options: LoadOptions,
+        device: Device
+    ) throws -> Qwen35Model
+}
 
-    /// Capabilities a Qwen 3-VL-MoE checkpoint exposes. Identical to the
-    /// dense Qwen 3-VL — the MoE variant only swaps the text backbone;
-    /// the vision tower (and its multi-frame `encode(frames:)` path) is
-    /// shared with `Qwen3VL`.
-    public static let availableCapabilities: Set<Capability> =
-        Capability.textOnly.union([.visionIn, .videoIn])
+// ─── Errors ──────────────────────────────────────────────────────────
 
-    /// Build a `VisionModel` from a `Qwen3VLMoeForConditionalGeneration`
-    /// checkpoint: the Qwen3-VL vision tower + the Qwen 3.5-MoE text
-    /// backbone, joined by the cross-modal splice.
-    public static func load(
-        config: ModelConfig, weights: SafeTensorsBundle,
-        options: LoadOptions, device: Device
-    ) throws -> VisionModel {
-        guard let visionConfig = config.subConfig("vision_config") else {
-            throw Qwen3VLMoeError.missingConfig
+/// Unified Qwen 3.5 family error — raised by both the text loaders
+/// (`Qwen35Hybrid.loadModel`) and the Qwen 3-VL-MoE orchestrator
+/// (`Qwen3VLMoe.load` in `Models/Vision/Qwen3Vision.swift`).
+public enum Qwen35Error: Error, CustomStringConvertible {
+    case missingConfig(String)
+    case unsupportedConfig(String)
+    public var description: String {
+        switch self {
+        case .missingConfig(let f):
+            return "Qwen3.5: required config field missing: \(f)"
+        case .unsupportedConfig(let m):
+            return "Qwen3.5: unsupported config: \(m)"
         }
-
-        // ── Text backbone — Qwen 3.5-MoE hybrid engine ──
-        // `Qwen35.loadModel` reads its text hyper-parameters from the
-        // `text_config` sub-tree itself (and decides dense-vs-MoE from
-        // `num_experts`), so the whole `config` is forwarded unchanged;
-        // only the weight sub-tree is narrowed to `language_model.*`.
-        let textWeights = weights.prefixed("language_model.")
-        let textEngine = try Qwen35Hybrid.loadModel(
-            config: config, weights: textWeights,
-            options: options, device: device)
-
-        // ── Vision tower — identical to the dense Qwen3-VL tower ──
-        // Including the multi-frame `encode(frames:)` path: the MoE
-        // variant ships the same vision weights at the same prefix and
-        // produces tokens with the same temporal-patch unfold.
-        let visionWeights = weights.prefixed("model.visual.")
-        let vision = try Qwen3VLVisionModel.load(
-            visionConfig: visionConfig, textHidden: textEngine.hidden,
-            weights: visionWeights, dtype: textEngine.dtype, device: device)
-
-        let imageTokenId = config.int("image_token_id")
-            ?? config.int("image_token_index") ?? defaultImageTokenId
-        let videoTokenId = config.int("video_token_id")
-            ?? config.int("video_token_index") ?? defaultVideoTokenId
-        return try VisionModel(
-            visionEncoder: vision.asVisionEncoder(),
-            engine: textEngine, imageTokenId: imageTokenId,
-            videoTokenId: videoTokenId,
-            normalization: .clip,
-            imageTokenCount: vision.mergedTokenCount)
     }
 }

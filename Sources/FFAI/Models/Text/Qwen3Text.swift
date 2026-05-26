@@ -1,52 +1,16 @@
-// Qwen3 family — Qwen3 dense. Future variants land here:
+// Qwen3 text — concrete variants + the dense decoder for the Qwen 3
+// family. The family enum (`enum Qwen3`), variant protocol
+// (`Qwen3Variant`), and error type (`Qwen3Error`) live in
+// `Models/Qwen3.swift` (the family root / main interface). This file
+// holds the text-only impl:
 //
-//   Qwen3.5 hybrid (GDN + attention)   — alongside the GDN kernels
-//   Qwen3.5 MoE                        — 
-//   Qwen3.5-VL (vision)                — 
-//   Qwen3.5-Omni (vision + audio)      — planned
-//
-// The protocol + per-variant struct convention is established now even
-// with a single dense variant, so adding 3.5 hybrid/MoE later is a
-// new struct + a new entry in `Qwen3.variant(for:)` rather than a
-// switch-statement grow-out.
+//   • `Qwen3Dense` — `Qwen3Variant` conformance + the per-variant
+//     `loadModel` entry,
+//   • `Qwen3Layer` — one attention + MLP block,
+//   • `Qwen3Model` — the full LanguageModel decoder.
 
 import Foundation
 import Metal
-
-// ─── Family entry point ──────────────────────────────────────────────
-
-public enum Qwen3 {
-    public static let modelTypes: Set<String> = ["qwen3"]
-    public static let architectures: Set<String> = ["Qwen3ForCausalLM"]
-
-    public static func variant(for config: ModelConfig) throws -> any Qwen3Variant.Type {
-        return Qwen3Dense.self
-    }
-}
-
-public protocol Qwen3Variant {
-    static var availableCapabilities: Set<Capability> { get }
-    /// Generation defaults for this variant. The user can override any
-    /// field; absent overrides fall back to the values declared here.
-    /// See planning/roadmap.md for which fields are honored today vs
-    /// staged for planned (sampling kernels).
-    static var defaultGenerationParameters: GenerationParameters { get }
-    static func loadModel(
-        config: ModelConfig,
-        weights: SafeTensorsBundle,
-        options: LoadOptions,
-        device: Device
-    ) throws -> Qwen3Model
-}
-
-public enum Qwen3Error: Error, CustomStringConvertible {
-    case missingConfig
-    public var description: String {
-        switch self {
-        case .missingConfig: return "Qwen3: required config field missing"
-        }
-    }
-}
 
 // ─── Qwen3Dense — standard dense transformer with q_norm / k_norm ─────
 

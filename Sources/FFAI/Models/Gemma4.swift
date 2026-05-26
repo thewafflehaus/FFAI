@@ -1,93 +1,95 @@
-// Gemma 4 VL — Google's Gemma 4 vision-language model (the
-// `Gemma4ForConditionalGeneration` checkpoints).
+// Gemma 4 family root — Google's Gemma 4 line.
 //
-// Composition:
-//   • Gemma 4 vision tower — a bespoke ViT that differs substantially
-//     from the shared SigLIP `VisionEncoder`:
-//       – patch-embed via a flattened linear projection (each
-//         `3 · patch · patch` patch row is projected by one GEMM, after
-//         a `2·(x − 0.5)` re-centring),
-//       – a learned 2D position embedding: two `[positionEmbeddingSize,
-//         hidden]` tables (one per spatial axis) summed by the patch's
-//         `(x, y)` grid coordinate,
-//       – RoPE attention with multi-dimensional positions (the head dim
-//         is split into an x-rotary half and a y-rotary half) and
-//         per-projection q / k / v RMSNorms,
-//       – four GemmaRMSNorm "zero-shift" norms per block (input /
-//         post-attention / pre-feedforward / post-feedforward) and a
-//         GELU-gated SwiGLU MLP,
-//       – an attention-pooling head that pools the patch grid down to
-//         `default_output_length` soft tokens, then a `sqrt(hidden)`
-//         scale and an optional standardization affine.
-//   • Multi-modal embedder — a GemmaRMSNorm (no-scale) over the pooled
-//     vision tokens followed by a linear projection into the text
-//     hidden dim (`embed_vision.*`).
-//   • Gemma 4 text backbone — the existing `Gemma4Model` engine, loaded
-//     from the `language_model.`-prefixed sub-tree (the `Gemma4Loader`
-//     probes the prefix and reads `text_config` itself).
+// This file is the **main model interface** for the family:
+//   • the family enum `Gemma4` (modelTypes, architectures, variant
+//     dispatch),
+//   • the `Gemma4Variant` protocol every concrete variant conforms to,
+//   • the unified `Gemma4Error` type every loader / decode site raises
+//     (covers both the text path and the Gemma 4 VL path).
 //
-// The three are joined by `VisionModel`'s cross-modal token splice: each
-// `<image_soft_token>` placeholder (`image_token_id`) in the prompt
-// takes one of the pooled, projected vision tokens.
+// Concrete variants + the dense / E / MoE decoder + per-layer impl live
+// under `Models/Text/Gemma4Text.swift`:
+//   - `Gemma4Dense` — 31B Gemma-style backbone, no PLE, dense MLP.
+//   - `Gemma4E`     — E2B / E4B; adds Per-Layer Embeddings.
+//   - `Gemma4MoE`   — 26B-A4B; mixture-of-experts feed-forward.
+//   - `Gemma4Model` — the full LanguageModel decoder.
 //
-// This file is the family orchestrator (load entry-point + the
-// `<image_soft_token>` token id). Vision tower internals live in
-// `Models/Vision/Gemma4Vision.swift`.
+// The Gemma 4 VL vision-language orchestrator (`enum Gemma4VL`) — which
+// ties the Gemma 4 text backbone to the bespoke Gemma 4 ViT vision
+// tower + multi-modal embedder — lives in
+// `Models/Vision/Gemma4Vision.swift` alongside the tower internals.
 
 import Foundation
-import Metal
 
-public enum Gemma4VLError: Error, CustomStringConvertible {
-    case missingConfig
-    case missingTensor(String)
+// ─── Family entry point ──────────────────────────────────────────────
 
-    public var description: String {
-        switch self {
-        case .missingConfig:
-            return "Gemma4VL: checkpoint config is missing required fields"
-        case .missingTensor(let name):
-            return "Gemma4VL: checkpoint is missing tensor '\(name)'"
+public enum Gemma4 {
+    public static let modelTypes: Set<String> = ["gemma4", "gemma4_text"]
+    public static let architectures: Set<String> = [
+        "Gemma4ForCausalLM", "Gemma4TextForCausalLM",
+        "Gemma4ForConditionalGeneration",
+    ]
+
+    /// Resolve the concrete variant from config. MoE wins over PLE wins
+    /// over plain dense.
+    public static func variant(for config: ModelConfig) throws -> any Gemma4Variant.Type {
+        let tc = Gemma4Config.textConfig(config)
+        if (tc["enable_moe_block"] as? Bool) ?? false {
+            return Gemma4MoE.self
         }
+        if let ple = tc["hidden_size_per_layer_input"] as? Int, ple > 0 {
+            return Gemma4E.self
+        }
+        return Gemma4Dense.self
     }
 }
 
-public enum Gemma4VL {
-    /// `image_token_id` default for Gemma 4 VL checkpoints.
-    public static let defaultImageTokenId = 262_144
+// ─── Variant protocol ────────────────────────────────────────────────
 
-    /// Build a `VisionModel` from a `Gemma4ForConditionalGeneration`
-    /// checkpoint: the Gemma 4 vision tower + multi-modal embedder +
-    /// Gemma 4 text backbone, joined by the cross-modal splice.
-    public static func load(
-        config: ModelConfig, weights: SafeTensorsBundle,
-        options: LoadOptions, device: Device
-    ) throws -> VisionModel {
-        guard let visionConfig = config.subConfig("vision_config") else {
-            throw Gemma4VLError.missingConfig
+public protocol Gemma4Variant {
+    static var availableCapabilities: Set<Capability> { get }
+    static var defaultGenerationParameters: GenerationParameters { get }
+    static func loadModel(
+        config: ModelConfig,
+        weights: SafeTensorsBundle,
+        options: LoadOptions,
+        device: Device
+    ) throws -> Gemma4Model
+}
+
+public extension Gemma4Variant {
+    static var availableCapabilities: Set<Capability> { [.textIn, .textOut] }
+    static var defaultGenerationParameters: GenerationParameters {
+        // Gemma 4: 4096-token prefill chunk is the audited family
+        // optimum (pure-attention backbone, no SSM bottleneck).
+        GenerationParameters(
+            maxTokens: 256, prefillStepSize: 4096,
+            temperature: 1.0, topP: 0.95, topK: 64,
+            repetitionPenalty: 1.0)
+    }
+}
+
+// ─── Errors ──────────────────────────────────────────────────────────
+
+/// Unified Gemma 4 family error — raised by both the text loaders
+/// (`Gemma4Dense` / `Gemma4E` / `Gemma4MoE.loadModel`) and the Gemma 4
+/// VL orchestrator (`Gemma4VL.load` in `Models/Vision/Gemma4Vision.swift`).
+public enum Gemma4Error: Error, CustomStringConvertible {
+    case missingConfig(String)
+    case missingTensor(String)
+    case unsupportedHeadDim(Int)
+    case unalignedNorm(Int)
+
+    public var description: String {
+        switch self {
+        case .missingConfig(let f):
+            return "Gemma4: required config field missing: \(f)"
+        case .missingTensor(let name):
+            return "Gemma4: checkpoint is missing tensor '\(name)'"
+        case .unsupportedHeadDim(let d):
+            return "Gemma4: head_dim \(d) unsupported (Ops.sdpaDecode needs 64/128/256/512)"
+        case .unalignedNorm(let n):
+            return "Gemma4: norm row size \(n) must be 128-aligned"
         }
-
-        // ── Text backbone — Gemma 4 engine ──
-        // `Gemma4Loader` probes the weight prefix (`language_model.model.`
-        // for a VLM conversion) and reads the text hyper-parameters from
-        // the `text_config` sub-tree itself, so the whole `config` and
-        // `weights` bundle is forwarded unchanged; the variant (dense /
-        // E / MoE) is config-driven.
-        let textVariant = try Gemma4.variant(for: config)
-        let textEngine = try textVariant.loadModel(
-            config: config, weights: weights, options: options, device: device)
-
-        // ── Vision tower + multi-modal embedder ──
-        let vision = try Gemma4VLVisionModel.load(
-            visionConfig: visionConfig, textHidden: textEngine.hidden,
-            weights: weights, dtype: textEngine.dtype,
-            quantization: config.quantization, device: device)
-
-        let imageTokenId = config.int("image_token_id")
-            ?? config.int("image_token_index") ?? defaultImageTokenId
-        return try VisionModel(
-            visionEncoder: vision.asVisionEncoder(),
-            engine: textEngine, imageTokenId: imageTokenId,
-            normalization: .siglip,
-            imageTokenCount: vision.tokensPerImage)
     }
 }

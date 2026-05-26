@@ -1,4 +1,19 @@
-// NemotronH family — a *stack-interleaved hybrid* model.
+// NemotronH text — concrete variants + the stack-interleaved hybrid
+// decoder. The family enum (`enum NemotronH`), variant protocol
+// (`NemotronHVariant`), and unified error type (`NemotronHError`) live
+// in `Models/Nemotron.swift` (the unified Nemotron family root, which
+// also unions metadata across NemotronH / NemotronVL /
+// NemotronDiffusion / NemotronDiffusionVL). This file holds the
+// text-only impl:
+//
+//   • `NemotronHHybrid` — the single variant (dense / MoE FFN mix is
+//     decided per checkpoint from `hybrid_override_pattern` +
+//     `num_experts`),
+//   • `NemotronHModel` — the full LanguageModel decoder.
+//
+// ─── Architecture ────────────────────────────────────────────────────
+//
+// NemotronH is a *stack-interleaved hybrid* model.
 //
 // Unlike FalconH1 (a *parallel* hybrid where every layer runs Mamba
 // AND attention together), NemotronH is a **stack-interleaved** hybrid:
@@ -67,39 +82,6 @@
 
 import Foundation
 import Metal
-
-// ─── Family entry point ──────────────────────────────────────────────
-
-public enum NemotronH {
-    public static let modelTypes: Set<String> = ["nemotron_h"]
-    public static let architectures: Set<String> = ["NemotronHForCausalLM"]
-
-    public static func variant(for config: ModelConfig) throws -> any NemotronHVariant.Type {
-        return NemotronHHybrid.self
-    }
-}
-
-public protocol NemotronHVariant {
-    static var availableCapabilities: Set<Capability> { get }
-    static var defaultGenerationParameters: GenerationParameters { get }
-    static func loadModel(
-        config: ModelConfig,
-        weights: SafeTensorsBundle,
-        options: LoadOptions,
-        device: Device
-    ) throws -> NemotronHModel
-}
-
-public enum NemotronHError: Error, CustomStringConvertible {
-    case missingConfig(String)
-    case unsupportedConfig(String)
-    public var description: String {
-        switch self {
-        case .missingConfig(let f): return "NemotronH: required config field missing: \(f)"
-        case .unsupportedConfig(let m): return "NemotronH: unsupported config: \(m)"
-        }
-    }
-}
 
 // ─── Layer kind ──────────────────────────────────────────────────────
 

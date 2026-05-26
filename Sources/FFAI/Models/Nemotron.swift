@@ -5,26 +5,34 @@
 //     attention / dense-MLP / MoE) decoder. Covers the dense
 //     Nemotron-H-4B-Base lineage AND the MoE Cascade-2-30B-A3B /
 //     Nemotron-3 Nano/Super/Ultra lineage (all `nemotron_h` model_type).
-//     Impl + family enum live in `Models/Text/NemotronHText.swift`.
+//     Family enum + variant protocol + unified error live below; impl
+//     lives in `Models/Text/NemotronHText.swift`.
 //   • NemotronH (vision-language) — Nemotron Nano VL: the ViT vision
 //     tower + multi-modal projector + the NemotronH hybrid text
-//     backbone. Orchestrator (`enum NemotronVL`) lives below; tower
-//     internals in `Models/Vision/NemotronHVision.swift`.
+//     backbone. Orchestrator (`enum NemotronVL`) lives in
+//     `Models/Vision/NemotronHVision.swift` alongside the tower
+//     internals; raises the same unified `NemotronHError` as the text
+//     path.
 //   • NemotronDiffusion (text) — Nemotron-Labs-Diffusion, the
 //     tri-mode (AR / block-diffusion / self-speculation) decoder.
-//     Impl + family enum live in `Models/Text/NemotronDiffusionText.swift`.
+//     Family enum + variant protocol + unified error live in
+//     `Models/NemotronDiffusion.swift`; impl lives in
+//     `Models/Text/NemotronDiffusionText.swift`.
 //   • NemotronDiffusion (vision-language) — Nemotron-Labs-Diffusion-
 //     VLM-8B: the Pixtral 2D-RoPE ViT + Mistral3-style patch-merger
 //     projector + the NemotronDiffusion tri-mode text backbone.
-//     Orchestrator (`enum NemotronDiffusionVL`) lives below; reuses
-//     `Models/Vision/PixtralVision.swift` for the tower and
-//     `Models/Vision/Mistral3Vision.swift` for the projector.
+//     Orchestrator (`enum NemotronDiffusionVL`) lives at the bottom of
+//     this file (it composes types from two unrelated families —
+//     Pixtral tower + Mistral3 projector + NemotronDiffusion text —
+//     and has no dedicated vision file).
 //
 // The `enum Nemotron` below is the unified family root — it advertises
 // the union of every variant's `modelTypes` + `architectures` so the
 // ModelRegistry can ask "is this a Nemotron checkpoint?" with one
-// lookup. Per-variant dispatch still routes to the right loader (Text/
-// for text + diffusion, the NemotronVL block in this file for VL).
+// lookup. Per-variant dispatch still routes to the right loader (the
+// NemotronH text impl, the NemotronVL block in
+// `Models/Vision/NemotronHVision.swift`, the NemotronDiffusion text
+// impl, the NemotronDiffusionVL block below).
 
 import Foundation
 import Metal
@@ -60,110 +68,72 @@ public enum Nemotron {
     }
 }
 
-// ─── NemotronVL — vision-language orchestrator ──────────────────────
+// ─── NemotronH text family entry point ───────────────────────────────
 
-public enum NemotronVLError: Error, CustomStringConvertible {
-    case missingConfig
-    case missingTensor(String)
+public enum NemotronH {
+    public static let modelTypes: Set<String> = ["nemotron_h"]
+    public static let architectures: Set<String> = ["NemotronHForCausalLM"]
 
-    public var description: String {
-        switch self {
-        case .missingConfig:
-            return "NemotronVL: checkpoint config is missing required fields"
-        case .missingTensor(let name):
-            return "NemotronVL: checkpoint is missing tensor '\(name)'"
-        }
+    public static func variant(for config: ModelConfig) throws -> any NemotronHVariant.Type {
+        _ = config
+        return NemotronHHybrid.self
     }
 }
 
-public enum NemotronVL {
-    /// `model_type` labels this orchestrator recognises (the VL
-    /// checkpoints actually carry `text_config.model_type = nemotron_h`
-    /// — the union here is mostly for documentation / future
-    /// dispatch flexibility).
-    public static let modelTypes: Set<String> = []
+// ─── NemotronH variant protocol ──────────────────────────────────────
 
-    /// `image_token_id` fallback for Nemotron Nano VL checkpoints.
-    public static let defaultImageTokenId = 131_072
+public protocol NemotronHVariant {
+    static var availableCapabilities: Set<Capability> { get }
+    static var defaultGenerationParameters: GenerationParameters { get }
+    static func loadModel(
+        config: ModelConfig,
+        weights: SafeTensorsBundle,
+        options: LoadOptions,
+        device: Device
+    ) throws -> NemotronHModel
+}
 
-    /// Build a `VisionModel` from a Nemotron Nano VL checkpoint: the ViT
-    /// vision tower + multi-modal projector + the NemotronH hybrid text
-    /// backbone, joined by the cross-modal splice.
-    public static func load(
-        config: ModelConfig, weights: SafeTensorsBundle,
-        options: LoadOptions, device: Device
-    ) throws -> VisionModel {
-        guard let visionConfig = config.subConfig("vision_config"),
-              let textConfigRaw = config.nested("text_config")
-        else {
-            throw NemotronVLError.missingConfig
+// ─── NemotronH errors ────────────────────────────────────────────────
+
+/// Unified NemotronH family error — raised by both the text loaders
+/// (`NemotronHHybrid.loadModel`) and the NemotronH vision-language
+/// orchestrator (`NemotronVL.load` in
+/// `Models/Vision/NemotronHVision.swift`).
+public enum NemotronHError: Error, CustomStringConvertible {
+    case missingConfig(String)
+    case missingTensor(String)
+    case unsupportedConfig(String)
+    public var description: String {
+        switch self {
+        case .missingConfig(let f): return "NemotronH: required config field missing: \(f)"
+        case .missingTensor(let name): return "NemotronH: checkpoint is missing tensor '\(name)'"
+        case .unsupportedConfig(let m): return "NemotronH: unsupported config: \(m)"
         }
-
-        // ── Text backbone — NemotronH hybrid engine ──
-        // The standalone `NemotronHHybrid` loader reads top-level config
-        // keys, so re-wrap the `text_config` sub-tree as a flat
-        // `ModelConfig`.
-        let textConfig = ModelConfig(
-            architecture: "NemotronHForCausalLM",
-            modelType: "nemotron_h",
-            raw: textConfigRaw)
-        let textWeights = weights.prefixed("language_model.")
-        let textEngine = try NemotronHHybrid.loadModel(
-            config: textConfig, weights: textWeights,
-            options: options, device: device)
-
-        // ── ViT vision tower ──
-        // The vision weights are namespaced under `vision_model.` (the
-        // C-RADIO / SigLIP encoder); load straight into the shared
-        // `VisionEncoder` core.
-        let visionEncoder = try nemotronVLLoadVisionEncoder(
-            config: visionConfig, weights: weights, device: device)
-
-        // ── Multi-modal projector ──
-        let projector = try NemotronVLProjector.load(
-            visionConfig: visionConfig, textHidden: textEngine.hidden,
-            weights: weights, device: device)
-
-        let composedTower = NemotronVLVisionTower(
-            encoder: visionEncoder, projector: projector,
-            textHidden: textEngine.hidden, dtype: textEngine.dtype)
-
-        let imageTokenId = config.int("image_token_id")
-            ?? config.int("image_token_index") ?? defaultImageTokenId
-        return try VisionModel(
-            visionEncoder: composedTower.asVisionEncoder(),
-            engine: textEngine, imageTokenId: imageTokenId,
-            normalization: .siglip,
-            imageTokenCount: visionEncoder.config.numPatches)
     }
 }
 
 // ─── NemotronDiffusionVL — diffusion vision-language orchestrator ────
+//
+// Nemotron-Labs-Diffusion-VLM-8B — the diffusion VLM. Wraps the
+// NemotronDiffusion tri-mode text backbone with a Pixtral ViT vision
+// tower and a Mistral3-style multi-modal projector
+// (RMSNorm → 2×2 patch merger → linear_1 → GELU → linear_2). The
+// `vision_config.model_type` is explicitly `"pixtral"`, so the
+// shipped `PixtralVisionEncoder` is the correct tower and we reuse
+// `Mistral3Projector` for the merger.
+//
+// Coherence-first port: vision attention runs on the CPU (already the
+// case in `PixtralVisionEncoder`); the text backbone runs through the
+// existing GPU-accelerated `NemotronDiffusionDense` engine. Image-only
+// inference for now; the `forwardBlock` diffusion / self-speculation
+// paths take the spliced embeddings unchanged.
+//
+// This orchestrator lives at the Nemotron family root (rather than in
+// a per-family vision file) because it composes types from THREE
+// unrelated families: the Pixtral vision tower, the Mistral3 patch-
+// merger projector, and the NemotronDiffusion text backbone — none
+// of which is canonically "the" vision file for the diffusion VLM.
 
-public enum NemotronDiffusionVLError: Error, CustomStringConvertible {
-    case missingConfig
-
-    public var description: String {
-        switch self {
-        case .missingConfig:
-            return "NemotronDiffusionVL: checkpoint config is missing required fields"
-        }
-    }
-}
-
-/// Nemotron-Labs-Diffusion-VLM-8B — the diffusion VLM. Wraps the
-/// NemotronDiffusion tri-mode text backbone with a Pixtral ViT vision
-/// tower and a Mistral3-style multi-modal projector
-/// (RMSNorm → 2×2 patch merger → linear_1 → GELU → linear_2). The
-/// `vision_config.model_type` is explicitly `"pixtral"`, so the
-/// shipped `PixtralVisionEncoder` is the correct tower and we reuse
-/// `Mistral3Projector` for the merger.
-///
-/// Coherence-first port: vision attention runs on the CPU (already the
-/// case in `PixtralVisionEncoder`); the text backbone runs through the
-/// existing GPU-accelerated `NemotronDiffusionDense` engine. Image-only
-/// inference for now; the `forwardBlock` diffusion / self-speculation
-/// paths take the spliced embeddings unchanged.
 public enum NemotronDiffusionVL {
     /// `model_type` labels this orchestrator recognises.
     public static let modelTypes: Set<String> = ["nemotron_labs_diffusion_vlm"]
@@ -189,7 +159,7 @@ public enum NemotronDiffusionVL {
     ) throws -> VisionModel {
         guard let visionConfig = config.subConfig("vision_config")
         else {
-            throw NemotronDiffusionVLError.missingConfig
+            throw NemotronDiffusionError.missingConfig
         }
 
         // ── Text backbone — NemotronDiffusion tri-mode engine ──
