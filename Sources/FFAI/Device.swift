@@ -24,6 +24,16 @@ public final class Device: @unchecked Sendable {
     public let mtlDevice: MTLDevice
     public let commandQueue: MTLCommandQueue
 
+    /// Lazy MTLResidencySet that pins the model's weight buffers so
+    /// every command buffer skips per-allocation residency tracking.
+    /// Populated after `Model.load` finishes. Typed as `Any?` so the
+    /// deployment target stays below macOS 15; the cast back to
+    /// `MTLResidencySet` lives inside the `@available` block in
+    /// `markWeightsResident`. Initialised under `residencyLock` to
+    /// single-flight the descriptor build.
+    private var weightResidencySet: Any?
+    private let residencyLock = NSLock()
+
     public static let shared: Device = {
         // Reuse the same MTLDevice + queue MetalTileSwift uses, so PSOs
         // and buffers are guaranteed compatible.
@@ -50,5 +60,41 @@ public final class Device: @unchecked Sendable {
             fatalError("Device.makeCommandBuffer() returned nil")
         }
         return cb
+    }
+
+    /// Add `buffers` to a persistent MTLResidencySet attached to the
+    /// command queue. Without this, Apple's Metal driver re-validates
+    /// per-allocation residency on every command-buffer encode — at
+    /// model sizes with tens of thousands of dispatches per prefill,
+    /// the per-dispatch overhead dominates wall time. One residency
+    /// set is shared across all weight buffers; repeated calls add
+    /// to it. Requires macOS 15+ / iOS 18+; older OSes silently
+    /// no-op. Set `FFAI_NO_RESIDENCY_SET=1` to disable for A/B.
+    public func markWeightsResident(_ buffers: [MTLBuffer]) {
+        if ProcessInfo.processInfo.environment["FFAI_NO_RESIDENCY_SET"] != nil { return }
+        guard #available(macOS 15.0, iOS 18.0, *) else { return }
+        residencyLock.lock()
+        defer { residencyLock.unlock() }
+        if weightResidencySet == nil {
+            let descriptor = MTLResidencySetDescriptor()
+            descriptor.label = "FFAI weights"
+            descriptor.initialCapacity = max(buffers.count, 1024)
+            do {
+                let set = try mtlDevice.makeResidencySet(descriptor: descriptor)
+                commandQueue.addResidencySet(set)
+                weightResidencySet = set
+            } catch {
+                // Driver refused to create the set; fall back to default
+                // residency tracking. Not fatal — just slower.
+                weightResidencySet = nil
+                return
+            }
+        }
+        guard let set = weightResidencySet as? MTLResidencySet else { return }
+        for buf in buffers {
+            set.addAllocation(buf)
+        }
+        set.commit()
+        set.requestResidency()
     }
 }
