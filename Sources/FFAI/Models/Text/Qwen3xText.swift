@@ -3068,6 +3068,31 @@ public final class Qwen35Model: LanguageModel {
             tokenIds: tokenIds,
             startPosition: startPosition,
             caches: caches,
+            returnAllLogits: false,
+            on: cmd, device: device)
+    }
+
+    /// Multi-token forward returning logits at EVERY position — `[T, vocab]`.
+    /// Same KV/GDN-cache-writing semantics as `forwardMany`; differs only
+    /// in the output: instead of slicing the last row's hidden, applies
+    /// final RMSNorm + lm_head row-wise to all T positions.
+    ///
+    /// Spec-decode driver: a drafter proposes `γ` candidate tokens, the
+    /// target verifies via `forwardManyAllLogits(prefix + candidates)` to
+    /// get the per-position logits, then accepts up to the first reject.
+    public func forwardManyAllLogits(
+        tokenIds: [Int], startPosition: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "Qwen35Model.forwardManyAllLogits: tokenIds must not be empty")
+        return _forwardManyBatched(
+            tokenIds: tokenIds,
+            startPosition: startPosition,
+            caches: caches,
+            returnAllLogits: true,
             on: cmd, device: device)
     }
 
@@ -3099,11 +3124,17 @@ public final class Qwen35Model: LanguageModel {
     /// Mixed-dispatch batched forwardMany. Attention layers fan to
     /// `decodeMany`; GDN (and any other) layer types stay per-token with
     /// a per-row `Ops.copy` blit-back into the running `[T, hidden]`
-    /// buffer. Embedding gathers all T tokens in one dispatch. Final
-    /// norm + lm_head run only on the LAST row, on the caller's `cmd`.
+    /// buffer. Embedding gathers all T tokens in one dispatch.
+    ///
+    /// Output shape depends on `returnAllLogits`:
+    ///   * `false` (default, prefill driver): final norm + lm_head run
+    ///     on the LAST row only → `[vocab]`.
+    ///   * `true` (spec-decode verify): batched RMSNorm over T rows +
+    ///     batched lm_head → `[T, vocab]`.
     private func _forwardManyBatched(
         tokenIds: [Int], startPosition: Int,
         caches: [any LayerCacheProtocol],
+        returnAllLogits: Bool,
         on cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
         let t = tokenIds.count
@@ -3184,14 +3215,28 @@ public final class Qwen35Model: LanguageModel {
             workCmd.waitUntilCompleted()
         }
 
-        // ── Final norm + lm_head on the LAST row only ────────────────────
-        // ITER 77 (PR10): fused via qwen35FinalNormLmHead.
-        let lastRow = Tensor(
-            buffer: h.buffer,
-            offset: h.offset + (t - 1) * hidden * dtBytes,
-            shape: [hidden], dtype: dt)
-        return qwen35FinalNormLmHead(
-            h: lastRow, finalNorm: finalNorm, lmHead: lmHead, on: cmd)
+        // ── Final norm + lm_head ─────────────────────────────────────────
+        // Two output shapes (see _forwardManyBatched docstring):
+        //   * returnAllLogits == false: logits of the LAST row only.
+        //     ITER 77 (PR10) fused via qwen35FinalNormLmHead.
+        //   * returnAllLogits == true: batched RMSNorm over T rows +
+        //     batched lm_head — the spec-decode verify path needs
+        //     per-position logits.
+        if !returnAllLogits {
+            let lastRow = Tensor(
+                buffer: h.buffer,
+                offset: h.offset + (t - 1) * hidden * dtBytes,
+                shape: [hidden], dtype: dt)
+            return qwen35FinalNormLmHead(
+                h: lastRow, finalNorm: finalNorm, lmHead: lmHead, on: cmd)
+        }
+        // All-T path: batched RMSNorm over T rows + batched lm_head.
+        let normedAll = Ops.rmsNormRows(
+            h, weight: finalNorm.weight, eps: finalNorm.eps,
+            nRows: t, rowSize: hidden, on: cmd)
+        return lmHead.callMany(
+            normedAll.reshaped(to: [t, hidden]),
+            t: t, on: cmd, device: device)
     }
 
     // ─── VLM embedding-input path ────────────────────────────────────
