@@ -7,6 +7,7 @@ Thanks for your interest. FFAI is a small, focused project — these guidelines 
 - PRs without a linked issue **will be automatically closed**.
 - Tests + docs land with the code that needs them.
 - AI-assisted contributions are welcome (preferred, even) — disclose how you used AI in the issue/PR template.
+- By contributing you agree to have your contributions distributed and governed by our [LICENSE](./LICENSE).
 
 ## Open an issue first
 
