@@ -25,13 +25,16 @@ import TestHelpers
 @Suite("Marvis Integration", .serialized)
 struct MarvisIntegrationTests {
 
+    /// Canonical HF repo id. The 4-bit MLX conversion is the smallest
+    /// published Marvis variant.
+    private static let repoId = "Marvis-AI/marvis-tts-250m-v0.2-MLX-4bit"
+
     /// Load Marvis from the HF cache. Throws on failure so a missing
     /// checkpoint fails the test instead of skipping it.
     private func loadMarvis() async throws -> MarvisModel {
-        let dir = try await AudioTestHelpers.resolveCheckpoint(
-            mlxAudioSlugs: ["Marvis-AI_marvis-tts-250m-v0.2-MLX",
-                            "Marvis-AI_marvis-tts-250m-v0.2-MLX-8bit"],
-            repoIds: ["Marvis-AI/marvis-tts-250m-v0.2-MLX-4bit"])
+        let dir = try await ModelLoadLock.shared.loadSerially {
+            try await ModelLocator().resolve(idOrPath: Self.repoId)
+        }
         return try await ModelLoadLock.shared.loadSerially {
             try await MarvisModel.load(directory: dir)
         }

@@ -27,21 +27,15 @@ import TestHelpers
 @Suite("VoxtralRealtime Integration", .serialized)
 struct VoxtralRealtimeIntegrationTests {
 
-    /// Resolve the Voxtral-Mini-4B checkpoint. Prefers the 4-bit variant
-    /// for speed; falls back to 6-bit and fp16.
+    /// Canonical HF repo id. The 4-bit MLX conversion is the smallest
+    /// published Voxtral-Mini-4B-Realtime variant.
+    private static let repoId = "mlx-community/Voxtral-Mini-4B-Realtime-2602-4bit"
+
+    /// Resolve the Voxtral-Mini-4B checkpoint and load the model.
     private func loadModel() async throws -> VoxtralRealtimeModel {
-        let dir = try await AudioTestHelpers.resolveCheckpoint(
-            mlxAudioSlugs: [
-                "mlx-community_Voxtral-Mini-4B-Realtime-2602-4bit",
-                "mlx-community_Voxtral-Mini-4B-Realtime-6bit",
-                "mlx-community_Voxtral-Mini-4B-Realtime-2602-fp16",
-            ],
-            repoIds: [
-                "mlx-community/Voxtral-Mini-4B-Realtime-2602-4bit",
-                "mlx-community/Voxtral-Mini-4B-Realtime-6bit",
-                "mlx-community/Voxtral-Mini-4B-Realtime-2602-fp16",
-            ]
-        )
+        let dir = try await ModelLoadLock.shared.loadSerially {
+            try await ModelLocator().resolve(idOrPath: Self.repoId)
+        }
         return try VoxtralRealtimeModel.load(directory: dir)
     }
 

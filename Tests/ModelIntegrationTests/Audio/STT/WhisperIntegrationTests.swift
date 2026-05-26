@@ -3,9 +3,10 @@
 // FAILS the suite — `loadWhisper()` is `throws` and the checkpoint is a
 // hard requirement, not a "skip if missing".
 //
-// whisper-tiny is the smallest Whisper variant (~150 MB f32), so the
-// integration suite stays fast. The architecture (AudioEncoder + a
-// cross-attending text decoder) is identical for base → large-v3.
+// whisper-tiny is the smallest Whisper variant, and `mlx-community/whisper-tiny-4bit`
+// is the smallest published MLX conversion (~40 MB). The architecture
+// (AudioEncoder + a cross-attending text decoder) is identical for base
+// → large-v3.
 //
 // WhisperModel works at the token-id level (it has no bundled
 // tokenizer), so the transcription assertions check that the decoder
@@ -21,11 +22,16 @@ import TestHelpers
 @Suite("Whisper Integration", .serialized)
 struct WhisperIntegrationTests {
 
+    /// Canonical HF repo id. The 4-bit MLX conversion is the smallest
+    /// published whisper-tiny variant.
+    private static let repoId = "mlx-community/whisper-tiny-4bit"
+
     /// Load whisper-tiny from the HF cache / network. Throws on failure
     /// so a missing checkpoint fails the test instead of skipping it.
     private func loadWhisper() async throws -> WhisperModel {
-        let dir = try await AudioTestHelpers.resolveCheckpoint(
-            repoIds: ["openai/whisper-tiny", "openai/whisper-base"])
+        let dir = try await ModelLoadLock.shared.loadSerially {
+            try await ModelLocator().resolve(idOrPath: Self.repoId)
+        }
         return try WhisperModel.load(directory: dir)
     }
 
@@ -33,7 +39,6 @@ struct WhisperIntegrationTests {
     func loadWhisper_bindsWeights() async throws {
         let model = try await loadWhisper()
         // whisper-tiny: d_model 384, 4 enc / 4 dec layers, 6 heads.
-        // whisper-base (the fallback): d_model 512, 6 / 6 layers.
         #expect(model.config.hidden > 0)
         #expect(model.config.encoderLayers > 0)
         #expect(model.config.decoderLayers > 0)

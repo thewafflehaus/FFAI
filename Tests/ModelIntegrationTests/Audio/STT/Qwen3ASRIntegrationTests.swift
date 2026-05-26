@@ -1,6 +1,6 @@
 // Integration test: loads the real Qwen3-ASR-0.6B-4bit checkpoint from the
-// mlx-audio HF cache and runs end-to-end transcription on the bundled
-// speech fixture. A missing checkpoint FAILS the suite.
+// HF cache and runs end-to-end transcription on the bundled speech fixture.
+// A missing checkpoint FAILS the suite.
 //
 // Qwen3-ASR uses a Conv2d audio encoder whose output is merged into a
 // Qwen3 text-decoder embedding stream. This test validates:
@@ -19,19 +19,20 @@ import TestHelpers
 @Suite("Qwen3ASR Integration", .serialized)
 struct Qwen3ASRIntegrationTests {
 
-    /// Resolve the Qwen3-ASR checkpoint directory from the mlx-audio cache
-    /// or the HF hub. Prefers the 0.6B-4bit variant for speed.
+    /// Canonical HF repo id. The 4-bit MLX conversion is the smallest
+    /// published Qwen3-ASR variant.
+    private static let repoId = "mlx-community/Qwen3-ASR-0.6B-4bit"
+
+    /// Resolve the Qwen3-ASR checkpoint directory through `ModelLocator`.
+    private func resolveDir() async throws -> URL {
+        try await ModelLoadLock.shared.loadSerially {
+            try await ModelLocator().resolve(idOrPath: Self.repoId)
+        }
+    }
+
+    /// Load the Qwen3-ASR model from the resolved checkpoint directory.
     private func loadModel() async throws -> Qwen3ASRModel {
-        let dir = try await AudioTestHelpers.resolveCheckpoint(
-            mlxAudioSlugs: [
-                "mlx-community_Qwen3-ASR-0.6B-4bit",
-                "mlx-community_Qwen3-ASR-0.6B-bf16",
-            ],
-            repoIds: [
-                "mlx-community/Qwen3-ASR-0.6B-4bit",
-                "mlx-community/Qwen3-ASR-0.6B-bf16",
-            ]
-        )
+        let dir = try await resolveDir()
         return try Qwen3ASRModel.load(directory: dir)
     }
 
@@ -101,18 +102,9 @@ struct Qwen3ASRIntegrationTests {
         let wave = try AudioTestHelpers.conversationalAWaveform()
         #expect(!wave.isEmpty, "audio fixture failed to load")
 
-        // We need a tokenizer — for Qwen3ASR checkpoints it lives in the
-        // same directory as the weights. Resolve it from the same cache.
-        let dir = try await AudioTestHelpers.resolveCheckpoint(
-            mlxAudioSlugs: [
-                "mlx-community_Qwen3-ASR-0.6B-4bit",
-                "mlx-community_Qwen3-ASR-0.6B-bf16",
-            ],
-            repoIds: [
-                "mlx-community/Qwen3-ASR-0.6B-4bit",
-                "mlx-community/Qwen3-ASR-0.6B-bf16",
-            ]
-        )
+        // The tokenizer lives alongside the weights in the resolved
+        // snapshot directory.
+        let dir = try await resolveDir()
         let tokenizer = try await TokenizerLoader().load(from: dir)
 
         let transcript = model.transcribe(

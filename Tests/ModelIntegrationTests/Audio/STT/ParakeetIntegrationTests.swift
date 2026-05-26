@@ -1,13 +1,11 @@
-// Integration test: loads the real parakeet-tdt-0.6b-v2 or v3 checkpoint
+// Integration test: loads the real parakeet-tdt-0.6b-v2 checkpoint
 // from the HF cache and runs the audio front-end + Conformer encoder +
 // greedy TDT decoder end-to-end. A load failure FAILS the suite —
 // `loadParakeet()` is `throws` and the checkpoint is a hard requirement.
 //
-// parakeet-tdt-0.6b-v2 uses a 1024-token BPE vocabulary.
-// parakeet-tdt-0.6b-v3 uses an 8192-token vocabulary with extra special
-// tokens (lang-id, emotion, etc.). Both share the same 24-layer Conformer
-// encoder and dual-LSTM prediction network — this file tests whichever is
-// available in the mlx-audio cache first, then falls back to the HF hub.
+// parakeet-tdt-0.6b-v2 uses a 1024-token BPE vocabulary. The Conformer
+// encoder + dual-LSTM prediction network are shared with the v3
+// variant; v2 is the canonical published smallest variant.
 //
 // DO NOT RUN — this suite requires multi-GB checkpoint files and a GPU.
 // Run via `make test-integration`.
@@ -20,57 +18,18 @@ import TestHelpers
 @Suite("Parakeet Integration", .serialized)
 struct ParakeetIntegrationTests {
 
-    // ─── HF cache helpers ────────────────────────────────────────────
+    /// Canonical HF repo id. No 4-bit MLX conversion exists at time of
+    /// writing for the parakeet-tdt family.
+    private static let repoId = "mlx-community/parakeet-tdt-0.6b-v2"
 
-    private static var hfCacheRoot: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cache/huggingface/hub")
-    }
+    // ─── Checkpoint resolution ───────────────────────────────────────
 
-    /// True when `dir` has a `config.json` and at least one `.safetensors` shard.
-    private static func isCompleteSnapshot(_ dir: URL) -> Bool {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: dir.appendingPathComponent("config.json").path)
-        else { return false }
-        guard let entries = try? fm.contentsOfDirectory(atPath: dir.path)
-        else { return false }
-        return entries.contains { $0.hasSuffix(".safetensors") }
-    }
-
-    /// Resolve a checkpoint directory from the mlx-audio flat cache or HF hub.
-    /// The mlx-audio layout (`~/.cache/huggingface/hub/mlx-audio/<slug>`) is
-    /// a fully materialised snapshot directory the checkpoints land in after
-    /// `mlx-audio` conversion.
+    /// Resolve the Parakeet checkpoint directory through `ModelLocator`,
+    /// serialised against other model loads via `ModelLoadLock`.
     private func resolveParakeetDir() async throws -> URL {
-        let candidates: [(String, String)] = [
-            // (slug for mlx-audio flat cache, HF repo id)
-            ("mlx-community_parakeet-tdt-0.6b-v2",
-             "mlx-community/parakeet-tdt-0.6b-v2"),
-            ("mlx-community_parakeet-tdt-0.6b-v3",
-             "mlx-community/parakeet-tdt-0.6b-v3"),
-        ]
-
-        let mlxAudioRoot = Self.hfCacheRoot.appendingPathComponent("mlx-audio")
-        // 1. Check mlx-audio flat cache — no network required.
-        for (slug, _) in candidates {
-            let dir = mlxAudioRoot.appendingPathComponent(slug)
-            if Self.isCompleteSnapshot(dir) { return dir }
+        try await ModelLoadLock.shared.loadSerially {
+            try await ModelLocator().resolve(idOrPath: Self.repoId)
         }
-        // 2. Fall back to HF hub download / cache hit.
-        let locator = ModelLocator()
-        var lastError: Error?
-        for (_, repoId) in candidates {
-            do {
-                return try await locator.resolve(idOrPath: repoId)
-            } catch {
-                lastError = error
-            }
-        }
-        throw lastError ?? NSError(
-            domain: "ParakeetIntegration",
-            code: 1,
-            userInfo: [NSLocalizedDescriptionKey:
-                "No Parakeet checkpoint found in cache or HF hub"])
     }
 
     /// Load a Parakeet model, resolving the checkpoint directory first.

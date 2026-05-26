@@ -2,7 +2,7 @@
 // from the HF cache and runs end-to-end speaker diarization on a short
 // bundled speech clip.
 //
-// Checkpoint: mlx-community/diar_streaming_sortformer_4spk-v2.1-fp16
+// Checkpoint: `mlx-community/diar_streaming_sortformer_4spk-v2.1-fp16`
 // Audio fixture: Resources/clean_001.wav  (~1.85 s, 16 kHz, "Sure, I
 // can help you with that." — single-speaker clean speech).
 //
@@ -27,18 +27,18 @@ import TestHelpers
 @Suite("Sortformer Integration", .serialized)
 struct SortformerIntegrationTests {
 
-    /// Published checkpoint slug (mlx-audio flat cache) and HF repo id.
-    static let mlxAudioSlug = "mlx-community_diar_streaming_sortformer_4spk-v2.1-fp16"
-    static let repoId       = "mlx-community/diar_streaming_sortformer_4spk-v2.1-fp16"
+    /// Canonical HF repo id. No 4-bit MLX conversion exists at time of
+    /// writing for Sortformer; fp16 is the smallest published variant.
+    private static let repoId = "mlx-community/diar_streaming_sortformer_4spk-v2.1-fp16"
 
     // ─── Helpers ─────────────────────────────────────────────────────
 
     /// Load the Sortformer model, holding the global model-load lock.
     /// A load failure throws — it is NOT caught and skipped.
     private func loadSortformer() async throws -> SortformerModel {
-        let dir = try await AudioTestHelpers.resolveCheckpoint(
-            mlxAudioSlugs: [Self.mlxAudioSlug],
-            repoIds: [Self.repoId])
+        let dir = try await ModelLoadLock.shared.loadSerially {
+            try await ModelLocator().resolve(idOrPath: Self.repoId)
+        }
         return try await ModelLoadLock.shared.loadSerially {
             try SortformerModel.loadFromDirectory(dir)
         }

@@ -2,10 +2,8 @@
 // / omni family. Loads the real checkpoint from the HF cache and exercises
 // the audio-encoding path that produces feature tokens for the LFM2 backbone.
 //
-// Checkpoint resolution order (first complete snapshot wins):
-//   1. mlx-audio flat cache:  mlx-community_LFM2.5-Audio-1.5B-6bit
-//   2. mlx-audio flat cache:  mlx-community_LFM2.5-Audio-1.5B-bf16
-//   3. HF hub (download):     mlx-community/LFM2.5-Audio-1.5B-4bit
+// Checkpoint: `mlx-community/LFM2.5-Audio-1.5B-4bit` — resolved through
+// `ModelLocator`, downloaded into the HF cache on first use.
 //
 // A missing checkpoint FAILS the test — there is no "skip if absent" logic.
 // The integration suite is serialized to avoid pinning the GPU with multiple
@@ -21,22 +19,21 @@ import TestHelpers
 @Suite("LFMAudio Integration", .serialized)
 struct LFMAudioIntegrationTests {
 
+    /// Canonical HF repo id for the LFM2.5-Audio checkpoint. The 4-bit
+    /// MLX conversion keeps the integration suite fast enough to run on
+    /// the smallest CI box.
+    private static let repoId = "mlx-community/LFM2.5-Audio-1.5B-4bit"
+
     // ── Checkpoint resolution ────────────────────────────────────────────
 
     /// Load the LFMAudio model from the HF cache / network. Throws on failure
     /// so a missing checkpoint surfaces as a test failure, not a silent pass.
+    /// The model-load lock keeps concurrent suites from racing the GPU.
     private func loadLFMAudio() async throws -> LFMAudioModel {
-        let dir = try await AudioTestHelpers.resolveCheckpoint(
-            mlxAudioSlugs: [
-                "mlx-community_LFM2.5-Audio-1.5B-6bit",
-                "mlx-community_LFM2.5-Audio-1.5B-bf16"
-            ],
-            repoIds: [
-                "mlx-community/LFM2.5-Audio-1.5B-4bit"
-            ])
-        return try await ModelLoadLock.shared.loadSerially {
-            try LFMAudioModel.load(directory: dir)
+        let dir = try await ModelLoadLock.shared.loadSerially {
+            try await ModelLocator().resolve(idOrPath: Self.repoId)
         }
+        return try LFMAudioModel.load(directory: dir)
     }
 
     // ── Load path ────────────────────────────────────────────────────────
@@ -164,14 +161,9 @@ struct LFMAudioIntegrationTests {
 
     @Test("AudioModelRegistry.load — returns .lfmAudio case for LFMAudio checkpoint")
     func registryLoad_returnsLFMAudioCase() async throws {
-        let dir = try await AudioTestHelpers.resolveCheckpoint(
-            mlxAudioSlugs: [
-                "mlx-community_LFM2.5-Audio-1.5B-6bit",
-                "mlx-community_LFM2.5-Audio-1.5B-bf16"
-            ],
-            repoIds: [
-                "mlx-community/LFM2.5-Audio-1.5B-4bit"
-            ])
+        let dir = try await ModelLoadLock.shared.loadSerially {
+            try await ModelLocator().resolve(idOrPath: Self.repoId)
+        }
         let loaded = try await ModelLoadLock.shared.loadSerially {
             try await AudioModelRegistry.load(directory: dir)
         }

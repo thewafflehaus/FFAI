@@ -1,9 +1,11 @@
 // DeepFilterNetIntegrationTests — end-to-end speech enhancement test.
 //
-// Downloads (or hits cache) the mlx-community/DeepFilterNet-mlx checkpoint,
+// Downloads (or hits cache) the `mlx-community/DeepFilterNet-mlx` checkpoint,
 // loads the V3 model, and enhances a short synthetic waveform.
 //
-// Gracefully skips if the checkpoint is unavailable (no network / cache miss).
+// A load failure FAILS the suite — no "skip if missing" logic. The model
+// load is serialised through `ModelLoadLock.shared` so concurrent suites
+// don't race the GPU.
 //
 // DO NOT RUN with `swift test` directly — use `make test-integration` to
 // keep model tests serialised and within the memory budget.
@@ -14,9 +16,9 @@ import Testing
 import TestHelpers
 
 /// Synthetic clean audio fixture for offline 48 kHz path — separate
-/// from the shared `AudioFixtures` in `Tests/ModelTests/AudioTestHelpers.swift`
-/// (which loads the 16 kHz `clean_001.wav` for STT). DeepFilterNet
-/// operates at 48 kHz, so it uses this synthetic sine instead.
+/// from the shared 16 kHz `clean_001.wav` fixture (which targets STT).
+/// DeepFilterNet operates at 48 kHz, so this synthetic sine stands in
+/// as "clean speech" for the offline path.
 enum DeepFilterNetFixtures {
     /// ~0.1 s of 440 Hz sine at 48 kHz — serves as a "clean speech"
     /// proxy for offline testing. Level is ~-12 dBFS.
@@ -35,14 +37,21 @@ enum DeepFilterNetFixtures {
 @Suite("DeepFilterNet Integration", .serialized)
 struct DeepFilterNetIntegrationTests {
 
+    /// Canonical HF repo id. DeepFilterNet does not ship a 4-bit
+    /// MLX conversion; the upstream `-mlx` repo is the only published
+    /// variant and is small (~1 MB) so quantisation is not motivated.
+    private static let repoId = "mlx-community/DeepFilterNet-mlx"
+
     @Test("enhance returns non-empty waveform with same length as input")
     func loadAndEnhance() async throws {
         // mlx-community/DeepFilterNet-mlx ships v1/v2/v3 subfolders.
         // Default: load v3 (recommended).
-        let model = try await DeepFilterNetModel.fromPretrained(
-            "mlx-community/DeepFilterNet-mlx",
-            subfolder: "v3"
-        )
+        let model = try await ModelLoadLock.shared.loadSerially {
+            try await DeepFilterNetModel.fromPretrained(
+                Self.repoId,
+                subfolder: "v3"
+            )
+        }
 
         let waveform = DeepFilterNetFixtures.clean001Waveform()
         #expect(!waveform.isEmpty)

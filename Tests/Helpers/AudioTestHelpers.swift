@@ -1,97 +1,26 @@
-// Audio-side test helpers — checkpoint resolution, waveform fixtures,
-// and STT phrase assertion shared by every audio integration suite.
+// Audio-side test helpers — waveform fixtures and the STT phrase
+// assertion shared by every audio integration suite.
 //
-// Three responsibilities:
+// Two responsibilities:
 //
-//  1. `resolveCheckpoint(...)` — resolve a checkpoint directory. Some
-//     audio checkpoints are only present in the HF-cache *mlx-audio*
-//     sibling layout (`~/.cache/huggingface/hub/mlx-audio/<repo>/`),
-//     a flat snapshot directory rather than the
-//     `models--org--repo/snapshots/` blob layout `ModelLocator`
-//     downloads into. When a family's HF-hub cache entry is incomplete
-//     (index.json present, shards missing) the suites point
-//     `ModelLocator` at the complete mlx-audio directory as a local
-//     path. The helper returns the first candidate that exists and
-//     looks complete (a config + at least one weight file).
-//
-//  2. Waveform fixtures — `clean001Waveform()` ("Sure, I can help you
+//  1. Waveform fixtures — `clean001Waveform()` ("Sure, I can help you
 //     with that.") and `conversationalAWaveform()` (~13 s
 //     multi-sentence dialogue) loaded from `Tests/Resources/`.
 //
-//  3. `expectMentionsSureICanHelp(...)` — STT phrase assertion for the
+//  2. `expectMentionsSureICanHelp(...)` — STT phrase assertion for the
 //     clean_001 fixture, with flexible punctuation + capitalisation
 //     matching ("Sure I can help you with that", "sure, i can help
 //     you with that.", "Sure! I can help you with that..." all pass).
 //
-// Unlike the old catch-and-skip helpers, nothing here swallows a load
-// failure: a missing checkpoint surfaces as a thrown error so the
-// test FAILS rather than silently passing.
+// Checkpoint resolution has moved back into the integration suites
+// (each picks a single canonical HF repo id and lets `ModelLocator`
+// download / cache-hit) — see the per-suite `loadXYZ()` helpers.
 
 import Foundation
 import Testing
 import FFAI
 
 public enum AudioTestHelpers {
-
-    // MARK: - Checkpoint resolution
-
-    /// Root of the HF cache (`~/.cache/huggingface/hub`).
-    public static var hfCacheRoot: URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return home.appendingPathComponent(".cache/huggingface/hub")
-    }
-
-    /// A flat snapshot directory under the `mlx-audio` sibling cache,
-    /// e.g. `mlx-audio/mlx-community_Kokoro-82M-bf16`. `repoSlug` is the
-    /// repo id with `/` replaced by `_`.
-    public static func mlxAudioDir(_ repoSlug: String) -> URL {
-        hfCacheRoot.appendingPathComponent("mlx-audio/\(repoSlug)")
-    }
-
-    /// True when `dir` looks like a usable checkpoint snapshot: a
-    /// `config.json` plus at least one weight file (`*.safetensors`).
-    public static func isCompleteSnapshot(_ dir: URL) -> Bool {
-        let fm = FileManager.default
-        let config = dir.appendingPathComponent("config.json")
-        guard fm.fileExists(atPath: config.path) else { return false }
-        guard let entries = try? fm.contentsOfDirectory(atPath: dir.path)
-        else { return false }
-        return entries.contains { $0.hasSuffix(".safetensors") }
-    }
-
-    /// Resolve a checkpoint directory, preferring `mlx-audio` slugs
-    /// that are already complete on disk, then falling back to HF repo
-    /// ids (which `ModelLocator` downloads or cache-hits). Every
-    /// candidate is tried in order; the first that resolves to a
-    /// complete snapshot wins. Throws if none resolve — the caller
-    /// lets that fail the test.
-    ///
-    /// `mlxAudioSlugs` are checked first as local paths (no network);
-    /// `repoIds` are HF ids tried after.
-    public static func resolveCheckpoint(
-        mlxAudioSlugs: [String] = [],
-        repoIds: [String] = []
-    ) async throws -> URL {
-        var lastError: Error?
-        // 1. Complete mlx-audio snapshots on disk — pure local, no network.
-        for slug in mlxAudioSlugs {
-            let dir = mlxAudioDir(slug)
-            if isCompleteSnapshot(dir) { return dir }
-        }
-        // 2. HF repo ids — ModelLocator downloads or cache-hits.
-        let locator = ModelLocator()
-        for repoId in repoIds {
-            do {
-                return try await ModelLoadLock.shared.loadSerially {
-                    try await locator.resolve(idOrPath: repoId)
-                }
-            } catch {
-                lastError = error
-            }
-        }
-        throw lastError ?? AudioTestHelpersError.noCheckpointResolved(
-            mlxAudioSlugs + repoIds)
-    }
 
     // MARK: - Waveform fixtures
 
@@ -144,17 +73,5 @@ public enum AudioTestHelpers {
             comment,
             sourceLocation: sourceLocation
         )
-    }
-}
-
-public enum AudioTestHelpersError: Error, CustomStringConvertible {
-    case noCheckpointResolved([String])
-
-    public var description: String {
-        switch self {
-        case .noCheckpointResolved(let candidates):
-            return "No audio checkpoint resolved from candidates: "
-                + candidates.joined(separator: ", ")
-        }
     }
 }

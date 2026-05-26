@@ -18,14 +18,18 @@ import TestHelpers
 @Suite("QwenOmni Integration", .serialized)
 struct QwenOmniIntegrationTests {
 
+    /// Canonical HF repo id. No 4-bit MLX conversion exists at time of
+    /// writing, so the integration suite resolves the upstream Qwen
+    /// release directly.
+    private static let repoId = "Qwen/Qwen2.5-Omni-3B"
+
     /// Load Qwen-Omni from the HF cache / network. Throws on failure so
     /// a missing checkpoint fails the test instead of skipping it.
     private func loadQwenOmni() async throws -> QwenOmniModel {
-        let dir = try await AudioTestHelpers.resolveCheckpoint(
-            repoIds: ["Qwen/Qwen2.5-Omni-3B"])
-        return try await ModelLoadLock.shared.loadSerially {
-            try QwenOmniModel.load(directory: dir)
+        let dir = try await ModelLoadLock.shared.loadSerially {
+            try await ModelLocator().resolve(idOrPath: Self.repoId)
         }
+        return try QwenOmniModel.load(directory: dir)
     }
 
     @Test("load — Qwen-Omni audio tower binds correctly")

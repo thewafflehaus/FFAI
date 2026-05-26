@@ -14,7 +14,7 @@
 // DO NOT RUN — this suite requires multi-GB checkpoint files.
 // Run via `make test-integration`.
 //
-// A missing checkpoint FAILS the suite (throws AudioTestHelpersError).
+// A missing checkpoint FAILS the suite.
 
 import Foundation
 import Testing
@@ -24,31 +24,26 @@ import TestHelpers
 @Suite("CohereTranscribe Integration", .serialized)
 struct CohereTranscribeIntegrationTests {
 
+    /// Canonical HF repo id. The 8-bit MLX conversion is the smallest
+    /// published Cohere-transcribe variant (no 4-bit exists on HF as of
+    /// 2026-05). Repo layout note: every model file lives under an
+    /// `mlx-int8/` subdirectory rather than at the snapshot root, so
+    /// `resolveDir()` descends into that subdir before handing the
+    /// directory to `CohereTranscribeModel.load(directory:)`.
+    private static let repoId = "mlx-community/cohere-transcribe-03-2026-mlx-8bit"
+
     // ─── Checkpoint resolution ───────────────────────────────────────────
 
-    /// Resolve the CohereTranscribe checkpoint directory from the mlx-audio
-    /// flat cache or HF hub.
+    /// Resolve the CohereTranscribe checkpoint directory from the HF hub.
     private func resolveDir() async throws -> URL {
-        // The original mlx-community/c4ai-aya-expanse-transcribe-mlx repo
-        // was renamed when Cohere republished as the 2026-03 release.
-        // Try the current mlx-community 8-bit conversion first, then fall
-        // back to legacy slugs in case someone has a stale local mirror.
-        //
-        // Repo layout note: the published `cohere-transcribe-03-2026-mlx-8bit`
-        // repo nests every model file (config.json, model.safetensors, …)
-        // under an `mlx-int8/` subdirectory rather than at the snapshot
-        // root. After ModelLocator resolves the snapshot dir, descend
-        // into that subdir so `CohereTranscribeModel.load(directory:)`
-        // sees the standard `<dir>/config.json` layout it expects.
-        let snapshot = try await AudioTestHelpers.resolveCheckpoint(
-            mlxAudioSlugs: [
-                "mlx-community_cohere-transcribe-03-2026-mlx-8bit",
-                "mlx-community_c4ai-aya-expanse-transcribe-mlx",
-            ],
-            repoIds: [
-                "mlx-community/cohere-transcribe-03-2026-mlx-8bit",
-            ]
-        )
+        let snapshot = try await ModelLoadLock.shared.loadSerially {
+            try await ModelLocator().resolve(idOrPath: Self.repoId)
+        }
+        // Published `cohere-transcribe-03-2026-mlx-8bit` nests every
+        // model file (config.json, model.safetensors, …) under an
+        // `mlx-int8/` subdirectory. Descend into that subdir so
+        // `CohereTranscribeModel.load(directory:)` sees the standard
+        // `<dir>/config.json` layout it expects.
         let nested = snapshot.appendingPathComponent("mlx-int8")
         if FileManager.default.fileExists(
             atPath: nested.appendingPathComponent("config.json").path

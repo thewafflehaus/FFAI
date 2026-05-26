@@ -10,9 +10,9 @@
 //
 // KokoroModel.load is config-driven — the vocoder geometry comes from
 // `config.json`'s `istftnet` block and no safetensors weights are read
-// (the StyleTTS2 acoustic stack is a separate port). The suite resolves
-// the mlx-audio Kokoro-82M-bf16 snapshot, which carries the canonical
-// config.
+// (the StyleTTS2 acoustic stack is a separate port). The 4-bit MLX
+// conversion is the smallest published Kokoro variant and carries the
+// canonical config.
 
 import Foundation
 import Testing
@@ -22,12 +22,16 @@ import TestHelpers
 @Suite("Kokoro Integration", .serialized)
 struct KokoroIntegrationTests {
 
+    /// Canonical HF repo id. The 4-bit MLX conversion is the smallest
+    /// published Kokoro variant.
+    private static let repoId = "mlx-community/Kokoro-82M-4bit"
+
     /// Load Kokoro from the HF cache. Throws on failure so a missing
     /// checkpoint fails the test instead of skipping it.
     private func loadKokoro() async throws -> KokoroModel {
-        let dir = try await AudioTestHelpers.resolveCheckpoint(
-            mlxAudioSlugs: ["mlx-community_Kokoro-82M-bf16"],
-            repoIds: ["mlx-community/Kokoro-82M-4bit", "hexgrad/Kokoro-82M"])
+        let dir = try await ModelLoadLock.shared.loadSerially {
+            try await ModelLocator().resolve(idOrPath: Self.repoId)
+        }
         return try KokoroModel.load(directory: dir)
     }
 

@@ -3,11 +3,11 @@
 // and run a Stage-1 + Stage-2 synthesis pass.
 //
 // Coverage:
-//   ✅  Config parsed from real config.json
-//   ✅  Weights loaded (8-bit quantized, sharded via model.safetensors.index.json)
-//   ✅  FishSpeechModel constructed (slow backbone + fast decoder)
-//   ✅  generateCodes produces code frames (Stage-1)
-//   ✅  synthesize(...) + FishS1DAC decodes to a waveform (Stage-2) when codec
+//   - Config parsed from real config.json
+//   - Weights loaded (8-bit quantized, sharded via model.safetensors.index.json)
+//   - FishSpeechModel constructed (slow backbone + fast decoder)
+//   - generateCodes produces code frames (Stage-1)
+//   - synthesize(...) + FishS1DAC decodes to a waveform (Stage-2) when codec
 //       weights are available in the snapshot directory or a codec/ sub-folder.
 //       If codec weights are absent the test asserts codecNotAvailable.
 //

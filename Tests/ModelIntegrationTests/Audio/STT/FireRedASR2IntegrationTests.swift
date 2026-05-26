@@ -23,19 +23,24 @@ import TestHelpers
 @Suite("FireRedASR2 Integration", .serialized)
 struct FireRedASR2IntegrationTests {
 
+    /// Canonical HF repo id. No 4-bit MLX conversion exists at time of
+    /// writing — `mlx-community/FireRedASR2-AED-mlx` is the only
+    /// published MLX variant.
+    private static let repoId = "mlx-community/FireRedASR2-AED-mlx"
+
     // ─── Checkpoint resolution ───────────────────────────────────────────
 
-    /// Load the FireRedASR2 model, resolving the checkpoint from the
-    /// mlx-audio flat cache or HF hub.
+    /// Resolve the checkpoint directory through `ModelLocator`, serialised
+    /// against other model loads via `ModelLoadLock`.
+    private func resolveDir() async throws -> URL {
+        try await ModelLoadLock.shared.loadSerially {
+            try await ModelLocator().resolve(idOrPath: Self.repoId)
+        }
+    }
+
+    /// Load the FireRedASR2 model from the resolved checkpoint directory.
     private func loadModel() async throws -> FireRedASR2Model {
-        let dir = try await AudioTestHelpers.resolveCheckpoint(
-            mlxAudioSlugs: [
-                "mlx-community_FireRedASR2-AED-mlx",
-            ],
-            repoIds: [
-                "mlx-community/FireRedASR2-AED-mlx",
-            ]
-        )
+        let dir = try await resolveDir()
         return try FireRedASR2Model.load(directory: dir)
     }
 
@@ -185,10 +190,7 @@ struct FireRedASR2IntegrationTests {
 
     @Test("registry — AudioModelRegistry routes to .fireRedASR2")
     func registryRoutes() async throws {
-        let dir = try await AudioTestHelpers.resolveCheckpoint(
-            mlxAudioSlugs: ["mlx-community_FireRedASR2-AED-mlx"],
-            repoIds: ["mlx-community/FireRedASR2-AED-mlx"]
-        )
+        let dir = try await resolveDir()
         let loaded = try await AudioModelRegistry.load(directory: dir)
         guard case .fireRedASR2 = loaded else {
             Issue.record(

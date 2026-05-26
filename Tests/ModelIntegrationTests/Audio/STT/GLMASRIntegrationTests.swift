@@ -25,22 +25,19 @@ import TestHelpers
 @Suite("GLMASR Integration", .serialized)
 struct GLMASRIntegrationTests {
 
+    /// Canonical HF repo id. The 4-bit MLX conversion is already the
+    /// smallest published variant.
+    private static let repoId = "mlx-community/GLM-ASR-Nano-2512-4bit"
+
     // ─── Checkpoint resolution ───────────────────────────────────────────
 
-    /// Resolve the GLM-ASR-Nano checkpoint directory from the mlx-audio
-    /// flat cache or HF hub.
     private func resolveDir() async throws -> URL {
-        try await AudioTestHelpers.resolveCheckpoint(
-            mlxAudioSlugs: [
-                "mlx-community_GLM-ASR-Nano-2512-4bit",
-            ],
-            repoIds: [
-                "mlx-community/GLM-ASR-Nano-2512-4bit",
-            ]
-        )
+        try await ModelLoadLock.shared.loadSerially {
+            try await ModelLocator().resolve(idOrPath: Self.repoId)
+        }
     }
 
-    /// Load the GLM-ASR model from a resolved checkpoint directory.
+    /// Load the GLM-ASR model from the resolved checkpoint directory.
     private func loadModel() async throws -> GLMASRModel {
         let dir = try await resolveDir()
         return try GLMASRModel.load(directory: dir)

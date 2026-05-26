@@ -17,11 +17,20 @@ import TestHelpers
 @Suite("SenseVoice Integration", .serialized)
 struct SenseVoiceIntegrationTests {
 
+    /// Canonical HF repo id. No 4-bit MLX conversion exists at time of
+    /// writing for the SenseVoice family.
+    private static let repoId = "mlx-community/SenseVoiceSmall"
+
+    private func resolveDir() async throws -> URL {
+        try await ModelLoadLock.shared.loadSerially {
+            try await ModelLocator().resolve(idOrPath: Self.repoId)
+        }
+    }
+
     /// Load SenseVoiceSmall from the HF cache / network. Throws on
     /// failure so a missing checkpoint fails the test.
     private func loadSenseVoice() async throws -> SenseVoiceModel {
-        let dir = try await AudioTestHelpers.resolveCheckpoint(
-            repoIds: ["mlx-community/SenseVoiceSmall"])
+        let dir = try await resolveDir()
         return try SenseVoiceModel.load(directory: dir)
     }
 
@@ -105,8 +114,7 @@ struct SenseVoiceIntegrationTests {
 
     @Test("registry — SenseVoice routes through the audio registry")
     func registry_routesSenseVoice() async throws {
-        let dir = try await AudioTestHelpers.resolveCheckpoint(
-            repoIds: ["mlx-community/SenseVoiceSmall"])
+        let dir = try await resolveDir()
         let loaded = try await AudioModelRegistry.load(directory: dir)
         guard case .senseVoice = loaded else {
             Issue.record("AudioModelRegistry did not route to SenseVoice")
