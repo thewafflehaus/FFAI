@@ -151,13 +151,18 @@ integration-bisect: regenerate-kernels ## run each ModelIntegrationTests/*Integr
 	./scripts/integration-bisect.sh $(SUITES)
 
 # ─── Lint / format ────────────────────────────────────────────────────
+# Invoke via `xcrun swift-format` so the call works both when
+# swift-format is on $PATH (e.g. brew install swift-format) AND when
+# it's only shipped inside the Xcode toolchain (xcrun resolves it via
+# DEVELOPER_DIR). `xcrun` falls back to a PATH lookup when neither
+# path resolves, so the behavior is identical for Homebrew installs.
 .PHONY: format
 format: ## run swift-format on all .swift files
-	swift-format format --in-place --configuration .swift-format --recursive .
+	xcrun swift-format format --in-place --configuration .swift-format --recursive .
 
 .PHONY: format-check
-format-check: ## check formatting without modifying files
-	swift-format lint --configuration .swift-format --recursive . && echo "format OK"
+format-check: ## swift-format lint (no writes)
+	xcrun swift-format lint --configuration .swift-format --recursive . && echo "format OK"
 
 # ─── Docs ─────────────────────────────────────────────────────────────
 # User-facing documentation lives at https://ffai.dev
