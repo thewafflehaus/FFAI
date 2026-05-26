@@ -777,17 +777,17 @@ public final class Qwen35DenseMLP: Module {
         return out
     }
 
-    /// down(silu(gate(x)) * up(x)).
+    /// down(silu(gate(x)) * up(x)). ITER 16: use fused Ops.swiglu —
+    /// one dispatch vs silu + mul = two dispatches.
     func forward(_ xNorm: Tensor, cmd: MTLCommandBuffer) -> Tensor {
         let g = gateProj(xNorm, on: cmd)
         let u = upProj(xNorm, on: cmd)
-        let inner = Ops.mul(Ops.silu(g, on: cmd), u, on: cmd)
+        let inner = Ops.swiglu(gate: g, up: u, on: cmd)
         return downProj(inner, on: cmd)
     }
 
     /// T-batched: down(silu(gate(x)) * up(x)) over T rows. Returns
-    /// `[T, hidden]` flat. Three batched projections + one elementwise
-    /// SwiGLU pass.
+    /// `[T, hidden]` flat. Three batched projections + one fused SwiGLU.
     func forwardMany(
         _ xNormFlat: Tensor, t: Int,
         cmd: MTLCommandBuffer, device: Device
@@ -795,7 +795,7 @@ public final class Qwen35DenseMLP: Module {
         let xRows = xNormFlat.reshaped(to: [t, xNormFlat.elementCount / t])
         let g = gateProj.callMany(xRows, t: t, on: cmd, device: device)
         let u = upProj.callMany(xRows, t: t, on: cmd, device: device)
-        let inner = Ops.mul(Ops.silu(g, on: cmd), u, on: cmd)
+        let inner = Ops.swiglu(gate: g, up: u, on: cmd)
         return downProj.callMany(inner, t: t, on: cmd, device: device)
     }
 }
@@ -869,7 +869,8 @@ public final class Qwen35MoEFFN: Module {
         let work = device.makeCommandBuffer()
         let sg = sharedGateProj(xNorm, on: work)
         let su = sharedUpProj(xNorm, on: work)
-        let sharedInner = Ops.mul(Ops.silu(sg, on: work), su, on: work)
+        // ITER 16: fused SwiGLU.
+        let sharedInner = Ops.swiglu(gate: sg, up: su, on: work)
         let sharedOut = sharedDownProj(sharedInner, on: work)
         let gateLogit = sharedExpertGate(xNorm, on: work)
         work.commit()
@@ -911,7 +912,8 @@ public final class Qwen35MoEFFN: Module {
         let xRows = xNormFlat.reshaped(to: [t, hidden])
         let sgAll = sharedGateProj.callMany(xRows, t: t, on: work, device: device)
         let suAll = sharedUpProj.callMany(xRows, t: t, on: work, device: device)
-        let sharedInnerAll = Ops.mul(Ops.silu(sgAll, on: work), suAll, on: work)
+        // ITER 16: fused SwiGLU.
+        let sharedInnerAll = Ops.swiglu(gate: sgAll, up: suAll, on: work)
         let sharedOutAll = sharedDownProj.callMany(
             sharedInnerAll, t: t,
             on: work, device: device)
