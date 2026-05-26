@@ -1868,101 +1868,148 @@ public final class Qwen35AttentionMixer: Module {
         let qDim = nHeads * headDim
         let kvDim = nKVHeads * headDim
 
-        // ── Projections — one gemm/qmm each, T-batched ───────────────────
-        let qOut = qProj.callMany(xNormFlat, t: t, on: cmd, device: device)
-        let kOut = kProj.callMany(xNormFlat, t: t, on: cmd, device: device)
-        let vOut = vProj.callMany(xNormFlat, t: t, on: cmd, device: device)
+        // ── Projections — fused QKV qmm when constraints match ──────────
+        // ITER 88 (PR10): `Ops.batchedQkvQmmFast` produces all three
+        // Q/K/V projections in ONE dispatch when the three QuantizedLinear
+        // projections share `bits=4`, `groupSize=64`, and `in_dim%512==0`
+        // / `out_*%8==0`. Replaces 3 `callMany` qmm encoders with 1 fused
+        // encoder. Predicate is the same `fusedQKVEligible` flag the
+        // single-token path uses (ITER 78).
+        let qOut: Tensor
+        let kOut: Tensor
+        let vOut: Tensor
+        if fusedQKVEligible, let bq = batchedQKV {
+            let qDimW = bq.qW.shape[0]
+            let kDimW = bq.kW.shape[0]
+            let vDimW = bq.vW.shape[0]
+            let inDim = bq.qW.shape[1] * 8
+            let qBuf = Tensor.empty(shape: [t, qDimW], dtype: dt, device: device)
+            let kBuf = Tensor.empty(shape: [t, kDimW], dtype: dt, device: device)
+            let vBuf = Tensor.empty(shape: [t, vDimW], dtype: dt, device: device)
+            Ops.batchedQkvQmmFast(
+                x: xNormFlat.reshaped(to: [t, inDim]),
+                wQ: bq.qW, scalesQ: bq.qS, biasesQ: bq.qB,
+                wK: bq.kW, scalesK: bq.kS, biasesK: bq.kB,
+                wV: bq.vW, scalesV: bq.vS, biasesV: bq.vB,
+                m: t, outQ: qDimW, outK: kDimW, outV: vDimW,
+                on: cmd,
+                qBuf: qBuf, kBuf: kBuf, vBuf: vBuf)
+            qOut = qBuf
+            kOut = kBuf
+            vOut = vBuf
+        } else {
+            qOut = qProj.callMany(xNormFlat, t: t, on: cmd, device: device)
+            kOut = kProj.callMany(xNormFlat, t: t, on: cmd, device: device)
+            vOut = vProj.callMany(xNormFlat, t: t, on: cmd, device: device)
+        }
 
-        // ── Gate split — one gather (vs T) when attnOutputGate ───────────
+        // ── Gate split — one shared-encoder gather (vs T) when
+        // attnOutputGate. ITER 74: both halves on a shared encoder via
+        // sliceHeadHalvesManyBoth35.
         let queriesFlat: Tensor  // `[T, nHeads, headDim]` flat
         let gateFlat: Tensor?  // `[T, nHeads, headDim]` flat
         if attnOutputGate {
             let q2T = qOut.reshaped(to: [t, nHeads, 2 * headDim])
-            queriesFlat = sliceHeadHalvesMany35(
-                q2T, t: t, nHeads: nHeads, headDim: headDim, takeFirst: true,
+            let (q, g) = sliceHeadHalvesManyBoth35(
+                q2T, t: t, nHeads: nHeads, headDim: headDim,
                 on: cmd, device: device)
-            gateFlat = sliceHeadHalvesMany35(
-                q2T, t: t, nHeads: nHeads, headDim: headDim, takeFirst: false,
-                on: cmd, device: device)
+            queriesFlat = q
+            gateFlat = g
         } else {
             queriesFlat = qOut
             gateFlat = nil
         }
 
-        // ── Q/K norm — one rmsNormRows over (T*nHeads) and (T*nKVHeads)
-        // rows. rmsNormRows is already row-wise, so the T-batched form is
-        // a count change, not a kernel change.
-        let qNormed = Ops.rmsNormRows(
-            queriesFlat, weight: qNorm.weight, eps: qNorm.eps,
-            nRows: t * nHeads, rowSize: headDim, on: cmd)
-        let kNormed = Ops.rmsNormRows(
-            kOut, weight: kNorm.weight, eps: kNorm.eps,
-            nRows: t * nKVHeads, rowSize: headDim, on: cmd)
+        // ── Q/K norm — one shared encoder over (T·nHeads) + (T·nKVHeads)
+        // rows. ITER 83 (PR10): collapse the two separate `rmsNormRows`
+        // dispatches into one `rmsNormRowsTwo` shared encoder, mirroring
+        // the single-token `forward` path (ITER 12+35). Saves 1 encoder
+        // begin/end per attn-layer prefill call.
+        let qNormed = Tensor.empty(
+            shape: queriesFlat.shape, dtype: queriesFlat.dtype, device: device)
+        let kNormed = Tensor.empty(
+            shape: kOut.shape, dtype: kOut.dtype, device: device)
+        Ops.rmsNormRowsTwo(
+            queriesFlat, weight: qNorm.weight, eps1: qNorm.eps,
+            nRows1: t * nHeads, rowSize1: headDim, into: qNormed,
+            kOut, weight: kNorm.weight, eps2: kNorm.eps,
+            nRows2: t * nKVHeads, rowSize2: headDim, into: kNormed,
+            on: cmd)
 
-        // ── RoPE per token + KV append — T dispatches each, all on `cmd`.
-        // The single-token RoPE kernel grids `[nHeads, halfRotary]` —
-        // small enough that T launches at T≤256 cost less than one big
-        // qmm. KV append uses appendRangeOnGPU for the single length-lock
-        // path; each step is one Ops.kvCacheUpdate dispatch.
-        var kRows: [Tensor] = []
-        kRows.reserveCapacity(t)
-        var vRows: [Tensor] = []
-        vRows.reserveCapacity(t)
-        for r in 0 ..< t {
-            let qRow = Tensor(
-                buffer: qNormed.buffer,
-                offset: qNormed.offset + r * qDim * dtBytes,
-                shape: [qDim], dtype: dt)
-            let kRow = Tensor(
-                buffer: kNormed.buffer,
-                offset: kNormed.offset + r * kvDim * dtBytes,
-                shape: [kvDim], dtype: dt)
-            let vRow = Tensor(
-                buffer: vOut.buffer,
-                offset: vOut.offset + r * kvDim * dtBytes,
-                shape: [kvDim], dtype: dt)
-            Ops.ropePartial(
-                qRow, position: startPosition + r,
-                headDim: headDim, rotaryDim: rotaryDim,
-                thetaBase: ropeTheta, on: cmd)
-            Ops.ropePartial(
-                kRow, position: startPosition + r,
-                headDim: headDim, rotaryDim: rotaryDim,
-                thetaBase: ropeTheta, on: cmd)
-            kRows.append(kRow.reshaped(to: [nKVHeads, headDim]))
-            vRows.append(vRow.reshaped(to: [nKVHeads, headDim]))
-        }
-        kv.appendRangeOnGPU(kRows: kRows, vRows: vRows, on: cmd)
+        // ── Batched RoPE over all T tokens on ONE shared encoder.
+        // ITER 84: pair Q+K RoPE for each row on the SAME shared encoder
+        // via `ropePartialTwo`. ITER 97: replace the T-loop of
+        // `Ops.ropePartialTwo` calls with ONE `Ops.ropePartialManyTwo`
+        // dispatch over all T tokens. Saves T-1 encoder begin/end pairs
+        // per attn layer × 10 ≈ 5100 fewer dispatches at T=512.
+        let positions = device.makeBuffer(length: t * 4)
+        let positionsPtr = positions.contents().bindMemory(
+            to: UInt32.self, capacity: t)
+        for r in 0 ..< t { positionsPtr[r] = UInt32(startPosition + r) }
+        let positionsT = Tensor(
+            buffer: positions, offset: 0, shape: [t], dtype: .u32)
+        Ops.ropePartialManyTwo(
+            q: qNormed, qNHeads: nHeads, qRowStride: qDim,
+            k: kNormed, kNHeads: nKVHeads, kRowStride: kvDim,
+            positions: positionsT, t: t,
+            headDim: headDim, rotaryDim: rotaryDim,
+            thetaBase: ropeTheta, on: cmd)
 
-        // ── SDPA — per-token loop over `sdpaDecode`. `Ops.sdpaMulti`
-        // would consolidate the T calls into one but it's head_dim-128
-        // only today; Qwen3.6 attention is head_dim-256. The per-token
-        // sdpaDecode loop preserves correctness; the projection and
-        // norm wins above still amortise. A future head_dim-256
-        // `sdpaMulti` variant (or transpose-to-prefill_mma) collapses
-        // these T launches into one.
+        // ── KV append — ITER 98: batched K+V cache append. Reserves T
+        // sequential physical slots on host under lengthLock, then writes
+        // K/V for all T tokens via ONE shared encoder + 2 dispatches (vs
+        // the T-loop of `kvCacheUpdateKV` paired-encoder calls).
+        let appendPositions = Tensor.empty(
+            shape: [t], dtype: .u32, device: device)
+        kv.reserveSlotsManyOnHost(t: t, into: appendPositions)
+        kv.appendRangeOnGPUMany(
+            kFlat: kNormed, vFlat: vOut, t: t,
+            positions: appendPositions, on: cmd)
+
+        // ── SDPA — ITER 90 / 93: fuse the T-token causal attention into
+        // ONE `Ops.sdpaMulti` dispatch. d=128 wraps `ffai_sdpa_multi`;
+        // d=256 (Qwen3.6-A3B full-attention layers) wraps
+        // `ffai_sdpa_multi_d256` — same semantics, head_dim-256 2-phase
+        // output reduction internally. T-loop `sdpaDecode` fallback only
+        // fires for other head_dims.
         let (cacheK, cacheV) = kv.prepareForAttention(on: cmd)
-        let attnAll = Tensor.empty(shape: [t * qDim], dtype: dt, device: device)
-        for r in 0 ..< t {
-            let qRow = Tensor(
-                buffer: qNormed.buffer,
-                offset: qNormed.offset + r * qDim * dtBytes,
-                shape: [nHeads, headDim], dtype: dt)
-            let outRow = Tensor(
-                buffer: attnAll.buffer,
-                offset: attnAll.offset + r * qDim * dtBytes,
-                shape: [nHeads, headDim], dtype: dt)
-            _ = Ops.sdpaDecode(
-                q: qRow, k: cacheK, v: cacheV,
+        let attnAll: Tensor
+        if headDim == 128 || headDim == 256 {
+            // qNormed is `[T, nHeads, headDim]` flat. Reshape into the
+            // shape sdpaMulti expects (same buffer, no copy).
+            let qBlock = qNormed.reshaped(to: [t, nHeads, headDim])
+            attnAll = Ops.sdpaMulti(
+                q: qBlock, k: cacheK, v: cacheV,
                 nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-                nKV: startPosition + r + 1, kvStride: kv.maxSeq,
-                scale: scale, on: cmd, into: outRow)
+                baseKV: startPosition, nQuery: t, kvStride: kv.maxSeq,
+                causal: true, scale: scale, on: cmd
+            ).reshaped(to: [t * qDim])
+        } else {
+            let attnAllScratch = Tensor.empty(
+                shape: [t * qDim], dtype: dt, device: device)
+            for r in 0 ..< t {
+                let qRow = Tensor(
+                    buffer: qNormed.buffer,
+                    offset: qNormed.offset + r * qDim * dtBytes,
+                    shape: [nHeads, headDim], dtype: dt)
+                let outRow = Tensor(
+                    buffer: attnAllScratch.buffer,
+                    offset: attnAllScratch.offset + r * qDim * dtBytes,
+                    shape: [nHeads, headDim], dtype: dt)
+                _ = Ops.sdpaDecode(
+                    q: qRow, k: cacheK, v: cacheV,
+                    nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
+                    nKV: startPosition + r + 1, kvStride: kv.maxSeq,
+                    scale: scale, on: cmd, into: outRow)
+            }
+            attnAll = attnAllScratch
         }
 
-        // ── Gated output * o_proj ────────────────────────────────────────
+        // ── Gated output * o_proj — ITER 14: use fused sigmoidMul on
+        // the prefill path (same kernel as the single-token ITER 11).
         var attnFlat = attnAll
         if let gateFlat {
-            attnFlat = Ops.mul(attnFlat, Ops.sigmoid(gateFlat, on: cmd), on: cmd)
+            attnFlat = Ops.sigmoidMul(attnFlat, gateFlat, on: cmd)
         }
         let attnRows = attnFlat.reshaped(to: [t, qDim])
         return oProj.callMany(attnRows, t: t, on: cmd, device: device)
@@ -2947,6 +2994,55 @@ private func sliceHeadHalves35(
     let idx = Tensor(buffer: idxBuf, offset: 0, shape: [nHeads], dtype: .u32)
     let gathered = Ops.gather(table: table, tokenIds: idx, on: cmd)
     return gathered.reshaped(to: [nHeads * headDim])
+}
+
+/// T-batched both-halves variant (ITER 74). Returns `(queriesFlat,
+/// gateFlat)` — both `[T·nHeads·headDim]` flat — using a single
+/// shared-encoder `Ops.gatherTwo` dispatch over the two interleaved
+/// row sets. Replaces two back-to-back `sliceHeadHalvesMany35` calls
+/// in `forwardMany` with one encoder begin/end pair.
+private func sliceHeadHalvesManyBoth35(
+    _ q2T: Tensor, t: Int,
+    nHeads: Int, headDim: Int,
+    on cmd: MTLCommandBuffer,
+    device: Device
+) -> (Tensor, Tensor) {
+    precondition(
+        q2T.elementCount == t * nHeads * 2 * headDim,
+        "sliceHeadHalvesManyBoth35: q2T must be [T, nHeads, 2·headDim]")
+    let table = q2T.reshaped(to: [t * nHeads * 2, headDim])
+    let nIdx = t * nHeads
+    var rowsFirst = [UInt32](repeating: 0, count: nIdx)
+    var rowsSecond = [UInt32](repeating: 0, count: nIdx)
+    for r in 0 ..< t {
+        let base = UInt32(r * 2 * nHeads)
+        let rowBase = r * nHeads
+        for h in 0 ..< nHeads {
+            rowsFirst[rowBase + h] = base + UInt32(2 * h)
+            rowsSecond[rowBase + h] = base + UInt32(2 * h) + 1
+        }
+    }
+    let firstBuf = device.makeBuffer(length: nIdx * 4)
+    rowsFirst.withUnsafeBytes {
+        _ = memcpy(firstBuf.contents(), $0.baseAddress!, nIdx * 4)
+    }
+    let secondBuf = device.makeBuffer(length: nIdx * 4)
+    rowsSecond.withUnsafeBytes {
+        _ = memcpy(secondBuf.contents(), $0.baseAddress!, nIdx * 4)
+    }
+    let idxFirst = Tensor(buffer: firstBuf, offset: 0, shape: [nIdx], dtype: .u32)
+    let idxSecond = Tensor(buffer: secondBuf, offset: 0, shape: [nIdx], dtype: .u32)
+    let out1 = Tensor.empty(shape: [nIdx, headDim], dtype: q2T.dtype, device: device)
+    let out2 = Tensor.empty(shape: [nIdx, headDim], dtype: q2T.dtype, device: device)
+    Ops.gatherTwo(
+        table: table,
+        ids1: idxFirst, into: out1,
+        ids2: idxSecond, into: out2,
+        on: cmd)
+    return (
+        out1.reshaped(to: [nIdx * headDim]),
+        out2.reshaped(to: [nIdx * headDim])
+    )
 }
 
 /// T-batched variant of `sliceHeadHalves35`. Input `q2T` is
