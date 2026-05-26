@@ -114,6 +114,56 @@ struct AuraKLDIntegrationTests {
         #expect(metrics.meanKld < 1.5, "\(meanKldMsg)")
     }
 
+    @Test("AURA aura8v4 — TQ+ production recipe (high-bit K, aggressive V)")
+    func aura8v4() async throws {
+        guard FileManager.default.fileExists(atPath: qwen3LocalPath) else {
+            print("aura8v4 skipped: \(qwen3LocalPath) not found")
+            return
+        }
+        let scheme = AURAScheme(keyBits: 8, valueBits: 4)
+        let metrics = try await runKLDComparison(scheme: scheme)
+        print(KLDivergence.summaryLine(label: "aura8v4 (TQ+ recipe)", metrics: metrics))
+    }
+
+    @Test("AURA aura3v3 — mid-bit data point in the curve")
+    func aura3v3() async throws {
+        guard FileManager.default.fileExists(atPath: qwen3LocalPath) else {
+            print("aura3v3 skipped: \(qwen3LocalPath) not found")
+            return
+        }
+        let scheme = AURAScheme(keyBits: 3, valueBits: 3)
+        let metrics = try await runKLDComparison(scheme: scheme)
+        print(KLDivergence.summaryLine(label: "aura3v3 (3-bit sym)", metrics: metrics))
+    }
+
+    @Test("AURA aura2v2 — low-bit data point in the curve")
+    func aura2v2() async throws {
+        guard FileManager.default.fileExists(atPath: qwen3LocalPath) else {
+            print("aura2v2 skipped: \(qwen3LocalPath) not found")
+            return
+        }
+        let scheme = AURAScheme(keyBits: 2, valueBits: 2)
+        let metrics = try await runKLDComparison(scheme: scheme)
+        print(KLDivergence.summaryLine(label: "aura2v2 (2-bit sym)", metrics: metrics))
+    }
+
+    @Test("AURA aura8v8 — high-bit sanity check (should be near-baseline)")
+    func aura8v8SanityCheck() async throws {
+        guard FileManager.default.fileExists(atPath: qwen3LocalPath) else {
+            print("auraKLD aura8v8 skipped: \(qwen3LocalPath) not found")
+            return
+        }
+        let scheme = AURAScheme(keyBits: 8, valueBits: 8)
+        let metrics = try await runKLDComparison(scheme: scheme)
+        print(
+            KLDivergence.summaryLine(
+                label: "aura8v8 (high-bit sanity)", metrics: metrics))
+        // 8-bit Lloyd-Max codebook should be very near baseline. If
+        // this is far from baseline the issue is the pipeline
+        // (rotation, encode→decode round-trip, dispatch), not the
+        // codebook — guides where to look for the quality gap.
+    }
+
     @Test("AURA aura4v2 (asymmetric 4-bit K / 2-bit V) vs fp16 baseline")
     func aura4v2VsBaseline() async throws {
         guard FileManager.default.fileExists(atPath: qwen3LocalPath) else {
