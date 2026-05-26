@@ -72,7 +72,7 @@ regenerate-kernels: ## run `tile build --emit` to regenerate metallib + Swift wr
 #     the same PSO. BufferPool uses NSLock. See PSOCache.swift +
 #     BufferPool.swift.
 #
-#  3. **ModelLoadLock** (Tests/ModelTests/ModelLoadLock.swift) — global
+#  3. **ModelLoadLock** (Tests/ModelIntegrationTests/ModelLoadLock.swift) — global
 #     async mutex around `Model.load(...)`. Different concern from GPU
 #     access: model load is heavy on RAM + disk-IO + GPU memory
 #     allocation BEFORE any cmdbuf exists. The lock makes Model.load()
@@ -82,7 +82,7 @@ regenerate-kernels: ## run `tile build --emit` to regenerate metallib + Swift wr
 # Targets:
 # - `make test-unit`         — FFAITests + MetalTileSwiftTests at the
 #                              production cap (FFAI_MAX_COMMAND_BUFFERS=16).
-# - `make test-integration`  — ModelTests at production cap + ModelLoadLock
+# - `make test-integration`  — ModelIntegrationTests at production cap + ModelLoadLock
 #                              + `--parallel --num-workers 1` (memory
 #                              pressure, not GPU). Matches release.yml.
 # - `make test`              — both in sequence.
@@ -101,11 +101,11 @@ test-unit: regenerate-kernels ## unit + Metal tests at production cap (FFAI_MAX_
 
 .PHONY: test-integration
 test-integration: regenerate-kernels ## end-to-end model tests; production cap + ModelLoadLock; matches release.yml
-	@# ModelLoadLock (Tests/ModelTests/ModelLoadLock.swift) serializes
+	@# ModelLoadLock (Tests/ModelIntegrationTests/ModelLoadLock.swift) serializes
 	@# Model.load() across suites so multi-GB checkpoints load one at a
 	@# time. --num-workers 1 caps Swift Testing's cross-suite parallelism
 	@# to one model resident at a time (memory pressure, not GPU).
-	FFAI_MAX_COMMAND_BUFFERS=16 swift test --parallel --num-workers 1 --filter "ModelTests"
+	FFAI_MAX_COMMAND_BUFFERS=16 swift test --parallel --num-workers 1 --filter "ModelIntegrationTests"
 
 .PHONY: test-stress
 test-stress: regenerate-kernels ## canary; production cap with uncapped parallelism — run after touching dispatch code
@@ -115,14 +115,14 @@ test-stress: regenerate-kernels ## canary; production cap with uncapped parallel
 	@echo "where it surfaces."
 	@echo ""
 	FFAI_MAX_COMMAND_BUFFERS=16 swift test --filter "FFAITests|MetalTileSwiftTests"
-	FFAI_MAX_COMMAND_BUFFERS=16 swift test --filter "ModelTests"
+	FFAI_MAX_COMMAND_BUFFERS=16 swift test --filter "ModelIntegrationTests"
 
 .PHONY: coverage
 coverage: ## swift test with coverage report (unit suite only, matches ci.yml)
 	FFAI_MAX_COMMAND_BUFFERS=16 ./scripts/coverage.sh
 
 .PHONY: integration-bisect
-integration-bisect: regenerate-kernels ## run each ModelTests/*IntegrationTests suite alone; tag GPU-pinned exits
+integration-bisect: regenerate-kernels ## run each ModelIntegrationTests/*IntegrationTests suite alone; tag GPU-pinned exits
 	@# Runs every integration suite in its OWN swift-test process, captures
 	@# pass/fail/timeout + GPU active-residency 3 s after exit. Any suite
 	@# that leaves the GPU at ≥ 50% after the test ends is flagged "PINNED"

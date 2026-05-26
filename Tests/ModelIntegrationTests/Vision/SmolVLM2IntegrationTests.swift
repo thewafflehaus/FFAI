@@ -57,9 +57,9 @@ struct SmolVLM2IntegrationTests {
 
     /// Load dog.jpeg from the test Fixtures directory.
     static func dogImagePixels(imageSize: Int) -> [Float]? {
-        // The Fixtures directory is bundled alongside ModelTests via .copy("../Fixtures")
+        // The Fixtures directory is bundled alongside ModelIntegrationTests via .copy("../Fixtures")
         guard let bundle = Bundle.allBundles.first(where: {
-            $0.bundlePath.contains("ModelTests")
+            $0.bundlePath.contains("ModelIntegrationTests")
         }) else { return nil }
         let fixturesURL = bundle.resourceURL?
             .appendingPathComponent("Fixtures")
@@ -71,7 +71,7 @@ struct SmolVLM2IntegrationTests {
               let ciImage = CIImage(contentsOf: fixturesURL) else {
             // Fallback: look for the fixture relative to the project root
             let fallback = URL(fileURLWithPath: #filePath)
-                .deletingLastPathComponent()   // ModelTests/
+                .deletingLastPathComponent()   // ModelIntegrationTests/
                 .deletingLastPathComponent()   // Tests/
                 .appendingPathComponent("Fixtures/dog.jpeg")
             guard FileManager.default.fileExists(atPath: fallback.path),

@@ -1,7 +1,7 @@
 #!/bin/bash
 # integration-bisect.sh
 #
-# Run every Tests/ModelTests/*IntegrationTests.swift suite ONE AT A TIME
+# Run every Tests/ModelIntegrationTests/*IntegrationTests.swift suite ONE AT A TIME
 # in a fresh process, capturing:
 #   - pass / fail / timeout
 #   - wall-clock duration
@@ -73,11 +73,11 @@ else
   SUITES=()
   while IFS= read -r line; do
     SUITES+=("$line")
-    # Phase A.3 reorg moved suites into Tests/ModelTests/{Text,Vision,Audio}/...
+    # Phase A.3 reorg moved suites into Tests/ModelIntegrationTests/{Text,Vision,Audio}/...
     # subfolders; recurse with `find` so every nested IntegrationTests.swift
     # is picked up, and de-dupe in case macOS APFS surfaces case-insensitive
     # path twins.
-  done < <(find Tests/ModelTests -name '*IntegrationTests.swift' -type f | sed 's|.*/||;s|\.swift$||' | sort -u)
+  done < <(find Tests/ModelIntegrationTests -name '*IntegrationTests.swift' -type f | sed 's|.*/||;s|\.swift$||' | sort -u)
 fi
 
 # Use sudo -n (no password) to test whether powermetrics is callable.
@@ -146,7 +146,7 @@ for suite in "${SUITES[@]}"; do
   fi
 
   # Run the single suite. `make test-unit`-style flags. The Makefile
-  # uses --parallel --num-workers 1 for ModelTests but for a single
+  # uses --parallel --num-workers 1 for ModelIntegrationTests but for a single
   # suite the parallelism flag is moot.
   #
   # `${TIMER[@]+...}` is the canonical bash idiom for expanding a

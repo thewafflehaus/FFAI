@@ -4,7 +4,7 @@
 # Excludes generated code, .build, and Tests themselves from the report.
 #
 # Scope is intentionally limited to the unit suite (FFAITests +
-# MetalTileSwiftTests). ModelTests download multi-GB HuggingFace
+# MetalTileSwiftTests). ModelIntegrationTests download multi-GB HuggingFace
 # snapshots + do real end-to-end inference, which:
 #   (a) takes tens of minutes per run
 #   (b) hits memory contention if multiple suites parallelize

@@ -36,7 +36,7 @@ Sources/
 Tests/
   MetalTileSwiftTests/     One file per kernel
   FFAITests/               Tensor, Module, KVCache, Sampling, ...
-  ModelTests/              Per-family integration tests — load,
+  ModelIntegrationTests/              Per-family integration tests — load,
                            greedy-decode, assert coherent output
 
 planning/                  Phased build-out + architecture diagrams
@@ -115,7 +115,7 @@ TL;DR:
    protocol, and one or more variant structs.
 2. Register the family in `Sources/FFAI/Model.swift` →
    `ModelRegistry.dispatchAndLoad`.
-3. Add `Tests/ModelTests/<Family>IntegrationTests.swift` — load the
+3. Add `Tests/ModelIntegrationTests/<Family>IntegrationTests.swift` — load the
    smallest published checkpoint, greedy-decode, and assert
    `expectCoherentOutput(...)`.
 

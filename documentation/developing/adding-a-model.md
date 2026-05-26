@@ -339,7 +339,7 @@ inspect --layer-trace --trace-layers 0,1,2,3,4` was the first
 thing the dev ran.
 
 **Required:** every new family file MUST follow this pattern. The
-`InspectSmokeTests` integration test (Tests/ModelTests/) asserts
+`InspectSmokeTests` integration test (Tests/ModelIntegrationTests/) asserts
 the inspect path runs end-to-end against a representative model
 from each family; that test will fail loudly if a family file
 forgets to wire `InspectTap` calls.
@@ -347,7 +347,7 @@ forgets to wire `InspectTap` calls.
 ## Step 8 — add the integration test
 
 Every family gets one flat file,
-`Tests/ModelTests/<Family>IntegrationTests.swift`. It loads the
+`Tests/ModelIntegrationTests/<Family>IntegrationTests.swift`. It loads the
 smallest published checkpoint through `ModelLoadLock.shared`
 (serializes the multi-GB load across suites), greedy-decodes, and
 asserts `expectCoherentOutput(...)` — a token-count floor, no

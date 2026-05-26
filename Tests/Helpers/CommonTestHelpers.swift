@@ -1,4 +1,4 @@
-// Test-bundle-wide helpers shared by FFAITests + ModelTests.
+// Test-bundle-wide helpers shared by FFAITests + ModelIntegrationTests.
 //
 // `Tests/Helpers/` is its own SwiftPM target (see Package.swift) so it
 // can be a dependency of both test targets without source duplication.

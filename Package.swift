@@ -78,7 +78,7 @@ let package = Package(
         // Shared test helpers (model-load lock, image / audio /
         // checkpoint resolution, coherent-output + content-recognition
         // assertions). Lives in its own target so both FFAITests and
-        // ModelTests can depend on it without source duplication.
+        // ModelIntegrationTests can depend on it without source duplication.
         // Uses only FFAI's public API — no `@testable` import.
         // Fixtures live at `Tests/Resources/` and are resolved by the
         // helpers via `#filePath`-relative paths (not SwiftPM bundles).
@@ -100,9 +100,9 @@ let package = Package(
             path: "Tests/FFAITests"
         ),
         .testTarget(
-            name: "ModelTests",
+            name: "ModelIntegrationTests",
             dependencies: ["FFAI", "TestHelpers"],
-            path: "Tests/ModelTests"
+            path: "Tests/ModelIntegrationTests"
         ),
     ]
 )

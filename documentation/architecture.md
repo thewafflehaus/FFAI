@@ -214,7 +214,7 @@ Sources/
 Tests/
   MetalTileSwiftTests/     One file per kernel
   FFAITests/               Tensor, Module, KVCache, Sampling, …
-  ModelTests/              Per-family integration tests — load,
+  ModelIntegrationTests/              Per-family integration tests — load,
                            greedy-decode, assert coherent output
 ```
 

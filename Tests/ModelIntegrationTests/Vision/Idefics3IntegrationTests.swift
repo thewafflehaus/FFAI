@@ -27,20 +27,20 @@ struct Idefics3IntegrationTests {
     static func dogImagePixels(imageSize: Int) -> [Float]? {
         // Search using #filePath so the test can locate the fixture without a
         // bundle resource rule — the fixture may live under Tests/Fixtures/ or
-        // Tests/ModelTests/Resources/ depending on the build.
+        // Tests/ModelIntegrationTests/Resources/ depending on the build.
         let candidates: [URL] = [
-            // Tests/Fixtures/dog.jpeg (Package.swift copies this for ModelTests)
+            // Tests/Fixtures/dog.jpeg (Package.swift copies this for ModelIntegrationTests)
             URL(fileURLWithPath: #filePath)
-                .deletingLastPathComponent()        // ModelTests/
+                .deletingLastPathComponent()        // ModelIntegrationTests/
                 .deletingLastPathComponent()        // Tests/
                 .appendingPathComponent("Fixtures/dog.jpeg"),
-            // Tests/ModelTests/Resources/dog.jpeg (other worktrees)
+            // Tests/ModelIntegrationTests/Resources/dog.jpeg (other worktrees)
             URL(fileURLWithPath: #filePath)
                 .deletingLastPathComponent()
                 .appendingPathComponent("Resources/dog.jpeg"),
             // Absolute path for local development convenience
             URL(fileURLWithPath: NSHomeDirectory())
-                .appendingPathComponent("Development/personal/ai/FFAI/Tests/ModelTests/Resources/dog.jpeg"),
+                .appendingPathComponent("Development/personal/ai/FFAI/Tests/ModelIntegrationTests/Resources/dog.jpeg"),
         ]
 
         for url in candidates {

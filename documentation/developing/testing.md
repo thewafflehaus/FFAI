@@ -8,13 +8,13 @@ coverage of the Swift surface plus a green integration sweep.
 ## Running tests
 
 **Go through `make` — do not run bare `swift test`.** Each
-`ModelTests` suite downloads a multi-GB checkpoint; an unconstrained
+`ModelIntegrationTests` suite downloads a multi-GB checkpoint; an unconstrained
 parallel run loads several at once and OOMs the box (and can pin the
 GPU). The `make` targets cap parallelism correctly.
 
 ```bash
 make test-unit          # FFAITests + MetalTileSwiftTests — fast, parallel-safe
-make test-integration   # ModelTests — serialized (--num-workers 1)
+make test-integration   # ModelIntegrationTests — serialized (--num-workers 1)
 make test               # both in sequence — the full local CI gate
 make coverage           # unit-suite line coverage (≥ 80 %)
 make test-stress        # production cap, uncapped parallelism — run after dispatch changes
@@ -47,7 +47,7 @@ Tests/
   FFAITests/             Tensor, Module, Linear, BufferPool, the
                          Ops* / *StateCache / KVCache / Layers /
                          Sampling / Capability / ModelConfig units.
-  ModelTests/            Flat files — one <Family>IntegrationTests
+  ModelIntegrationTests/            Flat files — one <Family>IntegrationTests
                          per model family, plus the cross-cutting
                          suites (see below).
 ```
@@ -61,7 +61,7 @@ naive CPU oracle); the FFAI integration tests assert that the model
 
 ## Integration testing
 
-Every model family has a `Tests/ModelTests/<Family>IntegrationTests.swift`
+Every model family has a `Tests/ModelIntegrationTests/<Family>IntegrationTests.swift`
 that downloads the smallest published checkpoint from mlx-community,
 greedy-decodes, and asserts `expectCoherentOutput(...)` (token-count
 floor, no degenerate repeat run, minimum token diversity). A
