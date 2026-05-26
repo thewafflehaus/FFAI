@@ -53,14 +53,17 @@
 //     weight. Implemented with `Ops.rmsNormRows` (one row per group) +
 //     `Ops.mul`.
 //
-// ─── MoE layers are rejected ─────────────────────────────────────────
+// ─── MoE layers ("E") — Cascade-2 / Nemotron-3 lineage ───────────────
 //
-// The "E" layer kind (Nemotron-Cascade-2 / Nemotron-3 MoE checkpoints)
-// uses squared-ReLU experts with sigmoid + group-expert-select routing
-// — both diverge from the SwiGLU-only `MoELayer` and its softmax /
-// top-K-then-softmax routers. No small published checkpoint exercises
-// "E", so rather than ship an untested MoE path the loader rejects any
-// pattern containing "E" with a clear `unsupportedConfig` error.
+// The "E" layer kind ships with the Nemotron-Cascade-2-30B-A3B,
+// Nemotron-3 Nano/Super/Ultra (all 30B-A3B+) checkpoints. The MoE
+// block diverges enough from `Models/MoELayer.swift` (squared-ReLU
+// experts with NO gate projection, sigmoid+bias router, raw-sigmoid
+// post-K renormalisation + routed_scaling, always-on dense shared
+// expert) that it lives next to the rest of the variants in this file
+// as `NemotronHMoELayer` (below). Grouped expert routing (`n_group >
+// 1`) is rejected at load — every shipped checkpoint sets `n_group:
+// 1`, which collapses to flat top-K.
 
 import Foundation
 import Metal
@@ -164,12 +167,23 @@ public struct NemotronHHybrid: NemotronHVariant {
         else { throw NemotronHError.missingConfig("hybrid_override_pattern") }
         let kinds = try Array(pattern).map { try NemotronHLayerKind(from: $0) }
         let nLayers = kinds.count
-        guard !kinds.contains(.moe) else {
-            throw NemotronHError.unsupportedConfig(
-                "MoE ('E') layers not yet supported — NemotronH MoE uses "
-                + "squared-ReLU experts + sigmoid group-expert routing, which "
-                + "diverge from the shipped SwiGLU MoELayer. Load a "
-                + "Mamba/attention/MLP-only checkpoint (e.g. Nemotron-H-4B-Base).")
+        // MoE ("E") layer support — Cascade-2 / Nemotron-3 Nano/Super/
+        // Ultra. Built by `buildNemotronHMoELayer` below. Grouped
+        // routing (`n_group > 1` / `topk_group > 1`) is NOT supported
+        // yet because every shipped checkpoint sets both to 1, which
+        // collapses to flat top-K — the loader rejects the grouped
+        // case explicitly so a developer hitting it gets a clear error
+        // rather than a silent wrong answer.
+        let hasMoE = kinds.contains(.moe)
+        let nGroupMoE = config.int("n_group") ?? 1
+        let topKGroupMoE = config.int("topk_group") ?? 1
+        if hasMoE {
+            guard nGroupMoE == 1, topKGroupMoE == 1 else {
+                throw NemotronHError.unsupportedConfig(
+                    "MoE grouped routing (n_group=\(nGroupMoE), "
+                    + "topk_group=\(topKGroupMoE)) not yet supported — "
+                    + "every shipped Nemotron MoE checkpoint sets both to 1.")
+            }
         }
 
         // ── Mamba 2 mixer geometry ────────────────────────────────────
@@ -224,6 +238,31 @@ public struct NemotronHHybrid: NemotronHVariant {
         }
         let embedTokens = AnyEmbedding(Embedding(weight: embedWRaw))
 
+        // ── MoE hyper-parameters (only read when an "E" layer exists) ─
+        // Reading these unconditionally would force Mamba/MLP-only
+        // checkpoints (e.g. Nemotron-H-4B-Base) to carry MoE fields they
+        // don't have. Read once, here, so each MoE layer construction is
+        // a pure pass-through.
+        let moeIntermediate = hasMoE
+            ? (config.int("moe_intermediate_size")
+               ?? config.int("intermediate_size") ?? intermediate)
+            : 0
+        let moeTopK = hasMoE ? (config.int("num_experts_per_tok") ?? 6) : 0
+        let nRoutedExperts = hasMoE ? (config.int("n_routed_experts") ?? 0) : 0
+        if hasMoE {
+            guard nRoutedExperts > 0 else {
+                throw NemotronHError.missingConfig("n_routed_experts")
+            }
+        }
+        let nSharedExperts = hasMoE ? (config.int("n_shared_experts") ?? 1) : 0
+        let sharedExpertIntermediate = hasMoE
+            ? (config.int("moe_shared_expert_intermediate_size") ?? moeIntermediate)
+            : 0
+        let routedScalingFactor: Float = hasMoE
+            ? Float(config.float("routed_scaling_factor") ?? 1.0)
+            : 1.0
+        let normTopkProb = hasMoE ? (config.bool("norm_topk_prob") ?? true) : true
+
         // ── Per-layer construction ────────────────────────────────────
         var layers: [any DecoderLayer] = []
         layers.reserveCapacity(nLayers)
@@ -268,8 +307,15 @@ public struct NemotronHHybrid: NemotronHVariant {
                     hidden: hidden, intermediate: intermediate))
 
             case .moe:
-                // Already rejected above; unreachable.
-                throw NemotronHError.unsupportedConfig("MoE layer reached construction")
+                layers.append(try buildNemotronHMoELayer(
+                    prefix: "\(p).mixer", norm: norm, weights: weights,
+                    hidden: hidden, moeIntermediate: moeIntermediate,
+                    nRoutedExperts: nRoutedExperts, topK: moeTopK,
+                    nSharedExperts: nSharedExperts,
+                    sharedExpertIntermediate: sharedExpertIntermediate,
+                    routedScalingFactor: routedScalingFactor,
+                    normTopkProb: normTopkProb,
+                    dtype: activationDtype, device: device))
             }
         }
 
@@ -598,6 +644,274 @@ public final class NemotronHMLPLayer: Module, DecoderLayer {
     }
 }
 
+// ─── NemotronHMoELayer — "E" ─────────────────────────────────────────
+//
+// Block-sparse MoE feed-forward used by Nemotron-Cascade-2 and the
+// Nemotron-3 Nano/Super/Ultra line. Different enough from the reusable
+// `MoELayer` (squared-ReLU experts, sigmoid+bias router, post-K
+// renormalisation + routed-scaling, always-on dense shared expert) that
+// it lives here next to the rest of the NemotronH variants.
+//
+// Routing — mirrors mlx-lm's `NemotronHMoEGate` exactly:
+//   1. logits = gate(x)                                  [nRouted]
+//   2. origScores = sigmoid(logits.toFloat32)            [nRouted]
+//   3. scores = origScores + e_score_correction_bias     [nRouted]
+//   4. (grouped routing if n_group > 1; n_group == 1 → flat top-K)
+//   5. inds = top-K of scores                            [topK]
+//   6. finalScores = origScores[inds]   (← raw sigmoid, *not* biased)
+//   7. if topK > 1 && norm_topk_prob:
+//        finalScores /= sum(finalScores) + 1e-20
+//   8. finalScores *= routed_scaling_factor              [topK]
+//
+// Per-selected-expert (squared-ReLU 2-layer MLP — NO gate, unlike
+// SwiGLU):
+//   y_e = down_proj_e( relu(up_proj_e(xNorm)) ^ 2 )
+//
+// Output:
+//   y      = Σ_k finalScores[k] · y_inds[k]
+//   if shared_experts: y += shared_experts(xNorm)   (squared-ReLU dense
+//                                                    MLP at moe_shared_
+//                                                    expert_intermediate_size)
+//   result = h + y                                  (residual outside)
+//
+// Grouped routing (n_group > 1, topk_group > 1): NOT implemented —
+// every shipped Nemotron MoE checkpoint (Cascade-2-30B-A3B, Nemotron-3
+// Nano 30B-A3B, Super, Ultra) sets `n_group: 1`, which collapses to
+// flat top-K. The loader rejects checkpoints with n_group > 1 with a
+// clear `unsupportedConfig` until a real checkpoint exercises the
+// grouped path.
+//
+// Command-buffer contract: `decode` commits the passed `cmd` (router
+// CPU readback), then runs the experts + shared expert + residual on a
+// fresh internal buffer and returns a fully-resident tensor. The host
+// `NemotronHModel.forward` therefore must refresh `cmd` after this
+// layer — same pattern as `MoELayer`. Cache slot is a
+// `StatelessLayerCache` (no per-token state).
+
+/// A single NemotronH expert: squared-ReLU 2-layer MLP, no gate. The
+/// shared expert reuses the same structure with a wider intermediate.
+public final class NemotronHExpert: Module {
+    let upProj, downProj: AnyLinear
+
+    init(upProj: AnyLinear, downProj: AnyLinear) {
+        self.upProj = upProj
+        self.downProj = downProj
+    }
+
+    public func parameters() -> [(String, Tensor)] {
+        var out: [(String, Tensor)] = []
+        for (k, v) in upProj.parameters() { out.append(("up_proj.\(k)", v)) }
+        for (k, v) in downProj.parameters() { out.append(("down_proj.\(k)", v)) }
+        return out
+    }
+
+    /// Run the expert: down( relu(up(x))^2 ). Caller owns `cmd`.
+    fileprivate func forward(_ x: Tensor, on cmd: MTLCommandBuffer) -> Tensor {
+        let up = upProj(x, on: cmd)
+        let r = Ops.relu(up, on: cmd)
+        let r2 = Ops.mul(r, r, on: cmd)
+        return downProj(r2, on: cmd)
+    }
+}
+
+public final class NemotronHMoELayer: Module, DecoderLayer {
+    let norm: RMSNorm
+    let gate: AnyLinear
+    /// `[nRouted]` correction bias applied only to the *selection*
+    /// score (the FINAL weight is `sigmoid(logits)`, unbiased).
+    let eScoreCorrectionBias: Tensor
+    /// `[nRouted]` host-resident copy of `eScoreCorrectionBias` — read
+    /// once at init so each decode skips a CPU readback of the bias.
+    let eScoreCorrectionBiasHost: [Float]
+    let experts: [NemotronHExpert]
+    /// Always-on dense shared MLP. `nil` if the checkpoint declared
+    /// `n_shared_experts == 0`.
+    let sharedExpert: NemotronHExpert?
+
+    public let hidden, nRouted, topK: Int
+    public let routedScalingFactor: Float
+    public let normTopkProb: Bool
+    let dtype: DType
+
+    init(norm: RMSNorm, gate: AnyLinear, eScoreCorrectionBias: Tensor,
+         experts: [NemotronHExpert], sharedExpert: NemotronHExpert?,
+         hidden: Int, topK: Int,
+         routedScalingFactor: Float, normTopkProb: Bool,
+         dtype: DType) {
+        precondition(topK > 0 && topK <= experts.count,
+                     "NemotronHMoELayer: topK \(topK) out of range "
+                     + "1…\(experts.count)")
+        self.norm = norm
+        self.gate = gate
+        self.eScoreCorrectionBias = eScoreCorrectionBias
+        self.eScoreCorrectionBiasHost = readFloatsNH(eScoreCorrectionBias)
+        self.experts = experts
+        self.sharedExpert = sharedExpert
+        self.hidden = hidden
+        self.nRouted = experts.count
+        self.topK = topK
+        self.routedScalingFactor = routedScalingFactor
+        self.normTopkProb = normTopkProb
+        self.dtype = dtype
+    }
+
+    public func parameters() -> [(String, Tensor)] {
+        var out: [(String, Tensor)] = []
+        for (k, v) in norm.parameters() { out.append(("norm.\(k)", v)) }
+        for (k, v) in gate.parameters() { out.append(("mixer.gate.\(k)", v)) }
+        out.append(("mixer.gate.e_score_correction_bias",
+                    eScoreCorrectionBias))
+        for (i, expert) in experts.enumerated() {
+            for (k, v) in expert.parameters() {
+                out.append(("mixer.experts.\(i).\(k)", v))
+            }
+        }
+        if let sharedExpert {
+            for (k, v) in sharedExpert.parameters() {
+                out.append(("mixer.shared_experts.\(k)", v))
+            }
+        }
+        return out
+    }
+
+    /// `DecoderLayer` conformance. Commits `cmd` and returns a
+    /// fully-resident tensor produced on a fresh internal buffer.
+    public func decode(_ h: Tensor, position _: Int,
+                       cache _: any LayerCacheProtocol,
+                       cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        // ── Pre-mixer RMSNorm + router GEMV on the caller's buffer ───
+        let xNorm = norm(h, on: cmd)
+        let logitsTensor = gate(xNorm, on: cmd)
+        cmd.commit()
+        cmd.waitUntilCompleted()
+
+        // ── CPU routing — sigmoid + bias for selection, raw sigmoid
+        //                  for weighting ─────────────────────────────
+        let logits = logitsTensor.toFloatArray()
+        var origScores = [Float](repeating: 0, count: nRouted)
+        var selectionScores = [Float](repeating: 0, count: nRouted)
+        for i in 0..<nRouted {
+            let s = 1.0 / (1.0 + Foundation.exp(-logits[i]))
+            origScores[i] = s
+            selectionScores[i] = s + eScoreCorrectionBiasHost[i]
+        }
+        let order = (0..<nRouted).sorted { a, b in
+            if selectionScores[a] != selectionScores[b] {
+                return selectionScores[a] > selectionScores[b]
+            }
+            return a < b
+        }
+        let inds = Array(order.prefix(topK))
+        var finalScores = inds.map { origScores[$0] }
+        if topK > 1 && normTopkProb {
+            let sum = finalScores.reduce(0, +) + 1e-20
+            finalScores = finalScores.map { $0 / sum }
+        }
+        finalScores = finalScores.map { $0 * routedScalingFactor }
+
+        // ── Per-expert squared-ReLU MLP + weighted sum, on a fresh
+        //    buffer (xNorm is already resident from the committed cmd) ─
+        let workCmd = device.makeCommandBuffer()
+        var accumulator: Tensor?
+        for (k, ei) in inds.enumerated() {
+            let y = experts[ei].forward(xNorm, on: workCmd)
+            let w = Tensor.filled(finalScores[k], shape: [hidden],
+                                  dtype: dtype, device: device)
+            let scaled = Ops.mul(y, w, on: workCmd)
+            accumulator = accumulator.map { Ops.add($0, scaled, on: workCmd) }
+                ?? scaled
+        }
+        // Shared expert — squared-ReLU MLP, always-on. Mirrors
+        // mlx-lm's `if let sharedExperts { y = y + sharedExperts(x) }`.
+        if let sharedExpert {
+            let sharedOut = sharedExpert.forward(xNorm, on: workCmd)
+            accumulator = accumulator.map { Ops.add($0, sharedOut, on: workCmd) }
+                ?? sharedOut
+        }
+        // ── Residual ─────────────────────────────────────────────────
+        // `accumulator` is non-nil — topK ≥ 1 always picks at least one
+        // expert, and even if a checkpoint somehow ships topK == 0 the
+        // shared expert is always present here.
+        let routedOut = accumulator!
+        let result = Ops.add(h, routedOut, on: workCmd)
+        workCmd.commit()
+        workCmd.waitUntilCompleted()
+        return result
+    }
+}
+
+/// Build one MoE layer for a NemotronH checkpoint. The shared expert
+/// is constructed when `nSharedExperts > 0`.
+private func buildNemotronHMoELayer(
+    prefix p: String, norm: RMSNorm, weights: SafeTensorsBundle,
+    hidden: Int, moeIntermediate: Int,
+    nRoutedExperts: Int, topK: Int,
+    nSharedExperts: Int, sharedExpertIntermediate: Int,
+    routedScalingFactor: Float, normTopkProb: Bool,
+    dtype: DType, device: Device
+) throws -> NemotronHMoELayer {
+    // Router: hidden → nRouted logits. NemotronH MoE checkpoints ship
+    // these projections as plain (non-quantized) Linear (the family
+    // rejects quantized configs at load), so we read the raw weight.
+    let gate = AnyLinear(Linear(
+        weight: try weights.tensor(named: "\(p).gate.weight")))
+    // The correction bias is per-expert; mlx-lm keeps it in fp32 — we
+    // do the same (the bias is the only thing the cast-predicate
+    // protects from being cast down to bf16/f16).
+    let eSCBRaw = try weights.tensor(named: "\(p).gate.e_score_correction_bias")
+    precondition(eSCBRaw.elementCount == nRoutedExperts,
+                 "NemotronH MoE: e_score_correction_bias has "
+                 + "\(eSCBRaw.elementCount) entries, expected \(nRoutedExperts)")
+
+    // Routed experts: each is a squared-ReLU 2-layer MLP. The published
+    // checkpoint ships them as `mixer.experts.<e>.{up_proj,down_proj}.weight`
+    // (Python layout — the mlx-swift port stacks them into
+    // `switch_mlp.fc1/fc2` at sanitize time, but FFAI keeps them
+    // per-expert because we dispatch one expert per top-K slot and
+    // never need the stacked form).
+    var experts: [NemotronHExpert] = []
+    experts.reserveCapacity(nRoutedExperts)
+    for e in 0..<nRoutedExperts {
+        let upProj = AnyLinear(Linear(
+            weight: try weights.tensor(
+                named: "\(p).experts.\(e).up_proj.weight")))
+        let downProj = AnyLinear(Linear(
+            weight: try weights.tensor(
+                named: "\(p).experts.\(e).down_proj.weight")))
+        experts.append(NemotronHExpert(upProj: upProj, downProj: downProj))
+    }
+
+    // Shared expert (n_shared_experts >= 1). The shape is wider
+    // (`moe_shared_expert_intermediate_size`, ≈ 2× the routed
+    // intermediate on Cascade-2) but otherwise the same squared-ReLU
+    // MLP. mlx-lm only supports nSharedExperts ∈ {0, 1}; we keep the
+    // same restriction here — the `n_shared_experts > 1` case has no
+    // shipped checkpoint exercising it.
+    let sharedExpert: NemotronHExpert?
+    if nSharedExperts > 0 {
+        precondition(nSharedExperts == 1,
+                     "NemotronH MoE: n_shared_experts \(nSharedExperts) > 1 "
+                     + "not supported (no shipped checkpoint uses it).")
+        let sharedUp = AnyLinear(Linear(
+            weight: try weights.tensor(named: "\(p).shared_experts.up_proj.weight")))
+        let sharedDown = AnyLinear(Linear(
+            weight: try weights.tensor(named: "\(p).shared_experts.down_proj.weight")))
+        sharedExpert = NemotronHExpert(upProj: sharedUp, downProj: sharedDown)
+        _ = sharedExpertIntermediate    // Plumbed for future shape checks.
+    } else {
+        sharedExpert = nil
+    }
+    _ = moeIntermediate    // Plumbed for future shape checks.
+
+    return NemotronHMoELayer(
+        norm: norm, gate: gate, eScoreCorrectionBias: eSCBRaw,
+        experts: experts, sharedExpert: sharedExpert,
+        hidden: hidden, topK: topK,
+        routedScalingFactor: routedScalingFactor,
+        normTopkProb: normTopkProb,
+        dtype: dtype)
+}
+
 // ─── NemotronHModel ──────────────────────────────────────────────────
 
 public final class NemotronHModel: LanguageModel {
@@ -636,7 +950,10 @@ public final class NemotronHModel: LanguageModel {
             case is NemotronHMambaLayer: return .mamba
             case is NemotronHAttentionLayer: return .attention
             case is NemotronHMLPLayer: return .mlp
-            default: return .moe   // unreachable — MoE is rejected at load
+            case is NemotronHMoELayer: return .moe
+            default:
+                fatalError("NemotronHModel: unknown DecoderLayer "
+                           + "\(type(of: layer)) in heterogeneous stack")
             }
         }
     }
@@ -652,6 +969,7 @@ public final class NemotronHModel: LanguageModel {
             case let l as NemotronHMambaLayer: params = l.parameters()
             case let l as NemotronHAttentionLayer: params = l.parameters()
             case let l as NemotronHMLPLayer: params = l.parameters()
+            case let l as NemotronHMoELayer: params = l.parameters()
             default: params = []
             }
             for (k, v) in params { out.append(("backbone.layers.\(i).\(k)", v)) }
@@ -685,11 +1003,14 @@ public final class NemotronHModel: LanguageModel {
     /// Queue a single-token forward pass. Walks the heterogeneous
     /// `[any DecoderLayer]` in lockstep with the per-layer caches.
     ///
-    /// NOTE: NemotronH currently has no command-buffer-committing layer
-    /// kind (MoE is rejected), so the whole forward queues onto `cmd`
-    /// exactly like FalconH1 / Qwen3. If a future MoE-bearing variant
-    /// lands, this loop must refresh `cmd` after any layer that commits
-    /// — see the MoELayer file header for the pattern.
+    /// NemotronH MoE layers commit the command buffer mid-decode (the
+    /// router CPU readback forces a sync), so the forward loop runs
+    /// every layer on its own internal `workCmd` and queues ONLY the
+    /// final `norm` + `lm_head` onto the caller's pristine `cmd` — the
+    /// Jamba command-buffer discipline. Layer kinds without commits
+    /// (Mamba / Attention / MLP) still benefit: their `workCmd`
+    /// commits on the next layer transition (or at the end of the
+    /// loop) rather than fighting for the caller's buffer.
     public func forward(tokenId: Int, position: Int,
                         caches: [any LayerCacheProtocol],
                         on cmd: MTLCommandBuffer, device: Device) -> Tensor {
@@ -697,13 +1018,43 @@ public final class NemotronHModel: LanguageModel {
         var tid = UInt32(tokenId)
         memcpy(tokenBuf.contents(), &tid, 4)
         let tokenTensor = Tensor(buffer: tokenBuf, offset: 0, shape: [1], dtype: .u32)
-        var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
 
-        for (i, layer) in layers.enumerated() {
-            h = layer.decode(h, position: position, cache: caches[i],
-                             cmd: cmd, device: device)
+        // Without any MoE layer, the entire forward queues onto `cmd`
+        // exactly like before (the workCmd path needs an internal
+        // commit per committing-layer transition). Pick the cheaper
+        // path per checkpoint.
+        let hasCommittingLayer = layerKinds.contains(.moe)
+        if !hasCommittingLayer {
+            var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
+            for (i, layer) in layers.enumerated() {
+                h = layer.decode(h, position: position, cache: caches[i],
+                                 cmd: cmd, device: device)
+            }
+            let normed = finalNorm(h, on: cmd)
+            return lmHead(normed, on: cmd)
         }
 
+        // MoE-bearing checkpoint: run every layer on a private buffer
+        // so the MoE commits don't poison the caller's `cmd`. Refresh
+        // the work buffer after each layer that commits.
+        var workCmd = device.makeCommandBuffer()
+        var h = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
+        for (i, layer) in layers.enumerated() {
+            h = layer.decode(h, position: position, cache: caches[i],
+                             cmd: workCmd, device: device)
+            // Layers that commit `workCmd` (MoE) hand back a resident
+            // tensor; we obtain a fresh buffer so the next layer's
+            // dispatches don't land on an already-committed buffer.
+            if layerKinds[i] == .moe {
+                workCmd = device.makeCommandBuffer()
+            }
+        }
+        // Final embedding → norm + lm_head on the caller's pristine
+        // `cmd`. `h` is resident (the work buffer either committed via
+        // an MoE layer or is about to fall out of scope unused — flush
+        // it so any pending non-MoE dispatches reach the GPU).
+        workCmd.commit()
+        workCmd.waitUntilCompleted()
         let normed = finalNorm(h, on: cmd)
         return lmHead(normed, on: cmd)
     }
@@ -733,10 +1084,10 @@ public final class NemotronHModel: LanguageModel {
     //
     // NemotronH is a VL-target text backbone (Nemotron-VLM wraps it).
     // The splice supplies a `[hidden]` row directly — a vision-encoder
-    // token or a text-token embedding the VL model looked up. The
-    // forward is identical to `forward(tokenId:...)` minus the embedding
-    // gather; the whole pass queues onto the caller's `cmd` (NemotronH
-    // has no command-buffer-committing layer kind — MoE is rejected).
+    // token or a text-token embedding the VL model looked up. Identical
+    // command-buffer discipline to `forward(tokenId:)`: dense
+    // checkpoints queue onto `cmd`; MoE-bearing checkpoints run layers
+    // on a private buffer that's refreshed after each MoE commit.
 
     public var supportsEmbeddingInput: Bool { true }
 
@@ -746,11 +1097,29 @@ public final class NemotronHModel: LanguageModel {
         precondition(inputEmbedding.elementCount == hidden,
                      "NemotronHModel.forward(inputEmbedding:): expected [\(hidden)], "
                      + "got \(inputEmbedding.shape)")
+
+        let hasCommittingLayer = layerKinds.contains(.moe)
+        if !hasCommittingLayer {
+            var h = inputEmbedding.reshaped(to: [hidden])
+            for (i, layer) in layers.enumerated() {
+                h = layer.decode(h, position: position, cache: caches[i],
+                                 cmd: cmd, device: device)
+            }
+            let normed = finalNorm(h, on: cmd)
+            return lmHead(normed, on: cmd)
+        }
+
+        var workCmd = device.makeCommandBuffer()
         var h = inputEmbedding.reshaped(to: [hidden])
         for (i, layer) in layers.enumerated() {
             h = layer.decode(h, position: position, cache: caches[i],
-                             cmd: cmd, device: device)
+                             cmd: workCmd, device: device)
+            if layerKinds[i] == .moe {
+                workCmd = device.makeCommandBuffer()
+            }
         }
+        workCmd.commit()
+        workCmd.waitUntilCompleted()
         let normed = finalNorm(h, on: cmd)
         return lmHead(normed, on: cmd)
     }
