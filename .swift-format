@@ -4,4 +4,7 @@
         "spaces": 4
     },
     "spacesAroundRangeFormationOperators": true,
+    "rules": {
+        "AlwaysUseLowerCamelCase": false
+    }
 }
