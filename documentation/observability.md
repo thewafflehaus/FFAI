@@ -18,7 +18,7 @@ deliberately portable to / from mlx-swift-lm's bench-row schema so
 analysis tooling stays compatible.
 
 ```bash
-ffai --model unsloth/Llama-3.2-1B --prompt "Once upon a time" --stats
+ffai --model mlx-community/Qwen3.5-0.8B-MLX-bf16 --prompt "Once upon a time" --stats
 ```
 
 ```
@@ -190,13 +190,13 @@ controllable via env vars so other entry points (Xcode test runs,
 your own Swift code) can opt in without editing source.
 
 ```bash
-ffai --debug --model unsloth/Llama-3.2-1B --prompt "Hi" 2>debug.log
+ffai --debug --model mlx-community/Qwen3.5-0.8B-MLX-bf16 --prompt "Hi" 2>debug.log
 ```
 
 Sample output (heavily abbreviated):
 
 ```
-[ffai:load] Model.load id-or-path=unsloth/Llama-3.2-1B
+[ffai:load] Model.load id-or-path=mlx-community/Qwen3.5-0.8B-MLX-bf16
 [ffai:loader] resolved snapshot dir: /Users/.../snapshots/abcd…
 [ffai:load] config: arch=LlamaForCausalLM model_type=llama hidden=2048 layers=16
 [ffai:generate] begin prefill: 5 tokens, maxTokens=64
@@ -234,7 +234,7 @@ Debug.log(.kvcache, "append k+v at pos \(pos), live bytes=\(caches.totalBytesInU
 Three levels. `0` is the default (off, zero overhead anywhere).
 
 ```bash
-ffai --profiling 1 --model unsloth/Llama-3.2-1B --prompt "Hi"
+ffai --profiling 1 --model mlx-community/Qwen3.5-0.8B-MLX-bf16 --prompt "Hi"
 ```
 
 ### Level 1 — wallclock breakdown
@@ -267,7 +267,7 @@ constructing any state. ~40 ns per call when nobody's listening.
 
 ```bash
 xctrace record --template 'os_signpost' --launch -- \
-    .build/release/ffai --profiling 2 --model unsloth/Llama-3.2-1B --prompt "Hi"
+    .build/release/ffai --profiling 2 --model mlx-community/Qwen3.5-0.8B-MLX-bf16 --prompt "Hi"
 ```
 
 The recorded trace shows FFAI's `prefill`, `decode_step`, `prewarm`,

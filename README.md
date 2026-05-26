@@ -63,7 +63,7 @@ Then generate text in five lines:
 ```swift
 import FFAI
 
-let model = try await Model.load("unsloth/Llama-3.2-1B")
+let model = try await Model.load("mlx-community/Qwen3.5-0.8B-MLX-bf16")
 let result = try await model.generate(
     prompt: "Once upon a time",
     parameters: model.defaultGenerationParameters.with { $0.maxTokens = 64 }
@@ -81,7 +81,7 @@ of the same repo are near-instant.
 CLI equivalent (the `ffai` executable target):
 
 ```bash
-ffai --model unsloth/Llama-3.2-1B --prompt "Once upon a time"
+ffai --model mlx-community/Qwen3.5-0.8B-MLX-bf16 --prompt "Once upon a time"
 ```
 
 See [`quickstart.md`](documentation/quickstart.md) for
@@ -112,17 +112,17 @@ up now vs queued.
 ### Adding a model
 
 Porting a new family is **one Swift file plus an integration test**.
-The Models/ tree mirrors itself in Tests/ so the diff lands in two
+The `Models/` tree mirrors itself in `Tests/` so the diff lands in two
 focused places, and the loader auto-routes on the `model_type` /
 `architectures[0]` strings the family enum advertises.
 
 Step-by-step walkthrough with copy-pasteable templates:
 [`documentation/developing/adding-a-model.md`](documentation/developing/adding-a-model.md).
 
-### Quantize your own checkpoints
+### Quantize a Model
 
 `ffai convert` quantizes any bf16/fp16 HuggingFace checkpoint to MLX
-4-bit affine format using FFAI's own GPU kernels — no Python deps,
+4-bit or 8bit affine format using FFAI's own GPU kernels — no Python deps,
 no `mlx-lm` / `mlx-vlm` install, and it works on architectures
 `mlx-lm` rejects (custom-modeling-code families like Soprano,
 Nemotron-H, FastVLM):

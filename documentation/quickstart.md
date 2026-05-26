@@ -5,7 +5,7 @@ Generate text in 5 lines:
 ```swift
 import FFAI
 
-let model = try await Model.load("unsloth/Llama-3.2-1B")
+let model = try await Model.load("mlx-community/Qwen3.5-0.8B-MLX-bf16")
 let result = try await model.generate(prompt: "Once upon a time")
 print(result.text)
 ```
@@ -43,7 +43,7 @@ The same surface ships as the `ffai` executable. See
 get it on `PATH`; once that's done:
 
 ```bash
-ffai --model unsloth/Llama-3.2-1B --prompt "Once upon a time"
+ffai --model mlx-community/Qwen3.5-0.8B-MLX-bf16 --prompt "Once upon a time"
 ffai --model mlx-community/Qwen3-4B-4bit --prompt "Hello" --max-tokens 128
 ```
 
@@ -123,7 +123,7 @@ surface and per-family quirks.
 
 ```swift
 let model = try await Model.load(
-    "unsloth/Llama-3.2-1B",
+    "mlx-community/Qwen3.5-0.8B-MLX-bf16",
     options: LoadOptions(
         capabilities: [.textIn, .textOut],
         kvCache: .raw,
@@ -163,7 +163,7 @@ any Swift code calling `Model.load(...)`. Same env var Python's
 
 ```bash
 export HF_HOME=/Volumes/Big/hf-cache
-ffai --model unsloth/Llama-3.2-1B --prompt "Once upon a time"
+ffai --model mlx-community/Qwen3.5-0.8B-MLX-bf16 --prompt "Once upon a time"
 ```
 
 ### 2. `LoadOptions.cacheDirectory` (programmatic)
@@ -173,7 +173,7 @@ process env:
 
 ```swift
 let model = try await Model.load(
-    "unsloth/Llama-3.2-1B",
+    "mlx-community/Qwen3.5-0.8B-MLX-bf16",
     options: LoadOptions(
         cacheDirectory: URL(fileURLWithPath: "/Volumes/Big/hf-cache")
     )
@@ -220,7 +220,7 @@ downloaded with `huggingface-cli download` or `mlx-lm`.
 `failed(Error)` from any state. Useful for UI progress bars:
 
 ```swift
-let model = try await Model.load("unsloth/Llama-3.2-1B")
+let model = try await Model.load("mlx-community/Qwen3.5-0.8B-MLX-bf16")
 Task {
     for await event in model.events {
         print("model state: \(event.state)")
