@@ -2,23 +2,16 @@
 
 **F*cking Fast Apple Inference.**
 
-A minimal, dependency-light LLM inference library for Apple Silicon, built on
-pre-compiled Metal kernels generated from the [metaltile](https://github.com/thewafflehaus/metaltile)
-DSL. No Python. No MLX. No C compilation. No JIT. No four-repo dependency chain.
+A minimal, dependency-light LLM inference library for Apple Silicon, built on pre-compiled Metal kernels generated from the [metaltile](https://github.com/thewafflehaus/metaltile) DSL. No Python. No MLX. No C compilation. No JIT. No four-repo dependency chain.
 
 **Just really f*cking fast AI!** 🚀
 
 ## Status
 
-Early bootstrap — the dense-text, hybrid, vision-language, and audio
-model waves have all landed; end-to-end inference runs real
-HuggingFace checkpoints across every shipped family.
+Early bootstrap — the dense-text, hybrid, vision-language, and audio model waves have all landed; end-to-end inference runs real HuggingFace checkpoints across every shipped family.
 
-- [`planning/plan.md`](planning/plan.md) — phased build-out, what we're
-  shipping when
-- [`planning/architecture.md`](planning/architecture.md) — visual
-  reference for kernel generation, model loading, and the inference
-  dispatch loop
+- [`planning/plan.md`](planning/plan.md) — phased build-out, what we're shipping when
+- [`planning/architecture.md`](planning/architecture.md) — visual reference for kernel generation, model loading, and the inference dispatch loop
 - [`documentation/`](documentation/README.md) — user-facing docs
 
 ## Features
@@ -45,10 +38,7 @@ HuggingFace checkpoints across every shipped family.
 | **Autotuner** | Per-shape kernel tuning so you never leave perf on the table. | 🚧 Phase 9 |
 | **GGUF support** | Run llama.cpp's quants directly. | 🚧 Phase 10 |
 
-For the longer-form view of what's shipped vs planned, see
-[`planning/roadmap.md`](planning/roadmap.md). For the per-topic
-deep-dives (KV cache, quantization, performance, capabilities) see
-[`documentation/`](documentation/README.md).
+For the longer-form view of what's shipped vs planned, see [`planning/roadmap.md`](planning/roadmap.md). For the per-topic deep-dives (KV cache, quantization, performance, capabilities) see [`documentation/`](documentation/README.md).
 
 ## Quick Start
 
@@ -72,11 +62,7 @@ print(result.text)
 print("\(result.tokensPerSecond) tok/s")
 ```
 
-`Model.load` resolves the HuggingFace repo, downloads the snapshot
-(or hits the cache), parses `config.json`, mmap-loads weights into
-per-tensor MTLBuffers, attaches the tokenizer, and prewarms the
-PSO cache. The first call costs a few seconds; subsequent loads
-of the same repo are near-instant.
+`Model.load` resolves the HuggingFace repo, downloads the snapshot (or hits the cache), parses `config.json`, mmap-loads weights into per-tensor MTLBuffers, attaches the tokenizer, and prewarms the PSO cache. The first call costs a few seconds; subsequent loads of the same repo are near-instant.
 
 CLI equivalent (the `ffai` executable target):
 
@@ -84,48 +70,25 @@ CLI equivalent (the `ffai` executable target):
 ffai --model mlx-community/Qwen3.5-0.8B-MLX-4bit --prompt "Once upon a time"
 ```
 
-See [`quickstart.md`](documentation/quickstart.md) for
-streaming, chat templates, capability gating, and lower-level
-forward APIs. Using a non-default cache directory (external SSD,
-shared cache between Python tools, etc.)? See
-[Custom model cache path](documentation/quickstart.md#custom-model-cache-path).
+See [`quickstart.md`](documentation/quickstart.md) for streaming, chat templates, capability gating, and lower-level forward APIs. Using a non-default cache directory (external SSD, shared cache between Python tools, etc.)? See [Custom model cache path](documentation/quickstart.md#custom-model-cache-path).
 
 ## Models Supported
 
-FFAI ships the most comprehensive Apple Silicon model coverage of
-any single library — **LLMs, VLMs, vision, STT, STS, TTS, and Omni
-models** all running real HuggingFace checkpoints end-to-end through
-one loader. Pass a repo ID, the registry resolves the architecture,
-downloads the snapshot, and routes to the right family.
+FFAI ships the most comprehensive Apple Silicon model coverage of any single library — **LLMs, VLMs, vision, STT, STS, TTS, and Omni models** all running real HuggingFace checkpoints end-to-end through one loader. Pass a repo ID, the registry resolves the architecture, downloads the snapshot, and routes to the right family.
 
-Run `ffai models` for the live list with copy-paste repo IDs, or
-browse the full breakdown by family + capability in
-[`documentation/models.md`](documentation/models.md).
+Run `ffai models` for the live list with copy-paste repo IDs, or browse the full breakdown by family + capability in [`documentation/models.md`](documentation/models.md).
 
-**Quantization.** Affine 3 / 4 / 5 / 6 / 8-bit (mlx-community
-packed-uint32 format) ships today, with per-tensor bit-width
-derivation for mixed-precision checkpoints. **2-bit, fully
-mixed-quantization recipes, and GGUF format are coming soon** — see
-[`quantization.md`](documentation/quantization.md) for what's wired
-up now vs queued.
+**Quantization.** Affine 3 / 4 / 5 / 6 / 8-bit (mlx-community packed-uint32 format) ships today, with per-tensor bit-width derivation for mixed-precision checkpoints. **2-bit, fully mixed-quantization recipes, and GGUF format are coming soon** — see [`quantization.md`](documentation/quantization.md) for what's wired up now vs queued.
 
 ### Adding a model
 
-Porting a new family is **one Swift file plus an integration test**.
-The `Models/` tree mirrors itself in `Tests/` so the diff lands in two
-focused places, and the loader auto-routes on the `model_type` /
-`architectures[0]` strings the family enum advertises.
+Porting a new family is **one Swift file plus an integration test**. The `Models/` tree mirrors itself in `Tests/` so the diff lands in two focused places, and the loader auto-routes on the `model_type` / `architectures[0]` strings the family enum advertises.
 
-Step-by-step walkthrough with copy-pasteable templates:
-[`documentation/developing/adding-a-model.md`](documentation/developing/adding-a-model.md).
+Step-by-step walkthrough with copy-pasteable templates: [`documentation/developing/adding-a-model.md`](documentation/developing/adding-a-model.md).
 
 ### Quantize a Model
 
-`ffai convert` quantizes any bf16/fp16 HuggingFace checkpoint to MLX
-4-bit or 8bit affine format using FFAI's own GPU kernels — no Python deps,
-no `mlx-lm` / `mlx-vlm` install, and it works on architectures
-`mlx-lm` rejects (custom-modeling-code families like Soprano,
-Nemotron-H, FastVLM):
+`ffai convert` quantizes any bf16/fp16 HuggingFace checkpoint to MLX 4-bit or 8bit affine format using FFAI's own GPU kernels — no Python deps, no `mlx-lm` / `mlx-vlm` install, and it works on architectures `mlx-lm` rejects (custom-modeling-code families like Soprano, Nemotron-H, FastVLM):
 
 ```bash
 # Pull, quantize, and write to ~/.cache/ffai/converts/.
@@ -136,8 +99,7 @@ ffai convert HuggingFaceTB/SmolLM2-360M-Instruct \
     --upload-repo ekryski/SmolLM2-360M-Instruct-4bit
 ```
 
-Full flag list + recipes:
-[`using-the-cli.md` § `convert`](documentation/using-the-cli.md#convert--quantize-a-checkpoint-to-mlx-4-bit).
+Full flag list + recipes: [`using-the-cli.md` § `convert`](documentation/using-the-cli.md#convert--quantize-a-checkpoint-to-mlx-4-bit).
 
 ## High Level Architecture
 
@@ -168,10 +130,7 @@ Full flag list + recipes:
 └─────────────────────────────────────────────────────────┘
 ```
 
-For the longer-form view (build pipeline, model load sequence,
-inference dispatch loop) see
-[`planning/architecture.md`](planning/architecture.md) and
-[`documentation/architecture.md`](documentation/architecture.md).
+For the longer-form view (build pipeline, model load sequence, inference dispatch loop) see [`planning/architecture.md`](planning/architecture.md) and [`documentation/architecture.md`](documentation/architecture.md).
 
 ## Contributing
 

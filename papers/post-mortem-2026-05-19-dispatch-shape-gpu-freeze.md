@@ -1,11 +1,6 @@
 # Post-mortem: wrong-dispatch-shape GPU freeze (2026-05-18 / 2026-05-19)
 
-**Authors:** Eric Kryski
-**Hardware:** Apple Silicon (M-series)
-**Software:** [FFAI](https://github.com/ekryski/FFAI) + sibling [metaltile](https://github.com/0xClandestine/metaltile)
-**Date:** 2026-05-19
-**Severity:** P0 — full WindowServer freeze, lost work session, ~1 day of debugging
-**Status:** Mitigated; layered prevention landed (this document, [FFAI/CLAUDE.md](../CLAUDE.md), kernel headers, GPU correctness tests). Underlying class still possible; metaltile-side dispatch validator queued.
+**Authors:** Eric Kryski **Hardware:** Apple Silicon (M-series) **Software:** [FFAI](https://github.com/ekryski/FFAI) + sibling [metaltile](https://github.com/0xClandestine/metaltile) **Date:** 2026-05-19 **Severity:** P0 — full WindowServer freeze, lost work session, ~1 day of debugging **Status:** Mitigated; layered prevention landed (this document, [FFAI/CLAUDE.md](../CLAUDE.md), kernel headers, GPU correctness tests). Underlying class still possible; metaltile-side dispatch validator queued.
 
 ---
 
@@ -369,52 +364,10 @@ The first seven are the prevention in place today. The remaining deferred item i
 
 ## 14. Follow-up findings discovered while landing the fixes
 
-This is the section we add as later layers of the same investigation
-surface related issues. Each entry includes how we caught it.
+This is the section we add as later layers of the same investigation surface related issues. Each entry includes how we caught it.
 
-**`aura_encode` codegen signedness bug (metaltile `18c34c0`).** The
-`#[kernel]` body parser lowered `(uint + bits).cast::<i32>() - 32i32 > 0i32`
-to MSL `int v = (int)(uint+4) - 32; bool b = v > 0u;` — the `0i32`
-literal got demoted to `0u` in the comparison. C/MSL int-to-uint
-promotion made `-28` reinterpret as `~4e9`, so the cross-word-spill
-branch fired for every thread regardless of bit-width. Symptom: low
-nibbles of words `[word_idx+1 ..]` polluted with the previous thread's
-quantization index. Caught by the `aura_encode_gpu_correctness` test
-from the Phase A defensive coverage pass — the test was originally
-mine and looked like a wrong-test-expectation until the diff pattern
-(0x7 OR'd with 0x8 = 0xF) showed the kernel was systematically
-miscomputing low nibbles. **Lesson:** GPU correctness tests against a
-naive CPU reference catch entire classes of codegen bugs that no
-amount of wrapper precondition would have detected.
+**`aura_encode` codegen signedness bug (metaltile `18c34c0`).** The `#[kernel]` body parser lowered `(uint + bits).cast::<i32>() - 32i32 > 0i32` to MSL `int v = (int)(uint+4) - 32; bool b = v > 0u;` — the `0i32` literal got demoted to `0u` in the comparison. C/MSL int-to-uint promotion made `-28` reinterpret as `~4e9`, so the cross-word-spill branch fired for every thread regardless of bit-width. Symptom: low nibbles of words `[word_idx+1 ..]` polluted with the previous thread's quantization index. Caught by the `aura_encode_gpu_correctness` test from the Phase A defensive coverage pass — the test was originally mine and looked like a wrong-test-expectation until the diff pattern (0x7 OR'd with 0x8 = 0xF) showed the kernel was systematically miscomputing low nibbles. **Lesson:** GPU correctness tests against a naive CPU reference catch entire classes of codegen bugs that no amount of wrapper precondition would have detected.
 
-**Grid3D over-dispatch in tests (metaltile `ec9d170` test file
-fixes).** Several `*_gpu_correctness.rs` tests I authored during Phase
-A dispatched `grid_groups=[N, 1, 1]` with `tg=[N, 1, 1]` = N² threads
-instead of N. For Grid3D mode `program_id<i>()` lowers to
-`thread_position_in_grid.[xyz]`, so `dispatch_with_grid([N,1,1],
-[N,1,1])` spawns N×N threads, most of them garbage. The `conv1d` test
-caught it cleanly: illegitimate threads' OOB reads (returning 0)
-raced against legitimate writes of `x[d]` to `state[2*nC+d]`, and the
-max state diff was exactly `max(x)` magnitude. Same pattern silently
-"passed" `kv_cache_update` (Metal clamps OOB writes) and
-`aura_dequant_rotated` (kernel's internal `if d < dim` guard). **Lesson:**
-the two semantically-different dispatch shapes (Reduction = grid in
-threadgroups, Grid3D = grid in threads) have to be documented as
-loudly as the TPG invariants. Now added to `FFAI/CLAUDE.md`
-§"Wrapping kernels in FFAI" and to `papers/optimizing-kernels-for-apple-m-series-architecture.md`
-§5.2.
+**Grid3D over-dispatch in tests (metaltile `ec9d170` test file fixes).** Several `*_gpu_correctness.rs` tests I authored during Phase A dispatched `grid_groups=[N, 1, 1]` with `tg=[N, 1, 1]` = N² threads instead of N. For Grid3D mode `program_id<i>()` lowers to `thread_position_in_grid.[xyz]`, so `dispatch_with_grid([N,1,1], [N,1,1])` spawns N×N threads, most of them garbage. The `conv1d` test caught it cleanly: illegitimate threads' OOB reads (returning 0) raced against legitimate writes of `x[d]` to `state[2*nC+d]`, and the max state diff was exactly `max(x)` magnitude. Same pattern silently "passed" `kv_cache_update` (Metal clamps OOB writes) and `aura_dequant_rotated` (kernel's internal `if d < dim` guard). **Lesson:** the two semantically-different dispatch shapes (Reduction = grid in threadgroups, Grid3D = grid in threads) have to be documented as loudly as the TPG invariants. Now added to `FFAI/CLAUDE.md` §"Wrapping kernels in FFAI" and to `papers/optimizing-kernels-for-apple-m-series-architecture.md` §5.2.
 
-**Llama 3.2 1B's `head_dim=64` was producing wrong attention output
-silently (metaltile `b6edc9b`).** The original `ffai_sdpa_decode` was
-hard-coded to `head_dim=128` (4 elements per lane). The wrapper's
-`elementwiseGrid` dispatch was already wrong for head_dim=64 — 4
-threadgroups of 256 threads instead of 1 threadgroup of 1024 — but
-`expectCoherentOutput` was lenient enough that Llama 3.2 1B's
-integration test passed with subtly-wrong attention. Phase B's
-OpsValidation precondition correctly trapped the wrong dispatch and
-flagged the gap; we shipped the head_dim=64 kernel specialization
-(`ffai_sdpa_decode_d64`) to actually fix the underlying bug rather
-than just relax the precondition. **Lesson:** loose integration tests
-(coherent output ≠ correct numerics) can hide real kernel bugs for
-the entire history of a model variant's support. Per-kernel GPU
-correctness tests catch what coherent-output tests can't.
+**Llama 3.2 1B's `head_dim=64` was producing wrong attention output silently (metaltile `b6edc9b`).** The original `ffai_sdpa_decode` was hard-coded to `head_dim=128` (4 elements per lane). The wrapper's `elementwiseGrid` dispatch was already wrong for head_dim=64 — 4 threadgroups of 256 threads instead of 1 threadgroup of 1024 — but `expectCoherentOutput` was lenient enough that Llama 3.2 1B's integration test passed with subtly-wrong attention. Phase B's OpsValidation precondition correctly trapped the wrong dispatch and flagged the gap; we shipped the head_dim=64 kernel specialization (`ffai_sdpa_decode_d64`) to actually fix the underlying bug rather than just relax the precondition. **Lesson:** loose integration tests (coherent output ≠ correct numerics) can hide real kernel bugs for the entire history of a model variant's support. Per-kernel GPU correctness tests catch what coherent-output tests can't.

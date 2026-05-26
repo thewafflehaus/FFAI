@@ -1,10 +1,6 @@
 # Speculative decoding on Apple Silicon: a working engineer's tour
 
-**Author:** Eric Kryski
-**Hardware target:** Apple M1 / M5 Max, 16–512 GB unified memory
-**Software target:** [mlx-swift-lm](https://github.com/ekryski/mlx-swift-lm)
-**Date:** 2026-04-28
-**Status:** Working draft
+**Author:** Eric Kryski **Hardware target:** Apple M1 / M5 Max, 16–512 GB unified memory **Software target:** [mlx-swift-lm](https://github.com/ekryski/mlx-swift-lm) **Date:** 2026-04-28 **Status:** Working draft
 
 > *Why does the same speculative-decoding trick give 3.5× on a server GPU and 1.0× on a MacBook? And what do we actually do about it?*
 

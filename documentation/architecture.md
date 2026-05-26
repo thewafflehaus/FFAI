@@ -1,10 +1,6 @@
 # Architecture
 
-FFAI is three layers, all in this repo except `metaltile` (a sibling
-Rust crate). The longer-form diagrams live in
-[`planning/architecture.md`](../planning/architecture.md); this
-page covers the user-facing model — what each layer is responsible
-for and how a single token moves through the stack.
+FFAI is three layers, all in this repo except `metaltile` (a sibling Rust crate). The longer-form diagrams live in [`planning/architecture.md`](../planning/architecture.md); this page covers the user-facing model — what each layer is responsible for and how a single token moves through the stack.
 
 ## The three layers
 
@@ -37,49 +33,22 @@ for and how a single token moves through the stack.
 
 ### `metaltile` (Rust)
 
-A `#[kernel]` proc-macro lowers a small Rust DSL into an IR; the
-codegen back-end emits Metal Shading Language. Authoring lives here:
-new kernels are Rust `pub fn`s in `crates/metaltile-std/src/ops/`,
-annotated with `#[bench_kernel(...)]` so the registry picks them up.
-End users never touch Rust — they consume the artifacts shipped in
-`Sources/MetalTileSwift/Resources/`.
+A `#[kernel]` proc-macro lowers a small Rust DSL into an IR; the codegen back-end emits Metal Shading Language. Authoring lives here: new kernels are Rust `pub fn`s in `crates/metaltile-std/src/ops/`, annotated with `#[bench_kernel(...)]` so the registry picks them up. End users never touch Rust — they consume the artifacts shipped in `Sources/MetalTileSwift/Resources/`.
 
 ### `MetalTileSwift`
 
-A thin Swift wrapper that loads `kernels.metallib` once
-(`MetalTileLibrary.shared`), maintains a PSO cache keyed on
-`(name, MTLFunctionConstantValues)`, and exposes one typed
-function per kernel via the generated `MetalTileKernels.swift`.
-Function-constant specialization lets us produce a single MSL source
-that spans dtype/shape variants — at PSO instantiation time the
-constants get baked into the pipeline.
+A thin Swift wrapper that loads `kernels.metallib` once (`MetalTileLibrary.shared`), maintains a PSO cache keyed on `(name, MTLFunctionConstantValues)`, and exposes one typed function per kernel via the generated `MetalTileKernels.swift`. Function-constant specialization lets us produce a single MSL source that spans dtype/shape variants — at PSO instantiation time the constants get baked into the pipeline.
 
 ### `FFAI`
 
 The user-facing layer:
 
-- **`Tensor`** — `MTLBuffer` + shape + dtype + strides + byte offset.
-  Owns memory directly; no `MLXArray` middle-man.
+- **`Tensor`** — `MTLBuffer` + shape + dtype + strides + byte offset. Owns memory directly; no `MLXArray` middle-man.
 - **`Module`** — protocol with named-parameter discovery.
-- **Layers** — `Linear`, `Embedding`, `RMSNorm`, `RoPE`, attention
-  blocks. Each is a thin call to `MetalTileSwift` kernels.
-- **Models** — one Swift file per family per folder. Text-only
-  families live at `Models/Text/<F>.swift` (`Models/Text/Llama.swift`,
-  `Models/Text/Mistral.swift`). VL families add a `Models/<F>.swift`
-  orchestrator + `Models/Vision/<F>Vision.swift` tower; the paired
-  text impl lives at `Models/Text/<F>Text.swift` (e.g.
-  `Models/Text/Qwen3Text.swift`). Audio families live under
-  `Models/Audio/{STT,TTS,STS,VAD,Omni}/<F>.swift`. Family files use
-  a protocol + per-variant struct pattern so adding `Qwen35MoE` etc.
-  doesn't bloat a switch. See
-  [developing/adding-a-model.md](developing/adding-a-model.md) for
-  the full layout rule.
-- **Loader** — `Model.load(...)` resolves an HF id (or local path),
-  downloads via `swift-huggingface`, parses `config.json`, mmap-loads
-  weights into per-tensor MTLBuffers, dispatches to the right family,
-  attaches the tokenizer.
-- **Inference** — `KVCache`, `Sampling`, `Generate` (the prefill +
-  decode loop).
+- **Layers** — `Linear`, `Embedding`, `RMSNorm`, `RoPE`, attention blocks. Each is a thin call to `MetalTileSwift` kernels.
+- **Models** — one Swift file per family per folder. Text-only families live at `Models/Text/<F>.swift` (`Models/Text/Llama.swift`, `Models/Text/Mistral.swift`). VL families add a `Models/<F>.swift` orchestrator + `Models/Vision/<F>Vision.swift` tower; the paired text impl lives at `Models/Text/<F>Text.swift` (e.g. `Models/Text/Qwen3Text.swift`). Audio families live under `Models/Audio/{STT,TTS,STS,VAD,Omni}/<F>.swift`. Family files use a protocol + per-variant struct pattern so adding `Qwen35MoE` etc. doesn't bloat a switch. See [developing/adding-a-model.md](developing/adding-a-model.md) for the full layout rule.
+- **Loader** — `Model.load(...)` resolves an HF id (or local path), downloads via `swift-huggingface`, parses `config.json`, mmap-loads weights into per-tensor MTLBuffers, dispatches to the right family, attaches the tokenizer.
+- **Inference** — `KVCache`, `Sampling`, `Generate` (the prefill + decode loop).
 
 ## The build pipeline
 
@@ -104,15 +73,11 @@ The user-facing layer:
                                                                   a pre-compiled metallib
 ```
 
-Kernel regeneration is `make regenerate-kernels` (which `make build`
-runs automatically). End users adding FFAI as a SwiftPM dep don't run
-this — they consume the metallib that ships in the package.
+Kernel regeneration is `make regenerate-kernels` (which `make build` runs automatically). End users adding FFAI as a SwiftPM dep don't run this — they consume the metallib that ships in the package.
 
 ## A single token, end-to-end
 
-This is the dispatch path for one decode step on a Llama-shaped
-model. The same path runs for every prompt token (slow prefill) and
-every generated token (decode loop):
+This is the dispatch path for one decode step on a Llama-shaped model. The same path runs for every prompt token (slow prefill) and every generated token (decode loop):
 
 ```
 User: model.engine.forwardSample(tokenId: t, position: pos, caches: caches)
@@ -149,30 +114,19 @@ User: model.engine.forwardSample(tokenId: t, position: pos, caches: caches)
 
 **Invariants the code maintains:**
 
-1. **One `MTLCommandBuffer` per token.** No mid-token sync. Every
-   layer's kernels enqueue onto the same buffer.
-2. **No CPU↔GPU sync inside a layer.** KV cache append is the
-   `kv_cache_update` Metal kernel — not a CPU memcpy.
-3. **No logits readback.** Sampling runs on the GPU
-   (`argmax` today; top-k / top-p / temperature land in Phase 5+).
-   Only the chosen token id (4 bytes) crosses CPU↔GPU per token.
-4. **Weights are immutable post-load.** Per-tensor MTLBuffers are
-   allocated once, never resized. Activations come from a
-   `BufferPool` so per-token allocation doesn't grow.
+1. **One `MTLCommandBuffer` per token.** No mid-token sync. Every layer's kernels enqueue onto the same buffer.
+2. **No CPU↔GPU sync inside a layer.** KV cache append is the `kv_cache_update` Metal kernel — not a CPU memcpy.
+3. **No logits readback.** Sampling runs on the GPU (`argmax` today; top-k / top-p / temperature land in Phase 5+). Only the chosen token id (4 bytes) crosses CPU↔GPU per token.
+4. **Weights are immutable post-load.** Per-tensor MTLBuffers are allocated once, never resized. Activations come from a `BufferPool` so per-token allocation doesn't grow.
 
 ## Capability-driven loading
 
 A `Model` has two `Capability` sets:
 
-- `availableCapabilities` — what the family declares it can do
-  (`Llama` is `[.textIn, .textOut]`; the VL families add `.visionIn`).
-- `enabledCapabilities` — what the user opted into via
-  `LoadOptions.capabilities`.
+- `availableCapabilities` — what the family declares it can do (`Llama` is `[.textIn, .textOut]`; the VL families add `.visionIn`).
+- `enabledCapabilities` — what the user opted into via `LoadOptions.capabilities`.
 
-Disabled modalities skip weight allocation entirely — the vision
-encoder of a 9B VL model is ~600MB you don't pay for if you only need
-text. The infrastructure has been in place since Phase 2; the
-vision-language and audio families now exercise it end-to-end.
+Disabled modalities skip weight allocation entirely — the vision encoder of a 9B VL model is ~600MB you don't pay for if you only need text. The infrastructure has been in place since Phase 2; the vision-language and audio families now exercise it end-to-end.
 
 ## File layout
 
@@ -222,11 +176,7 @@ Tests/
 
 ## Where to read more
 
-- [`planning/architecture.md`](../planning/architecture.md) — fuller
-  diagrams (build pipeline, model load sequence, dispatch loop,
-  threadgroup mapping per kernel).
-- [`planning/plan.md`](../planning/plan.md) — phased build-out and
-  the rationale for what's in / out of scope per phase.
+- [`planning/architecture.md`](../planning/architecture.md) — fuller diagrams (build pipeline, model load sequence, dispatch loop, threadgroup mapping per kernel).
+- [`planning/plan.md`](../planning/plan.md) — phased build-out and the rationale for what's in / out of scope per phase.
 - [Models](models.md) — what's actually supported today.
-- [KV cache](kv-cache.md) — current cache and the planned
-  affine / AURA / SSM variants.
+- [KV cache](kv-cache.md) — current cache and the planned affine / AURA / SSM variants.

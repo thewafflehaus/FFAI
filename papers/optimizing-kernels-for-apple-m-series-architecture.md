@@ -1,9 +1,6 @@
 # Optimizing Kernels for Apple M-series Architecture
 
-**Authors:** Eric Kryski
-**Hardware target:** Apple M1 → M5 series (Max class)
-**Software target:** [FFAI](https://github.com/ekryski/FFAI) on [metaltile](https://github.com/0xClandestine/metaltile)
-**Status:** Living reference — extend when we discover new optimization patterns.
+**Authors:** Eric Kryski **Hardware target:** Apple M1 → M5 series (Max class) **Software target:** [FFAI](https://github.com/ekryski/FFAI) on [metaltile](https://github.com/0xClandestine/metaltile) **Status:** Living reference — extend when we discover new optimization patterns.
 
 This document is the working reference for everyone writing kernels in metaltile or wrappers in FFAI. It covers:
 

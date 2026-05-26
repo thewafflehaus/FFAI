@@ -1,10 +1,6 @@
 # AURA: a frankenstein compression algorithm
 
-**Authors:** Eric Kryski, Tom Turney
-**Hardware target:** Apple M1 / M5 Max, 16–512 GB unified memory
-**Software target:** [FFAI](https://github.com/ekryski/FFAI) — Apple Silicon inference stack (port of the codec formerly shipped as `TurboQuant*` in [mlx-swift-lm](https://github.com/ekryski/mlx-swift-lm))
-**Date:** 2026-05-17 (rebranded from working draft 2026-05-09)
-**Status:** Working draft — implementation notes
+**Authors:** Eric Kryski, Tom Turney **Hardware target:** Apple M1 / M5 Max, 16–512 GB unified memory **Software target:** [FFAI](https://github.com/ekryski/FFAI) — Apple Silicon inference stack (port of the codec formerly shipped as `TurboQuant*` in [mlx-swift-lm](https://github.com/ekryski/mlx-swift-lm)) **Date:** 2026-05-17 (rebranded from working draft 2026-05-09) **Status:** Working draft — implementation notes
 
 > *Our codec was originally shipped as `TurboQuant*` in mlx-swift-lm and is not, in fact, an implementation of the TurboQuant paper. It is a hybrid of TurboQuant_mse, QuaRot, PolarQuant, and llama.cpp's k_quants. This paper documents the honest accounting; the new home is FFAI and the new name is **AURA — Adaptive Unified Rotated Activations**.*
 
@@ -132,7 +128,7 @@ Four moves that do not appear in any source paper:
   - **NIAH retention improves with QJL off.** 31/33 vs q8_0's 30/33 at long context.
   - The fix: take the bit-budget that QJL would have used and **invest it in more centroids instead** — 16 optimal centroids vs 8-centroids + QJL bit. That is the path the turbo4 resurrection took, and the path AURA ships.
 
-  Mathematically the failure mode is straightforward: QJL is an *unbiased* estimator of the inner product but with higher variance than the MSE-only estimator. Variance compounds across decode steps in autoregressive generation, and softmax exponentiates the error — a small variance increase on logits becomes a large probability shift on the sampled token. The bias QJL removes is the 2/π term from Sec. 3.2 of the paper, which diminishes with bit-width and is acceptable at 4-bit. Trading a small bounded bias for unbounded variance amplification was the wrong call for attention, even if it gives optimal-rate guarantees for offline vector search where the estimator's variance averages out over many queries.
+Mathematically the failure mode is straightforward: QJL is an *unbiased* estimator of the inner product but with higher variance than the MSE-only estimator. Variance compounds across decode steps in autoregressive generation, and softmax exponentiates the error — a small variance increase on logits becomes a large probability shift on the sampled token. The bias QJL removes is the 2/π term from Sec. 3.2 of the paper, which diminishes with bit-width and is acceptable at 4-bit. Trading a small bounded bias for unbounded variance amplification was the wrong call for attention, even if it gives optimal-rate guarantees for offline vector search where the estimator's variance averages out over many queries.
 
 - **Per-coordinate codebooks.** The paper specifies one Lloyd-Max quantizer per dimension. AURA uses one global 1D codebook for all coordinates. The approximation is justified by the high-dim i.i.d.-Beta assumption but it is a real divergence.
 - **Analytic codebook derivation.** Paper gives closed-form quantizer values per bit-width from the Beta distribution variance. AURA uses llama.cpp's empirically-derived k_quants table.

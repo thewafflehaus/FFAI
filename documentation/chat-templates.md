@@ -1,16 +1,8 @@
 # Chat Templates
 
-Most modern chat / instruct models ship with a Jinja chat template
-in their `tokenizer_config.json`. FFAI calls into
-swift-transformers' `Tokenizer.applyChatTemplate(...)` to render
-those templates; you pass typed `ChatMessage` values + a typed
-`ChatTemplateOptions` and FFAI threads the right variables into the
-Jinja context.
+Most modern chat / instruct models ship with a Jinja chat template in their `tokenizer_config.json`. FFAI calls into swift-transformers' `Tokenizer.applyChatTemplate(...)` to render those templates; you pass typed `ChatMessage` values + a typed `ChatTemplateOptions` and FFAI threads the right variables into the Jinja context.
 
-The Phase-2/2.5 plain `Model.generate(prompt:...)` API takes a raw
-string — no chat template applied — which means *you* are
-responsible for rendering. Use the `messages:` overloads instead
-when working with chat / instruct models.
+The Phase-2/2.5 plain `Model.generate(prompt:...)` API takes a raw string — no chat template applied — which means *you* are responsible for rendering. Use the `messages:` overloads instead when working with chat / instruct models.
 
 ## Buffered
 
@@ -33,8 +25,7 @@ for try await chunk in stream {
 }
 ```
 
-Same chunk shape as the `prompt:` streaming variant — see
-[`streaming.md`](streaming.md).
+Same chunk shape as the `prompt:` streaming variant — see [`streaming.md`](streaming.md).
 
 ## `ChatMessage`
 
@@ -47,9 +38,7 @@ public struct ChatMessage: Sendable, Equatable {
 }
 ```
 
-The `thinking` field is for multi-turn conversations where the
-prior assistant turn included a thinking segment that the template
-wants to re-emit (Qwen 3 / DeepSeek-R1 do this).
+The `thinking` field is for multi-turn conversations where the prior assistant turn included a thinking segment that the template wants to re-emit (Qwen 3 / DeepSeek-R1 do this).
 
 ## `ChatTemplateOptions`
 
@@ -74,9 +63,7 @@ public struct ChatTemplateOptions: Sendable {
 
 ## Format quirks
 
-The template does the per-family rendering. We pass typed inputs
-through the well-known variable names; the rest is in the model's
-`tokenizer_config.json`. Specific behaviours:
+The template does the per-family rendering. We pass typed inputs through the well-known variable names; the rest is in the model's `tokenizer_config.json`. Specific behaviours:
 
 | Family | Notes |
 |---|---|
@@ -96,14 +83,11 @@ public enum ChatTemplateError: Error {
 }
 ```
 
-`noTemplateOnTokenizer` typically means you've loaded a base
-(non-chat) checkpoint and should either pass a raw prompt via
-`generate(prompt:)`, or use a different checkpoint (e.g. `*-Instruct`).
+`noTemplateOnTokenizer` typically means you've loaded a base (non-chat) checkpoint and should either pass a raw prompt via `generate(prompt:)`, or use a different checkpoint (e.g. `*-Instruct`).
 
 ## Rendering without generating
 
-For testing / debugging the templated input, render to token ids
-without running the model:
+For testing / debugging the templated input, render to token ids without running the model:
 
 ```swift
 let ids = try model.renderChatTemplate(
@@ -118,5 +102,4 @@ print(model.tokenizer.decode(tokens: ids, skipSpecialTokens: false))
 
 - [Quickstart](quickstart.md) — `prompt:` vs `messages:` decision.
 - [Streaming](streaming.md) — both overloads support streaming.
-- [Observability § think vs gen split](observability.md#think-vs-gen-split)
-  — what `enable_thinking: true` enables on the stats side.
+- [Observability § think vs gen split](observability.md#think-vs-gen-split) — what `enable_thinking: true` enables on the stats side.

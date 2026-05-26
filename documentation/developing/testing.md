@@ -1,16 +1,10 @@
 # Testing
 
-FFAI tests in three layers — kernel-wrapper correctness, Swift unit
-tests, and per-model integration tests — using **Swift Testing**
-(`@Suite` / `@Test` / `#expect`), not XCTest. CI gates on ≥ 80 % line
-coverage of the Swift surface plus a green integration sweep.
+FFAI tests in three layers — kernel-wrapper correctness, Swift unit tests, and per-model integration tests — using **Swift Testing** (`@Suite` / `@Test` / `#expect`), not XCTest. CI gates on ≥ 80 % line coverage of the Swift surface plus a green integration sweep.
 
 ## Running tests
 
-**Go through `make` — do not run bare `swift test`.** Each
-`ModelIntegrationTests` suite downloads a multi-GB checkpoint; an unconstrained
-parallel run loads several at once and OOMs the box (and can pin the
-GPU). The `make` targets cap parallelism correctly.
+**Go through `make` — do not run bare `swift test`.** Each `ModelIntegrationTests` suite downloads a multi-GB checkpoint; an unconstrained parallel run loads several at once and OOMs the box (and can pin the GPU). The `make` targets cap parallelism correctly.
 
 ```bash
 make test-unit          # FFAITests + MetalTileSwiftTests — fast, parallel-safe
@@ -20,14 +14,11 @@ make coverage           # unit-suite line coverage (≥ 80 %)
 make test-stress        # production cap, uncapped parallelism — run after dispatch changes
 ```
 
-`make test` runs `make regenerate-kernels` first, so you never test
-against stale kernels.
+`make test` runs `make regenerate-kernels` first, so you never test against stale kernels.
 
 ### Filtering to one suite or test
 
-To iterate on a single suite, run `swift test` directly **but keep
-the memory cap** — `--parallel --num-workers 1` loads one model at a
-time:
+To iterate on a single suite, run `swift test` directly **but keep the memory cap** — `--parallel --num-workers 1` loads one model at a time:
 
 ```bash
 swift test --parallel --num-workers 1 --filter Qwen3IntegrationTests
@@ -52,36 +43,21 @@ Tests/
                          suites (see below).
 ```
 
-There are **no golden fixtures**. Cross-implementation token-parity
-vs mlx-lm proved to be a measure of rounding-mode alignment, not
-correctness — it was dropped. Numerical correctness now comes from
-the metaltile-side per-kernel GPU-correctness tests (compared to a
-naive CPU oracle); the FFAI integration tests assert that the model
-*pipeline* produces coherent text.
+There are **no golden fixtures**. Cross-implementation token-parity vs mlx-lm proved to be a measure of rounding-mode alignment, not correctness — it was dropped. Numerical correctness now comes from the metaltile-side per-kernel GPU-correctness tests (compared to a naive CPU oracle); the FFAI integration tests assert that the model *pipeline* produces coherent text.
 
 ## Integration testing
 
-Every model family has a `Tests/ModelIntegrationTests/<Family>IntegrationTests.swift`
-that downloads the smallest published checkpoint from mlx-community,
-greedy-decodes, and asserts `expectCoherentOutput(...)` (token-count
-floor, no degenerate repeat run, minimum token diversity). A
-checkpoint that can't be fetched (offline, gated repo) prints a skip
-line and **passes** — integration tests never hard-fail on a missing
-download.
+Every model family has a `Tests/ModelIntegrationTests/<Family>IntegrationTests.swift` that downloads the smallest published checkpoint from mlx-community, greedy-decodes, and asserts `expectCoherentOutput(...)` (token-count floor, no degenerate repeat run, minimum token diversity). A checkpoint that can't be fetched (offline, gated repo) prints a skip line and **passes** — integration tests never hard-fail on a missing download.
 
 Cross-cutting suites:
 
-- `ModelKVCacheMatrixIntegrationTests` — the model family × weight
-  bitwidth × KV-cache scheme cross-product.
-- `Quantized{3,4,5,6,8}bitIntegrationTests` — the weight-bitwidth
-  ladder.
+- `ModelKVCacheMatrixIntegrationTests` — the model family × weight bitwidth × KV-cache scheme cross-product.
+- `Quantized{3,4,5,6,8}bitIntegrationTests` — the weight-bitwidth ladder.
 - `DeterminismSmokeTests` — temp = 0 is stable across runs.
 
 ### Not every model runs by default — env-gated tests
 
-The largest checkpoints are too heavy (or too slow) for the routine
-gate, so they are gated behind environment variables. With the var
-unset the test skips (and passes); set it to opt in:
+The largest checkpoints are too heavy (or too slow) for the routine gate, so they are gated behind environment variables. With the var unset the test skips (and passes); set it to opt in:
 
 | Env var | Unlocks |
 |---|---|
@@ -98,8 +74,7 @@ FFAI_MATRIX_FAMILY=Llama swift test --parallel --num-workers 1 \
     --filter ModelKVCacheMatrixIntegrationTests
 ```
 
-The default `make test-integration` runs only the always-on cells:
-the smallest checkpoint per family.
+The default `make test-integration` runs only the always-on cells: the smallest checkpoint per family.
 
 ## Writing a test
 
@@ -119,8 +94,7 @@ struct OpsAddTests {
 }
 ```
 
-A model integration test loads through `ModelLoadLock.shared`
-(serializes the multi-GB load across suites) and asserts coherence:
+A model integration test loads through `ModelLoadLock.shared` (serializes the multi-GB load across suites) and asserts coherence:
 
 ```swift
 @Suite("Qwen3 integration", .serialized)
@@ -139,15 +113,11 @@ struct Qwen3IntegrationTests {
 }
 ```
 
-A non-trivial kernel lands with a paired metaltile GPU-correctness
-test in the **same commit** (see metaltile `docs/testing.md`).
+A non-trivial kernel lands with a paired metaltile GPU-correctness test in the **same commit** (see metaltile `docs/testing.md`).
 
 ## CI
 
-CI runs on Apple Silicon: the unit gate, then the serialized
-integration gate (matching `make test-integration`), and uploads the
-coverage report — a PR that drops Swift-surface coverage below the
-threshold fails.
+CI runs on Apple Silicon: the unit gate, then the serialized integration gate (matching `make test-integration`), and uploads the coverage report — a PR that drops Swift-surface coverage below the threshold fails.
 
 ## What we don't test
 

@@ -1,21 +1,12 @@
 # Observability — `--stats`, `--debug`, `--profiling`
 
-Three CLI flags to introspect what FFAI is doing per token. The
-underlying types live in [`Sources/FFAI/Stats/`](../Sources/FFAI/Stats/)
-and are usable from your own code without going through the CLI.
+Three CLI flags to introspect what FFAI is doing per token. The underlying types live in [`Sources/FFAI/Stats/`](../Sources/FFAI/Stats/) and are usable from your own code without going through the CLI.
 
-This page covers `--stats` today; `--debug` and `--profiling` land
-in follow-up commits and are described under
-[Coming next](#coming-next).
+This page covers `--stats` today; `--debug` and `--profiling` land in follow-up commits and are described under [Coming next](#coming-next).
 
 ## `--stats`
 
-Prints a `[STATS]` block after generation completes. Always-on
-instrumentation: a `PhaseMemoryTracker` samples
-`MTLDevice.currentAllocatedSize` at every token boundary (cost: one
-property read per token, ~sub-µs). The fields and shape are
-deliberately portable to / from mlx-swift-lm's bench-row schema so
-analysis tooling stays compatible.
+Prints a `[STATS]` block after generation completes. Always-on instrumentation: a `PhaseMemoryTracker` samples `MTLDevice.currentAllocatedSize` at every token boundary (cost: one property read per token, ~sub-µs). The fields and shape are deliberately portable to / from mlx-swift-lm's bench-row schema so analysis tooling stays compatible.
 
 ```bash
 ffai --model mlx-community/Qwen3.5-0.8B-MLX-4bit --prompt "Once upon a time" --stats
@@ -59,8 +50,7 @@ ffai --model mlx-community/Qwen3.5-0.8B-MLX-4bit --prompt "Once upon a time" --s
 
 ### Programmatic access
 
-Stats are always populated on `GenerationResult.stats`. The CLI flag
-only controls the printout.
+Stats are always populated on `GenerationResult.stats`. The CLI flag only controls the printout.
 
 ```swift
 let result = try await model.generate(prompt: "...")
@@ -72,14 +62,11 @@ print(result.stats.kvCacheUsedBytes)
 print(result.stats.steadyTokensPerSecond ?? "<warm-up only>")
 ```
 
-For a custom report, call `result.stats.formatted()` — that's what
-the CLI prints.
+For a custom report, call `result.stats.formatted()` — that's what the CLI prints.
 
 ### Perplexity (opt-in)
 
-Perplexity computation requires a per-step logits readback (extra
-cost on top of greedy decode), so it's not folded into
-`generate(...)`. Use the standalone helper:
+Perplexity computation requires a per-step logits readback (extra cost on top of greedy decode), so it's not folded into `generate(...)`. Use the standalone helper:
 
 ```swift
 let r = try await model.generate(prompt: "Once upon a time")
@@ -88,24 +75,13 @@ let ppl = Perplexity.compute(model: model,
 print(ppl.perplexity)   // exp(-mean log p(token | prefix))
 ```
 
-All perplexity math runs in **fp32** — bf16's 7 mantissa bits can't
-represent the partial `Σ exp(x_i − max_x)` over a 128–152K vocab
-without losing precision in the third decimal of perplexity, which
-is exactly the resolution we need for distinguishing quantization
-tiers. fp32 costs ~1µs per token; only matters offline. Header in
-[`Stats/Perplexity.swift`](../Sources/FFAI/Stats/Perplexity.swift)
-has the longer rationale.
+All perplexity math runs in **fp32** — bf16's 7 mantissa bits can't represent the partial `Σ exp(x_i − max_x)` over a 128–152K vocab without losing precision in the third decimal of perplexity, which is exactly the resolution we need for distinguishing quantization tiers. fp32 costs ~1µs per token; only matters offline. Header in [`Stats/Perplexity.swift`](../Sources/FFAI/Stats/Perplexity.swift) has the longer rationale.
 
-The bench harness's `--method wikitext2` runs this over the
-WikiText-2 corpus and writes the resulting `genPerplexity` into the
-report row.
+The bench harness's `--method wikitext2` runs this over the WikiText-2 corpus and writes the resulting `genPerplexity` into the report row.
 
 ### KL divergence vs a reference model
 
-`Perplexity.klDivergence(reference:candidate:tokens:)` runs both
-models forward in lockstep over a fixed token sequence and returns
-the mean per-position `KL(p_ref || q_cand)` in nats. Both models
-must share the same tokenizer / vocab.
+`Perplexity.klDivergence(reference:candidate:tokens:)` runs both models forward in lockstep over a fixed token sequence and returns the mean per-position `KL(p_ref || q_cand)` in nats. Both models must share the same tokenizer / vocab.
 
 ```swift
 let reference = try await Model.load("mlx-community/Qwen3-4B-bf16")
@@ -117,29 +93,15 @@ let kld = Perplexity.klDivergence(
 print(kld.meanKLDivergence)
 ```
 
-**Pick the right reference.** The number is only meaningful when
-the reference is a higher-fidelity sibling of the candidate — same
-architecture, same tokenizer. **Use the bf16 unquantized variant if
-it fits in device memory.** A smaller / different-family reference
-turns the KL into a measure of family closeness rather than
-quantization fidelity.
+**Pick the right reference.** The number is only meaningful when the reference is a higher-fidelity sibling of the candidate — same architecture, same tokenizer. **Use the bf16 unquantized variant if it fits in device memory.** A smaller / different-family reference turns the KL into a measure of family closeness rather than quantization fidelity.
 
-Memory: both models live resident simultaneously, plus their KV
-caches. For Qwen 3 4B, that's roughly 8GB (bf16) + 2.5GB (4-bit) +
-a few hundred MB of caches — fits on any 16GB+ Mac. For Qwen 3 14B
-the bf16 variant alone is ~28GB; pair with `Qwen3-14B-8bit` as the
-candidate against `Qwen3-14B-bf16` as the reference if you have the
-RAM, otherwise drop down to the next size class.
+Memory: both models live resident simultaneously, plus their KV caches. For Qwen 3 4B, that's roughly 8GB (bf16) + 2.5GB (4-bit) + a few hundred MB of caches — fits on any 16GB+ Mac. For Qwen 3 14B the bf16 variant alone is ~28GB; pair with `Qwen3-14B-8bit` as the candidate against `Qwen3-14B-bf16` as the reference if you have the RAM, otherwise drop down to the next size class.
 
-CLI `--ref-model <repo>` plumbing ships with the bench subcommand
-in the next chunk.
+CLI `--ref-model <repo>` plumbing ships with the bench subcommand in the next chunk.
 
 ### Think vs gen split
 
-Models that emit reasoning segments (Qwen 3 / DeepSeek-R1 ChatML,
-GPT-OSS Harmony, Gemma 3/4 channels) get a separate
-`think_tokens / gen_tokens` count line. Format auto-detection runs
-on every `generate(...)` call via `ThinkingSplit.detectFormat(model:)`:
+Models that emit reasoning segments (Qwen 3 / DeepSeek-R1 ChatML, GPT-OSS Harmony, Gemma 3/4 channels) get a separate `think_tokens / gen_tokens` count line. Format auto-detection runs on every `generate(...)` call via `ThinkingSplit.detectFormat(model:)`:
 
 | Detected from | Format | Implementation |
 |---|---|---|
@@ -148,13 +110,9 @@ on every `generate(...)` call via `ThinkingSplit.detectFormat(model:)`:
 | Tokenizer has `<think>` / `</think>` ids | `.chatML` | Implemented today. |
 | Otherwise | `.none` | Whole generation counts as gen. |
 
-For models that don't emit thinking markers, the split is silently
-omitted. See [`Stats/ThinkingSplit.swift`](../Sources/FFAI/Stats/ThinkingSplit.swift)
-for the per-format scanners.
+For models that don't emit thinking markers, the split is silently omitted. See [`Stats/ThinkingSplit.swift`](../Sources/FFAI/Stats/ThinkingSplit.swift) for the per-format scanners.
 
-Per-segment perplexity is `nil` from `generate(...)` alone — the
-bench harness will run perplexity over each segment separately
-when it lands. For now you can do it yourself:
+Per-segment perplexity is `nil` from `generate(...)` alone — the bench harness will run perplexity over each segment separately when it lands. For now you can do it yourself:
 
 ```swift
 let split = ThinkingSplit.split(tokens: result.generatedTokens, model: model)
@@ -170,24 +128,16 @@ if let s = split {
 
 ### Scaffolded fields (commented today)
 
-The `GenerationStats` struct reserves space — currently commented —
-for capabilities that haven't shipped yet:
+The `GenerationStats` struct reserves space — currently commented — for capabilities that haven't shipped yet:
 
-- **Batch decoding** (Phase 8+): `batchSize`,
-  `perSequenceDecodeTokensPerSecond`.
-- **Speculative decoding** (Phase 8+): `acceptanceRate`,
-  `draftTokensPerSecond`, `draftAcceptedTokens`.
+- **Batch decoding** (Phase 8+): `batchSize`, `perSequenceDecodeTokensPerSecond`.
+- **Speculative decoding** (Phase 8+): `acceptanceRate`, `draftTokensPerSecond`, `draftAcceptedTokens`.
 
-When those modes land, uncomment the fields, populate them in
-`Generate.swift`, and the formatted output + bench writer pick them
-up automatically.
+When those modes land, uncomment the fields, populate them in `Generate.swift`, and the formatted output + bench writer pick them up automatically.
 
 ## `--debug`
 
-Gates verbose log output to **stderr**, tagged by subsystem. Off by
-default. The CLI flag flips the global gate; the same gate is
-controllable via env vars so other entry points (Xcode test runs,
-your own Swift code) can opt in without editing source.
+Gates verbose log output to **stderr**, tagged by subsystem. Off by default. The CLI flag flips the global gate; the same gate is controllable via env vars so other entry points (Xcode test runs, your own Swift code) can opt in without editing source.
 
 ```bash
 ffai --debug --model mlx-community/Qwen3.5-0.8B-MLX-4bit --prompt "Hi" 2>debug.log
@@ -206,8 +156,7 @@ Sample output (heavily abbreviated):
 
 ### Per-subsystem gates
 
-`--debug` enables every subsystem. To enable just one, set the
-matching env var instead of passing `--debug`:
+`--debug` enables every subsystem. To enable just one, set the matching env var instead of passing `--debug`:
 
 | Env var | Subsystem | What it logs |
 |---|---|---|
@@ -221,9 +170,7 @@ matching env var instead of passing `--debug`:
 | `FFAI_DEBUG_DISPATCH=1` | `dispatch` | Per-`MTLCommandBuffer` commit / wait. |
 | `FFAI_DEBUG_BENCH=1` | `bench` | `BenchRunner` method dispatch + sub-phase timing. |
 
-The closure passed to `Debug.log(...)` is `@autoclosure` — when the
-subsystem is off, the message string isn't built and the call is
-near-free. Safe to leave instrumentation in hot paths.
+The closure passed to `Debug.log(...)` is `@autoclosure` — when the subsystem is off, the message string isn't built and the call is near-free. Safe to leave instrumentation in hot paths.
 
 ```swift
 Debug.log(.kvcache, "append k+v at pos \(pos), live bytes=\(caches.totalBytesInUse)")
@@ -239,10 +186,7 @@ ffai --profiling 1 --model mlx-community/Qwen3.5-0.8B-MLX-4bit --prompt "Hi"
 
 ### Level 1 — wallclock breakdown
 
-Captures wallclock durations at every phase boundary
-(`model_load`, `prewarm`, `prefill`, `ttft`, `decode`,
-`generation_total`) and prints a `[PROFILE]` block at the end of
-the run. Cost is a few `Date()` calls per generation — negligible.
+Captures wallclock durations at every phase boundary (`model_load`, `prewarm`, `prefill`, `ttft`, `decode`, `generation_total`) and prints a `[PROFILE]` block at the end of the run. Cost is a few `Date()` calls per generation — negligible.
 
 ```
 [PROFILE]
@@ -256,31 +200,20 @@ the run. Cost is a few `Date()` calls per generation — negligible.
 
 ### Level 2 — level 1 + `os_signpost` intervals
 
-Wraps each phase + the inner decode-step loop in
-[`OSSignposter`](https://developer.apple.com/documentation/os/ossignposter)
-intervals under subsystem `ai.ffai`, capturable by Instruments
-(*Profile → Logging → os_signpost*) or `xctrace record`.
+Wraps each phase + the inner decode-step loop in [`OSSignposter`](https://developer.apple.com/documentation/os/ossignposter) intervals under subsystem `ai.ffai`, capturable by Instruments (*Profile → Logging → os_signpost*) or `xctrace record`.
 
-**Zero overhead when no tracer is attached** — `OSSignposter` checks
-a flag at the start of each `beginInterval(...)` and bails before
-constructing any state. ~40 ns per call when nobody's listening.
+**Zero overhead when no tracer is attached** — `OSSignposter` checks a flag at the start of each `beginInterval(...)` and bails before constructing any state. ~40 ns per call when nobody's listening.
 
 ```bash
 xctrace record --template 'os_signpost' --launch -- \
     .build/release/ffai --profiling 2 --model mlx-community/Qwen3.5-0.8B-MLX-4bit --prompt "Hi"
 ```
 
-The recorded trace shows FFAI's `prefill`, `decode_step`, `prewarm`,
-`model_load` spans on the same timeline as Apple's Metal subsystem
-spans (`com.apple.Metal`). Each Metal kernel dispatch shows up
-automatically there — no need to wrap individual kernels on our
-side. Use Instruments' Metal System Trace template to drill into
-GPU vs CPU time per phase.
+The recorded trace shows FFAI's `prefill`, `decode_step`, `prewarm`, `model_load` spans on the same timeline as Apple's Metal subsystem spans (`com.apple.Metal`). Each Metal kernel dispatch shows up automatically there — no need to wrap individual kernels on our side. Use Instruments' Metal System Trace template to drill into GPU vs CPU time per phase.
 
 ### Pattern for new call sites
 
-Wrapping a call site in a signpost is a one-liner — passes through
-the body's value, no signpost overhead at level 0/1:
+Wrapping a call site in a signpost is a one-liner — passes through the body's value, no signpost overhead at level 0/1:
 
 ```swift
 Profile.signpost("MyOp.compute") {
@@ -301,9 +234,7 @@ let result = Profile.time("custom_phase") {
 Profile.event("first_decode_token")
 ```
 
-The top-level CLI sets `Profile.shared.level` once before any FFAI
-work runs; the same global is used by the bench subcommand so trace
-recordings line up across `ffai generate` and `ffai bench`.
+The top-level CLI sets `Profile.shared.level` once before any FFAI work runs; the same global is used by the bench subcommand so trace recordings line up across `ffai generate` and `ffai bench`.
 
 ### Programmatic access
 
@@ -316,13 +247,11 @@ let result = try await model.generate(prompt: "...")
 print(Profile.shared.phases.formatted())   // [PROFILE] block
 ```
 
-`PhaseTimings` is a `Sendable` struct — safe to grab a snapshot from
-any context.
+`PhaseTimings` is a `Sendable` struct — safe to grab a snapshot from any context.
 
 ## Comparison with mlx-swift-lm
 
-FFAI's flags follow mlx-swift-lm's conventions so trace recipes and
-analysis tooling carry over:
+FFAI's flags follow mlx-swift-lm's conventions so trace recipes and analysis tooling carry over:
 
 | mlx-swift-lm | FFAI |
 |---|---|
@@ -333,11 +262,7 @@ analysis tooling carry over:
 
 ## See also
 
-- [`generation-parameters.md`](generation-parameters.md) — the knobs that
-  control what gets generated; stats describes how it ran.
-- [`performance.md`](performance.md) — current `tok/s` numbers per
-  model + the Phase 4 wave-by-wave perf history.
-- [`kv-cache.md`](kv-cache.md) — what the `KV cache (alloc)` and
-  `(used)` fields actually account for.
-- mlx-swift-lm's [benchmarks/README.md](https://github.com/ml-explore/mlx-swift-lm/blob/main/benchmarks/README.md)
-  — the upstream schema FFAI's stats fields mirror.
+- [`generation-parameters.md`](generation-parameters.md) — the knobs that control what gets generated; stats describes how it ran.
+- [`performance.md`](performance.md) — current `tok/s` numbers per model + the Phase 4 wave-by-wave perf history.
+- [`kv-cache.md`](kv-cache.md) — what the `KV cache (alloc)` and `(used)` fields actually account for.
+- mlx-swift-lm's [benchmarks/README.md](https://github.com/ml-explore/mlx-swift-lm/blob/main/benchmarks/README.md) — the upstream schema FFAI's stats fields mirror.

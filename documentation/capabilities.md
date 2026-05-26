@@ -1,13 +1,8 @@
 # Capabilities & Lifecycle
 
-FFAI models declare what they *can* do via `Capability`, the user
-picks what to *enable* at load time via `LoadOptions`, and the model
-exposes its load progress + hot capability changes via an
-`AsyncStream<ModelLifecycleEvent>`.
+FFAI models declare what they *can* do via `Capability`, the user picks what to *enable* at load time via `LoadOptions`, and the model exposes its load progress + hot capability changes via an `AsyncStream<ModelLifecycleEvent>`.
 
-The infrastructure has been in place since Phase 2; the
-vision-language families (Gemma 3/4-VL, Qwen 2.5/3-VL, Qwen3-VL-MoE,
-Nemotron-VLM) and audio families now exercise it end-to-end.
+The infrastructure has been in place since Phase 2; the vision-language families (Gemma 3/4-VL, Qwen 2.5/3-VL, Qwen3-VL-MoE, Nemotron-VLM) and audio families now exercise it end-to-end.
 
 ## The `Capability` enum
 
@@ -42,11 +37,7 @@ Capability.omniAudio      // [.textIn, .audioIn, .textOut] — Qwen-Omni
 
 ## Audio models
 
-Audio models do not route through `Model` / `ModelRegistry` (which
-describe a text-in / text-out causal decoder). They load through
-[`AudioModelRegistry`](../Sources/FFAI/AudioModelRegistry.swift), which
-inspects `config.json`, picks the family (Whisper STT, SenseVoice STT,
-Kokoro TTS, Qwen-Omni), and reports the audio `Capability` set:
+Audio models do not route through `Model` / `ModelRegistry` (which describe a text-in / text-out causal decoder). They load through [`AudioModelRegistry`](../Sources/FFAI/AudioModelRegistry.swift), which inspects `config.json`, picks the family (Whisper STT, SenseVoice STT, Kokoro TTS, Qwen-Omni), and reports the audio `Capability` set:
 
 ```swift
 let loaded = try AudioModelRegistry.load(directory: dir)
@@ -58,8 +49,7 @@ case .qwenOmni(let m):   ...   // .omniAudio
 }
 ```
 
-`AudioModelRegistry.capabilities(forConfigAt:)` reports the capability
-set without loading weights — useful for a model picker.
+`AudioModelRegistry.capabilities(forConfigAt:)` reports the capability set without loading weights — useful for a model picker.
 
 ## What each family declares
 
@@ -78,9 +68,7 @@ set without loading weights — useful for a model picker.
 | `Gemma4.Gemma4Dense` / `Gemma4E` / `Gemma4MoE` | `[.textIn, .textOut]` |
 | `GPTOSS.GPTOSSMoEVariant` | `[.textIn, .textOut]` |
 
-When a family adds a capability (e.g. the VL families add
-`.visionIn`), the family file declares it and the loader allocates
-the corresponding subnet only if the user opts in.
+When a family adds a capability (e.g. the VL families add `.visionIn`), the family file declares it and the loader allocates the corresponding subnet only if the user opts in.
 
 ## `LoadOptions`
 
@@ -118,8 +106,7 @@ print(model.config.modelType)        // "qwen3"
 print(model.modelDirectory)          // resolved local snapshot
 ```
 
-If you ask for a capability the family doesn't expose, the loader
-throws `ModelError.capabilityNotAvailable(.visionIn)`.
+If you ask for a capability the family doesn't expose, the loader throws `ModelError.capabilityNotAvailable(.visionIn)`.
 
 ## Lifecycle states
 
@@ -130,9 +117,7 @@ ModelLifecycleState:
        (or failed(Error) at any stage)
 ```
 
-`Model.events` is an `AsyncStream<ModelLifecycleEvent>` that emits
-each transition. The stream is multi-consumer-safe and finishes when
-the `Model` is deinitialized.
+`Model.events` is an `AsyncStream<ModelLifecycleEvent>` that emits each transition. The stream is multi-consumer-safe and finishes when the `Model` is deinitialized.
 
 ```swift
 let model = try await Model.load("mlx-community/Qwen3.5-0.8B-MLX-4bit")
@@ -153,13 +138,11 @@ Task {
 print(model.currentState)  // sync snapshot — typically .ready by the time load() returns
 ```
 
-`currentState` is a thread-safe snapshot of the latest emitted event.
-The stream is the source of truth for fine-grained progress.
+`currentState` is a thread-safe snapshot of the latest emitted event. The stream is the source of truth for fine-grained progress.
 
 ## Hot capability changes (Phase 6)
 
-The API surface is in place from Phase 2; the implementation lands
-alongside the first VL family:
+The API surface is in place from Phase 2; the implementation lands alongside the first VL family:
 
 ```swift
 // Phase 6:
@@ -168,15 +151,10 @@ try await model.enable(.visionIn)    // mmaps vision weights, builds encoder, pr
 try await model.disable(.visionIn)   // releases MTLBuffers, frees GPU residency
 ```
 
-Each call emits per-capability lifecycle events through the same
-`events` stream. If `lazyCapabilities = false` was passed at load
-time, both calls throw — capabilities are then frozen at the load-time
-set.
+Each call emits per-capability lifecycle events through the same `events` stream. If `lazyCapabilities = false` was passed at load time, both calls throw — capabilities are then frozen at the load-time set.
 
 ## See also
 
-- [Quick start](quickstart.md) — the basic `Model.load` + `generate`
-  flow.
+- [Quick start](quickstart.md) — the basic `Model.load` + `generate` flow.
 - [Models](models.md) — what each family declares for `availableCapabilities`.
-- [Architecture](architecture.md) — where capability-driven loading
-  sits in the load sequence.
+- [Architecture](architecture.md) — where capability-driven loading sits in the load sequence.

@@ -1,10 +1,6 @@
 # Beyond quadratic attention: a 2026 field survey for Apple Silicon inference
 
-**Author:** Eric Kryski
-**Hardware target:** Apple M1 / M5 Max, 16–512 GB unified memory
-**Software target:** [mlx-swift-lm](https://github.com/ekryski/mlx-swift-lm)
-**Date:** 2026-05-09
-**Status:** Working draft — research survey (revision 6)
+**Author:** Eric Kryski **Hardware target:** Apple M1 / M5 Max, 16–512 GB unified memory **Software target:** [mlx-swift-lm](https://github.com/ekryski/mlx-swift-lm) **Date:** 2026-05-09 **Status:** Working draft — research survey (revision 6)
 
 > *Softmax attention is O(N²). Speculative decoding helps decode but not the underlying forward. What else is there — and which of it actually composes with a quantised, MoE-aware, GatedDeltaNet-capable inference stack on Apple Silicon?*
 
