@@ -85,6 +85,188 @@ struct OpsSpecialPathTests {
         }
     }
 
+    @Test("castToF32Two f16 — same as two sequential castToF32 calls")
+    func castToF32TwoMatchesSequential() {
+        autoreleasepool {
+            let n = 4
+            let a = Tensor.empty(shape: [n], dtype: .f16)
+            a.copyIn(from: [Float16(0.5), 2, -2, 4])
+            let b = Tensor.empty(shape: [n], dtype: .f16)
+            b.copyIn(from: [Float16(-1), 0, 1, 0.25])
+            let refA = Tensor.empty(shape: [n], dtype: .f32)
+            let refB = Tensor.empty(shape: [n], dtype: .f32)
+            runAndWait { cb in
+                Ops.castToF32(a, into: refA, on: cb)
+                Ops.castToF32(b, into: refB, on: cb)
+            }
+            let outA = Tensor.empty(shape: [n], dtype: .f32)
+            let outB = Tensor.empty(shape: [n], dtype: .f32)
+            runAndWait { cb in
+                Ops.castToF32Two(a, into: outA, b, into: outB, on: cb)
+            }
+            let rA = refA.toArray(as: Float.self)
+            let gA = outA.toArray(as: Float.self)
+            let rB = refB.toArray(as: Float.self)
+            let gB = outB.toArray(as: Float.self)
+            for i in 0 ..< n {
+                #expect(abs(gA[i] - rA[i]) < 1e-5, "a[\(i)]")
+                #expect(abs(gB[i] - rB[i]) < 1e-5, "b[\(i)]")
+            }
+        }
+    }
+
+    @Test("castToF32Three bf16 — same as three sequential castToF32 calls")
+    func castToF32ThreeMatchesSequential() {
+        autoreleasepool {
+            // bf16 round-trip — fewer mantissa bits than f16 but still
+            // exact when source values fit the type.
+            let n = 4
+            let aSrc: [Float] = [0.5, 2, -2, 4]
+            let bSrc: [Float] = [-1, 0, 1, 0.25]
+            let cSrc: [Float] = [3.5, -0.125, 1.0, 0]
+            // bf16 store: pick the top 16 bits of each Float bit pattern.
+            func toBF16Bits(_ xs: [Float]) -> [UInt16] {
+                xs.map { UInt16(truncatingIfNeeded: $0.bitPattern >> 16) }
+            }
+            let a = Tensor.empty(shape: [n], dtype: .bf16)
+            a.copyIn(from: toBF16Bits(aSrc))
+            let b = Tensor.empty(shape: [n], dtype: .bf16)
+            b.copyIn(from: toBF16Bits(bSrc))
+            let c = Tensor.empty(shape: [n], dtype: .bf16)
+            c.copyIn(from: toBF16Bits(cSrc))
+            let refA = Tensor.empty(shape: [n], dtype: .f32)
+            let refB = Tensor.empty(shape: [n], dtype: .f32)
+            let refC = Tensor.empty(shape: [n], dtype: .f32)
+            runAndWait { cb in
+                Ops.castToF32(a, into: refA, on: cb)
+                Ops.castToF32(b, into: refB, on: cb)
+                Ops.castToF32(c, into: refC, on: cb)
+            }
+            let outA = Tensor.empty(shape: [n], dtype: .f32)
+            let outB = Tensor.empty(shape: [n], dtype: .f32)
+            let outC = Tensor.empty(shape: [n], dtype: .f32)
+            runAndWait { cb in
+                Ops.castToF32Three(
+                    a, into: outA, b, into: outB, c, into: outC, on: cb)
+            }
+            let rA = refA.toArray(as: Float.self)
+            let gA = outA.toArray(as: Float.self)
+            let rB = refB.toArray(as: Float.self)
+            let gB = outB.toArray(as: Float.self)
+            let rC = refC.toArray(as: Float.self)
+            let gC = outC.toArray(as: Float.self)
+            for i in 0 ..< n {
+                #expect(abs(gA[i] - rA[i]) < 1e-5, "a[\(i)]")
+                #expect(abs(gB[i] - rB[i]) < 1e-5, "b[\(i)]")
+                #expect(abs(gC[i] - rC[i]) < 1e-5, "c[\(i)]")
+            }
+        }
+    }
+
+    @Test("swigluMany f32 — N=3 separate dispatches share one encoder")
+    func swigluManyMatchesSequential() {
+        autoreleasepool {
+            let n = 8
+            // Build three (gate, up) pairs of different sizes — the
+            // wrapper sets PSO once and dispatches each independently.
+            let g0 = Tensor.empty(shape: [n], dtype: .f32)
+            g0.copyIn(from: (0 ..< n).map { Float($0) * 0.1 })
+            let u0 = Tensor.empty(shape: [n], dtype: .f32)
+            u0.copyIn(from: (0 ..< n).map { Float($0 + 1) })
+            let g1 = Tensor.empty(shape: [n], dtype: .f32)
+            g1.copyIn(from: (0 ..< n).map { Float($0) * -0.2 })
+            let u1 = Tensor.empty(shape: [n], dtype: .f32)
+            u1.copyIn(from: (0 ..< n).map { Float($0) * 0.5 + 1 })
+            let g2 = Tensor.empty(shape: [n], dtype: .f32)
+            g2.copyIn(from: (0 ..< n).map { Float($0) * 0.3 - 0.1 })
+            let u2 = Tensor.empty(shape: [n], dtype: .f32)
+            u2.copyIn(from: (0 ..< n).map { Float(n - $0) })
+            var ref0: Tensor!
+            var ref1: Tensor!
+            var ref2: Tensor!
+            runAndWait { cb in
+                ref0 = Ops.swiglu(gate: g0, up: u0, on: cb)
+                ref1 = Ops.swiglu(gate: g1, up: u1, on: cb)
+                ref2 = Ops.swiglu(gate: g2, up: u2, on: cb)
+            }
+            let out0 = Tensor.empty(shape: [n], dtype: .f32)
+            let out1 = Tensor.empty(shape: [n], dtype: .f32)
+            let out2 = Tensor.empty(shape: [n], dtype: .f32)
+            runAndWait { cb in
+                Ops.swigluMany(
+                    gates: [g0, g1, g2],
+                    ups: [u0, u1, u2],
+                    outs: [out0, out1, out2],
+                    on: cb)
+            }
+            let pairs: [(Tensor, Tensor)] = [(ref0, out0), (ref1, out1), (ref2, out2)]
+            for (idx, pair) in pairs.enumerated() {
+                let r = pair.0.toArray(as: Float.self)
+                let g = pair.1.toArray(as: Float.self)
+                for i in 0 ..< n {
+                    #expect(abs(r[i] - g[i]) < 1e-5, "pair \(idx) [\(i)]")
+                }
+            }
+        }
+    }
+
+    @Test("gatedMixerNormMany f32 — T=2 matches two sequential gatedMixerNorm calls")
+    func gatedMixerNormManyMatchesSequential() {
+        autoreleasepool {
+            let t = 2
+            let hv = 2
+            let dv = 8
+            let total = t * hv * dv
+            let perToken = hv * dv
+            let yData = (0 ..< total).map { Float($0 + 1) * 0.1 }
+            let zData = (0 ..< total).map { Float16(Float($0 % 5) * 0.2 - 0.4) }
+            let weightData = (0 ..< dv).map { Float16(0.5 + Float($0) * 0.05) }
+            let weight = Tensor.empty(shape: [dv], dtype: .f16)
+            weight.copyIn(from: weightData)
+            let epsBuf = Tensor.empty(shape: [1], dtype: .f32)
+            epsBuf.copyIn(from: [Float(1e-6)])
+            // Reference: two single-token gatedMixerNorm dispatches with
+            // pre-sliced inputs. All allocations + slicing happen up
+            // front; runAndWait only carries kernel work.
+            var refSlices: [Tensor] = []
+            for tt in 0 ..< t {
+                let ySlice = Tensor.empty(shape: [hv, dv], dtype: .f32)
+                ySlice.copyIn(from: Array(yData[tt * perToken ..< (tt + 1) * perToken]))
+                let zSlice = Tensor.empty(shape: [hv, dv], dtype: .f16)
+                zSlice.copyIn(from: Array(zData[tt * perToken ..< (tt + 1) * perToken]))
+                let outSlice = Tensor.empty(shape: [hv, dv], dtype: .f16)
+                runAndWait { cb in
+                    Ops.gatedMixerNorm(
+                        y: ySlice, z: zSlice, weight: weight, epsBuf: epsBuf,
+                        into: outSlice,
+                        numValueHeads: hv, valueHeadDim: dv, on: cb)
+                }
+                refSlices.append(outSlice)
+            }
+            // Batched dispatch over the full T·Hv·Dv span.
+            let y = Tensor.empty(shape: [t, hv, dv], dtype: .f32)
+            y.copyIn(from: yData)
+            let z = Tensor.empty(shape: [t, hv, dv], dtype: .f16)
+            z.copyIn(from: zData)
+            let outMany = Tensor.empty(shape: [t, hv, dv], dtype: .f16)
+            runAndWait { cb in
+                Ops.gatedMixerNormMany(
+                    y: y, z: z, weight: weight, epsBuf: epsBuf,
+                    into: outMany,
+                    t: t, numValueHeads: hv, valueHeadDim: dv, on: cb)
+            }
+            let g = outMany.toArray(as: Float16.self)
+            for tt in 0 ..< t {
+                let r = refSlices[tt].toArray(as: Float16.self)
+                for i in 0 ..< perToken {
+                    let rf = Float(r[i])
+                    let gf = Float(g[tt * perToken + i])
+                    #expect(abs(rf - gf) < 5e-3, "t=\(tt) i=\(i): ref \(rf) vs got \(gf)")
+                }
+            }
+        }
+    }
+
     @Test("siluCastF32PlusCastF32Two f16 — same as sequential silu+two casts")
     func siluCastF32PlusCastF32TwoFromF16() {
         autoreleasepool {

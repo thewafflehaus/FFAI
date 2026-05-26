@@ -4413,6 +4413,103 @@ public enum Ops {
         }
     }
 
+    /// Cast TWO same-dtype tensors to f32 on the same compute encoder.
+    /// Saves one encoder begin/end pair versus two `castToF32` calls.
+    /// Used inside the Qwen3 GDN T-loop where the two raw gate inputs
+    /// (`aRaw`, `bRaw`) need to be promoted to fp32 every token.
+    public static func castToF32Two(
+        _ a: Tensor, into outA: Tensor,
+        _ b: Tensor, into outB: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            a.dtype == b.dtype,
+            "Ops.castToF32Two: inputs must share dtype")
+        precondition(
+            outA.dtype == .f32 && outB.dtype == .f32,
+            "Ops.castToF32Two: outputs must be f32")
+        precondition(
+            a.elementCount == outA.elementCount,
+            "Ops.castToF32Two: a / outA element-count mismatch")
+        precondition(
+            b.elementCount == outB.elementCount,
+            "Ops.castToF32Two: b / outB element-count mismatch")
+        let psoName: String
+        switch a.dtype {
+        case .bf16: psoName = "mt_cast_to_f32_bf16"
+        case .f16: psoName = "mt_cast_to_f32_f16"
+        case .f32: psoName = "mt_cast_to_f32_f32"
+        default: fatalError("Ops.castToF32Two: unsupported dtype \(a.dtype)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        @inline(__always)
+        func dispatch(_ input: Tensor, _ out: Tensor) {
+            enc.setBuffer(input.buffer, offset: input.offset, index: 0)
+            enc.setBuffer(out.buffer, offset: out.offset, index: 1)
+            let n = input.elementCount
+            let tgWidth = min(n, 256)
+            enc.dispatchThreads(
+                MTLSize(width: n, height: 1, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: tgWidth, height: 1, depth: 1))
+        }
+        dispatch(a, outA)
+        dispatch(b, outB)
+        enc.endEncoding()
+    }
+
+    /// Cast THREE same-dtype tensors to f32 on the same compute
+    /// encoder. Used in the Qwen3 GDN fused-prep path where
+    /// `convAct`, `aRaw`, and `bRaw` all need f32 promotion before
+    /// the recurrence kernel.
+    public static func castToF32Three(
+        _ a: Tensor, into outA: Tensor,
+        _ b: Tensor, into outB: Tensor,
+        _ c: Tensor, into outC: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            a.dtype == b.dtype && b.dtype == c.dtype,
+            "Ops.castToF32Three: all inputs must share dtype")
+        precondition(
+            outA.dtype == .f32 && outB.dtype == .f32 && outC.dtype == .f32,
+            "Ops.castToF32Three: outputs must all be f32")
+        precondition(
+            a.elementCount == outA.elementCount,
+            "Ops.castToF32Three: a / outA element-count mismatch")
+        precondition(
+            b.elementCount == outB.elementCount,
+            "Ops.castToF32Three: b / outB element-count mismatch")
+        precondition(
+            c.elementCount == outC.elementCount,
+            "Ops.castToF32Three: c / outC element-count mismatch")
+        let psoName: String
+        switch a.dtype {
+        case .bf16: psoName = "mt_cast_to_f32_bf16"
+        case .f16: psoName = "mt_cast_to_f32_f16"
+        case .f32: psoName = "mt_cast_to_f32_f32"
+        default: fatalError("Ops.castToF32Three: unsupported dtype \(a.dtype)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        @inline(__always)
+        func dispatch(_ input: Tensor, _ out: Tensor) {
+            enc.setBuffer(input.buffer, offset: input.offset, index: 0)
+            enc.setBuffer(out.buffer, offset: out.offset, index: 1)
+            let n = input.elementCount
+            let tgWidth = min(n, 256)
+            enc.dispatchThreads(
+                MTLSize(width: n, height: 1, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: tgWidth, height: 1, depth: 1))
+        }
+        dispatch(a, outA)
+        dispatch(b, outB)
+        dispatch(c, outC)
+        enc.endEncoding()
+    }
+
     public static func castToF32(
         _ input: Tensor, into output: Tensor,
         on cmd: MTLCommandBuffer
@@ -4602,6 +4699,86 @@ public enum Ops {
                 n: nU, gridSize: grid, threadgroupSize: tg, on: cmd)
         default:
             fatalError("Ops.gatedMixerNorm: unsupported out dtype \(out.dtype)")
+        }
+    }
+
+    /// T-batched `gatedMixerNorm`. Same kernel, same per-row geometry
+    /// (one threadgroup per row, `Dv / 4` threads per TG); the grid X
+    /// axis widens from `Hv` to `T · Hv` so a single dispatch covers
+    /// every prefill row. Used in the Qwen3.5 GDN mixer's prefill
+    /// path where the T-loop over per-token norms was an explicit
+    /// performance hotspot.
+    ///
+    /// Tensor shapes:
+    ///   - `y` `[T, Hv, Dv]` fp32 (recurrence output stays fp32)
+    ///   - `z` / `out` `[T, Hv, Dv]` in model dtype
+    ///   - `weight` `[Dv]` in model dtype
+    ///   - `epsBuf` `[1]` fp32
+    public static func gatedMixerNormMany(
+        y: Tensor, z: Tensor, weight: Tensor,
+        epsBuf: Tensor,
+        into out: Tensor,
+        t: Int, numValueHeads: Int, valueHeadDim: Int,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(t > 0, "Ops.gatedMixerNormMany: t must be positive")
+        precondition(
+            y.dtype == .f32,
+            "Ops.gatedMixerNormMany: y must be f32 (got \(y.dtype))")
+        precondition(
+            z.dtype == weight.dtype && weight.dtype == out.dtype,
+            "Ops.gatedMixerNormMany: z / weight / out must share dtype")
+        precondition(
+            epsBuf.dtype == .f32,
+            "Ops.gatedMixerNormMany: epsBuf must be f32")
+        precondition(
+            valueHeadDim.isMultiple(of: 4),
+            "Ops.gatedMixerNormMany: valueHeadDim (\(valueHeadDim)) must be a multiple of 4")
+        let expected = t * numValueHeads * valueHeadDim
+        precondition(
+            y.elementCount == expected,
+            "Ops.gatedMixerNormMany: y has \(y.elementCount), expected T·Hv·Dv = \(expected)")
+        precondition(
+            z.elementCount == expected,
+            "Ops.gatedMixerNormMany: z has \(z.elementCount), expected \(expected)")
+        precondition(
+            weight.elementCount == valueHeadDim,
+            "Ops.gatedMixerNormMany: weight has \(weight.elementCount), expected Dv = \(valueHeadDim)")
+        precondition(
+            out.elementCount == expected,
+            "Ops.gatedMixerNormMany: out has \(out.elementCount), expected \(expected)")
+        let tpg = valueHeadDim / 4
+        let nRows = t * numValueHeads
+        let grid = MTLSize(width: nRows * tpg, height: 1, depth: 1)
+        let tg = MTLSize(width: tpg, height: 1, depth: 1)
+        let nU = UInt32(valueHeadDim)
+        switch out.dtype {
+        case .f32:
+            MetalTileKernels.mt_gated_mixer_norm_f32(
+                y: y.buffer, yOffset: y.offset,
+                z: z.buffer, zOffset: z.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                out: out.buffer, outOffset: out.offset,
+                eps_buf: epsBuf.buffer, eps_bufOffset: epsBuf.offset,
+                n: nU, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.mt_gated_mixer_norm_f16(
+                y: y.buffer, yOffset: y.offset,
+                z: z.buffer, zOffset: z.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                out: out.buffer, outOffset: out.offset,
+                eps_buf: epsBuf.buffer, eps_bufOffset: epsBuf.offset,
+                n: nU, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.mt_gated_mixer_norm_bf16(
+                y: y.buffer, yOffset: y.offset,
+                z: z.buffer, zOffset: z.offset,
+                w: weight.buffer, wOffset: weight.offset,
+                out: out.buffer, outOffset: out.offset,
+                eps_buf: epsBuf.buffer, eps_bufOffset: epsBuf.offset,
+                n: nU, gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("Ops.gatedMixerNormMany: unsupported out dtype \(out.dtype)")
         }
     }
 
@@ -4801,6 +4978,51 @@ public enum Ops {
             fatalError("Ops.swiglu: unsupported dtype \(gate.dtype)")
         }
         return result
+    }
+
+    /// N independent SwiGLU dispatches sharing ONE compute encoder.
+    /// Each `(gate, up, out)` triple is dispatched in sequence after
+    /// setting the same `mt_swiglu_*` PSO once. Used by the MoE
+    /// per-expert SwiGLU phase at decode (one dispatch per chosen
+    /// expert × topK experts × MoE layers) where the encoder
+    /// begin/end pairs dominated CPU side.
+    public static func swigluMany(
+        gates: [Tensor], ups: [Tensor], outs: [Tensor],
+        on cmd: MTLCommandBuffer
+    ) {
+        let n = gates.count
+        precondition(
+            ups.count == n && outs.count == n,
+            "Ops.swigluMany: count mismatch")
+        guard n > 0 else { return }
+        let dtype = gates[0].dtype
+        let psoName: String
+        switch dtype {
+        case .f32: psoName = "mt_swiglu_f32"
+        case .f16: psoName = "mt_swiglu_f16"
+        case .bf16: psoName = "mt_swiglu_bf16"
+        default: fatalError("Ops.swigluMany: unsupported dtype \(dtype)")
+        }
+        let pso = PSOCache.shared.pipelineState(for: psoName)
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(pso)
+        for i in 0 ..< n {
+            let count = gates[i].elementCount
+            precondition(
+                ups[i].elementCount == count && outs[i].elementCount == count,
+                "Ops.swigluMany: shape mismatch at index \(i)")
+            precondition(
+                ups[i].dtype == dtype && outs[i].dtype == dtype,
+                "Ops.swigluMany: dtype mismatch at index \(i)")
+            let tgWidth = min(count, 256)
+            enc.setBuffer(gates[i].buffer, offset: gates[i].offset, index: 0)
+            enc.setBuffer(ups[i].buffer, offset: ups[i].offset, index: 1)
+            enc.setBuffer(outs[i].buffer, offset: outs[i].offset, index: 2)
+            enc.dispatchThreads(
+                MTLSize(width: count, height: 1, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: tgWidth, height: 1, depth: 1))
+        }
+        enc.endEncoding()
     }
 
     // ─── MoE gather quantised matmul, scalar m1 ────────────────────────
