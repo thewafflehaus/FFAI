@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// FFAI — Fucking Fast Apple Inference
+// FFAI — F*cking Fast Apple Inference
 //
 // See planning/plan.md and planning/architecture.md.
 

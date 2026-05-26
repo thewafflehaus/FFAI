@@ -1,12 +1,12 @@
 # FFAI
 
-**Fucking Fast Apple Inference.**
+**F*cking Fast Apple Inference.**
 
 A minimal, dependency-light LLM inference library for Apple Silicon, built on
 pre-compiled Metal kernels generated from the [metaltile](https://github.com/thewafflehaus/metaltile)
 DSL. No Python. No MLX. No C compilation. No JIT. No four-repo dependency chain.
 
-**Just really fucking fast AI!** 🚀
+**Just really f*cking fast AI!** 🚀
 
 ## Status
 

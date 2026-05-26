@@ -26,7 +26,7 @@ import Foundation
 struct FFAIRoot: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "ffai",
-        abstract: "Fucking Fast Apple Inference — Apple Silicon LLM CLI.",
+        abstract: "F*cking Fast Apple Inference — Apple Silicon LLM CLI.",
         // `--version` is auto-wired by swift-argument-parser when this is
         // non-empty; it prints the string + exits 0 before any subcommand
         // dispatches. Sourced from `FFAI.version` so there's one source of
