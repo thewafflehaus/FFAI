@@ -284,6 +284,49 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
         }
     }
 
+    /// Batched range append: takes contiguous `[T, nKVHeads, headDim]`
+    /// flat K + V tensors and writes them all in ONE shared encoder
+    /// (2 dispatches: K then V) using a `[T]` u32 positions buffer.
+    /// Caller provides the positions buffer (allocated + filled with
+    /// the freshly-reserved slot indices). Replaces the T-loop of
+    /// `Ops.kvCacheUpdateKV` calls.
+    public func appendRangeOnGPUMany(
+        kFlat: Tensor, vFlat: Tensor,
+        t: Int, positions: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            kFlat.dtype == dtype && vFlat.dtype == dtype,
+            "KVCache.appendRangeOnGPUMany: dtype mismatch")
+        precondition(
+            positions.dtype == .u32 && positions.elementCount == t,
+            "KVCache.appendRangeOnGPUMany: positions must be .u32[T]")
+        Ops.kvCacheUpdateKVMany(
+            kSrc: kFlat, kCache: kBuffer,
+            vSrc: vFlat, vCache: vBuffer,
+            positions: positions, t: t,
+            nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+            on: cmd)
+    }
+
+    /// Reserve T sequential physical slots in the cache, writing the
+    /// chosen indices into `positionsOut` (a u32 buffer length ≥ T).
+    /// Atomic under `lengthLock`. Returns nothing — caller passes the
+    /// positions tensor straight to `appendRangeOnGPUMany`.
+    public func reserveSlotsManyOnHost(t: Int, into positionsOut: Tensor) {
+        precondition(
+            positionsOut.dtype == .u32,
+            "KVCache.reserveSlotsManyOnHost: positionsOut must be .u32")
+        precondition(
+            positionsOut.elementCount >= t,
+            "KVCache.reserveSlotsManyOnHost: positionsOut shorter than T")
+        let ptr = positionsOut.buffer.contents().advanced(by: positionsOut.offset)
+            .bindMemory(to: UInt32.self, capacity: t)
+        lengthLock.withLock {
+            for r in 0 ..< t { ptr[r] = UInt32(_evictionState.reserveNextSlot()) }
+        }
+    }
+
     /// Write one timestep's K/V at an explicit physical slot **without**
     /// touching `length`. Diffusion-block forwards stage their scratch
     /// K/V in the buffer's free region `[length, maxSeq)` across denoise
