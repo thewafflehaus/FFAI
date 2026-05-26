@@ -1,10 +1,10 @@
-// Smoke test for FFAI greedy-decode determinism.  Loads Qwen3 1.7B bf16
-// (the same model the GoldenFixture tests use) and runs the SAME
-// single-token forward pass three times back-to-back.  Logs the top-5
-// logits and the argmax for each run.  If the logits — or even just the
-// argmax — vary across runs, FFAI's greedy decode is nondeterministic at
-// temperature=0, which is a correctness bug independent of any MLX
-// parity gap.
+// Integration tests covering FFAI greedy-decode determinism.  Loads
+// Qwen3 1.7B bf16 (the same model the GoldenFixture tests use) and
+// runs the SAME single-token forward pass three times back-to-back.
+// Logs the top-5 logits and the argmax for each run.  If the logits —
+// or even just the argmax — vary across runs, FFAI's greedy decode is
+// nondeterministic at temperature=0, which is a correctness bug
+// independent of any MLX parity gap.
 //
 // Skipped automatically if the network/checkpoint isn't available.
 
@@ -13,8 +13,8 @@ import Testing
 @testable import FFAI
 import TestHelpers
 
-@Suite("FFAI Determinism Smoke", .serialized)
-struct DeterminismSmokeTests {
+@Suite("Model Determinism Integration", .serialized)
+struct ModelDeterminismIntegrationTests {
 
     @Test("forwardSample(BOS) returns the same token on three back-to-back calls")
     func forwardSampleIsDeterministic() async throws {

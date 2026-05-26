@@ -1,5 +1,5 @@
-// `ffai inspect` smoke test — runs the inspect path end-to-end
-// against a small locally-cached model and asserts the diagnostic
+// Integration tests covering the `ffai inspect` path end-to-end
+// against a small locally-cached model — asserts the diagnostic
 // surface doesn't crash on a working architecture. Doesn't pin the
 // exact output (top-K logits / token-id sequence aren't stable
 // across tokenizer revisions); just confirms the pipeline runs.
@@ -14,8 +14,8 @@ import Testing
 @testable import FFAI
 import TestHelpers
 
-@Suite("FFAI Inspect Smoke", .serialized)
-struct InspectSmokeTests {
+@Suite("Model Inspection Integration", .serialized)
+struct ModelInspectionIntegrationTests {
 
     @Test("inspect path runs end-to-end on Llama 3.2 1B")
     func inspectLlama() async throws {
