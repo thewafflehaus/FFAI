@@ -164,7 +164,7 @@ metaltile/
 FFAI/
   Tests/MetalTileSwiftTests/   # PSO manifest + per-kernel Swift wrapper smoke
   Tests/FFAITests/             # Tensor, Module, Linear, KVCache, Sampling, … (parallel-safe)
-  Tests/ModelTests/            # one folder per model — forward-pass determinism
+  Tests/ModelIntegrationTests/ # one folder per model — forward-pass determinism
                                # vs mlx-lm / mlx-vlm golden fixture (serialized)
 ```
 
@@ -306,7 +306,7 @@ Swift dispatch, with the SPM build plugin auto-invoking the emit step.
     OOM the 7 GB runner; release.yml runs them right before tagging.
   - `.github/workflows/release.yml` — Apple Silicon runner. Runs both
     `swift test … --filter "FFAITests|MetalTileSwiftTests"` and
-    `swift test … --filter "ModelTests" --parallel --num-workers 1`
+    `swift test … --filter "ModelIntegrationTests" --parallel --num-workers 1`
     (matches `make test-integration`) right before cutting a release.
   - `.github/workflows/auto-label.yml` — conventional-commit PR
     labeling (adapted from mlx-swift-lm)
@@ -477,10 +477,10 @@ text. No quantization yet.
   - `Tests/FFAITests/CapabilityTests.swift` — load with subset of
     capabilities, verify others not loaded; `enable` / `disable`
     round-trip (uses a synthetic model since Llama is text-only)
-  - `Tests/ModelTests/Llama/LlamaForwardTests.swift` —
+  - `Tests/ModelIntegrationTests/Llama/LlamaForwardTests.swift` —
     randomly-initialized layer numerical match vs golden fixture
     (captured from mlx-lm)
-  - `Tests/ModelTests/Llama/LlamaGenerateTests.swift` — token-by-token
+  - `Tests/ModelIntegrationTests/Llama/LlamaGenerateTests.swift` — token-by-token
     determinism on a real Llama 3.2 1B checkpoint with a fixed prompt
     and seed (small reference fixture committed to repo, or downloaded
     via test setup script)
@@ -540,9 +540,9 @@ edit, not a debugging session.
   vocab size, etc.) — handled by the family's Variant detection
 - Updated `ModelRegistry` entries for Qwen3 model_type strings
 - **Tests:**
-  - `Tests/ModelTests/Qwen3/Qwen3ForwardTests.swift` — q_norm/k_norm
+  - `Tests/ModelIntegrationTests/Qwen3/Qwen3ForwardTests.swift` — q_norm/k_norm
     application correctness
-  - `Tests/ModelTests/Qwen3/Qwen3GenerateTests.swift` — token-by-token
+  - `Tests/ModelIntegrationTests/Qwen3/Qwen3GenerateTests.swift` — token-by-token
     determinism
   - 100% line coverage maintained
 
@@ -860,7 +860,7 @@ and `Models/Mamba2.swift` ships the end-to-end dense path.
   false)` so swift-transformers falls back to plain BPE for
   tokenizers it doesn't have a class for (Mamba 2 ships
   `GPTNeoXTokenizer`).
-- Integration test: `Tests/ModelTests/Mamba2IntegrationTests.swift`
+- Integration test: `Tests/ModelIntegrationTests/Mamba2IntegrationTests.swift`
   loads `mlx-community/mamba2-130m`, verifies shapes match config,
   runs greedy decode to completion (~130 tok/s on M-series).
 
@@ -920,7 +920,7 @@ test:
 **Tests:**
 
 - `Tests/MetalTileSwiftTests/SlidingWindowMaskTests.swift`.
-- `Tests/ModelTests/GPTOSSIntegrationTests.swift` — coherent
+- `Tests/ModelIntegrationTests/GPTOSSIntegrationTests.swift` — coherent
   `--kv-cache aura4v2` decode at 1k + 8k prompts.
 
 ---
@@ -960,7 +960,7 @@ Each model gets:
 
 - Family file in `Sources/FFAI/Models/`.
 - Registry entry in `ModelRegistry`.
-- `Tests/ModelTests/<Family>IntegrationTests.swift` downloading from
+- `Tests/ModelIntegrationTests/<Family>IntegrationTests.swift` downloading from
   mlx-community + asserting coherent output.
 - Doc row updates in `documentation/models.md`,
   `documentation/capabilities.md`, `documentation/quantization.md`.
@@ -1065,7 +1065,7 @@ Make `Profile` injectable instead of a `.shared` singleton — each
 `Model.generate(...)` takes `profile: Profile = .shared`.
 Prerequisite for per-sequence telemetry under the batched /
 continuous decode Phase 8 introduces (see the concurrency audit
-`papers/concurrency-and-cache-readiness-audit-2026-05-19.md` §2.D).
+`planning/concurrency-and-cache-readiness-audit-2026-05-19.md` §2.D).
 
 ---
 
@@ -1088,7 +1088,7 @@ Phase 6.5 deliverables ✅ on disk:
   hang").
 - `Sources/FFAI/ImagePreprocessing.swift` (resize / normalize /
   patchify + CHW conversion).
-- `Tests/ModelTests/VLMTestSupport.swift` with
+- `Tests/ModelIntegrationTests/VLMTestSupport.swift` with
   `dogImageCHW(targetSize:)` /
   `dogImageCHWNormalized(targetSize:normalization:)` /
   `expectMentionsDog(...)`.
@@ -1340,9 +1340,9 @@ Whisper STT + Qwen-Omni audio + at least one TTS family
 
 **Tests:**
 
-- `Tests/ModelTests/WhisperIntegrationTests.swift` — coherent
+- `Tests/ModelIntegrationTests/WhisperIntegrationTests.swift` — coherent
   transcription on a known sample.
-- `Tests/ModelTests/KokoroIntegrationTests.swift` (or Bark) —
+- `Tests/ModelIntegrationTests/KokoroIntegrationTests.swift` (or Bark) —
   coherent generated speech (frame-by-frame deterministic with a
   fixed seed).
 

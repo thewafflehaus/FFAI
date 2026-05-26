@@ -331,12 +331,12 @@ layer's hot path. That's deliberate: layer-boundary taps localise
 *which* layer is failing in two `ffai inspect --layer-trace` runs.
 For inside-layer triage (which op in layer N produced the NaN),
 drop temporary fine-grained `tap.dumpLayerBoundary(...)` calls
-between ops as you debug, then remove them before merging. See
-`papers/gemma3-coherence-investigation-2026-05-19.md` for the
-canonical example — a single GELU NaN inside layer 1's MLP that
-the standardized boundary tap localised in seconds once `ffai
+between ops as you debug, then remove them before merging. The
+canonical worked example (a single GELU NaN inside layer 1's MLP
+that the standardized boundary tap localised in seconds once `ffai
 inspect --layer-trace --trace-layers 0,1,2,3,4` was the first
-thing the dev ran.
+thing the dev ran) is documented in the Gemma 3 coherence
+investigation that lived in `papers/` during that fix.
 
 **Required:** every new family file MUST follow this pattern. The
 `InspectSmokeTests` integration test (Tests/ModelIntegrationTests/) asserts

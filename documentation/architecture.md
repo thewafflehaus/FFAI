@@ -212,10 +212,12 @@ Sources/
     main.swift
 
 Tests/
-  MetalTileSwiftTests/     One file per kernel
-  FFAITests/               Tensor, Module, KVCache, Sampling, …
-  ModelIntegrationTests/              Per-family integration tests — load,
-                           greedy-decode, assert coherent output
+  MetalTileSwiftTests/         One file per kernel
+  FFAITests/                   Tensor, Module, KVCache, Sampling, …
+                               (mirrors Sources/FFAI/ — every source file
+                               has a sibling Tests/FFAITests/<X>Tests.swift)
+  ModelIntegrationTests/       Per-family integration tests — load,
+                               greedy-decode, assert coherent output
 ```
 
 ## Where to read more

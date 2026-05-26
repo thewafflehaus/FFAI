@@ -42,6 +42,16 @@ Always run the Release workflow **from `main`** (the branch picker in
 the workflow_dispatch UI). The workflow guards against running off
 any other branch.
 
+### License-header sweep
+
+Before computing the version and creating the tag, the release
+workflow runs [`scripts/update-license.sh`](../../scripts/update-license.sh)
+to prepend the Apache 2.0 header to any source file missing it; the
+workflow commits the result so the tagged commit provably carries the
+header on every code + test file. The script is idempotent — a no-op
+when the pre-commit hook (`make install-hooks`) already kept headers
+in sync locally.
+
 ## What the script does to `FFAI.version`
 
 There's exactly one in-code version string,
