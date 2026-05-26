@@ -1,3 +1,17 @@
+// Copyright 2026 Eric Kryski (@ekryski)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
 // GenerationStats — every numeric field one `generate(...)` call
 // produces. The CLI's --stats prints this; the bench harness writes
 // the same fields into the markdown / JSON sidecar so analysis tooling
@@ -92,11 +106,11 @@ public struct GenerationStats: Sendable {
     // Kept here so the formatted() printer + bench writer schema only
     // grow additively when those land.
     //
-    // Batch decoding (Phase 8+):
+    // Batch decoding:
     //   public let batchSize: Int
     //   public let perSequenceDecodeTokensPerSecond: Double?
     //
-    // Speculative decoding (Phase 8+):
+    // Speculative decoding:
     //   public let acceptanceRate: Double?
     //   public let draftTokensPerSecond: Double?
     //   public let draftAcceptedTokens: Int?
@@ -109,18 +123,22 @@ public struct GenerationStats: Sendable {
         out += "  generated:        \(generatedTokens) tokens\n"
         out += "  context:          \(contextSize) tokens\n"
         out += String(format: "  ttft:             %.2f ms\n", timeToFirstTokenMs)
-        out += String(format: "  prefill:          %.2fs (%.2f tok/s)\n",
-                      prefillTimeS, prefillTokensPerSecond)
-        out += String(format: "  decode:           %.2fs (%.2f tok/s)\n",
-                      decodeTimeS, decodeTokensPerSecond)
+        out += String(
+            format: "  prefill:          %.2fs (%.2f tok/s)\n",
+            prefillTimeS, prefillTokensPerSecond)
+        out += String(
+            format: "  decode:           %.2fs (%.2f tok/s)\n",
+            decodeTimeS, decodeTokensPerSecond)
         if let s = steadyTokensPerSecond {
             out += String(format: "  decode (steady):  %.2f tok/s   (tokens 11+)\n", s)
         }
         out += String(format: "  baseline GPU:     %@\n", Self.fmt(baselineGPUBytes))
-        out += String(format: "  post-prefill GPU: %@   (+ %@)\n",
-                      Self.fmt(postPrefillGPUBytes), Self.fmt(prefillGrowthBytes))
-        out += String(format: "  post-decode  GPU: %@   (+ %@)\n",
-                      Self.fmt(postDecodeGPUBytes), Self.fmt(decodeGrowthBytes))
+        out += String(
+            format: "  post-prefill GPU: %@   (+ %@)\n",
+            Self.fmt(postPrefillGPUBytes), Self.fmt(prefillGrowthBytes))
+        out += String(
+            format: "  post-decode  GPU: %@   (+ %@)\n",
+            Self.fmt(postDecodeGPUBytes), Self.fmt(decodeGrowthBytes))
         out += String(format: "  prefill peak:     %@\n", Self.fmt(prefillPeakGPUBytes))
         out += String(format: "  decode  peak:     %@\n", Self.fmt(decodePeakGPUBytes))
         out += String(format: "  weights:          %@\n", Self.fmt(weightsBytes))

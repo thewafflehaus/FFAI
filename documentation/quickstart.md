@@ -5,20 +5,12 @@ Generate text in 5 lines:
 ```swift
 import FFAI
 
-let model = try await Model.load("unsloth/Llama-3.2-1B")
+let model = try await Model.load("mlx-community/Qwen3.5-0.8B-MLX-4bit")
 let result = try await model.generate(prompt: "Once upon a time")
 print(result.text)
 ```
 
-The first call resolves and downloads the checkpoint on demand
-(cached under `~/.cache/huggingface/hub/`), parses `config.json`,
-loads weights into per-tensor MTLBuffers, attaches the tokenizer,
-and prewarms the PSO cache. `generate(...)` defaults to the model's
-family-declared
-[`defaultGenerationParameters`](generation-parameters.md) — Llama and
-Qwen 3 each carry their own. The returned `GenerationResult`
-carries the prompt + generated tokens, the decoded text, and
-prefill / decode timings.
+The first call resolves and downloads the checkpoint on demand (cached under `~/.cache/huggingface/hub/`), parses `config.json`, loads weights into per-tensor MTLBuffers, attaches the tokenizer, and prewarms the PSO cache. `generate(...)` defaults to the model's family-declared [`defaultGenerationParameters`](generation-parameters.md) — Llama and Qwen 3 each carry their own. The returned `GenerationResult` carries the prompt + generated tokens, the decoded text, and prefill / decode timings.
 
 ```swift
 print("\(result.promptTokens.count) prompt + \(result.generatedTokens.count) generated tokens")
@@ -27,8 +19,7 @@ print(String(format: "%.2f tok/s", result.tokensPerSecond))
 
 ## A quantized model
 
-The same call works for any [mlx-format](quantization.md)
-checkpoint — 3 / 4 / 5 / 6 / 8-bit:
+The same call works for any [mlx-format](quantization.md) checkpoint — 3 / 4 / 5 / 6 / 8-bit:
 
 ```swift
 let model = try await Model.load("mlx-community/Qwen3-4B-4bit")
@@ -38,29 +29,18 @@ print(result.text)
 
 ## CLI
 
-The same surface ships as the `ffai` executable. See
-[using-the-cli.md](using-the-cli.md) for how to build the binary and
-get it on `PATH`; once that's done:
+The same surface ships as the `ffai` executable. See [using-the-cli.md](using-the-cli.md) for how to build the binary and get it on `PATH`; once that's done:
 
 ```bash
-ffai --model unsloth/Llama-3.2-1B --prompt "Once upon a time"
+ffai --model mlx-community/Qwen3.5-0.8B-MLX-4bit --prompt "Once upon a time"
 ffai --model mlx-community/Qwen3-4B-4bit --prompt "Hello" --max-tokens 128
 ```
 
-Tokens are streamed to stdout as they're generated. Pass
-`--no-streaming` to print the full text once at the end (matches the
-buffered API exactly). Pass `--stats` for the post-run `[STATS]`
-block (per-phase memory, TTFT, KV cache, wired ticket — see
-[observability.md](observability.md)). Pass `--verbose` to print
-the top-5 next-token distribution from a single prefill instead of
-generating.
+Tokens are streamed to stdout as they're generated. Pass `--no-streaming` to print the full text once at the end (matches the buffered API exactly). Pass `--stats` for the post-run `[STATS]` block (per-phase memory, TTFT, KV cache, wired ticket — see [observability.md](observability.md)). Pass `--verbose` to print the top-5 next-token distribution from a single prefill instead of generating.
 
 ## Customizing the generation
 
-The second argument to `generate` is a
-[`GenerationParameters`](generation-parameters.md). Omit it (or pass
-`nil`) to use the family default — overriding a single field with
-the `with(_:)` copy-mutator preserves the family-tuned baseline:
+The second argument to `generate` is a [`GenerationParameters`](generation-parameters.md). Omit it (or pass `nil`) to use the family default — overriding a single field with the `with(_:)` copy-mutator preserves the family-tuned baseline:
 
 ```swift
 let result = try await model.generate(
@@ -69,15 +49,11 @@ let result = try await model.generate(
 )
 ```
 
-For the full field table (sampling temp, top-p / top-k, repetition
-penalty, prefill chunk size, …) and which fields are honored today
-vs staged for Phase 5, see
-[`generation-parameters.md`](generation-parameters.md).
+For the full field table (sampling temp, top-p / top-k, repetition penalty, prefill chunk size, …) and which fields are honored today vs staged for Phase 5, see [`generation-parameters.md`](generation-parameters.md).
 
 ## Streaming
 
-Streaming is the primitive — buffered `generate(...)` collects from
-the same stream:
+Streaming is the primitive — buffered `generate(...)` collects from the same stream:
 
 ```swift
 for try await chunk in model.generateStream(prompt: "Why is the sky blue?") {
@@ -85,15 +61,11 @@ for try await chunk in model.generateStream(prompt: "Why is the sky blue?") {
 }
 ```
 
-The final chunk carries the full `GenerationStats` (peak GPU,
-KV cache size, TTFT, …) on its `stats` property. Cancel the
-consuming task to stop generation early — the producer notices at
-the next token boundary. See [streaming.md](streaming.md).
+The final chunk carries the full `GenerationStats` (peak GPU, KV cache size, TTFT, …) on its `stats` property. Cancel the consuming task to stop generation early — the producer notices at the next token boundary. See [streaming.md](streaming.md).
 
 ## Chat / multi-turn
 
-For instruct / chat models, pass `[ChatMessage]` and FFAI applies
-the tokenizer's chat template:
+For instruct / chat models, pass `[ChatMessage]` and FFAI applies the tokenizer's chat template:
 
 ```swift
 let messages: [ChatMessage] = [
@@ -104,8 +76,7 @@ let result = try await model.generate(messages: messages)
 print(result.text)
 ```
 
-For reasoning-tuned models (Qwen 3, DeepSeek-R1, GPT-OSS), opt into
-the model's thinking / reasoning hooks:
+For reasoning-tuned models (Qwen 3, DeepSeek-R1, GPT-OSS), opt into the model's thinking / reasoning hooks:
 
 ```swift
 let result = try await model.generate(
@@ -114,8 +85,7 @@ let result = try await model.generate(
 )
 ```
 
-See [chat-templates.md](chat-templates.md) for the full options
-surface and per-family quirks.
+See [chat-templates.md](chat-templates.md) for the full options surface and per-family quirks.
 
 ## Customizing the load
 
@@ -123,7 +93,7 @@ surface and per-family quirks.
 
 ```swift
 let model = try await Model.load(
-    "unsloth/Llama-3.2-1B",
+    "mlx-community/Qwen3.5-0.8B-MLX-4bit",
     options: LoadOptions(
         capabilities: [.textIn, .textOut],
         kvCache: .raw,
@@ -145,52 +115,40 @@ let model = try await Model.load(
 
 ## Custom model cache path
 
-By default FFAI shares a snapshot cache with Python's
-`huggingface_hub`. The standard discovery order is:
+By default FFAI shares a snapshot cache with Python's `huggingface_hub`. The standard discovery order is:
 
-1. **`HF_HOME` env var** — if set, the cache lives under
-   `$HF_HOME/hub/` (or `$HF_HOME` if it's already a `hub` dir).
+1. **`HF_HOME` env var** — if set, the cache lives under `$HF_HOME/hub/` (or `$HF_HOME` if it's already a `hub` dir).
 2. **`~/.cache/huggingface/hub/`** — the default fallback.
 
 Three ways to point FFAI somewhere else, easiest first:
 
 ### 1. `HF_HOME` env var (CLI + library)
 
-Cleanest for ad-hoc relocation — works for both the `ffai` CLI and
-any Swift code calling `Model.load(...)`. Same env var Python's
-`huggingface_hub` honors, so the cache stays shared with `mlx-lm`,
-`huggingface-cli`, etc.
+Cleanest for ad-hoc relocation — works for both the `ffai` CLI and any Swift code calling `Model.load(...)`. Same env var Python's `huggingface_hub` honors, so the cache stays shared with `mlx-lm`, `huggingface-cli`, etc.
 
 ```bash
 export HF_HOME=/Volumes/Big/hf-cache
-ffai --model unsloth/Llama-3.2-1B --prompt "Once upon a time"
+ffai --model mlx-community/Qwen3.5-0.8B-MLX-4bit --prompt "Once upon a time"
 ```
 
 ### 2. `LoadOptions.cacheDirectory` (programmatic)
 
-Override per `Model.load(...)` call without touching the
-process env:
+Override per `Model.load(...)` call without touching the process env:
 
 ```swift
 let model = try await Model.load(
-    "unsloth/Llama-3.2-1B",
+    "mlx-community/Qwen3.5-0.8B-MLX-4bit",
     options: LoadOptions(
         cacheDirectory: URL(fileURLWithPath: "/Volumes/Big/hf-cache")
     )
 )
 ```
 
-`nil` (the default) keeps the standard `HF_HOME` → `~/.cache/...`
-discovery order. Useful when one process needs to read from
-multiple cache roots, or when you want to keep the user's normal
-cache untouched while a background pipeline downloads to its own
-location.
+`nil` (the default) keeps the standard `HF_HOME` → `~/.cache/...` discovery order. Useful when one process needs to read from multiple cache roots, or when you want to keep the user's normal cache untouched while a background pipeline downloads to its own location.
 
 ### 3. Fully local snapshot path
 
-Skip HF entirely — `Model.load(...)` accepts a local directory
-containing the snapshot files (`config.json`, `tokenizer.json`,
-`*.safetensors`, etc.):
+Skip HF entirely — `Model.load(...)` accepts a local directory containing the snapshot files (`config.json`, `tokenizer.json`, `*.safetensors`, etc.):
 
 ```swift
 let model = try await Model.load("/Volumes/Big/models/llama-3.2-1B-snapshot")
@@ -200,27 +158,21 @@ let model = try await Model.load("/Volumes/Big/models/llama-3.2-1B-snapshot")
 ffai --model /Volumes/Big/models/llama-3.2-1B-snapshot --prompt "Once upon a time"
 ```
 
-`ModelLocator.isLocalPath(_:)` decides this — anything that starts
-with `/`, `./`, `../`, or `~` (or just exists on disk) routes to
-the local-path branch and never hits the network. The directory
-needs at minimum:
+`ModelLocator.isLocalPath(_:)` decides this — anything that starts with `/`, `./`, `../`, or `~` (or just exists on disk) routes to the local-path branch and never hits the network. The directory needs at minimum:
 
 - `config.json`
 - `tokenizer.json` (or the multi-file tokenizer the model uses)
 - `*.safetensors` (one or more shard files)
 - `tokenizer_config.json` if you'll be using chat templates
 
-This is also how you'd point at a snapshot you've already
-downloaded with `huggingface-cli download` or `mlx-lm`.
+This is also how you'd point at a snapshot you've already downloaded with `huggingface-cli download` or `mlx-lm`.
 
 ## Lifecycle events
 
-`Model.events` is an `AsyncStream<ModelLifecycleEvent>` that emits
-`idle → downloading → loading → loaded → ready`, plus
-`failed(Error)` from any state. Useful for UI progress bars:
+`Model.events` is an `AsyncStream<ModelLifecycleEvent>` that emits `idle → downloading → loading → loaded → ready`, plus `failed(Error)` from any state. Useful for UI progress bars:
 
 ```swift
-let model = try await Model.load("unsloth/Llama-3.2-1B")
+let model = try await Model.load("mlx-community/Qwen3.5-0.8B-MLX-4bit")
 Task {
     for await event in model.events {
         print("model state: \(event.state)")
@@ -230,9 +182,7 @@ Task {
 
 ## Lower-level API
 
-`Model.generate(...)` is a thin wrapper. To drive the loop yourself
-(e.g. custom sampling, streaming hooks, multi-turn cache reuse) drop
-to the `LanguageModel` protocol:
+`Model.generate(...)` is a thin wrapper. To drive the loop yourself (e.g. custom sampling, streaming hooks, multi-turn cache reuse) drop to the `LanguageModel` protocol:
 
 ```swift
 let caches = model.engine.makeLayerCaches()
@@ -255,9 +205,7 @@ for _ in 0..<64 {
 }
 ```
 
-`forward(tokenId:position:caches:)` returns the logits `Tensor` if you
-need them on CPU; `forwardSample` keeps them on the GPU and only
-returns the sampled token id (4 bytes across CPU↔GPU per token).
+`forward(tokenId:position:caches:)` returns the logits `Tensor` if you need them on CPU; `forwardSample` keeps them on the GPU and only returns the sampled token id (4 bytes across CPU↔GPU per token).
 
 ## Next steps
 

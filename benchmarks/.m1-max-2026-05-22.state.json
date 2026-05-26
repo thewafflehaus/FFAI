@@ -1,0 +1,25 @@
+{
+  "chip" : "m1-max",
+  "createdAt" : "2026-05-22T07:24:01Z",
+  "osVersion" : "26.5.0",
+  "rows" : [
+    {
+      "baselineGPUBytes" : 3684663296,
+      "contextSize" : 262144,
+      "decodeTokensPerSecond" : 14.757561199711517,
+      "generatedTokens" : 64,
+      "kvCacheUsedBytes" : 39297024,
+      "method" : "simple",
+      "model" : "mlx-community\/Qwen3.5-0.8B-MLX-4bit",
+      "outputPreview" : " the first press was founded in 1476, and the first press was founded in 1476, and the first press was founded in 1476. The first press was founded in 1476, and",
+      "peakGPUBytes" : 3756605440,
+      "prefillTokensPerSecond" : 9.919417081374593,
+      "promptTokens" : 8,
+      "steadyTokensPerSecond" : 14.252556201315508,
+      "timeToFirstTokenMs" : 806.4990043640137,
+      "weightsBytes" : 566084096,
+      "wiredTicketBytes" : 55662788608
+    }
+  ],
+  "systemRAMBytes" : 68719476736
+}

@@ -1,0 +1,983 @@
+// Copyright 2026 Eric Kryski (@ekryski)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// Paligemma vision internals — SigLIP encoder + projector + PaligemmaModel.
+//
+// The family orchestrator (`enum Paligemma`, `enum PaligemmaError`,
+// `protocol PaligemmaVariant`, `struct PaligemmaStandard`) lives in
+// `Models/Paligemma.swift`. This file contains the implementation types:
+//   • readF32 / float16ToFloat / paligemmaBfloat16ToFloat — load-time
+//     dtype converters (run once during weight prep).
+//   • dequantRow — per-row int4/int8 dequantization for quantized
+//     embeddings (load-time).
+//   • CpuEmbedding — position-embedding lookup table held host-side
+//     (table is tiny; the per-token gather happens at prompt-prep time).
+//   • CpuLinear — Linear wrapper that dispatches Ops.gemm /
+//     Ops.dequantGemv on the GPU. (The "Cpu" prefix is historical —
+//     the projection itself is GPU-resident.)
+//   • layerNorm / geluFast — small host-side helpers for tile-local
+//     ops where Metal launch overhead would dominate.
+//   • cpuSDPA — GPU SDPA dispatch via Ops.sdpaBidirectional(headDim: 72)
+//     for the SigLIP attention core. (Name is historical; the compute
+//     is GPU-resident — see Vision/VisionEncoder.swift's dispatch.)
+//   • SigLIPLayer — one SigLIP transformer block (GPU projections +
+//     GPU SDPA + per-row LayerNorm).
+//   • PaligemmaModel — the assembled VLM: SigLIP ViT + Gemma 2 decoder.
+//   • Numeric helpers: floatToFloat16 / floatToBFloat16 / fillScale.
+
+import Foundation
+import Metal
+
+// ─── CPU helpers for vision encoder ──────────────────────────────────────────
+
+/// CPU float32 representation of a tensor row. Read out from an MTLBuffer
+/// or a quantized (weight, scales, biases) triplet via dequantization.
+private func readF32(_ t: Tensor) -> [Float] {
+    switch t.dtype {
+    case .f32:
+        return t.toArray(as: Float.self)
+    case .f16:
+        let raw = t.toArray(as: UInt16.self)
+        return raw.map { float16ToFloat($0) }
+    case .bf16:
+        let raw = t.toArray(as: UInt16.self)
+        return raw.map { paligemmaBfloat16ToFloat($0) }
+    default:
+        fatalError("readF32: unsupported dtype \(t.dtype)")
+    }
+}
+
+/// Half-precision to Float (IEEE 754 binary16).
+private func float16ToFloat(_ h: UInt16) -> Float {
+    // Fast path using bit-manipulation. Adapted from standard conversion.
+    let sign = UInt32(h & 0x8000) << 16
+    let exp = UInt32((h >> 10) & 0x1f)
+    let mantisa = UInt32(h & 0x3ff)
+    if exp == 0x1f {
+        // Inf or NaN
+        let bits = sign | 0x7f80_0000 | (mantisa << 13)
+        return Float(bitPattern: bits)
+    } else if exp == 0 {
+        if mantisa == 0 { return Float(bitPattern: sign) }
+        // Denormal
+        var m = mantisa
+        var e: UInt32 = 127 - 14
+        while m & 0x400 == 0 {
+            m <<= 1
+            e -= 1
+        }
+        m &= 0x3ff
+        let bits = sign | ((e) << 23) | (m << 13)
+        return Float(bitPattern: bits)
+    } else {
+        let bits = sign | ((exp + 127 - 15) << 23) | (mantisa << 13)
+        return Float(bitPattern: bits)
+    }
+}
+
+/// BF16 to Float (just zero the lower 16 bits of the float32 repr).
+private func paligemmaBfloat16ToFloat(_ b: UInt16) -> Float {
+    Float(bitPattern: UInt32(b) << 16)
+}
+
+/// Dequantize one row from an mlx-format int4/int8 quantized tensor.
+/// weight[row] has `hidden/packFactor` packed uint32 elements.
+/// scales[row] has `hidden/groupSize` scale values.
+/// biases[row] has `hidden/groupSize` bias values.
+private func dequantRow(
+    weight: [UInt32], scales: [Float], biases: [Float],
+    row: Int, hidden: Int, bits: Int, groupSize: Int
+) -> [Float] {
+    let packFactor = 32 / bits
+    let numGroups = hidden / groupSize
+    let wordsPerRow = hidden / packFactor
+    let maskBits = UInt32((1 << bits) - 1)
+
+    var result = [Float](repeating: 0, count: hidden)
+    let wordIdx = row * wordsPerRow
+    let scaleIdx = row * numGroups
+
+    for g in 0 ..< numGroups {
+        let scale = scales[scaleIdx + g]
+        let bias = biases[scaleIdx + g]
+        let startCol = g * groupSize
+        for col in startCol ..< (startCol + groupSize) {
+            let wi = wordIdx + (col / packFactor)
+            let shift = (col % packFactor) * bits
+            let q = Int((weight[wi] >> UInt32(shift)) & maskBits)
+            result[col] = Float(q) * scale + bias
+        }
+    }
+    return result
+}
+
+// ─── CPU embedding lookup ─────────────────────────────────────────────────────
+
+/// A CPU-side embedding table, either plain float or quantized.
+/// Read-only after init — @unchecked Sendable is safe.
+final class CpuEmbedding: @unchecked Sendable {
+    private let plain: [Float]?  // [vocab * hidden] flat
+    private let quantW: [UInt32]?  // packed
+    private let quantScales: [Float]?
+    private let quantBiases: [Float]?
+    let hidden: Int
+    let bits: Int
+    let groupSize: Int
+
+    init(weight: Tensor) {
+        self.hidden = weight.shape[1]
+        self.bits = 0
+        self.groupSize = 0
+        self.plain = readF32(weight)
+        self.quantW = nil
+        self.quantScales = nil
+        self.quantBiases = nil
+    }
+
+    init(
+        quantized: Tensor, scales: Tensor, biases: Tensor,
+        hidden: Int, bits: Int, groupSize: Int
+    ) {
+        self.hidden = hidden
+        self.bits = bits
+        self.groupSize = groupSize
+        self.plain = nil
+        self.quantW = quantized.toArray(as: UInt32.self)
+        self.quantScales = readF32(scales)
+        self.quantBiases = readF32(biases)
+    }
+
+    /// Look up one token row. Returns [hidden] Float.
+    func row(_ idx: Int) -> [Float] {
+        if let p = plain {
+            let s = idx * hidden
+            return Array(p[s ..< s + hidden])
+        }
+        return dequantRow(
+            weight: quantW!, scales: quantScales!, biases: quantBiases!,
+            row: idx, hidden: hidden, bits: bits, groupSize: groupSize
+        )
+    }
+}
+
+// ─── GPU-resident linear (with optional bias) ────────────────────────────────
+
+/// Linear layer for the SigLIP encoder / projector, dispatched on the GPU
+/// via `Ops.gemm` / `Ops.dequantGemv` instead of the per-row
+/// `concurrentPerform` CPU loop the file previously shipped.
+///
+/// Storage keeps the source tensors so the GPU kernels can read them
+/// directly:
+///   • plain:   weight `[outDim, inDim]` f32 + optional bias `[outDim]` f32.
+///   • quant:   packed uint32 weight + f32 scales + f32 biases triplet,
+///              dispatched through `Ops.dequantGemv` (per-row, batched on
+///              the same command buffer — `dequantGemmDynamicM` is unusable
+///              for SigLIP-So400m's 4304-wide fc1/fc2 since it requires
+///              `nOut % 32 == 0`).
+///
+/// `forwardBatch` is the hot-path entry: takes the layer's `[nTokens, inDim]`
+/// patch activations as `[[Float]]` rows, returns `[[Float]]` rows of size
+/// `outDim`. One Tensor upload, one (or N) kernel dispatches, one download.
+/// This collapses the 27 layers × 4096 patches × {q,k,v,o,fc1,fc2} per-row
+/// CPU `concurrentPerform` matmuls that used to pin the CPU during
+/// Paligemma vision prefill.
+//
+// Holds Metal tensors with reference semantics; @unchecked Sendable is safe
+// because all fields are immutable after init and the kernels read them
+// without mutation.
+final class CpuLinear: @unchecked Sendable {
+    private enum Storage {
+        case plain(weight: Tensor)  // [outDim, inDim] f32 GPU tensor
+        case quant(
+            weight: Tensor, scales: Tensor, biases: Tensor,
+            bits: Int, groupSize: Int)
+    }
+    private let storage: Storage
+    let outDim: Int
+    let inDim: Int
+    /// Bias as a `[outDim]` f32 GPU tensor (nil → no bias).
+    private let biasTensor: Tensor?
+
+    /// Full-precision weight [outDim, inDim]. Re-uploaded to f32 if the
+    /// source tensor isn't already f32 — the SigLIP encoder is f32-resident
+    /// (matching the original CPU path) so projector / per-layer mat-muls
+    /// share one dtype contract.
+    init(weight: Tensor, bias: Tensor? = nil) {
+        precondition(
+            weight.shape.count == 2,
+            "CpuLinear: weight must be 2D (got \(weight.shape))")
+        self.outDim = weight.shape[0]
+        self.inDim = weight.shape[1]
+        self.storage = .plain(
+            weight: Self.uploadF32(
+                weight,
+                shape: [weight.shape[0], weight.shape[1]]))
+        self.biasTensor = bias.map { Self.uploadF32($0, shape: $0.shape) }
+    }
+
+    /// Quantized weight triplet. Stored as GPU tensors so `Ops.dequantGemv`
+    /// can read them directly. Scales / biases must be uploaded as the
+    /// activation dtype (f32 here — the SigLIP encoder is f32 throughout).
+    init(
+        quantized: Tensor, scales: Tensor, biases: Tensor,
+        outDim: Int, inDim: Int, bits: Int, groupSize: Int,
+        bias: Tensor? = nil
+    ) {
+        precondition(
+            quantized.dtype == .u32,
+            "CpuLinear: quantized weight must be u32 packed")
+        self.outDim = outDim
+        self.inDim = inDim
+        // Scales / biases must match the input dtype the kernel sees
+        // (f32 for the SigLIP CPU-resident encoder).
+        let scalesF32 = Self.uploadF32(scales, shape: scales.shape)
+        let biasesF32 = Self.uploadF32(biases, shape: biases.shape)
+        self.storage = .quant(
+            weight: quantized, scales: scalesF32, biases: biasesF32,
+            bits: bits, groupSize: groupSize)
+        self.biasTensor = bias.map { Self.uploadF32($0, shape: $0.shape) }
+    }
+
+    /// Upload (or convert) `src` to a fresh f32 GPU tensor of the requested
+    /// `shape`. SigLIP-side mat-muls all run in f32 so each weight / bias
+    /// is rehosted once at load time and never touched by the CPU again.
+    private static func uploadF32(_ src: Tensor, shape: [Int]) -> Tensor {
+        if src.dtype == .f32 { return src }
+        let values = readF32(src)
+        let t = Tensor.empty(shape: shape, dtype: .f32)
+        t.copyIn(from: values)
+        return t
+    }
+
+    /// Batched forward over `nRows` `[inDim]` rows. Dispatches ONE GPU GEMM
+    /// (plain) or ONE GEMM-equivalent loop of per-row dequant-gemvs (quant)
+    /// on a private command buffer and returns the `[nRows, outDim]`
+    /// result as `[[Float]]` rows. Bias broadcast is fused into the GEMM
+    /// output via `Ops.add` on a tiled-bias tensor.
+    func forwardBatch(_ rows: [[Float]], device: Device = .shared) -> [[Float]] {
+        let nRows = rows.count
+        precondition(nRows > 0, "CpuLinear.forwardBatch: nRows must be positive")
+        // Flatten input rows into a single f32 GPU tensor [nRows, inDim].
+        var flatIn = [Float](repeating: 0, count: nRows * inDim)
+        for r in 0 ..< nRows {
+            // Defensive copy in case the caller hands us a row of the wrong width.
+            precondition(
+                rows[r].count == inDim,
+                "CpuLinear.forwardBatch: row \(r) has \(rows[r].count) cols, expected \(inDim)")
+            let base = r * inDim
+            for c in 0 ..< inDim { flatIn[base + c] = rows[r][c] }
+        }
+        let inTensor = Tensor.empty(shape: [nRows, inDim], dtype: .f32, device: device)
+        inTensor.copyIn(from: flatIn)
+
+        let cmd = device.makeCommandBuffer()
+        let outTensor: Tensor
+        switch storage {
+        case .plain(let w):
+            // Single Ops.gemm dispatch for the whole batch. Ops.gemm
+            // requires inDim multiple of 16 — every SigLIP shape in
+            // PaliGemma2 (1152, 4304) satisfies it.
+            outTensor = Ops.gemm(weight: w, input: inTensor, nRows: nRows, on: cmd)
+        case .quant(let w, let sc, let bi, let bits, let gs):
+            // Per-row dequant_gemv on the same command buffer.
+            // dequantGemmDynamicM needs nOut % 32 == 0, which the
+            // SigLIP-So400m 4304-wide fc1/fc2 violates — so we issue
+            // nRows GPU gemvs back-to-back. All run on the same command
+            // buffer, so there's no per-call host overhead.
+            let outT = Tensor.empty(shape: [nRows, outDim], dtype: .f32, device: device)
+            let inElemBytes = inDim * MemoryLayout<Float>.size
+            let outElemBytes = outDim * MemoryLayout<Float>.size
+            for r in 0 ..< nRows {
+                let xRow = Tensor(
+                    buffer: inTensor.buffer,
+                    offset: inTensor.offset + r * inElemBytes,
+                    shape: [inDim], dtype: .f32)
+                let outRow = Tensor(
+                    buffer: outT.buffer,
+                    offset: outT.offset + r * outElemBytes,
+                    shape: [outDim], dtype: .f32)
+                _ = Ops.dequantGemv(
+                    weight: w, scales: sc, biases: bi,
+                    input: xRow, bits: bits, groupSize: gs,
+                    on: cmd, into: outRow)
+            }
+            outTensor = outT
+        }
+
+        // Broadcast bias across rows via a tiled `[nRows, outDim]` add.
+        let withBias: Tensor
+        if let bias = biasTensor {
+            let biasVals = bias.toFloatArray()
+            var tiledFlat = [Float](repeating: 0, count: nRows * outDim)
+            for r in 0 ..< nRows {
+                let base = r * outDim
+                for c in 0 ..< outDim { tiledFlat[base + c] = biasVals[c] }
+            }
+            let tiled = Tensor.empty(shape: [nRows, outDim], dtype: .f32, device: device)
+            tiled.copyIn(from: tiledFlat)
+            withBias = Ops.add(outTensor, tiled, on: cmd)
+        } else {
+            withBias = outTensor
+        }
+
+        cmd.commit()
+        cmd.waitUntilCompleted()
+
+        // Unflatten back into [[Float]] rows for the caller.
+        let outFlat = withBias.toFloatArray()
+        var result = [[Float]](repeating: [], count: nRows)
+        for r in 0 ..< nRows {
+            let base = r * outDim
+            result[r] = Array(outFlat[base ..< (base + outDim)])
+        }
+        return result
+    }
+
+    /// Single-row forward — handy for callers that still process row at a
+    /// time (e.g. legacy callers prior to the batched migration). Wraps
+    /// `forwardBatch` with a single-row batch; for large hot-path callers
+    /// prefer `forwardBatch` so we don't pay one round-trip per row.
+    func forward(_ x: [Float]) -> [Float] {
+        return forwardBatch([x])[0]
+    }
+}
+
+// ─── CPU LayerNorm ────────────────────────────────────────────────────────────
+
+/// Standard layer normalisation (not RMS). Used in SigLIP encoder.
+private func layerNorm(_ x: [Float], weight: [Float], bias: [Float], eps: Float) -> [Float] {
+    let n = x.count
+    let mean = x.reduce(0, +) / Float(n)
+    let variance = x.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Float(n)
+    let invStd = 1.0 / (variance + eps).squareRoot()
+    return (0 ..< n).map { i in (x[i] - mean) * invStd * weight[i] + bias[i] }
+}
+
+// ─── CPU GeLU (fast/approximate used by SigLIP MLP) ──────────────────────────
+
+/// tanh-based GELU approximation matching `gelu_fast` / `gelu_pytorch_tanh`.
+private func geluFast(_ x: Float) -> Float {
+    // 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x³)))
+    let inner = Float(0.7978845608) * (x + Float(0.044715) * x * x * x)
+    return 0.5 * x * (1.0 + tanh(inner))
+}
+
+// ─── GPU SDPA (for SigLIP encoder — full-sequence, bidirectional) ────────────
+
+/// Scaled dot-product attention over the full image patch sequence.
+/// Now GPU-resident: one `Ops.sdpaBidirectional(headDim: 72)` dispatch
+/// for the PaliGemma SigLIP-So400m encoder (headDim=72 for 1152/16).
+///
+/// Input rows are flattened from `[[Float]]` (row-per-token, each row
+/// `[numHeads*headDim]`) into a contiguous `[nPatches, numHeads, headDim]`
+/// f32 buffer — Q's layout matches the kernel directly; K/V are
+/// transposed once into `[numHeads, nPatches, headDim]` to match the
+/// kernel's `[nKVHeads, kvStride, headDim]` contract. Output
+/// `[nPatches, numHeads, headDim]` is reassembled into `[[Float]]` rows.
+private func cpuSDPA(
+    q: [[Float]], k: [[Float]], v: [[Float]],
+    nPatches: Int, numHeads: Int, headDim: Int
+) -> [[Float]] {
+    let scale = 1.0 / Float(headDim).squareRoot()
+    let hidden = numHeads * headDim
+    let device = Device.shared
+
+    // Flatten Q into [nPatches, numHeads, headDim] — same memory order as
+    // `q[i][h*headDim + d]`, so this is just a row-major copy.
+    var qFlat = [Float](repeating: 0, count: nPatches * hidden)
+    for i in 0 ..< nPatches {
+        let base = i * hidden
+        for d in 0 ..< hidden { qFlat[base + d] = q[i][d] }
+    }
+    // K/V need transpose to [numHeads, nPatches, headDim] for the kernel.
+    var kFlat = [Float](repeating: 0, count: nPatches * hidden)
+    var vFlat = [Float](repeating: 0, count: nPatches * hidden)
+    for j in 0 ..< nPatches {
+        for h in 0 ..< numHeads {
+            let srcOff = h * headDim
+            let dst = (h * nPatches + j) * headDim
+            for d in 0 ..< headDim {
+                kFlat[dst + d] = k[j][srcOff + d]
+                vFlat[dst + d] = v[j][srcOff + d]
+            }
+        }
+    }
+
+    let qT = paligemmaFloatsToTensor(
+        qFlat, shape: [nPatches, numHeads, headDim],
+        device: device)
+    let kT = paligemmaFloatsToTensor(
+        kFlat, shape: [numHeads, nPatches, headDim],
+        device: device)
+    let vT = paligemmaFloatsToTensor(
+        vFlat, shape: [numHeads, nPatches, headDim],
+        device: device)
+    let cmd = device.makeCommandBuffer()
+    let outT = Ops.sdpaBidirectional(
+        q: qT, k: kT, v: vT,
+        nQHeads: numHeads, nKVHeads: numHeads, headDim: headDim,
+        baseKV: 0, nQuery: nPatches, kvStride: nPatches,
+        scale: scale, on: cmd)
+    cmd.commit()
+    cmd.waitUntilCompleted()
+    let outFlat = outT.toFloatArray()  // [nPatches, numHeads, headDim] flat
+
+    // Reassemble into [nPatches, numHeads * headDim].
+    return (0 ..< nPatches).map { i in
+        let src = i * hidden
+        return Array(outFlat[src ..< src + hidden])
+    }
+}
+
+/// Write a Float32 array into a fresh GPU tensor for one-shot kernel input.
+private func paligemmaFloatsToTensor(
+    _ values: [Float], shape: [Int],
+    device: Device = .shared
+) -> Tensor {
+    let t = Tensor.empty(shape: shape, dtype: .f32, device: device)
+    t.copyIn(from: values)
+    return t
+}
+
+// ─── SigLIP Layer (CPU) ───────────────────────────────────────────────────────
+
+/// One SigLIP transformer encoder layer (CPU float32 path).
+/// Read-only after init — @unchecked Sendable is safe.
+final class SigLIPLayer: @unchecked Sendable {
+    // Self-attention linears (with bias)
+    let qProj: CpuLinear
+    let kProj: CpuLinear
+    let vProj: CpuLinear
+    let outProj: CpuLinear
+
+    // Layer norms
+    let ln1W: [Float]
+    let ln1B: [Float]
+    let ln2W: [Float]
+    let ln2B: [Float]
+
+    // MLP
+    let fc1: CpuLinear
+    let fc2: CpuLinear
+
+    let numHeads: Int
+    let headDim: Int
+    let hidden: Int
+    let eps: Float
+
+    init(
+        qProj: CpuLinear, kProj: CpuLinear, vProj: CpuLinear, outProj: CpuLinear,
+        ln1W: [Float], ln1B: [Float], ln2W: [Float], ln2B: [Float],
+        fc1: CpuLinear, fc2: CpuLinear,
+        numHeads: Int, hidden: Int, eps: Float
+    ) {
+        self.qProj = qProj
+        self.kProj = kProj
+        self.vProj = vProj
+        self.outProj = outProj
+        self.ln1W = ln1W
+        self.ln1B = ln1B
+        self.ln2W = ln2W
+        self.ln2B = ln2B
+        self.fc1 = fc1
+        self.fc2 = fc2
+        self.numHeads = numHeads
+        self.headDim = hidden / numHeads
+        self.hidden = hidden
+        self.eps = eps
+    }
+
+    /// Load one SigLIP encoder layer from the safetensors bundle.
+    static func load(
+        prefix: String, from bundle: SafeTensorsBundle,
+        hidden: Int, intermediate: Int, numHeads: Int, eps: Float,
+        quantization: ModelConfig.QuantizationConfig?
+    ) throws -> SigLIPLayer {
+        func lin(_ base: String) throws -> CpuLinear {
+            if let q = quantization, [3, 4, 5, 6, 8].contains(q.bits), bundle.isQuantized(base) {
+                let t = try bundle.quantizedTriplet(base)
+                // Quantized weight shape: [outDim, inDim/packFactor]. shape[0] == outDim.
+                let outDim = t.weight.shape[0]
+                let bias =
+                    bundle.has("\(base).bias") ? try bundle.tensor(named: "\(base).bias") : nil
+                return CpuLinear(
+                    quantized: t.weight, scales: t.scales, biases: t.biases,
+                    outDim: outDim, inDim: hidden, bits: q.bits, groupSize: q.groupSize,
+                    bias: bias
+                )
+            }
+            let w = try bundle.tensor(named: "\(base).weight")
+            let bias = bundle.has("\(base).bias") ? try bundle.tensor(named: "\(base).bias") : nil
+            return CpuLinear(weight: w, bias: bias)
+        }
+
+        let qProj = try lin("\(prefix).self_attn.q_proj")
+        let kProj = try lin("\(prefix).self_attn.k_proj")
+        let vProj = try lin("\(prefix).self_attn.v_proj")
+        let outProj = try lin("\(prefix).self_attn.out_proj")
+        let fc1 = try lin("\(prefix).mlp.fc1")
+        let fc2 = try lin("\(prefix).mlp.fc2")
+
+        let ln1W = readF32(try bundle.tensor(named: "\(prefix).layer_norm1.weight"))
+        let ln1B = readF32(try bundle.tensor(named: "\(prefix).layer_norm1.bias"))
+        let ln2W = readF32(try bundle.tensor(named: "\(prefix).layer_norm2.weight"))
+        let ln2B = readF32(try bundle.tensor(named: "\(prefix).layer_norm2.bias"))
+
+        return SigLIPLayer(
+            qProj: qProj, kProj: kProj, vProj: vProj, outProj: outProj,
+            ln1W: ln1W, ln1B: ln1B, ln2W: ln2W, ln2B: ln2B,
+            fc1: fc1, fc2: fc2,
+            numHeads: numHeads, hidden: hidden, eps: eps
+        )
+    }
+
+    /// Forward pass over all patches at once.
+    /// x: [nPatches, hidden] → [nPatches, hidden]
+    func forward(_ x: [[Float]]) -> [[Float]] {
+        let nPatches = x.count
+
+        // ── Self-attention ────────────────────────────────────────────
+        let xNorm1: [[Float]] = x.map { row in layerNorm(row, weight: ln1W, bias: ln1B, eps: eps) }
+
+        // Q/K/V projections — one batched GPU GEMM each instead of 4096
+        // single-row CPU `concurrentPerform` matmuls per projection.
+        let q = qProj.forwardBatch(xNorm1)
+        let k = kProj.forwardBatch(xNorm1)
+        let v = vProj.forwardBatch(xNorm1)
+
+        let attnOut = cpuSDPA(
+            q: q, k: k, v: v, nPatches: nPatches, numHeads: numHeads, headDim: headDim)
+        let projected = outProj.forwardBatch(attnOut)
+
+        // Residual
+        var h: [[Float]] = (0 ..< nPatches).map { i in
+            (0 ..< hidden).map { d in x[i][d] + projected[i][d] }
+        }
+
+        // ── MLP ───────────────────────────────────────────────────────
+        let xNorm2: [[Float]] = h.map { row in layerNorm(row, weight: ln2W, bias: ln2B, eps: eps) }
+        // fc1 → GELU → fc2 in two batched GEMMs with a CPU GELU sweep in
+        // between (the activation is element-wise, no reduction, so a
+        // small CPU loop is fine and avoids an extra round-trip).
+        var fc1Out = fc1.forwardBatch(xNorm2)
+        for r in 0 ..< nPatches {
+            let row = fc1Out[r]
+            var activated = [Float](repeating: 0, count: row.count)
+            for d in 0 ..< row.count { activated[d] = geluFast(row[d]) }
+            fc1Out[r] = activated
+        }
+        let mlpOut = fc2.forwardBatch(fc1Out)
+
+        // Residual
+        h = (0 ..< nPatches).map { i in
+            (0 ..< self.hidden).map { d in h[i][d] + mlpOut[i][d] }
+        }
+        return h
+    }
+}
+
+// ─── PaligemmaModel ───────────────────────────────────────────────────────────
+
+/// Combined PaliGemma model: SigLIP ViT encoder (CPU) + Gemma decoder (GPU).
+///
+/// Usage:
+///   1. Call `setImagePixels(_:channels:height:width:)` with the preprocessed
+///      image (RGB, normalised to ~[-1,1], as Float32 row-major).
+///   2. Encode tokens normally: `<image>×1024  <bos>  prompt\n`.
+///   3. Call `forward(tokenId:position:caches:device:)` as usual; positions
+///      0..<numImageTokens resolve to the stored image embeddings automatically.
+// PaligemmaModel stores read-only vision weights + a mutex-protected mutable
+// field (imageFeatures). @unchecked Sendable is safe given the NSLock guard.
+public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
+    // ── Text backbone ───────────────────────────────────────────────────
+    /// The PaliGemma 2 text decoder. The shared `Gemma2Model` handles
+    /// the 4 norms per layer, alternating sliding / full attention,
+    /// the sqrt(hidden) embed-scale, tied LM head, per-layer KV cache
+    /// split — everything Gemma 2 needs. PaliGemma's wrapper is now
+    /// just the SigLIP vision tower + image-token splice on top.
+    public let textEngine: Gemma2Model
+
+    // ── Vision encoder ───────────────────────────────────────────────────
+    // Patch embedding conv: [outC, kH, kW, inC] (MLX layout).
+    private let patchW: Tensor
+    private let patchB: Tensor
+    private let posEmbedding: CpuEmbedding
+    private let visLayers: [SigLIPLayer]
+    private let postLNW: [Float]
+    private let postLNB: [Float]
+    let visHidden: Int
+    /// Number of image tokens this checkpoint contributes per image
+    /// (`(imgSize/patchSize)²`). Exposed so callers can pad their prompt
+    /// with the right count of image-placeholder tokens.
+    public let numImageTokens: Int
+    let visNumChannels: Int
+    let visPatchSize: Int
+    let visImgSize: Int
+
+    // ── Projector ────────────────────────────────────────────────────────
+    private let projLinear: CpuLinear
+    let projDim: Int  // == textEngine.hidden
+
+    // ── Shared ───────────────────────────────────────────────────────────
+    /// Token id the chat template emits as an image placeholder. The
+    /// forward path substitutes precomputed image features at every
+    /// position equal to this id.
+    public let imageTokenIndex: Int
+
+    // ── Runtime state ────────────────────────────────────────────────────
+    /// Precomputed image features [numImageTokens, hidden] on GPU, in
+    /// the text backbone's activation dtype. Set by `setImagePixels(...)`
+    /// before generation begins.
+    private var imageFeatures: Tensor?
+    /// Lock protecting `imageFeatures` for thread safety.
+    private let featuresLock = NSLock()
+
+    // ── LanguageModel-protocol forwarding properties ────────────────────
+    // These delegate straight to the text engine so external callers
+    // (tests, the Model wrapper, the generation loop) see the same
+    // surface they always have. The bespoke text-layer fields the old
+    // PaligemmaModel exposed are gone — everything routes through
+    // `textEngine`.
+    public var hidden: Int { textEngine.hidden }
+    public var nLayers: Int { textEngine.nLayers }
+    public var nHeads: Int { textEngine.nHeads }
+    public var nKVHeads: Int { textEngine.nKVHeads }
+    public var headDim: Int { textEngine.headDim }
+    public var vocab: Int { textEngine.vocab }
+    public var maxSeq: Int { textEngine.maxSeq }
+    public var dtype: DType { textEngine.dtype }
+
+    init(
+        textEngine: Gemma2Model,
+        patchW: Tensor, patchB: Tensor, posEmbedding: CpuEmbedding,
+        visLayers: [SigLIPLayer], postLNW: Tensor, postLNB: Tensor,
+        visHidden: Int, numImageTokens: Int, visNumChannels: Int,
+        visPatchSize: Int, visImgSize: Int,
+        projLinear: CpuLinear, projDim: Int,
+        imageTokenIndex: Int
+    ) {
+        self.textEngine = textEngine
+        self.patchW = patchW
+        self.patchB = patchB
+        self.posEmbedding = posEmbedding
+        self.visLayers = visLayers
+        self.postLNW = readF32(postLNW)
+        self.postLNB = readF32(postLNB)
+        self.visHidden = visHidden
+        self.numImageTokens = numImageTokens
+        self.visNumChannels = visNumChannels
+        self.visPatchSize = visPatchSize
+        self.visImgSize = visImgSize
+        self.projLinear = projLinear
+        self.projDim = projDim
+        self.imageTokenIndex = imageTokenIndex
+    }
+
+    public func parameters() -> [(String, Tensor)] {
+        // Re-prefix the text engine's parameters with `language_model.`
+        // so the round-tripped name matches what's on disk.
+        // (PaliGemma stores its text weights under `language_model.`.)
+        var out: [(String, Tensor)] = []
+        for (k, v) in textEngine.parameters() {
+            out.append(("language_model.\(k)", v))
+        }
+        // Vision + projector parameters could be enumerated here too,
+        // but the existing tests + tools only consume the text-side
+        // parameter map; leave the surface unchanged.
+        return out
+    }
+
+    public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
+        // Per-layer Gemma 2 KV cache: sliding layers cap at the
+        // configured `sliding_window`, full-attention layers stay
+        // unbounded. Gemma 2 owns that policy.
+        return textEngine.makeLayerCaches(maxSeq: maxSeq, device: device)
+    }
+
+    // MARK: - Image processing
+
+    /// Precompute vision features from a preprocessed image.
+    ///
+    /// `pixels` is a flat Float32 array in CHW order (channels-first):
+    ///   pixels[c * H * W + y * W + x]  where c ∈ {0,1,2}
+    /// The image must already be resized to `visImgSize × visImgSize` and
+    /// normalised (SigLIP mean/std). This matches what `prepare(image:)` in
+    /// the MLXVLM processor produces.
+    ///
+    /// Call once per image before beginning generation.
+    public func setImagePixels(_ pixels: [Float], device: Device = .shared) {
+        // ── Patch embedding (CPU conv2d) ──────────────────────────────────
+        // patchW: [outC, kH, kW, inC] in MLX layout (already transposed from PyTorch).
+        let outC = patchW.shape[0]
+        let kH = patchW.shape[1]
+        let kW = patchW.shape[2]
+        let inC = patchW.shape[3]
+        precondition(
+            kH == visPatchSize && kW == visPatchSize && inC == visNumChannels,
+            "Paligemma: patch embedding kernel shape mismatch")
+        let wFlat = readF32(patchW)  // [outC, kH, kW, inC]
+        let bFlat = readF32(patchB)  // [outC]
+
+        // numPatches per side
+        let nGrid = visImgSize / visPatchSize
+        let nPatches = nGrid * nGrid  // should equal numImageTokens
+
+        // Pixels are in CHW order: pixels[c * H * W + y * W + x].
+        let hw = visImgSize * visImgSize
+
+        // Patch embedding output: flat [nPatches * outC] raw pointer.
+        // Each concurrent iteration owns a distinct patchIdx*outC stride;
+        // raw pointer passed by value is Sendable and safe to write concurrently.
+        let patchEmbedBuf = UnsafeMutablePointer<Float>.allocate(capacity: nPatches * outC)
+        defer { patchEmbedBuf.deallocate() }
+        nonisolated(unsafe) let pePtr = patchEmbedBuf
+
+        DispatchQueue.concurrentPerform(iterations: nGrid * nGrid) { patchIdx in
+            let py = patchIdx / nGrid
+            let px = patchIdx % nGrid
+            let yStart = py * visPatchSize
+            let xStart = px * visPatchSize
+            let base = patchIdx * outC
+            for oc in 0 ..< outC {
+                var acc = bFlat[oc]
+                for ky in 0 ..< kH {
+                    for kx in 0 ..< kW {
+                        for ic in 0 ..< inC {
+                            // wFlat[oc, ky, kx, ic] in row-major [outC, kH, kW, inC]
+                            let wi = oc * kH * kW * inC + ky * kW * inC + kx * inC + ic
+                            let pv = pixels[ic * hw + (yStart + ky) * visImgSize + (xStart + kx)]
+                            acc += wFlat[wi] * pv
+                        }
+                    }
+                }
+                pePtr[base + oc] = acc
+            }
+        }
+
+        // Convert flat buffer → [[Float]] row view for the encoder.
+        var patchEmbed: [[Float]] = (0 ..< nPatches).map { i in
+            Array(UnsafeBufferPointer(start: pePtr.advanced(by: i * outC), count: outC))
+        }
+
+        // ── Add position embeddings ────────────────────────────────────────
+        for i in 0 ..< nPatches {
+            let posRow = posEmbedding.row(i)  // [visHidden]
+            for d in 0 ..< visHidden {
+                patchEmbed[i][d] += posRow[d]
+            }
+        }
+
+        // ── SigLIP encoder layers ────────────────────────────────────────
+        var x = patchEmbed
+        for layer in visLayers {
+            x = layer.forward(x)
+        }
+
+        // ── Post layer norm ────────────────────────────────────────────
+        x = x.map { layerNorm($0, weight: postLNW, bias: postLNB, eps: 1e-6) }
+
+        // ── Projector ──────────────────────────────────────────────────
+        // Project visHidden → textHidden, then pre-divide by
+        // `sqrt(hidden)`. HF's `PaliGemmaForConditionalGeneration`
+        // scales the text-embedding tensor by `sqrt(hidden)` BEFORE
+        // splicing image features in, so image features end up at
+        // their projector-output magnitude, NOT scaled. Our path runs
+        // image features through `Gemma2Model.forward(inputEmbedding:)`
+        // which always multiplies by `sqrt(hidden)`; pre-dividing here
+        // makes the two scales cancel and matches the HF reference
+        // (skipping the inverse-scale leaves image features ~48×
+        // too large, which dominates attention and pushes the model
+        // straight to EOS).
+        let invScale = 1.0 / Float(Double(textEngine.hidden).squareRoot())
+        var projected = projLinear.forwardBatch(x)
+        for i in 0 ..< projected.count {
+            for d in 0 ..< projected[i].count { projected[i][d] *= invScale }
+        }
+
+        // ── Copy to GPU Tensor [nPatches, hidden] in textEngine.dtype ──
+        // PaliGemma 2 ships Gemma 2 norm weights as f16, so the feature
+        // tensor must match — the old f32 hard-code blew up the first
+        // `Ops.rmsNorm` dtype precondition on quantized variants.
+        let h = textEngine.hidden
+        let dt = textEngine.dtype
+        let feat = Tensor.empty(shape: [nPatches, h], dtype: dt, device: device)
+        switch dt {
+        case .f32:
+            let ptr = feat.buffer.contents().advanced(by: feat.offset)
+                .bindMemory(to: Float.self, capacity: nPatches * h)
+            for i in 0 ..< nPatches {
+                for d in 0 ..< h { ptr[i * h + d] = projected[i][d] }
+            }
+        case .f16:
+            let ptr = feat.buffer.contents().advanced(by: feat.offset)
+                .bindMemory(to: UInt16.self, capacity: nPatches * h)
+            for i in 0 ..< nPatches {
+                for d in 0 ..< h { ptr[i * h + d] = floatToFloat16(projected[i][d]) }
+            }
+        case .bf16:
+            let ptr = feat.buffer.contents().advanced(by: feat.offset)
+                .bindMemory(to: UInt16.self, capacity: nPatches * h)
+            for i in 0 ..< nPatches {
+                for d in 0 ..< h { ptr[i * h + d] = floatToBFloat16(projected[i][d]) }
+            }
+        default:
+            fatalError("Paligemma.setImagePixels: unsupported activation dtype \(dt)")
+        }
+
+        featuresLock.lock()
+        imageFeatures = feat
+        featuresLock.unlock()
+    }
+
+    // MARK: - LanguageModel
+
+    /// Single-token forward. For positions that correspond to an image
+    /// token (`tokenId == imageTokenIndex`) the stored vision embedding
+    /// is spliced in via `textEngine.forward(inputEmbedding:)`; text
+    /// tokens take the standard `textEngine.forward(tokenId:)` path.
+    /// The `position` argument is used to index into the image features:
+    /// image tokens span positions 0..<numImageTokens.
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        if tokenId == imageTokenIndex {
+            let row = imageFeatureRow(position: position)
+            return textEngine.forward(
+                inputEmbedding: row, position: position,
+                caches: caches, on: cmd, device: device)
+        }
+        return textEngine.forward(
+            tokenId: tokenId, position: position,
+            caches: caches, on: cmd, device: device)
+    }
+
+    public func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol], device: Device
+    ) -> Tensor {
+        let cmd = device.makeCommandBuffer()
+        let logits = forward(
+            tokenId: tokenId, position: position,
+            caches: caches, on: cmd, device: device)
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return logits
+    }
+
+    /// Multi-token forward — prefill fast path. Loops the
+    /// per-token forward so the image-token vs text-token branch picks
+    /// the right embedding source for each row. PaliGemma's
+    /// position-based image-token check is intrinsic to the
+    /// architecture, so a vectorised "which positions are image tokens"
+    /// chunked path is future work; today this is commit-count-batched
+    /// only.
+    public func forwardMulti(
+        tokenIds: [Int], startingAt position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        precondition(
+            !tokenIds.isEmpty,
+            "PaligemmaModel.forwardMulti: tokenIds must be non-empty")
+        var logits: Tensor!
+        for (i, tok) in tokenIds.enumerated() {
+            logits = forward(
+                tokenId: tok, position: position + i,
+                caches: caches, on: cmd, device: device)
+        }
+        return logits
+    }
+
+    public func forwardSample(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol], device: Device
+    ) -> Int {
+        let cmd = device.makeCommandBuffer()
+        let logits = forward(
+            tokenId: tokenId, position: position,
+            caches: caches, on: cmd, device: device)
+        let outBuf = device.makeBuffer(length: 4)
+        let outTensor = Tensor(buffer: outBuf, offset: 0, shape: [1], dtype: .u32)
+        Ops.argmax(logits, into: outTensor, on: cmd)
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return Int(outBuf.contents().bindMemory(to: UInt32.self, capacity: 1).pointee)
+    }
+
+    /// Slice the image features tensor at `position`, returning a
+    /// `[hidden]` view. Clamps `position` into `[0, numImageTokens)`
+    /// so an off-by-one (e.g. an image-token at the very last prompt
+    /// position) doesn't panic.
+    private func imageFeatureRow(position: Int) -> Tensor {
+        featuresLock.lock()
+        guard let feat = imageFeatures else {
+            featuresLock.unlock()
+            fatalError("PaligemmaModel.forward: setImagePixels() has not been called")
+        }
+        featuresLock.unlock()
+        let imgPos = max(0, min(position, numImageTokens - 1))
+        return feat.slicedRows(start: imgPos, count: 1).reshaped(to: [textEngine.hidden])
+    }
+}
+
+// ─── Numeric helpers ──────────────────────────────────────────────────────────
+
+private func floatToFloat16(_ x: Float) -> UInt16 {
+    // Use a round-trip through a 16-bit float for portability.
+    var out: UInt16 = 0
+    withUnsafeBytes(of: x) { fBuf in
+        let bits = fBuf.load(as: UInt32.self)
+        let sign = UInt16((bits >> 16) & 0x8000)
+        let exp32 = Int((bits >> 23) & 0xff)
+        let mant32 = bits & 0x7fffff
+        if exp32 == 255 {
+            out = sign | 0x7c00 | UInt16(mant32 >> 13)
+        } else if exp32 > 142 {
+            out = sign | 0x7c00  // overflow → inf
+        } else if exp32 < 113 {
+            out = sign  // underflow → 0
+        } else {
+            let exp16 = UInt16(exp32 - 127 + 15)
+            let mant16 = UInt16(mant32 >> 13)
+            out = sign | (exp16 << 10) | mant16
+        }
+    }
+    return out
+}
+
+private func floatToBFloat16(_ x: Float) -> UInt16 {
+    let bits = x.bitPattern
+    return UInt16(bits >> 16)
+}
+
+/// Fill a buffer with `n` copies of `value` in the specified dtype.
+private func fillScale(_ buf: MTLBuffer, value: Float, n: Int, dtype: DType) {
+    switch dtype {
+    case .f32:
+        let ptr = buf.contents().bindMemory(to: Float.self, capacity: n)
+        for i in 0 ..< n { ptr[i] = value }
+    case .f16:
+        let ptr = buf.contents().bindMemory(to: UInt16.self, capacity: n)
+        let h16 = floatToFloat16(value)
+        for i in 0 ..< n { ptr[i] = h16 }
+    case .bf16:
+        let ptr = buf.contents().bindMemory(to: UInt16.self, capacity: n)
+        let bf = floatToBFloat16(value)
+        for i in 0 ..< n { ptr[i] = bf }
+    default:
+        fatalError("fillScale: unsupported dtype \(dtype)")
+    }
+}

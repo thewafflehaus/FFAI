@@ -106,7 +106,7 @@ jobs:
             --out ${{ github.workspace }}/FFAI/Sources/MetalTileSwift
 
       - name: Run unit tests (with coverage)
-        # FFAITests (~215 cases) + MetalTileSwiftTests (kernel round-trip).
+        # FFAITests + MetalTileSwiftTests (kernel round-trip).
         # Integration tests (ModelTests) are deliberately excluded — they
         # ship a different way (release.yml runs them right before tagging).
         #

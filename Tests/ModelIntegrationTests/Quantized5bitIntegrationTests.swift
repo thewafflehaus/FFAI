@@ -1,0 +1,61 @@
+// Copyright 2026 Eric Kryski (@ekryski)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// End-to-end test: download mlx-community/Qwen3-1.7B-5bit and assert
+// FFAI's greedy decode produces coherent output. Exercises the
+// dequant_gemv_int5 kernel end-to-end on Qwen3 1.7B.
+//
+// Skipped if network/checkpoint isn't available.
+
+import Foundation
+import TestHelpers
+import Testing
+
+@testable import FFAI
+
+@Suite("Qwen3 5-bit Integration", .serialized)
+struct Quantized5bitIntegrationTests {
+
+    @Test("load + greedy generate produces coherent output")
+    func loadAndGenerate() async throws {
+        let modelId = "mlx-community/Qwen3-1.7B-5bit"
+        let prompt = "Once upon a time, in a quiet village"
+        let maxTokens = 200
+
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
+
+        #expect(m.config.quantization?.bits == 5)
+        #expect(m.config.quantization?.groupSize == 64)
+        #expect(m.qwen3 != nil)
+
+        #expect(m.engine.hidden == 2048)
+        #expect(m.engine.nLayers == 28)
+        #expect(m.engine.nHeads == 16)
+        #expect(m.engine.nKVHeads == 8)
+        #expect(m.engine.headDim == 128)
+
+        let caches = m.engine.makeLayerCaches()
+        let logits = m.engine.forward(tokenId: 0, position: 0, caches: caches)
+        let top = Sampling.topN(logits, n: 5)
+        #expect(top.count == 5)
+        #expect(top[0].1.isFinite)
+
+        let result = try await m.generate(
+            prompt: prompt,
+            parameters: GenerationParameters(maxTokens: maxTokens, temperature: 0)
+        )
+        #expect(result.tokensPerSecond > 0)
+        expectCoherentOutput(result.generatedTokens, label: "Qwen3 1.7B 5-bit")
+    }
+}

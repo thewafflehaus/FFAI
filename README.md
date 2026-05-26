@@ -1,22 +1,17 @@
 # FFAI
 
-**Fucking Fast Apple Inference.**
+**F*cking Fast Apple Inference.**
 
-A minimal, dependency-light LLM inference library for Apple Silicon, built on
-pre-compiled Metal kernels generated from the [metaltile](https://github.com/thewafflehaus/metaltile)
-DSL. No Python. No MLX. No C compilation. No JIT. No four-repo dependency chain.
+A minimal, dependency-light LLM inference library for Apple Silicon, built on pre-compiled Metal kernels generated from the [metaltile](https://github.com/thewafflehaus/metaltile) DSL. No Python. No MLX. No C compilation. No JIT. No four-repo dependency chain.
 
-**Just really fucking fast AI!** 🚀
+**Just really f*cking fast AI on your Mac!** 🚀
 
 ## Status
 
-Early bootstrap — Phase 4 complete (end-to-end inference + perf pass).
+Early bootstrap — the dense-text, hybrid, vision-language, and audio model waves have all landed; end-to-end inference runs real HuggingFace checkpoints across every shipped family.
 
-- [`planning/plan.md`](planning/plan.md) — phased build-out, what we're
-  shipping when
-- [`planning/architecture.md`](planning/architecture.md) — visual
-  reference for kernel generation, model loading, and the inference
-  dispatch loop
+- [`planning/plan.md`](planning/plan.md) — phased build-out, what we're shipping when
+- [`planning/architecture.md`](planning/architecture.md) — visual reference for kernel generation, model loading, and the inference dispatch loop
 - [`documentation/`](documentation/README.md) — user-facing docs
 
 ## Features
@@ -28,23 +23,22 @@ Early bootstrap — Phase 4 complete (end-to-end inference + perf pass).
 | **One-line model loading** | `Model.load("org/repo")` and you're generating. Download, cache, tokenizer, prewarm — one async call. | ✅ |
 | **HuggingFace native** | Pull any compatible model straight from the Hub. Same cache as Python. | ✅ |
 | **3 / 4 / 5 / 6 / 8-bit quantization** | Run beefy models on lean machines. The `mlx-community` quants you're already using. | ✅ |
+| **Native MLX 4-bit conversion** | `ffai convert <repo>` quantizes any FFAI-loadable checkpoint to MLX 4-bit using our own GPU kernel — no Python, no `mlx-lm`, no `mlx-vlm`. Optional one-flag HF upload. | ✅ |
 | **Single-buffer-per-token dispatch** | Forward + sample on one Metal command buffer per token. Just 4 bytes cross CPU↔GPU. | ✅ |
 | **Capability-driven hot loading/unloading** | Only load what you'll use. Add and remove vision and audio encoders as you need them. | ✅ |
 | **Async lifecycle stream** | Real progress for your UI — download, load, ready — as an `AsyncStream`. | ✅ |
 | **Built in performance profiling** | Run benchmarks using the FFAI CLI and get performance telemtry data as you do inference. | ✅ |
 | **Streaming generation** | Streaming inference support across all models. | ✅ |
-| **Quantized KV cache** | Squeeze long contexts into a fraction of the memory. Affine 4/6/8-bit + TurboQuant. | 🚧 Phase 5 |
-| **Hybrid models (GDN + SSM)** | Qwen 3.5, Mamba, NemotronH — the families that mix attention with recurrence. | 🚧 Phase 5 |
-| **Vision (multi-modal)** | Drop in an image, get text back. Qwen 2.5-VL / 3.5-VL first. | 🚧 Phase 6 |
-| **Audio in / out** | Whisper-style speech-to-text and text-to-speech. | 🚧 Phase 8+ |
-| **Speculative decoding** | Faster generation via n-gram lookup + draft models. | 🚧 Phase 8+ |
-| **Autotuner** | Per-shape kernel tuning so you never leave perf on the table. | 🚧 Phase 7 |
-| **GGUF support** | Run llama.cpp's quants directly. | 🚧 Phase 8+ |
+| **Quantized KV cache** | Squeeze long contexts into a fraction of the memory. Affine 4/8-bit + AURA compressed. | ✅ |
+| **Hybrid models (GDN + SSM)** | Qwen 3.5, Mamba 2, NemotronH, Jamba, GraniteMoeHybrid, FalconH1 — attention mixed with recurrence. | ✅ |
+| **Mixture-of-experts** | GPT-OSS-20B, Qwen 3.5 MoE, Gemma 4 MoE — sparse top-K expert routing. | ✅ |
+| **Vision (multi-modal)** | Drop in an image or video, get text back. Gemma 3/4-VL, Qwen 2.5/3-VL, Qwen3-VL-MoE, Nemotron-VLM. | ✅ |
+| **Audio in / out** | Whisper-style speech-to-text, text-to-speech, omni audio, VAD — plus 7 neural audio codecs. | ✅ |
+| **Speculative decoding** | Faster generation via n-gram lookup + draft models. | 🚧 Phase 8 |
+| **Autotuner** | Per-shape kernel tuning so you never leave perf on the table. | 🚧 Phase 9 |
+| **GGUF support** | Run llama.cpp's quants directly. | 🚧 Phase 10 |
 
-For the longer-form view of what's shipped vs planned, see
-[`planning/roadmap.md`](planning/roadmap.md). For the per-topic
-deep-dives (KV cache, quantization, performance, capabilities) see
-[`documentation/`](documentation/README.md).
+For the longer-form view of what's shipped vs planned, see [`planning/roadmap.md`](planning/roadmap.md). For the per-topic deep-dives (KV cache, quantization, performance, capabilities) see [`documentation/`](documentation/README.md).
 
 ## Quick Start
 
@@ -59,7 +53,7 @@ Then generate text in five lines:
 ```swift
 import FFAI
 
-let model = try await Model.load("unsloth/Llama-3.2-1B")
+let model = try await Model.load("mlx-community/Qwen3.5-0.8B-MLX-4bit")
 let result = try await model.generate(
     prompt: "Once upon a time",
     parameters: model.defaultGenerationParameters.with { $0.maxTokens = 64 }
@@ -68,46 +62,44 @@ print(result.text)
 print("\(result.tokensPerSecond) tok/s")
 ```
 
-`Model.load` resolves the HuggingFace repo, downloads the snapshot
-(or hits the cache), parses `config.json`, mmap-loads weights into
-per-tensor MTLBuffers, attaches the tokenizer, and prewarms the
-PSO cache. The first call costs a few seconds; subsequent loads
-of the same repo are near-instant.
+`Model.load` resolves the HuggingFace repo, downloads the snapshot (or hits the cache), parses `config.json`, mmap-loads weights into per-tensor MTLBuffers, attaches the tokenizer, and prewarms the PSO cache. The first call costs a few seconds; subsequent loads of the same repo are near-instant.
 
 CLI equivalent (the `ffai` executable target):
 
 ```bash
-ffai --model unsloth/Llama-3.2-1B --prompt "Once upon a time"
+ffai --model mlx-community/Qwen3.5-0.8B-MLX-4bit --prompt "Once upon a time"
 ```
 
-See [`quickstart.md`](documentation/quickstart.md) for
-streaming, chat templates, capability gating, and lower-level
-forward APIs. Using a non-default cache directory (external SSD,
-shared cache between Python tools, etc.)? See
-[Custom model cache path](documentation/quickstart.md#custom-model-cache-path).
+See [`quickstart.md`](documentation/quickstart.md) for streaming, chat templates, capability gating, and lower-level forward APIs. Using a non-default cache directory (external SSD, shared cache between Python tools, etc.)? See [Custom model cache path](documentation/quickstart.md#custom-model-cache-path).
 
 ## Models Supported
 
-Two architecture families ship today; both run real HuggingFace
-checkpoints end-to-end. Adding a new family is one Swift file plus
-test fixtures — see
-[`adding-a-model.md`](documentation/adding-a-model.md).
+FFAI ships the most comprehensive Apple Silicon model coverage of any single library — **LLMs, VLMs, vision, STT, STS, TTS, and Omni models** all running real HuggingFace checkpoints end-to-end through one loader. Pass a repo ID, the registry resolves the architecture, downloads the snapshot, and routes to the right family.
 
-| Family | Variants | Sizes | Quantizations |
-|---|---|---|---|
-| **Llama 3.x** (`Llama.swift`) | `LlamaDense` (GQA + RoPE3 scaling + RMSNorm + SwiGLU MLP) | 1B / 3B / 8B / 70B | bf16 / 8bit / 6bit / 5bit / 4bit / 3bit |
-| **Qwen 3** (`Qwen3.swift`) | `Qwen3Dense` (Llama core + per-head q_norm/k_norm) | 0.6B / 1.7B / 4B / 8B / 14B / 32B | bf16 / 8bit / 6bit / 5bit / 4bit / 3bit |
+Run `ffai models` for the live list with copy-paste repo IDs, or browse the full breakdown by family + capability in [`documentation/models.md`](documentation/models.md).
 
-Quant layouts follow the **mlx-community** packed-uint32 format
-(weights + scales + biases per group). Pass any HuggingFace repo ID
-and the loader resolves architecture, downloads the snapshot, and
-routes to the right family. See
-[`models.md`](documentation/models.md) for the full
-matrix and known gaps.
+**Quantization.** Affine 3 / 4 / 5 / 6 / 8-bit (mlx-community packed-uint32 format) ships today, with per-tensor bit-width derivation for mixed-precision checkpoints. **2-bit, fully mixed-quantization recipes, and GGUF format are coming soon** — see [`quantization.md`](documentation/quantization.md) for what's wired up now vs queued.
 
-**Coming next** (per [`planning/plan.md`](planning/plan.md)): Qwen 3.5
-hybrid (GDN + attention), Qwen 3.5 MoE, Mistral, Phi, Gemma, vision
-(Qwen 2.5/3.5-VL), audio (Whisper / Qwen-Omni).
+### Adding a model
+
+Porting a new family is **one Swift file plus an integration test**. The `Models/` tree mirrors itself in `Tests/` so the diff lands in two focused places, and the loader auto-routes on the `model_type` / `architectures[0]` strings the family enum advertises.
+
+Step-by-step walkthrough with copy-pasteable templates: [`documentation/developing/adding-a-model.md`](documentation/developing/adding-a-model.md).
+
+### Quantize a Model
+
+`ffai convert` quantizes any bf16/fp16 HuggingFace checkpoint to MLX 4-bit or 8bit affine format using FFAI's own GPU kernels — no Python deps, no `mlx-lm` / `mlx-vlm` install, and it works on architectures `mlx-lm` rejects (custom-modeling-code families like Soprano, Nemotron-H, FastVLM):
+
+```bash
+# Pull, quantize, and write to ~/.cache/ffai/converts/.
+ffai convert HuggingFaceTB/SmolLM2-360M-Instruct
+
+# Also upload to a HF repo you control (uses your `hf` CLI auth).
+ffai convert HuggingFaceTB/SmolLM2-360M-Instruct \
+    --upload-repo ekryski/SmolLM2-360M-Instruct-4bit
+```
+
+Full flag list + recipes: [`using-the-cli.md` § `convert`](documentation/using-the-cli.md#convert--quantize-a-checkpoint-to-mlx-4-bit).
 
 ## High Level Architecture
 
@@ -131,17 +123,14 @@ hybrid (GDN + attention), Qwen 3.5 MoE, Mistral, Phi, Gemma, vision
 ┌────────────────────────▼────────────────────────────────┐
 │  metaltile (Rust, sibling repo)                         │
 │   • #[kernel] DSL → IR → MSL                            │
-│   • `tile build --emit all` (metaltile-cli) produces:   │
+│   • `tile emit` (metaltile-cli) produces:               │
 │       kernels.metallib   (compiled by xcrun metal)      │
 │       manifest.json      (kernel metadata)              │
 │       MetalTileKernels.swift  (typed wrappers)          │
 └─────────────────────────────────────────────────────────┘
 ```
 
-For the longer-form view (build pipeline, model load sequence,
-inference dispatch loop) see
-[`planning/architecture.md`](planning/architecture.md) and
-[`documentation/architecture.md`](documentation/architecture.md).
+For the longer-form view (build pipeline, model load sequence, inference dispatch loop) see [`planning/architecture.md`](planning/architecture.md) and [`documentation/architecture.md`](documentation/architecture.md).
 
 ## Contributing
 

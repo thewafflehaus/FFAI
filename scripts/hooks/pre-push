@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+#
+# pre-push — minimum gate: a clean Swift build + the full unit suite
+# must pass before the push round-trips to GitHub. Runs once per push,
+# not per commit, so the latency is amortised across the commit range.
+#
+# Covers:
+#   - make build      (~10-15 s when the kernel cache is warm)
+#   - make test-unit  (~2 min — FFAITests + MetalTileSwiftTests at the
+#                      production cap, FFAI_MAX_COMMAND_BUFFERS=16)
+#
+# NOT run here (too slow or environment-specific):
+#   - make test-integration  — multi-GB checkpoint downloads + per-family
+#                              end-to-end inference; runs in the release
+#                              workflow, not on every push. We may refine
+#                              and require this in the future once the
+#                              integration suite is fast enough.
+#
+# Bypass with `git push --no-verify` only when you know what you're
+# doing.
+
+set -e
+set -o pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+echo "→ pre-push: make build + make test-unit"
+
+if ! make build 2>&1 | tail -20; then
+    echo
+    echo "✗ make build failed. Fix the errors above and re-push."
+    exit 1
+fi
+
+if ! make test-unit 2>&1 | tail -10; then
+    echo
+    echo "✗ make test-unit failed. Fix the failures above and re-push."
+    exit 1
+fi
+
+# Future: integration suite gate. Disabled by default — multi-GB
+# checkpoints + 15-30 min runtime makes this too heavyweight for every
+# push today. The release workflow covers it pre-tag. Uncomment when
+# the integration suite is fast enough to gate every push on.
+#
+# if ! make test-integration 2>&1 | tail -10; then
+#     echo
+#     echo "✗ make test-integration failed. Fix the failures above and re-push."
+#     exit 1
+# fi
+
+echo "✓ pre-push OK"

@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+#
+# pre-commit — fast local lint (~1-3 s). Cheap things only, so the hook
+# stays out of the way of normal commits.
+#
+# Covers:
+#   - make format-check  (swift-format lint across the repo)
+#
+# Skipped here (live in other hooks or CI):
+#   - banned-term + trailer-shape scan      — fires in commit-msg, sees
+#                                              the actual commit message.
+#   - make build / make test-unit           — runs in pre-push, where
+#                                              the latency is amortised
+#                                              across the commit range.
+#   - make test-integration                 — multi-GB checkpoint
+#                                              downloads, too
+#                                              heavyweight to run on
+#                                              every commit (or push).
+#                                              The release workflow
+#                                              covers it pre-tag.
+#
+# Bypass with `git commit --no-verify` only when you know what you're
+# doing.
+
+set -e
+# Without pipefail, `make format-check 2>&1 | tail -20` returns tail's
+# exit status (always 0), so a failing lint would never trip the `if !`
+# guard below. Pipefail propagates the leftmost-failing command's
+# status.
+set -o pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+echo "→ pre-commit: make format-check"
+
+if ! make format-check 2>&1 | tail -20; then
+    echo
+    echo "✗ swift-format lint failed. Run 'make format' and re-stage."
+    exit 1
+fi
+
+echo "✓ pre-commit OK"

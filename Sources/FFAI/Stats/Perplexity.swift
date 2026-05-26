@@ -1,3 +1,17 @@
+// Copyright 2026 Eric Kryski (@ekryski)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
 // Perplexity — log-likelihood / perplexity / KL-divergence over a
 // fixed token sequence.
 //
@@ -58,22 +72,25 @@ public enum Perplexity {
         tokens: [Int],
         device: Device = .shared
     ) -> Result {
-        precondition(tokens.count >= 2,
-                     "Perplexity.compute requires at least 2 tokens (one context + one target)")
+        precondition(
+            tokens.count >= 2,
+            "Perplexity.compute requires at least 2 tokens (one context + one target)")
         let caches = model.engine.makeLayerCaches(maxSeq: nil, device: device)
         var nll = 0.0
         var scored = 0
-        for t in 0..<(tokens.count - 1) {
-            let logits = model.engine.forward(tokenId: tokens[t], position: t,
-                                              caches: caches, device: device)
+        for t in 0 ..< (tokens.count - 1) {
+            let logits = model.engine.forward(
+                tokenId: tokens[t], position: t,
+                caches: caches, device: device)
             let target = tokens[t + 1]
             nll += negLogSoftmaxAt(logits: logits, index: target)
             scored += 1
         }
         let mean = nll / Double(scored)
-        return Result(perplexity: exp(mean),
-                      meanNegLogLikelihood: mean,
-                      scoredTokens: scored)
+        return Result(
+            perplexity: exp(mean),
+            meanNegLogLikelihood: mean,
+            scoredTokens: scored)
     }
 
     /// KL(reference || candidate) over a fixed token sequence. Both
@@ -93,18 +110,21 @@ public enum Perplexity {
         tokens: [Int],
         device: Device = .shared
     ) -> KLDResult {
-        precondition(tokens.count >= 2,
-                     "klDivergence requires at least 2 tokens")
+        precondition(
+            tokens.count >= 2,
+            "klDivergence requires at least 2 tokens")
         let refCaches = reference.engine.makeLayerCaches(maxSeq: nil, device: device)
         let candCaches = candidate.engine.makeLayerCaches(maxSeq: nil, device: device)
 
         var totalKL = 0.0
         var scored = 0
-        for t in 0..<(tokens.count - 1) {
-            let refLogits = reference.engine.forward(tokenId: tokens[t], position: t,
-                                                     caches: refCaches, device: device)
-            let candLogits = candidate.engine.forward(tokenId: tokens[t], position: t,
-                                                      caches: candCaches, device: device)
+        for t in 0 ..< (tokens.count - 1) {
+            let refLogits = reference.engine.forward(
+                tokenId: tokens[t], position: t,
+                caches: refCaches, device: device)
+            let candLogits = candidate.engine.forward(
+                tokenId: tokens[t], position: t,
+                caches: candCaches, device: device)
             // Skip positions where vocab sizes mismatch (defensive — KL
             // over heterogeneous vocabs isn't meaningful).
             let refV = refLogits.shape.last ?? 0
@@ -131,21 +151,21 @@ public enum Perplexity {
         switch logits.dtype {
         case .f32:
             let f = ptr.assumingMemoryBound(to: Float.self)
-            for i in 0..<n {
+            for i in 0 ..< n {
                 let v = Double(f[i])
                 if v > maxV { maxV = v }
             }
             targetLogit = Double(f[index])
         case .f16:
             let f = ptr.assumingMemoryBound(to: UInt16.self)
-            for i in 0..<n {
+            for i in 0 ..< n {
                 let v = Double(float16ToFloat32(f[i]))
                 if v > maxV { maxV = v }
             }
             targetLogit = Double(float16ToFloat32(f[index]))
         case .bf16:
             let f = ptr.assumingMemoryBound(to: UInt16.self)
-            for i in 0..<n {
+            for i in 0 ..< n {
                 let v = Double(bfloat16ToFloat32(f[i]))
                 if v > maxV { maxV = v }
             }
@@ -158,18 +178,18 @@ public enum Perplexity {
         switch logits.dtype {
         case .f32:
             let f = ptr.assumingMemoryBound(to: Float.self)
-            for i in 0..<n { sum += exp(Double(f[i]) - maxV) }
+            for i in 0 ..< n { sum += exp(Double(f[i]) - maxV) }
         case .f16:
             let f = ptr.assumingMemoryBound(to: UInt16.self)
-            for i in 0..<n { sum += exp(Double(float16ToFloat32(f[i])) - maxV) }
+            for i in 0 ..< n { sum += exp(Double(float16ToFloat32(f[i])) - maxV) }
         case .bf16:
             let f = ptr.assumingMemoryBound(to: UInt16.self)
-            for i in 0..<n { sum += exp(Double(bfloat16ToFloat32(f[i])) - maxV) }
+            for i in 0 ..< n { sum += exp(Double(bfloat16ToFloat32(f[i])) - maxV) }
         default:
             fatalError("Perplexity: unsupported logits dtype \(logits.dtype)")
         }
         let logZ = maxV + log(sum)
-        return logZ - targetLogit   // = -log p(target)
+        return logZ - targetLogit  // = -log p(target)
     }
 
     /// Per-position KL(p_ref || q_cand). Decodes both logit vectors to
@@ -182,7 +202,7 @@ public enum Perplexity {
         let refLog = decodeLogSoftmax(logits: refLogits)
         let candLog = decodeLogSoftmax(logits: candLogits)
         var kl = 0.0
-        for v in 0..<n {
+        for v in 0 ..< n {
             let p = exp(refLog[v])
             kl += p * (refLog[v] - candLog[v])
         }
@@ -198,13 +218,13 @@ public enum Perplexity {
         switch logits.dtype {
         case .f32:
             let f = ptr.assumingMemoryBound(to: Float.self)
-            for i in 0..<n { raw[i] = Double(f[i]) }
+            for i in 0 ..< n { raw[i] = Double(f[i]) }
         case .f16:
             let f = ptr.assumingMemoryBound(to: UInt16.self)
-            for i in 0..<n { raw[i] = Double(float16ToFloat32(f[i])) }
+            for i in 0 ..< n { raw[i] = Double(float16ToFloat32(f[i])) }
         case .bf16:
             let f = ptr.assumingMemoryBound(to: UInt16.self)
-            for i in 0..<n { raw[i] = Double(bfloat16ToFloat32(f[i])) }
+            for i in 0 ..< n { raw[i] = Double(bfloat16ToFloat32(f[i])) }
         default:
             fatalError("Perplexity: unsupported logits dtype \(logits.dtype)")
         }
@@ -213,7 +233,7 @@ public enum Perplexity {
         var sum = 0.0
         for v in raw { sum += exp(v - maxV) }
         let logZ = maxV + log(sum)
-        for i in 0..<n { raw[i] -= logZ }
+        for i in 0 ..< n { raw[i] -= logZ }
         return raw
     }
 

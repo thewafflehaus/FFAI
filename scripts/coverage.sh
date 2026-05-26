@@ -1,14 +1,38 @@
 #!/bin/bash
+#
+# Copyright 2026 Eric Kryski (@ekryski)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 # coverage.sh
-# Run tests with coverage and print a summary.
+# Run unit tests with coverage and print a summary.
 # Excludes generated code, .build, and Tests themselves from the report.
+#
+# Scope is intentionally limited to the unit suite (FFAITests +
+# MetalTileSwiftTests). ModelIntegrationTests download multi-GB HuggingFace
+# snapshots + do real end-to-end inference, which:
+#   (a) takes tens of minutes per run
+#   (b) hits memory contention if multiple suites parallelize
+#   (c) doesn't meaningfully contribute to *unit* coverage anyway
+# Matches .github/workflows/ci.yml's coverage step exactly. For
+# integration tests, see `make test-integration`.
 
 set -e
 
 cd "$(dirname "$0")/.."
 
-echo "Running tests with coverage enabled..."
-swift test --enable-code-coverage
+echo "Running unit tests with coverage enabled..."
+swift test --enable-code-coverage --filter "FFAITests|MetalTileSwiftTests"
 
 BIN_PATH=$(swift build --show-bin-path)
 PROF_DATA="$BIN_PATH/codecov/default.profdata"

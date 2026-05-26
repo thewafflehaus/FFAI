@@ -20,3 +20,8 @@ Sources/MetalTileSwift/Generated/*
 /Models/
 *.safetensors
 *.gguf
+planning/session-plan.md
+
+# Per-run output from scripts/integration-bisect.sh — the script tool
+# itself stays tracked; only the log dump is local.
+planning/integration-bisect-logs/

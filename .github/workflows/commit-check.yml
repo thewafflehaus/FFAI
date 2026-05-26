@@ -1,0 +1,40 @@
+name: Commit hygiene
+
+# Run scripts/commit_hygiene.py against every commit in the PR
+# range. Guards AI-attribution pollution — `Co-Authored-By:` /
+# `Generated-by:` trailers, `🤖 Generated with <tool>` footers, etc.
+# Bare mentions are fine; only attribution credit is rejected. See the
+# script's docstring for the full detection ruleset (T / K / P).
+#
+# The script also posts a sticky PR comment summarising any findings,
+# so the job needs `pull-requests: write`.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  commit-hygiene:
+    name: Scan PR commit messages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run hygiene check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+        run: python3 scripts/commit_hygiene.py

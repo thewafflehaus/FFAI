@@ -152,11 +152,14 @@ jobs:
         # The real value-add of running tests inside the release
         # workflow: end-to-end inference against Llama / Qwen3 (×5
         # quants) / Mamba 2 right before we cut the tag.
-        # `--parallel --num-workers 1` enables the scheduler but caps
-        # at one worker, so suites run effectively serially with only
-        # one model resident in the runner's 7 GB RAM envelope at a
-        # time. (Swift PM rejects `--num-workers` without `--parallel`.)
-        run: swift test -c release --skip-build --filter "ModelTests" --parallel --num-workers 1
+        #
+        # Serialization is enforced inside the test code (`.serialized`
+        # trait on every @Suite in Tests/ModelTests/*, plus a global
+        # ModelLoadLock around every Model.load() call), so we don't
+        # need to pass `--parallel --num-workers 1` here — those
+        # SwiftPM flags don't actually control Swift Testing's
+        # in-bundle scheduler anyway. Running with the defaults.
+        run: swift test -c release --skip-build --filter "ModelTests"
 
   release:
     needs: test
@@ -184,6 +187,23 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # Ensure the Apache 2.0 header is present on every code + test file
+      # at the tagged commit. Idempotent — a no-op when contributors ran
+      # the pre-commit hook locally (or anyone manually ran the script
+      # earlier). When new files slipped through without the header,
+      # this step adds it + commits the result so the tag points at
+      # source the LICENSE actually applies to.
+      - name: Ensure Apache 2.0 license headers
+        run: |
+          ./scripts/update-license.sh
+          if ! git diff --quiet; then
+            git add -A
+            git commit -m "chore: apply Apache 2.0 license headers"
+            echo "Committed missing license headers."
+          else
+            echo "All source files already carry the license header."
+          fi
 
       - name: Compute version + create branch/tag
         id: bump

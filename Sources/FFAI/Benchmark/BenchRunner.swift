@@ -1,3 +1,17 @@
+// Copyright 2026 Eric Kryski (@ekryski)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
 // BenchRunner — drives a `BenchMethod` against a loaded model and
 // hands the resulting row to a `BenchmarkWriter`.
 //
@@ -17,11 +31,13 @@ public enum BenchRunnerError: Error, CustomStringConvertible {
     public var description: String {
         switch self {
         case .notImplemented(let m, let dep):
-            return "ffai bench --method \(m.rawValue): not implemented yet — needs \(dep). Tracked alongside its parent feature in planning/plan.md."
+            return
+                "ffai bench --method \(m.rawValue): not implemented yet — needs \(dep). Tracked alongside its parent feature in planning/plan.md."
         case .missingPrompt:
             return "ffai bench: --prompt is required for this method"
         case .wikitext2CorpusMissing(let url):
-            return "ffai bench: WikiText-2 corpus not found at \(url.path). Provide --wikitext2-corpus </path/to/wiki.test.raw>"
+            return
+                "ffai bench: WikiText-2 corpus not found at \(url.path). Provide --wikitext2-corpus </path/to/wiki.test.raw>"
         case .kldRequiresReferenceModel:
             return "ffai bench: KLD computation requires --ref-model"
         }
@@ -67,8 +83,10 @@ public struct BenchRunner {
 
     /// Run `method` against the loaded model, returning a `BenchRow`
     /// the caller can hand to `BenchmarkWriter.append(_:)`.
-    public func run(method: BenchMethod,
-                    options: BenchOptions) async throws -> BenchRow {
+    public func run(
+        method: BenchMethod,
+        options: BenchOptions
+    ) async throws -> BenchRow {
         Debug.log(.bench, "running method=\(method.rawValue) model=\(modelLabel)")
         switch method {
         case .simple:

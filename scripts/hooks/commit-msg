@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+#
+# commit-msg — local mirror of .github/scripts/commit_hygiene.py.
+#
+# Guards AI *attribution* pollution, not bare mentions:
+#
+#   (K) explicit attribution-trailer keys anywhere — Co-Authored-By:,
+#       Signed-off-by:, Reviewed-by:, Generated-by:, … (the lines a
+#       `git commit --trailer …` plants).
+#   (P) AI-attribution phrases — the `🤖` footer emoji, or an
+#       attribution verb (generated / co-authored / created / …) joined
+#       by `by`/`with`/`using` to a known AI tool name on the same line
+#       (`🤖 Generated with Claude Code`, `created with Cursor`, …).
+#   (T) any Git-trailer-shaped line (`^Word: …`) in the trailing
+#       paragraph — CI rejects all of them, so phrase summaries as
+#       `Test results — 7/7` rather than `Tests: 7/7`.
+#
+# What is FINE (not flagged): naming files/dirs like CLAUDE.md,
+# .claude/, .cursor/, AGENTS.md; disclosing AI assistance in prose
+# (CONTRIBUTING.md asks for it); kernels named after models (llama…).
+#
+# Bypass with `git commit --no-verify` if you know what you're doing.
+
+set -e
+
+MSG_FILE="$1"
+[ -z "$MSG_FILE" ] && exit 0
+
+# Strip comment lines (`#` is the comment prefix in Git commit messages).
+BODY="$(grep -v '^#' "$MSG_FILE" || true)"
+
+# ─── (K) attribution-trailer keys, anywhere in the message ───────────
+ATTRIB_KEYS='^[[:space:]]*(co-?authored-by|signed-off-by|reviewed-by|tested-by|acked-by|assisted-by|generated-by|created-by|authored-by|helped-by|suggested-by|reported-by|written-by)[[:space:]]*:'
+if echo "$BODY" | grep -iE "$ATTRIB_KEYS" >/dev/null; then
+    echo "✗ commit-msg: AI/co-author attribution trailer"
+    echo
+    echo "  Matched lines:"
+    echo "$BODY" | grep -iEn "$ATTRIB_KEYS" | head -5 | sed 's/^/    /'
+    echo
+    echo "  Drop the trailer. Disclosing AI use in prose is fine; crediting"
+    echo "  it as a co-author is not. Bypass with --no-verify."
+    exit 1
+fi
+
+# ─── (P) AI-attribution phrase — 🤖 footer, or verb + tool name ──────
+ATTRIB_VERB='(co-?authored|generated|created|authored|written|produced|powered|assisted|made|built|crafted).{0,30}(by|with|using)'
+AI_NAMES='(claude|anthropic|codex|openai|chatgpt|gpt[- ]?[0-9]|antigravity|gemini|bard|copilot|cursor|sourcegraph|cody|devin|aider|windsurf|tabnine|llama|mistral|grok|perplexity|replit|ghostwriter)'
+ROBOT_HITS="$(echo "$BODY" | grep -Fn '🤖' || true)"
+PHRASE_HITS="$(echo "$BODY" | grep -iEn "$ATTRIB_VERB" | grep -iE "$AI_NAMES" || true)"
+if [ -n "$ROBOT_HITS" ] || [ -n "$PHRASE_HITS" ]; then
+    echo "✗ commit-msg: AI-attribution line"
+    echo
+    echo "  Matched lines:"
+    [ -n "$ROBOT_HITS" ] && echo "$ROBOT_HITS" | head -3 | sed 's/^/    /'
+    [ -n "$PHRASE_HITS" ] && echo "$PHRASE_HITS" | head -3 | sed 's/^/    /'
+    echo
+    echo "  Drop the '🤖 Generated with …' / 'created with <tool>' line."
+    echo "  Bypass with --no-verify."
+    exit 1
+fi
+
+# ─── (T) Trailer-shaped tail scan ────────────────────────────────────
+# A run of `Word: …` lines forming the final paragraph — i.e. sitting
+# below a blank line, so a real body exists above them — is what CI
+# treats as a trailer block. The preceding-blank check is load-bearing:
+# a one-line conventional-commit subject (`feat: …`) is `Word:`-shaped
+# too, so without it every single-line commit would be rejected.
+
+TMP="$(mktemp)"
+trap 'rm -f "$TMP"' EXIT
+printf '%s\n' "$BODY" > "$TMP"
+total_lines=$(wc -l < "$TMP" | tr -d ' ')
+
+# Index of the last non-blank line (ignore trailing blank lines).
+last=0
+for i in $(seq 1 "$total_lines"); do
+    [ -n "$(sed -n "${i}p" "$TMP" | tr -d '[:space:]')" ] && last=$i
+done
+
+# Walk up from `last`, counting trailer-shaped lines; stop at the first
+# blank or non-trailer line and remember which stopped us.
+trailers_in_tail=0
+stopped_on_blank=0
+i=$last
+while [ "$i" -ge 1 ]; do
+    line=$(sed -n "${i}p" "$TMP")
+    if [ -z "$(printf '%s' "$line" | tr -d '[:space:]')" ]; then
+        stopped_on_blank=1
+        break
+    fi
+    if printf '%s' "$line" | grep -qE '^[A-Za-z][A-Za-z0-9-]*:[[:space:]]'; then
+        trailers_in_tail=$((trailers_in_tail + 1))
+        i=$((i - 1))
+    else
+        break
+    fi
+done
+
+# Flag only a real trailing trailer paragraph: trailer-shaped lines
+# below a blank line. A bare subject breaks the walk by running off the
+# top of the message, not on a blank — so it is left alone.
+if [ "$trailers_in_tail" -gt 0 ] && [ "$stopped_on_blank" -eq 1 ]; then
+    echo "✗ commit-msg: $trailers_in_tail Git-trailer-shaped line(s) in trailing paragraph"
+    echo
+    echo "  CI's hygiene check treats trailing 'Word:\s...' lines as Co-Authored-By-"
+    echo "  style trailers and rejects them. Common false-positive offenders:"
+    echo "    - 'Tests: 7/7 pass' → use 'Test results — 7/7 pass'"
+    echo "    - 'Tolerance: 1e-5' → use 'Tolerance — 1e-5'"
+    echo "    - 'Shape: …'        → use 'Shape — …'"
+    echo
+    echo "  Either rephrase or move them mid-body before the closing paragraph."
+    echo "  Bypass with --no-verify."
+    exit 1
+fi
+
+exit 0
