@@ -90,7 +90,7 @@ struct SpecDecodeVerifyCostBench {
             tokenIds: inputIds, startPosition: promptLen,
             caches: caches, on: warmCmd, device: device)
         warmCmd.commit()
-        await warmCmd.completed()
+        await warmCmd.awaitCompletion()
         caches.restoreAll(from: snap0, device: device)
 
         // 16 timed iters of each path, restoring caches between each.
@@ -115,7 +115,7 @@ struct SpecDecodeVerifyCostBench {
                 tokenIds: inputIds, startPosition: promptLen,
                 caches: caches, on: cmd, device: device)
             cmd.commit()
-            await cmd.completed()
+            await cmd.awaitCompletion()
             batchedTimes.append(Date().timeIntervalSince(t0))
             caches.restoreAll(from: snap0, device: device)
         }
@@ -154,7 +154,7 @@ struct SpecDecodeVerifyCostBench {
             tokenIds: inputIds2, startPosition: promptLen,
             caches: caches, on: warmCmd2, device: device)
         warmCmd2.commit()
-        await warmCmd2.completed()
+        await warmCmd2.awaitCompletion()
         caches.restoreAll(from: snap2, device: device)
 
         var singleT2: [Double] = []
@@ -175,7 +175,7 @@ struct SpecDecodeVerifyCostBench {
                 tokenIds: inputIds2, startPosition: promptLen,
                 caches: caches, on: cmd, device: device)
             cmd.commit()
-            await cmd.completed()
+            await cmd.awaitCompletion()
             batchedT2.append(Date().timeIntervalSince(t0))
             caches.restoreAll(from: snap2, device: device)
         }

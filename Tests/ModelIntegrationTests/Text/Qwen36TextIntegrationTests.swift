@@ -220,7 +220,7 @@ struct Qwen36TextIntegrationTests {
                 tokenIds: encoded, startPosition: 0,
                 caches: warmCachesB, on: warmCmd, device: Device.shared)
             warmCmd.commit()
-            await warmCmd.completed()
+            await warmCmd.awaitCompletion()
             _ = warmIter  // silence
         }
 
@@ -250,7 +250,7 @@ struct Qwen36TextIntegrationTests {
                 tokenIds: encoded, startPosition: 0,
                 caches: caches, on: bCmd, device: Device.shared)
             bCmd.commit()
-            await bCmd.completed()
+            await bCmd.awaitCompletion()
             batchedSecs.append(Date().timeIntervalSince(t0))
         }
         batchedSecs.sort()
@@ -297,7 +297,7 @@ struct Qwen36TextIntegrationTests {
             tokenIds: encoded, startPosition: 0,
             caches: manyCaches, on: manyCmd, device: Device.shared)
         manyCmd.commit()
-        await manyCmd.completed()
+        await manyCmd.awaitCompletion()
         let manyLogits = manyLogitsTensor.toFloatArray()
         let manyArgmax = manyLogits.enumerated().max(by: { $0.element < $1.element })!.offset
 

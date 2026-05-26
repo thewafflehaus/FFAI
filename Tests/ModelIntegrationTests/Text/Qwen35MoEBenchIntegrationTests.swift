@@ -103,7 +103,7 @@ struct Qwen35MoEBenchIntegrationTests {
             tokenIds: encoded, startPosition: 0,
             caches: caches, on: cmd, device: Device.shared)
         cmd.commit()
-        await cmd.completed()
+        await cmd.awaitCompletion()
         let dt = Date().timeIntervalSince(t0)
         print("Qwen3.5-35B-A3B forwardMany T=8: \(String(format: "%.3f", dt))s")
     }
@@ -181,7 +181,7 @@ struct Qwen35MoEBenchIntegrationTests {
             tokenIds: encoded, startPosition: 0,
             caches: caches, on: cmd, device: Device.shared)
         cmd.commit()
-        await cmd.completed()
+        await cmd.awaitCompletion()
         let prefillS = Date().timeIntervalSince(prefillT0)
         let prefillTps = Double(T) / prefillS
         print(
@@ -242,7 +242,7 @@ struct Qwen35MoEBenchIntegrationTests {
                 tokenIds: encoded, startPosition: 0,
                 caches: warmCachesB, on: warmCmd, device: Device.shared)
             warmCmd.commit()
-            await warmCmd.completed()
+            await warmCmd.awaitCompletion()
         }
 
         // Per-token loop baseline (5 runs, median).
@@ -268,7 +268,7 @@ struct Qwen35MoEBenchIntegrationTests {
                 tokenIds: encoded, startPosition: 0,
                 caches: caches, on: bCmd, device: Device.shared)
             bCmd.commit()
-            await bCmd.completed()
+            await bCmd.awaitCompletion()
             batchedSecs.append(Date().timeIntervalSince(t0))
         }
         batchedSecs.sort()
