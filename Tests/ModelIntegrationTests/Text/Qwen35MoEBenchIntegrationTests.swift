@@ -147,10 +147,10 @@ struct Qwen35MoEBenchIntegrationTests {
         try await runForwardManyBench(targetT: 2048)
     }
 
-    @Test("Qwen3.5-35B-A3B decode after T=1024 prefill — long-KV decode tps")
-    func decodeAfterLongPrefill() async throws {
+    @Test("Qwen3.5-35B-A3B prefill T=32K + decode-after-prefill — long-context bench")
+    func longContext32K() async throws {
         guard FileManager.default.fileExists(atPath: qwen35MoELocalPath) else {
-            print("decodeAfterLongPrefill skipped: \(qwen35MoELocalPath) not found")
+            print("longContext32K skipped: \(qwen35MoELocalPath) not found")
             return
         }
         let m = try await loadModel()
@@ -158,51 +158,48 @@ struct Qwen35MoEBenchIntegrationTests {
         let seed =
             "The history of the printing press began when European craftsmen of the 15th century combined movable metal type with oil based ink screw presses paper to mass produce printed books pamphlets and broadsheets revolutionising communication"
         let seedEncoded = m.tokenizer.encode(text: seed)
+        let targetT = 32_768
         var encoded = seedEncoded
-        while encoded.count < 1024 { encoded.append(contentsOf: seedEncoded) }
-        encoded = Array(encoded.prefix(1024))
-
-        // Warm.
-        for _ in 0 ..< 2 {
-            let warmCaches = qwen.makeLayerCaches()
-            let warmCmd = Device.shared.makeCommandBuffer()
-            _ = qwen.forwardMany(
-                tokenIds: encoded, startPosition: 0,
-                caches: warmCaches, on: warmCmd, device: Device.shared)
-            warmCmd.commit()
-            await warmCmd.completed()
+        while encoded.count < targetT {
+            encoded.append(contentsOf: seedEncoded)
         }
+        encoded = Array(encoded.prefix(targetT))
+        let T = encoded.count
 
-        // Prefill 1024 via forwardMany, then decode 32 steps and
-        // measure decode-only tps. Verifies the wirings (sdpaDecode +
-        // sdpaDecode2Pass routing, KV cache residency, etc.) hold up
-        // at non-trivial KV.
-        let nSteps = 32
-        var runs: [Double] = []
-        for _ in 0 ..< 5 {
-            let caches = qwen.makeLayerCaches()
-            let cmd = Device.shared.makeCommandBuffer()
-            _ = qwen.forwardMany(
-                tokenIds: encoded, startPosition: 0,
-                caches: caches, on: cmd, device: Device.shared)
-            cmd.commit()
-            await cmd.completed()
+        // Single prefill + decode run (32 decode steps). No
+        // 5-run median — the prefill alone is multi-second so the
+        // variance from a single shot is fine for a sanity bench.
+        // Per-token baseline at T=32K is intentionally NOT measured
+        // (would take ~5 minutes per run).
+        print("Qwen3.5-35B-A3B longContext32K T=\(T) (single run)")
 
-            let t0 = Date()
-            for j in 0 ..< nSteps {
-                _ = qwen.forward(
-                    tokenId: 0, position: 1024 + j, caches: caches)
-            }
-            runs.append(Date().timeIntervalSince(t0))
-        }
-        runs.sort()
-        let median = runs[runs.count / 2]
-        let tps = Double(nSteps) / median
+        let nDecode = 32
+        let caches = qwen.makeLayerCaches()
+        let prefillT0 = Date()
+        let cmd = Device.shared.makeCommandBuffer()
+        _ = qwen.forwardMany(
+            tokenIds: encoded, startPosition: 0,
+            caches: caches, on: cmd, device: Device.shared)
+        cmd.commit()
+        await cmd.completed()
+        let prefillS = Date().timeIntervalSince(prefillT0)
+        let prefillTps = Double(T) / prefillS
         print(
-            "Qwen3.5-35B-A3B decode T=1 after T=1024 prefill: "
-                + "runs=\(runs.map { String(format: "%.3f", $0) })s "
-                + "median=\(String(format: "%.3f", median))s → "
-                + "\(String(format: "%.2f", tps)) tps")
+            "Qwen3.5-35B-A3B prefill T=\(T): "
+                + "\(String(format: "%.3f", prefillS))s → "
+                + "\(String(format: "%.1f", prefillTps)) tps batched")
+
+        let decodeT0 = Date()
+        for j in 0 ..< nDecode {
+            _ = qwen.forward(
+                tokenId: 0, position: T + j, caches: caches)
+        }
+        let decodeS = Date().timeIntervalSince(decodeT0)
+        let decodeTps = Double(nDecode) / decodeS
+        print(
+            "Qwen3.5-35B-A3B decode T=1 after T=\(T) prefill: "
+                + "\(String(format: "%.3f", decodeS))s over \(nDecode) steps → "
+                + "\(String(format: "%.2f", decodeTps)) tps")
     }
 
     private func loadModel() async throws -> Model {
