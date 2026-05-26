@@ -1,73 +1,15 @@
-// Phi-3 family — Microsoft's Phi-3 mini / small / medium (and their
-// 3.5 refresh). Architecturally a Llama-ish dense transformer with
-// two layout differences:
+// Phi text — concrete variants + the dense decoder support for the
+// Phi-3 / Phi-3.5 family. The family enum (`enum Phi`), variant
+// protocol (`PhiVariant`), and error type (`PhiError`) live in
+// `Models/Phi.swift` (the family root / main interface).
 //
-//   1. **Fused QKV projection** — `qkv_proj.weight` is one
-//      `[(Q + 2*KV) * head_dim, hidden]` row-major linear, not three
-//      separate `q_proj` / `k_proj` / `v_proj`. We slice the row range
-//      via `Tensor.slicedRows` to produce three Linear views sharing
-//      the same MTLBuffer.
-//
-//   2. **Fused gate/up MLP projection** — `mlp.gate_up_proj.weight` is
-//      `[2 * intermediate, hidden]`. Same row-slice trick: gate is
-//      rows [0, intermediate), up is rows [intermediate, 2*intermediate).
-//
-// Once the fused weights are split into row-slice views, the layer
-// stack is bit-for-bit `LlamaLayer`/`LlamaModel`. We pass the views
-// straight into the LlamaLayer constructor and reuse all of Llama's
-// forward + cache infrastructure.
-//
-// Quantized Phi-3 (mlx-community 4-bit / 8-bit packs) is out of scope
-// for first-light: slicing the packed u32 weight by row would also
-// require slicing the per-group scales and biases at the same
-// row boundary, which works for the typical Phi-3 head_dim=96 + 32
-// groupSize, but requires per-row alignment validation we haven't
-// written yet. Bundles with `quantization.bits` set fall back to
-// loading raw if the quantized blob isn't present, or fail with a
-// clear error otherwise.
-//
-// RoPE scaling: Phi-3-mini-4k-instruct ships with no rope_scaling.
-// Phi-3-mini-128k-instruct uses `rope_scaling.type = "longrope"` /
-// "su" — per-dimension RoPE frequency vectors. SuScaledRoPE is queued
-// as a follow-up; the 4k variant is the first integration
-// target.
+// This file holds:
+//   • `Phi3Dense` — `PhiVariant` conformance + the per-variant
+//     `loadModel` entry. Slices the fused `qkv_proj` and
+//     `gate_up_proj` weights into row-views that drop straight into
+//     `LlamaLayer`, then returns a `LlamaModel` engine.
 
 import Foundation
-
-public enum Phi {
-    public static let modelTypes: Set<String> = ["phi3"]
-    public static let architectures: Set<String> = ["Phi3ForCausalLM"]
-
-    public static func variant(for config: ModelConfig) throws -> any PhiVariant.Type {
-        return Phi3Dense.self
-    }
-}
-
-public protocol PhiVariant {
-    static var availableCapabilities: Set<Capability> { get }
-    static var defaultGenerationParameters: GenerationParameters { get }
-    static func loadModel(
-        config: ModelConfig,
-        weights: SafeTensorsBundle,
-        options: LoadOptions,
-        device: Device
-    ) throws -> LlamaModel
-}
-
-public enum PhiError: Error, CustomStringConvertible {
-    case missingConfig
-    case unsupportedRopeScaling(String)
-    case quantizedFusedNotSupported
-    public var description: String {
-        switch self {
-        case .missingConfig: return "Phi: required config field missing"
-        case .unsupportedRopeScaling(let t):
-            return "Phi: rope_scaling type '\(t)' not supported yet (SuScaledRoPE is a follow-up); use Phi-3-mini-4k-instruct or wait"
-        case .quantizedFusedNotSupported:
-            return "Phi: quantized fused qkv_proj / gate_up_proj not supported yet; load the raw bf16 / f16 checkpoint or convert with split projections"
-        }
-    }
-}
 
 public struct Phi3Dense: PhiVariant {
     public static let availableCapabilities: Set<Capability> = [.textIn, .textOut]

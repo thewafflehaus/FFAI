@@ -1,112 +1,19 @@
-// LFM2 family — LiquidAI's Liquid Foundation Models 2 (and LFM2.5,
-// which is architecturally identical: `model_type: lfm2`,
-// `Lfm2ForCausalLM`).
+// LFM2 text — concrete variants + the hybrid decoder for LiquidAI's
+// LFM2 / LFM2.5 family. The family enum (`enum LFM2`), variant
+// protocol (`LFM2Variant`), and error type (`LFM2Error`) live in
+// `Models/LFM2.swift` (the family root / main interface). This file
+// holds the text-only impl:
 //
-// LFM2 is a *stack-interleaved hybrid*: a `layer_types` schedule (or the
-// `full_attn_idxs` index list) assigns each decoder layer exactly one
-// mixer kind —
-//
-//   * `conv`            — LFM2's double-gated short convolution.
-//   * `full_attention`  — grouped-query attention with RoPE.
-//
-// Every layer carries a feed-forward half. Two checkpoint shapes:
-//
-//   * `Lfm2ForCausalLM` (`lfm2`)        — a dense SwiGLU MLP on every
-//                                          layer.
-//   * `Lfm2MoeForCausalLM` (`lfm2_moe`) — a block-sparse MoE FFN on
-//                                          every layer at index ≥
-//                                          `num_dense_layers`; the
-//                                          first `num_dense_layers`
-//                                          stay dense SwiGLU.
-//
-// Each layer is two pre-norm + residual blocks (`operator_norm` →
-// mixer, `ffn_norm` → FFN).
-//
-// ─── The LFM2 short-conv mixer ───────────────────────────────────────
-//
-//   BCx        = in_proj(operator_norm(h))        [3 · hidden]
-//   B, C, x    = split(BCx, 3)                    each [hidden]
-//   Bx         = B · x                            (input gate)
-//   conv_out   = depthwise_causal_conv1d(Bx)      kernel = conv_L_cache
-//   y          = C · conv_out                     (output gate)
-//   mixer_out  = out_proj(y)
-//
-// The causal depthwise conv1d is the shipped `conv1d_causal_step`
-// kernel + a per-layer `ConvStateCache` (the same primitive Mamba 2 /
-// FalconH1 use) — no new kernel. LFM2 applies NO activation between the
-// conv and the output gate (unlike Mamba's post-conv SiLU).
-//
-// ─── Attention ───────────────────────────────────────────────────────
-//
-// Standard GQA + NeoX RoPE, with a per-head RMSNorm on Q and K before
-// RoPE (`q_layernorm` / `k_layernorm`, like Qwen 3). LFM2's head_dim is
-// `hidden / n_heads = 64`, which is NOT a multiple of 128 — so the GPU
-// `Ops.rmsNormRows` reduction kernel (128-aligned rows only) cannot run
-// the per-head norm. LFM2 therefore applies the Q/K norm HOST-side (a
-// 64-wide norm over a single decode token is trivial on the CPU), the
-// GPT-OSS host-norm precedent.
-//
-// ─── MoE routing (`lfm2_moe`) ────────────────────────────────────────
-//
-// LFM2-MoE's router: softmax over all experts, add the per-expert
-// load-balancing `expert_bias`, take the top-K of the biased values,
-// then (with `norm_topk_prob`) re-normalise the K combine weights. The
-// biased value is BOTH the selector and the combine weight — wired
-// through `MoERouter`'s `expertBias` parameter on the `.softmaxThenTopK`
-// mode.
-//
-// ─── Command-buffer discipline ───────────────────────────────────────
-//
-// Both an attention layer (host-side Q/K norm) and a MoE FFN
-// (`MoELayer.decode`'s router CPU readback) commit the command buffer
-// mid-layer. Conv layers with a dense FFN do not. `LFM2Model.forward`
-// runs the stack on internal `workCmd` buffers and refreshes after each
-// committing layer — the Granite4 discipline.
+//   • `LFM2Dense` / `LFM2MoE` — `LFM2Variant` conformance + the per-
+//     variant `loadModel` entries,
+//   • `LFM2LayerKind`, `LFM2ConvCache`, `LFM2Model` — per-layer + full-
+//     model impl. Stack-interleaved conv (double-gated short conv) +
+//     attention (GQA + NeoX RoPE, host-side Q/K norm). MoE uses the
+//     biased-router `.softmaxThenTopK` mode. `LFM2Model.forward`
+//     follows the Granite4 command-buffer discipline.
 
 import Foundation
 import Metal
-
-// ─── Family entry point ──────────────────────────────────────────────
-
-public enum LFM2 {
-    public static let modelTypes: Set<String> = ["lfm2", "lfm2_moe"]
-    public static let architectures: Set<String> =
-        ["Lfm2ForCausalLM", "Lfm2MoeForCausalLM"]
-
-    /// True when the config names the mixture-of-experts checkpoint.
-    static func isMoE(_ config: ModelConfig) -> Bool {
-        config.modelType == "lfm2_moe"
-            || config.architecture == "Lfm2MoeForCausalLM"
-    }
-
-    public static func variant(for config: ModelConfig) throws -> any LFM2Variant.Type {
-        return isMoE(config) ? LFM2MoE.self : LFM2Dense.self
-    }
-}
-
-public protocol LFM2Variant {
-    static var availableCapabilities: Set<Capability> { get }
-    static var defaultGenerationParameters: GenerationParameters { get }
-    static func loadModel(
-        config: ModelConfig,
-        weights: SafeTensorsBundle,
-        options: LoadOptions,
-        device: Device
-    ) throws -> LFM2Model
-}
-
-public enum LFM2Error: Error, CustomStringConvertible {
-    case missingConfig(String)
-    case unsupportedConfig(String)
-    public var description: String {
-        switch self {
-        case .missingConfig(let f):
-            return "LFM2: required config field missing: \(f)"
-        case .unsupportedConfig(let m):
-            return "LFM2: unsupported config: \(m)"
-        }
-    }
-}
 
 // ─── Layer kind + schedule ───────────────────────────────────────────
 

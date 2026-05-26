@@ -1,105 +1,19 @@
-// Jamba family — a *stack-interleaved hybrid* model.
+// Jamba text — concrete variants + the hybrid decoder for AI21's
+// Jamba family. The family enum (`enum Jamba`), variant protocol
+// (`JambaVariant`), and error type (`JambaError`) live in
+// `Models/Jamba.swift` (the family root / main interface). This file
+// holds the text-only impl:
 //
-// Jamba (AI21's Jamba v0.1 / Jamba-Reasoning-3B) is a stack-interleaved
-// hybrid like NemotronH / Granite4: a `layers_block_type` array
-// assigns each decoder layer exactly ONE mixer kind — "mamba" or
-// "attention" — and the kinds vary down the stack. Every layer ALSO
-// carries a feed-forward half: either a dense SwiGLU MLP
-// (`num_experts == 1`) or a block-sparse MoE block (`num_experts > 1`).
-//
-// Per-layer dataflow (matches mlx-lm's `jamba.py`):
-//
-//   residual = h
-//   h        = input_layernorm(h)
-//   h        = mixer(h)                      — mamba / attention
-//   r        = residual + h
-//   out      = r + feed_forward(pre_ff_layernorm(r))
-//
-// ─── The Mamba mixer is Mamba 1, not Mamba 2 ─────────────────────────
-//
-// Jamba's `JambaMambaMixer` is the *original* Mamba (Mamba 1) selective
-// SSM — NOT the Mamba 2 SSD form that `Mamba2Layer` / NemotronH /
-// Granite4 implement. The two differ structurally:
-//
-//   * Mamba 2: `A` is one scalar per head; `dt` is one scalar per head;
-//     the recurrence decay `exp(A·dt)` is shared across all `state_dim`.
-//     The shipped `Ops.ssmStep` Metal kernel bakes this in.
-//   * Mamba 1 (Jamba): `A` is per-(channel, state) — shape
-//     `[d_inner, d_state]` — and `dt` is per-channel `[d_inner]`. The
-//     decay `exp(A[c,n]·dt[c])` therefore varies with the state index
-//     `n`. The shipped `ssm_step` kernel CANNOT express this.
-//
-// Rather than add a new Metal kernel, Jamba runs the selective-scan
-// core on the CPU. The per-token cost is `d_inner · d_state` (≈ 82K
-// MACs for Jamba-3B's 5120·16) — negligible, dwarfed by the GPU gemms.
-// The GPU still owns every projection (`in_proj`, `conv1d`, `x_proj`,
-// `dt_proj`, `out_proj`), attention, and the MLP. Only the scalar SSM
-// recurrence is host-side.
-//
-// ─── The 2-D `A_log` quirk ───────────────────────────────────────────
-//
-// Jamba ships `mamba.A_log` with shape `[d_inner, d_state]`. mlx-lm
-// initialises it as `log(repeat([1..d_state], count=d_inner))` — so the
-// *untrained* tensor has every channel row identical — but a trained
-// checkpoint diverges per channel, so the 2-D shape does NOT collapse.
-// Jamba keeps `A_eff = -exp(A_log)` as a full `[d_inner, d_state]` host
-// array and indexes it per (channel, state) in the CPU scan. (This is
-// also why the Mamba 2 path's `[n_heads]` `A_log` assumption does not
-// apply — the shapes are genuinely different.)
-//
-// ─── Mamba mixer commits the command buffer ──────────────────────────
-//
-// Because the SSM core is host-side, every Jamba *mamba* layer commits
-// the command buffer mid-`decode`: the GPU projections must complete
-// before the CPU can read them, and the CPU result must be uploaded
-// before `out_proj` runs. `JambaMambaLayer.commitsCommandBuffer` is
-// `true`; an `MoELayer` FFN also commits. `JambaModel.forward` refreshes
-// `cmd` after any layer whose `commitsCommandBuffer` flag is set — the
-// same pattern Granite4 uses for its MoE layers.
-//
-// ─── No RoPE ─────────────────────────────────────────────────────────
-//
-// Jamba attention attends WITHOUT positional rotation (the Mamba layers
-// carry sequence order) — mlx-lm's `JambaAttention` makes no RoPE call.
-// `JambaAttentionLayer` therefore skips `Ops.rope`, like NemotronH.
+//   • `JambaHybrid` — `JambaVariant` conformance + the per-variant
+//     `loadModel` entry,
+//   • `JambaLayerKind`, `JambaMambaLayer`, `JambaAttentionLayer`,
+//     `JambaModel` — the per-layer + full-model impl. Mamba mixer is
+//     Mamba 1 (per-(channel, state) `A_log`), so the selective scan
+//     runs on the CPU and the Mamba layer commits the command buffer.
+//     Attention has no RoPE.
 
 import Foundation
 import Metal
-
-// ─── Family entry point ──────────────────────────────────────────────
-
-public enum Jamba {
-    public static let modelTypes: Set<String> = ["jamba"]
-    public static let architectures: Set<String> = ["JambaForCausalLM"]
-
-    public static func variant(for _: ModelConfig) throws -> any JambaVariant.Type {
-        return JambaHybrid.self
-    }
-}
-
-public protocol JambaVariant {
-    static var availableCapabilities: Set<Capability> { get }
-    static var defaultGenerationParameters: GenerationParameters { get }
-    static func loadModel(
-        config: ModelConfig,
-        weights: SafeTensorsBundle,
-        options: LoadOptions,
-        device: Device
-    ) throws -> JambaModel
-}
-
-public enum JambaError: Error, CustomStringConvertible {
-    case missingConfig(String)
-    case unsupportedConfig(String)
-    public var description: String {
-        switch self {
-        case .missingConfig(let f):
-            return "Jamba: required config field missing: \(f)"
-        case .unsupportedConfig(let m):
-            return "Jamba: unsupported config: \(m)"
-        }
-    }
-}
 
 // ─── Layer kind ──────────────────────────────────────────────────────
 

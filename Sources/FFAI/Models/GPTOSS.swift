@@ -1,16 +1,60 @@
-// GPTOSS family root — OpenAI's GPT-OSS open-weights MoE line.
-// The family enum (`enum GPTOSS`), variant protocol, and impl classes
-// live in `Models/Text/GPTOSSText.swift` + `Models/Text/GPTOSSMoEText.swift`.
-// This file is the universal family-root anchor — every Sources/FFAI
-// model family has a `Models/<F>.swift` discoverability entry point,
-// even when (as here) the enum lives one folder down.
+// GPTOSS family root — OpenAI's GPT-OSS open-weights MoE line
+// (`gpt_oss` model_type, e.g. GPT-OSS-20B).
 //
-// Variants:
-//   - Models/Text/GPTOSSText.swift    — shared scaffolding (config,
-//                                        sliding-window-vs-full
-//                                        attention alternation, sinks
-//                                        fold)
-//   - Models/Text/GPTOSSMoEText.swift — GPT-OSS-20B MoE decoder
-//                                        (`gpt_oss` model_type)
+// This file is the **main model interface** for the family:
+//   • the family enum `GPTOSS` (modelTypes, architectures, variant
+//     dispatch),
+//   • the `GPTOSSVariant` protocol every concrete variant conforms to,
+//   • the `GPTOSSError` type the loader / decode site raises.
+//
+// Concrete variants + the MoE decoder + per-layer impl live under
+// `Models/Text/GPTOSSText.swift`:
+//   - `GPTOSSMoEVariant` — the 24-layer MoE transformer (~20B total /
+//     ~3.6B active per token) with alternating sliding / full
+//     attention, learned per-head attention sinks, biased Q/K/V/O
+//     projections, and an MXFP4-sourced clipped-α-SwiGLU expert FFN
+//     that's transcoded to FFAI's affine-int4 format at load time.
+//     The `GPTOSSAttentionKind` tag, MXFP4 codec, `GPTOSSExpert`,
+//     `GPTOSSMoELayer`, and `buildGPTOSSMoE` loader all live in the
+//     Text file.
 
 import Foundation
+
+// ─── Family entry point ──────────────────────────────────────────────
+
+public enum GPTOSS {
+    public static let modelTypes: Set<String> = ["gpt_oss"]
+    public static let architectures: Set<String> = ["GptOssForCausalLM"]
+
+    public static func variant(for _: ModelConfig) throws -> any GPTOSSVariant.Type {
+        return GPTOSSMoEVariant.self
+    }
+}
+
+// ─── Variant protocol ────────────────────────────────────────────────
+
+public protocol GPTOSSVariant {
+    static var availableCapabilities: Set<Capability> { get }
+    static var defaultGenerationParameters: GenerationParameters { get }
+    static func loadModel(
+        config: ModelConfig,
+        weights: SafeTensorsBundle,
+        options: LoadOptions,
+        device: Device
+    ) throws -> GPTOSSModel
+}
+
+// ─── Errors ──────────────────────────────────────────────────────────
+
+public enum GPTOSSError: Error, CustomStringConvertible {
+    case missingConfig(String)
+    case unsupportedConfig(String)
+    public var description: String {
+        switch self {
+        case .missingConfig(let f):
+            return "GPT-OSS: required config field missing: \(f)"
+        case .unsupportedConfig(let m):
+            return "GPT-OSS: unsupported config: \(m)"
+        }
+    }
+}

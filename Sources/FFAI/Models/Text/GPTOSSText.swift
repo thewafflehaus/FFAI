@@ -1,106 +1,20 @@
-// GPT-OSS family — OpenAI's GPT-OSS-20B mixture-of-experts transformer.
+// GPT-OSS text — concrete variants + the MoE decoder for OpenAI's
+// GPT-OSS family. The family enum (`enum GPTOSS`), variant protocol
+// (`GPTOSSVariant`), and error type (`GPTOSSError`) live in
+// `Models/GPTOSS.swift` (the family root / main interface). This file
+// holds the text-only impl:
 //
-// Port of mlx-lm's `gpt_oss.py` (and mlx-swift-lm's `GPTOSS.swift`).
-// GPT-OSS-20B is a 24-layer MoE transformer (~20B total params, ~3.6B
-// active per token) with three structural features that distinguish it
-// from the dense Llama / Qwen3 family files:
-//
-//   1. ─── Alternating layer schedule ───────────────────────────────
-//      `config.layer_types` assigns each decoder layer one attention
-//      kind: "sliding_attention" or "full_attention". The published
-//      checkpoints alternate strictly (sliding, full, sliding, full,
-//      …) but the schedule is read from the config, never assumed.
-//      Sliding layers cap attention at `sliding_window` (128) recent
-//      positions; full layers attend the whole context.
-//
-//   2. ─── Learned per-head attention sinks ─────────────────────────
-//      Every attention layer carries a learned `self_attn.sinks`
-//      vector — one scalar logit per query head. The sink is an extra
-//      implicit column in the attention softmax denominator; its V is
-//      zero so it contributes nothing to the output accumulator, it
-//      only *attenuates* the real attention output. Math:
-//
-//        M  = max(max_t s_t, sink_h)
-//        Z  = Σ_t exp(s_t - M)
-//        O  = (Σ_t exp(s_t - M)·V_t) / Z          ← plain SDPA output
-//        O' = O · Z / (Z + exp(sink_h - M))       ← sink-corrected
-//
-//      FFAI's `Ops.sdpaDecode` head_dim=64 kernel is dense-only — it
-//      has no learned-sink-logit support (the `sinkEnd`/`windowStart`
-//      params on the head_dim=128 variants are KV-*position* bounds,
-//      a different feature). So GPT-OSS folds the sink as a per-head
-//      *post-hoc rescale*: run plain SDPA for `O`, recover `M` and `Z`
-//      per head via a CPU dot-product over the (small) K cache, then
-//      multiply `O` by the per-head correction factor. See
-//      `GPTOSSAttention.forward`.
-//
-//   3. ─── Bias-corrected K/V (and Q/O) projections ─────────────────
-//      `config.attention_bias == true` — q/k/v/o projections all ship
-//      `.bias` tensors. `Linear` applies them; `loadLinear` picks the
-//      bias up automatically.
-//
-// ─── MoE FFN ─────────────────────────────────────────────────────────
-//
-// Every layer's feed-forward half is a block-sparse MoE: a biased
-// router selects top-K of `num_local_experts` experts; the experts run
-// a *clipped* SwiGLU (`swiglu_limit`-clamped, α=1.702 swish, with the
-// `(linear + 1)` GPT-OSS gating form). The published checkpoints ship
-// the experts MXFP4-quantized; the loader re-packs MXFP4 to FFAI's
-// affine-int4 format at load time. The codec, `GPTOSSExpert`,
-// `GPTOSSMoELayer` (with its `decode`-commits contract), and the
-// `buildGPTOSSMoE` loader live in the lower half of this file. The
-// reusable `MoELayer` in `Models/MoELayer.swift` is intentionally NOT
-// used here — GPT-OSS's biased router, per-projection biases, clipped
-// α-swish activation, and MXFP4-sourced expert weights diverge from
-// every other MoE family in FFAI.
-//
-// ─── Command-buffer discipline ───────────────────────────────────────
-//
-// Two things commit the command buffer mid-decode: (a) every layer's
-// MoE FFN (`GPTOSSMoELayer.decode`, router CPU readback), and (b) every
-// attention layer's sink correction (a CPU readback of K + Q). So a
-// GPT-OSS layer ALWAYS commits the buffer it is handed. `GPTOSSModel.
-// forward` therefore runs the embedding + every layer on internal
-// `workCmd` buffers and queues ONLY the final norm + lm_head onto the
-// caller's pristine `cmd` — the Jamba command-buffer discipline.
+//   • `GPTOSSMoEVariant` — `GPTOSSVariant` conformance + the per-
+//     variant `loadModel` entry,
+//   • `GPTOSSAttentionKind`, `GPTOSSAttention`, `GPTOSSExpert`,
+//     `GPTOSSMoELayer`, `buildGPTOSSMoE` — the per-layer impl,
+//     MXFP4-to-affine-int4 codec, and biased-router MoE FFN,
+//   • `GPTOSSModel` — the full LanguageModel decoder, with the Jamba-
+//     style command-buffer discipline (every layer commits, so per-
+//     layer work runs on internal `workCmd` buffers).
 
 import Foundation
 import Metal
-
-// ─── Family entry point ──────────────────────────────────────────────
-
-public enum GPTOSS {
-    public static let modelTypes: Set<String> = ["gpt_oss"]
-    public static let architectures: Set<String> = ["GptOssForCausalLM"]
-
-    public static func variant(for _: ModelConfig) throws -> any GPTOSSVariant.Type {
-        return GPTOSSMoEVariant.self
-    }
-}
-
-public protocol GPTOSSVariant {
-    static var availableCapabilities: Set<Capability> { get }
-    static var defaultGenerationParameters: GenerationParameters { get }
-    static func loadModel(
-        config: ModelConfig,
-        weights: SafeTensorsBundle,
-        options: LoadOptions,
-        device: Device
-    ) throws -> GPTOSSModel
-}
-
-public enum GPTOSSError: Error, CustomStringConvertible {
-    case missingConfig(String)
-    case unsupportedConfig(String)
-    public var description: String {
-        switch self {
-        case .missingConfig(let f):
-            return "GPT-OSS: required config field missing: \(f)"
-        case .unsupportedConfig(let m):
-            return "GPT-OSS: unsupported config: \(m)"
-        }
-    }
-}
 
 // ─── Attention kind ──────────────────────────────────────────────────
 

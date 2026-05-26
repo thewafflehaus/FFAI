@@ -1,72 +1,20 @@
-// Mamba 2 family — selective-SSM / hybrid backbone.
+// Mamba 2 text — concrete variants + the SSM decoder for the Mamba 2
+// family. The family enum (`enum Mamba2`), variant protocol
+// (`Mamba2Variant`), and error type (`Mamba2Error`) live in
+// `Models/Mamba2.swift` (the family root / main interface). This file
+// holds the text-only impl:
 //
-// ships the dense decode path:
-//   - one MTLCommandBuffer per token (same single-commit shape as Llama)
-//   - constant-memory recurrent state via `Mamba2LayerCache`
-//   - n_groups=1 only (B / C tensors shared across heads). Grouped B/C
-//     (Mamba 2's `n_groups > 1`) and chunked-prefill parallel-scan are
-//     follow-ups — see `planning/roadmap.md`.
+//   • `Mamba2Dense` — `Mamba2Variant` conformance + the per-variant
+//     `loadModel` entry,
+//   • `Mamba2Layer` — one selective-SSM mixer block,
+//   • `Mamba2Model` — the full LanguageModel decoder.
 //
-// Architecture per layer (matching the official Mamba 2 SSD form +
-// mlx-lm's reference impl):
-//
-//   residual = x_in
-//   h        = RMSNorm(x_in)                                    [hidden]
-//   proj     = in_proj(h)                                       [in_proj_dim]
-//   z, xBC, dt_raw = split(proj, [d_inner, conv_dim, n_heads])
-//   xBC      = silu(conv1d_causal_step(xBC) + bias)             [conv_dim]
-//   x, B, C  = split(xBC, [d_inner, state_dim, state_dim])
-//   dt       = softplus(dt_raw + dt_bias)                       [n_heads]
-//   y        = ssm_step(x, A_eff, B, C, dt, state)              [d_inner]
-//   y       += D_tiled * x                                       (skip)
-//   y       *= silu(z)                                           (gating)
-//   y        = mixer_norm(y)
-//   y        = out_proj(y)                                      [hidden]
-//   out      = residual + y
-//
-// Where:
-//   d_inner    = expand * hidden
-//   conv_dim   = d_inner + 2 * n_groups * state_dim
-//   in_proj_dim = 2 * d_inner + 2 * n_groups * state_dim + n_heads
-//   A_eff      = -exp(A_log)         (precomputed at load)
-//   D_tiled    = D[h] tiled across head_dim → [d_inner]
-//                (lets us reuse Ops.mul instead of a broadcast kernel)
+// Ships the dense decode path: one MTLCommandBuffer per token,
+// constant-memory recurrent state via `Mamba2LayerCache`, `n_groups=1`
+// only.
 
 import Foundation
 import Metal
-
-// ─── Family entry point ──────────────────────────────────────────────
-
-public enum Mamba2 {
-    public static let modelTypes: Set<String> = ["mamba2"]
-    public static let architectures: Set<String> = ["Mamba2ForCausalLM"]
-
-    public static func variant(for config: ModelConfig) throws -> any Mamba2Variant.Type {
-        return Mamba2Dense.self
-    }
-}
-
-public protocol Mamba2Variant {
-    static var availableCapabilities: Set<Capability> { get }
-    static var defaultGenerationParameters: GenerationParameters { get }
-    static func loadModel(
-        config: ModelConfig,
-        weights: SafeTensorsBundle,
-        options: LoadOptions,
-        device: Device
-    ) throws -> Mamba2Model
-}
-
-public enum Mamba2Error: Error, CustomStringConvertible {
-    case missingConfig(String)
-    case unsupportedConfig(String)
-    public var description: String {
-        switch self {
-        case .missingConfig(let f): return "Mamba2: required config field missing: \(f)"
-        case .unsupportedConfig(let m): return "Mamba2: unsupported config: \(m)"
-        }
-    }
-}
 
 // ─── Mamba2Dense — single dense variant (130m / 370m / 780m / 1.3b / 2.7b)
 

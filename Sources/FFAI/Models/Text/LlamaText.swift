@@ -1,40 +1,16 @@
-// Llama family — Llama 3.x architecture. ships the dense
-// variant only (1B / 3B / 8B / 70B; 405B with quant). The protocol +
-// per-variant struct pattern is established here even with a single
-// variant so the family scales when 4 / 4.x / future variants land.
+// Llama text — concrete variants + the dense decoder for the Llama 3.x
+// family. The family enum (`enum Llama`), variant protocol
+// (`LlamaVariant`), and error type (`LlamaError`) live in
+// `Models/Llama.swift` (the family root / main interface). This file
+// holds the text-only impl:
+//
+//   • `LlamaDense` — `LlamaVariant` conformance + the per-variant
+//     `loadModel` entry,
+//   • `LlamaLayer` — one attention + MLP block,
+//   • `LlamaModel` — the full LanguageModel decoder.
 
 import Foundation
 import Metal
-
-// ─── Family entry point ──────────────────────────────────────────────
-
-public enum Llama {
-    public static let modelTypes: Set<String> = ["llama"]
-    public static let architectures: Set<String> = ["LlamaForCausalLM"]
-
-    /// Pick the variant struct for a config. only knows about
-    /// LlamaDense; future variants (e.g. LlamaMoE if Llama 4 ships one)
-    /// would dispatch here.
-    public static func variant(for config: ModelConfig) throws -> any LlamaVariant.Type {
-        // Only one variant for now.
-        return LlamaDense.self
-    }
-}
-
-public protocol LlamaVariant {
-    static var availableCapabilities: Set<Capability> { get }
-    /// Generation defaults for this variant. The user can override any
-    /// field; absent overrides fall back to the values declared here.
-    /// See planning/roadmap.md for which fields are honored today vs
-    /// staged for planned (sampling kernels).
-    static var defaultGenerationParameters: GenerationParameters { get }
-    static func loadModel(
-        config: ModelConfig,
-        weights: SafeTensorsBundle,
-        options: LoadOptions,
-        device: Device
-    ) throws -> LlamaModel
-}
 
 // ─── LlamaDense — standard transformer ───────────────────────────────
 
@@ -180,15 +156,6 @@ public struct LlamaDense: LlamaVariant {
             kvEviction: options.kvEviction,
             auraDecodePath: options.auraDecodePath
         )
-    }
-}
-
-public enum LlamaError: Error, CustomStringConvertible {
-    case missingConfig
-    public var description: String {
-        switch self {
-        case .missingConfig: return "Llama: required config field missing"
-        }
     }
 }
 

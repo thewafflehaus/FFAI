@@ -1,73 +1,22 @@
-// NemotronDiffusion family — NVIDIA Nemotron-Labs-Diffusion, a
-// "tri-mode" language model that runs the same weights as
-// autoregressive (AR), block-wise diffusion, or self-speculation.
+// NemotronDiffusion text — concrete variants + the tri-mode decoder
+// for NVIDIA's Nemotron-Labs-Diffusion family. The family enum (`enum
+// NemotronDiffusion`), variant protocol (`NemotronDiffusionVariant`),
+// and error type (`NemotronDiffusionError`) live in
+// `Models/NemotronDiffusion.swift` (the family root / main interface).
+// This file holds the text-only impl:
 //
-// The backbone is a standard dense Ministral/Llama transformer
-// (RMSNorm, SwiGLU, GQA, RoPE, no biases). The only structural deltas
-// vs Llama: weight keys are prefixed `encoder.`, the LM head is
-// `diffusion_head.weight`, and head_dim is independent of hidden_size.
-//
-// What lives where:
-//   - AR generation runs through the standard single-token `forward`
-//     and the existing `Generate.swift` decode loop.
-//   - Diffusion + self-speculation run through `forwardBlock` (multi-
-//     token) and `GenerateDiffusion.swift`.
-//
-// Distinct from the planned `NemotronH` hybrid family (Mamba2 +
-// attention) and its `NemotronCascade2` variant — different
-// architecture, different `model_type`.
-//
-// RoPE: the checkpoint declares YaRN scaling, applied via the
-// `ffai_rope_yarn` kernel (`Ops.ropeYaRN`). Correction-range bounds and
-// the mscale attention factor are derived from `rope_parameters` at
-// load time; a non-yarn checkpoint falls back to plain RoPE.
+//   • `NemotronDiffusionDense` — `NemotronDiffusionVariant`
+//     conformance + the per-variant `loadModel` entry. Dense
+//     Ministral/Llama-shaped backbone with `encoder.`-prefixed weight
+//     keys and a `diffusion_head.weight` LM head.
+//   • `NemotronDiffusionLayer`, `NemotronDiffusionModel` — the per-
+//     layer + full-model impl. AR drives the standard `forward`;
+//     block-wise diffusion / self-speculation drive `forwardBlock`.
+//     RoPE uses YaRN scaling (`Ops.ropeYaRN`) when the checkpoint
+//     declares it.
 
 import Foundation
 import Metal
-
-// ─── Family entry point ──────────────────────────────────────────────
-
-public enum NemotronDiffusion {
-    // Both the text-only checkpoint and the VLM checkpoint share this
-    // family — the VLM's text backbone uses the identical `encoder.*` /
-    // `diffusion_head.weight` layout. Loading a VLM checkpoint here
-    // brings up the tri-mode *text* backbone; the `vision_tower.*` /
-    // `multi_modal_projector.*` tensors are left unreferenced until the
-    // vision path lands.
-    public static let modelTypes: Set<String> = [
-        "nemotron_labs_diffusion", "nemotron_labs_diffusion_vlm",
-    ]
-    public static let architectures: Set<String> = [
-        "NemotronDiffusionModel", "NemotronDiffusionVLMModel",
-    ]
-
-    public static func variant(
-        for config: ModelConfig
-    ) throws -> any NemotronDiffusionVariant.Type {
-        return NemotronDiffusionDense.self
-    }
-}
-
-public protocol NemotronDiffusionVariant {
-    static var availableCapabilities: Set<Capability> { get }
-    static var defaultGenerationParameters: GenerationParameters { get }
-    static func loadModel(
-        config: ModelConfig,
-        weights: SafeTensorsBundle,
-        options: LoadOptions,
-        device: Device
-    ) throws -> NemotronDiffusionModel
-}
-
-public enum NemotronDiffusionError: Error, CustomStringConvertible {
-    case missingConfig
-
-    public var description: String {
-        switch self {
-        case .missingConfig: return "NemotronDiffusion: required config field missing"
-        }
-    }
-}
 
 // ─── NemotronDiffusionDense — the tri-mode dense transformer ──────
 

@@ -1,18 +1,34 @@
-// Mistral family root. The family enum (`enum Mistral`), variant
-// protocol, and dense-impl class live in `Models/Text/MistralText.swift`.
-// Mistral 7B is architecturally identical to Llama 3 dense, so the
-// loader just routes through `LlamaDense` with Mistral-specific
-// dispatch metadata. This file is the universal family-root anchor —
-// every Sources/FFAI model family has a `Models/<F>.swift`
-// discoverability entry point, even when (as here) the enum lives one
-// folder down.
+// Mistral family root — Mistral 7B and Nemo / Small dense decoders.
 //
-// Variants:
-//   - Models/Text/MistralText.swift — Mistral 7B / Mistral Nemo dense
+// This file is the **main model interface** for the family:
+//   • the family enum `Mistral` (modelTypes, architectures, variant
+//     dispatch). Mistral 7B / Nemo are byte-for-byte identical to
+//     Llama 3 dense except for `rope_theta` and the
+//     `max_position_embeddings` cap, both of which flow naturally
+//     through `LlamaDense` from `config.json` — so `variant(for:)`
+//     reuses `LlamaDense` rather than declaring a Mistral-specific
+//     variant. No `MistralVariant` protocol or `MistralError` type
+//     ships today.
 //
-// Related (separate families):
-//   - Models/Mistral3.swift         — Mistral Small 3.1 vision-language
-//                                     (`mistral3` model_type, ViT + MLP
-//                                     projector + LlamaDense backbone)
+// Concrete loader notes + the `MistralForCausalLM` weight-key contract
+// live in `Models/Text/MistralText.swift`.
+//
+// Related (separate family):
+//   - Models/Mistral3.swift — Mistral Small 3.1 vision-language
+//                             (`mistral3` model_type, ViT + MLP
+//                             projector + LlamaDense backbone)
 
 import Foundation
+
+// ─── Family entry point ──────────────────────────────────────────────
+
+public enum Mistral {
+    public static let modelTypes: Set<String> = ["mistral"]
+    public static let architectures: Set<String> = ["MistralForCausalLM"]
+
+    public static func variant(for config: ModelConfig) throws -> any LlamaVariant.Type {
+        // Mistral has no architectural variants relevant to the
+        // dense-text path. Reuse Llama's dense loader.
+        return LlamaDense.self
+    }
+}

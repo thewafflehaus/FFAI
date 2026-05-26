@@ -1,106 +1,19 @@
-// Granite4 family — a *stack-interleaved hybrid* model
-// with a mixture-of-experts feed-forward block.
+// Granite4 text — concrete variants + the hybrid decoder for IBM's
+// Granite 4 family. The family enum (`enum Granite4`), variant
+// protocol (`Granite4Variant`), and error type (`Granite4Error`) live
+// in `Models/Granite4.swift` (the family root / main interface). This
+// file holds the text-only impl:
 //
-// Granite4 (IBM's Granite 4.0 "-H" series — H-350M / H-1B /
-// H-Tiny / H-Small) is a **stack-interleaved** hybrid like NemotronH: a
-// `layer_types` array assigns each decoder layer exactly ONE mixer kind
-// — "mamba" or "attention" — and the kinds vary down the stack (the
-// published checkpoints are mostly Mamba with a sparse handful of
-// attention layers). Unlike NemotronH, the FEED-FORWARD half of every
-// layer is identical across the stack:
-//
-//   * `num_local_experts > 0`  → block-sparse MoE (top-K SwiGLU experts)
-//                                 PLUS an always-on shared SwiGLU expert.
-//   * `num_local_experts == 0` → a plain dense SwiGLU MLP.
-//
-// H-350M / H-1B ship `num_local_experts = 0` (dense FFN); H-Tiny /
-// H-Small ship the 64-expert MoE FFN. Both FFN shapes are supported.
-//
-// Per-layer dataflow (matches mlx-lm's `granitemoehybrid.py`):
-//
-//   residual = h
-//   h        = input_layernorm(h)                 [hidden]
-//   h        = mixer(h)                            [hidden]  — mamba / attn
-//   h        = residual + h * residual_multiplier
-//   residual = h
-//   n        = post_attention_layernorm(h)         [hidden]
-//   ffn      = MoE(n) + shared_mlp(n)   (or)  dense_mlp(n)
-//   out      = residual + ffn * residual_multiplier
-//
-// ─── No RoPE ─────────────────────────────────────────────────────────
-//
-// Every published Granite-4 "-H" checkpoint ships
-// `position_embedding_type: "nope"` — the attention layers attend
-// WITHOUT positional rotation (the Mamba layers carry sequence order).
-// `Granite4AttentionLayer` therefore skips the `Ops.rope` call.
-//
-// ─── Scalar multipliers — applied at runtime / folded, never doubled ─
-//
-// Granite scatters four scalar multipliers (`embedding_multiplier`,
-// `attention_multiplier`, `residual_multiplier`, `logits_scaling`).
-// Unlike FalconH1's µP vectors, mlx-lm's Granite4 `sanitize`
-// does NOT fold any of them — they live as runtime config values and
-// the reference applies them live in `callAsFunction`. mlx-community
-// conversions preserve that (their `sanitize` only transposes conv1d
-// and splits the stacked MoE weights), so there is no double-fold
-// hazard. We:
-//   * fold `embedding_multiplier` into a dedicated scaled copy of the
-//     embedding table (the tied lm_head keeps the unscaled table);
-//   * fold `residual_multiplier` into every mixer `out_proj` and every
-//     FFN down-projection so the decode hot path stays a plain
-//     `residual + mixerOut` with zero runtime scalar ops;
-//   * keep `attention_multiplier` as the SDPA scale;
-//   * keep `logits_scaling` as a final divide on the logits.
-//
-// ─── MoE commits the command buffer ──────────────────────────────────
-//
-// `MoELayer.decode` commits the command buffer it is handed (the router
-// needs the gate logits on the CPU). A Granite4 layer whose FFN
-// is an `MoELayer` therefore commits mid-layer. `Granite4Model.
-// forward` keeps ALL per-layer work on internal self-managed command
-// buffers — never the caller's `cmd` — so a committing layer can never
-// double-commit the caller's buffer. It refreshes the internal `workCmd`
-// after each committing layer (`commitsCommandBuffer` flag) and queues
-// only the final norm + lm_head onto the caller's pristine `cmd`. See
-// the `forward` doc comment and the MoELayer file header.
+//   • `Granite4Hybrid` — `Granite4Variant` conformance + the per-
+//     variant `loadModel` entry,
+//   • `Granite4LayerKind`, `Granite4MambaLayer`,
+//     `Granite4AttentionLayer`, `Granite4Model` — the per-layer + full-
+//     model impl. `Granite4Model.forward` runs all per-layer work on
+//     internal `workCmd` buffers so a committing MoE FFN never double-
+//     commits the caller's `cmd`. No RoPE.
 
 import Foundation
 import Metal
-
-// ─── Family entry point ──────────────────────────────────────────────
-
-public enum Granite4 {
-    public static let modelTypes: Set<String> = ["granitemoehybrid"]
-    public static let architectures: Set<String> = ["Granite4ForCausalLM"]
-
-    public static func variant(for _: ModelConfig) throws -> any Granite4Variant.Type {
-        return Granite4Hybrid.self
-    }
-}
-
-public protocol Granite4Variant {
-    static var availableCapabilities: Set<Capability> { get }
-    static var defaultGenerationParameters: GenerationParameters { get }
-    static func loadModel(
-        config: ModelConfig,
-        weights: SafeTensorsBundle,
-        options: LoadOptions,
-        device: Device
-    ) throws -> Granite4Model
-}
-
-public enum Granite4Error: Error, CustomStringConvertible {
-    case missingConfig(String)
-    case unsupportedConfig(String)
-    public var description: String {
-        switch self {
-        case .missingConfig(let f):
-            return "Granite4: required config field missing: \(f)"
-        case .unsupportedConfig(let m):
-            return "Granite4: unsupported config: \(m)"
-        }
-    }
-}
 
 // ─── Layer kind ──────────────────────────────────────────────────────
 

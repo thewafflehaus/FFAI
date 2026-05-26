@@ -1,88 +1,19 @@
-// FalconH1 family — an early *hybrid* model and the proving
-// ground for the `DecoderLayer` scaffolding.
+// FalconH1 text — concrete variants + the parallel-hybrid decoder for
+// TII's Falcon-H1 family. The family enum (`enum FalconH1`), variant
+// protocol (`FalconH1Variant`), and error type (`FalconH1Error`) live
+// in `Models/FalconH1.swift` (the family root / main interface). This
+// file holds the text-only impl:
 //
-// FalconH1 (TII's Falcon-H1 series — Tiny-90M / 0.5B / 1.5B / 3B / 7B)
-// is a **parallel hybrid**: every decoder layer runs BOTH a Mamba 2
-// selective-SSM mixer AND a grouped-query attention path on the *same*
-// normalized input, sums their outputs into the residual, then applies
-// a SwiGLU MLP. There is no layer-schedule interleave — all `nLayers`
-// layers are identical in shape (unlike Jamba / NemotronH, which
-// alternate Mamba and attention blocks). The hybrid-ness is *within*
-// the layer, not across the stack.
-//
-// Per-layer dataflow (matches mlx-lm's `falcon_h1.py` reference):
-//
-//   residual = h
-//   h        = input_layernorm(h)              [hidden]
-//   mambaH   = mamba(h)                         [hidden]   — SSM mixer
-//   attnH    = self_attn(h)                     [hidden]   — GQA + RoPE
-//   h        = residual + mambaH + attnH
-//   residual = h
-//   h        = pre_ff_layernorm(h)              [hidden]
-//   h        = feed_forward(h)                  [hidden]   — SwiGLU
-//   out      = residual + h
-//
-// **Scalar multipliers.** FalconH1 scatters ~10 scalar multipliers
-// across the architecture (`embedding_multiplier`, `lm_head_multiplier`,
-// `attention_{in,out}_multiplier`, `key_multiplier`, `mlp_multipliers`,
-// `ssm_{in,out}_multiplier`, `ssm_multipliers` — a per-channel µP
-// vector). The HF reference folds them into projection weights at
-// load time. **mlx-community checkpoints are PRE-SANITIZED** — the
-// conversion tool already folded the multipliers into the saved
-// weights, so re-applying them on load would double-fold and corrupt
-// the activations. The loader detects a pre-sanitized checkpoint via
-// a conv1d-weight-shape probe (see `preSanitized` in `loadModel`) and
-// skips all folding in that case. For a genuine HF-original checkpoint
-// the multipliers ARE folded — `scaleTensor` / `scaleRows` /
-// `computeMupVector` do the CPU-side arithmetic so the hot decode path
-// stays a plain `residual + mixer` with zero runtime scalar ops.
-//
-// **Mamba sizing quirk.** Unlike plain Mamba 2 (`d_inner = expand *
-// hidden`), FalconH1 takes the SSM inner width *directly* from
-// `mamba_d_ssm`. For Tiny-90M that is 768 = `mamba_n_heads(24) *
-// mamba_d_head(32)`, which is NOT `mamba_expand(2) * hidden(512)`. The
-// loader uses `mamba_d_ssm` and asserts the head decomposition.
-//
-// **Cache.** `makeLayerCaches` returns one `FalconH1LayerCache` per
-// layer — a thin bundle of a `Mamba2LayerCache` (SSM + conv state) and
-// a `KVCache` (attention K/V). Both mixers in a layer step in lockstep
-// off the same per-layer cache slot.
+//   • `FalconH1Hybrid` — `FalconH1Variant` conformance + the per-
+//     variant `loadModel` entry. Every decoder layer runs Mamba 2 +
+//     GQA in parallel; the loader folds the ~10 scalar / µP
+//     multipliers into the projection weights at load time unless the
+//     checkpoint is already pre-sanitized.
+//   • `FalconH1Layer`, `FalconH1LayerCache`, `FalconH1Model` — the
+//     per-layer + full-model impl.
 
 import Foundation
 import Metal
-
-// ─── Family entry point ──────────────────────────────────────────────
-
-public enum FalconH1 {
-    public static let modelTypes: Set<String> = ["falcon_h1"]
-    public static let architectures: Set<String> = ["FalconH1ForCausalLM"]
-
-    public static func variant(for config: ModelConfig) throws -> any FalconH1Variant.Type {
-        return FalconH1Hybrid.self
-    }
-}
-
-public protocol FalconH1Variant {
-    static var availableCapabilities: Set<Capability> { get }
-    static var defaultGenerationParameters: GenerationParameters { get }
-    static func loadModel(
-        config: ModelConfig,
-        weights: SafeTensorsBundle,
-        options: LoadOptions,
-        device: Device
-    ) throws -> FalconH1Model
-}
-
-public enum FalconH1Error: Error, CustomStringConvertible {
-    case missingConfig(String)
-    case unsupportedConfig(String)
-    public var description: String {
-        switch self {
-        case .missingConfig(let f): return "FalconH1: required config field missing: \(f)"
-        case .unsupportedConfig(let m): return "FalconH1: unsupported config: \(m)"
-        }
-    }
-}
 
 // ─── FalconH1Hybrid — the single (and only) variant ──────────────────
 

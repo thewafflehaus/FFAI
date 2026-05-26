@@ -1,11 +1,56 @@
-// Phi family root. The family enum (`enum Phi`), variant protocol, and
-// dense-impl class live in `Models/Text/PhiText.swift`. This file is
-// the universal family-root anchor — every Sources/FFAI model family
-// has a `Models/<F>.swift` discoverability entry point, even when (as
-// here) the enum lives one folder down.
+// Phi family root — Microsoft's Phi-3 / Phi-3.5 line.
 //
-// Variants:
-//   - Models/Text/PhiText.swift — Phi-3 / Phi-3.5 dense text models
-//                                  (`phi3` model_type)
+// This file is the **main model interface** for the family:
+//   • the family enum `Phi` (modelTypes, architectures, variant
+//     dispatch),
+//   • the `PhiVariant` protocol every concrete variant conforms to,
+//   • the `PhiError` type the loader / decode site raises.
+//
+// Concrete variants + the dense decoder + per-layer impl live under
+// `Models/Text/PhiText.swift`:
+//   - `Phi3Dense` — Phi-3 / Phi-3.5 mini / small / medium dense GQA
+//     transformer with fused QKV + fused gate/up projections row-sliced
+//     into LlamaLayer views. Returns a `LlamaModel` engine.
 
 import Foundation
+
+// ─── Family entry point ──────────────────────────────────────────────
+
+public enum Phi {
+    public static let modelTypes: Set<String> = ["phi3"]
+    public static let architectures: Set<String> = ["Phi3ForCausalLM"]
+
+    public static func variant(for config: ModelConfig) throws -> any PhiVariant.Type {
+        return Phi3Dense.self
+    }
+}
+
+// ─── Variant protocol ────────────────────────────────────────────────
+
+public protocol PhiVariant {
+    static var availableCapabilities: Set<Capability> { get }
+    static var defaultGenerationParameters: GenerationParameters { get }
+    static func loadModel(
+        config: ModelConfig,
+        weights: SafeTensorsBundle,
+        options: LoadOptions,
+        device: Device
+    ) throws -> LlamaModel
+}
+
+// ─── Errors ──────────────────────────────────────────────────────────
+
+public enum PhiError: Error, CustomStringConvertible {
+    case missingConfig
+    case unsupportedRopeScaling(String)
+    case quantizedFusedNotSupported
+    public var description: String {
+        switch self {
+        case .missingConfig: return "Phi: required config field missing"
+        case .unsupportedRopeScaling(let t):
+            return "Phi: rope_scaling type '\(t)' not supported yet (SuScaledRoPE is a follow-up); use Phi-3-mini-4k-instruct or wait"
+        case .quantizedFusedNotSupported:
+            return "Phi: quantized fused qkv_proj / gate_up_proj not supported yet; load the raw bf16 / f16 checkpoint or convert with split projections"
+        }
+    }
+}

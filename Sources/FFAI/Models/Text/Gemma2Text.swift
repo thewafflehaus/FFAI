@@ -1,87 +1,17 @@
-// Gemma 2 family — Google's open Gemma 2 text decoder. Ships as 2B,
-// 9B, and 27B variants under model_type `gemma2`.
+// Gemma 2 text — concrete variants + the dense decoder for the Gemma 2
+// family. The family enum (`enum Gemma2`), variant protocol
+// (`Gemma2Variant`), and error type (`Gemma2Error`) live in
+// `Models/Gemma2.swift` (the family root / main interface). This file
+// holds the text-only impl:
 //
-// Architecturally Gemma 2 is a near-twin of Gemma 3 (which is the
-// derived next generation) with five concrete differences:
-//
-//   1. **No per-head q_norm / k_norm.** Gemma 3 added a head-dim
-//      RMSNorm between the Q/K projection and RoPE; Gemma 2 doesn't
-//      have it. Q and K go straight from projection into RoPE.
-//
-//   2. **Alternating sliding-window vs full attention every layer.**
-//      `sliding_window_pattern = 2` by default (vs 6 for Gemma 3): odd
-//      layers (0, 2, 4, ...) are sliding, even layers (1, 3, 5, ...)
-//      are full attention. The formula
-//      `isSliding = (i + 1) % sliding_window_pattern != 0` reproduces
-//      Hugging Face's `not bool(layer_idx % 2)` for pattern=2.
-//
-//   3. **Attention soft-capping** — Q · Kᵀ scores are passed through
-//      `softcap · tanh(scores / softcap)` before the softmax
-//      (`attn_logit_softcapping = 50.0`). FFAI's `Ops.sdpaDecode` is a
-//      fused kernel with no hook to inject the tanh between scores and
-//      softmax. For first-light we **skip** the soft-cap and rely on
-//      the model still producing coherent output — soft-capping
-//      primarily affects extreme-logit cases, and inference quality
-//      typically holds. Documented as a known quality gap; a kernel
-//      variant with the soft-cap baked into the scores reduction is
-//      the proper fix.
-//
-//   4. **Final logit soft-capping** (`final_logit_softcapping = 30.0`).
-//      Applied to lm_head output before sampling. We **skip** this too:
-//      `tanh` is monotonic, so the argmax of `tanh(logits/cap)*cap` is
-//      identical to the argmax of `logits` — for greedy decode it has
-//      no effect on token choice. For temperature sampling it changes
-//      the distribution; that's the moment to implement it.
-//
-//   5. **Single RoPE base across all layers.** Gemma 3 has separate
-//      `rope_theta` (global layers) and `rope_local_base_freq` (sliding
-//      layers); Gemma 2 uses one `rope_theta = 10_000` for every layer.
-//
-// Everything else — the four norms per layer, GemmaRMSNorm `+1.0` fold,
-// per-layer sliding-window KV cache (FIFO eviction), embed-scale
-// `sqrt(hidden_size)` multiplier, tied LM head, GELU-tanh MLP — is
-// shared with Gemma 3 and we reuse the same helpers (`loadGemmaRMSNorm`,
-// `fillScalar`) directly. The forward path is bespoke (no q_norm /
-// k_norm step) to keep the dispatch tight.
-//
-// First-light scope: text-only generation on the 2B-it / 9B-it / 27B-it
-// checkpoints. Tested against `mlx-community/gemma-2-2b-it-4bit` and
-// the raw bf16 variant.
+//   • `Gemma2Dense` — `Gemma2Variant` conformance + the per-variant
+//     `loadModel` entry,
+//   • `Gemma2Layer`, `Gemma2Model` — the per-layer + full-model impl
+//     (alternating sliding-window / full attention, GemmaRMSNorm
+//     `+1.0` fold, tied LM head, GELU-tanh MLP).
 
 import Foundation
 import Metal
-
-public enum Gemma2 {
-    public static let modelTypes: Set<String> = ["gemma2", "gemma2_text"]
-    public static let architectures: Set<String> = [
-        "Gemma2ForCausalLM"
-    ]
-
-    public static func variant(for config: ModelConfig) throws -> any Gemma2Variant.Type {
-        return Gemma2Dense.self
-    }
-}
-
-public enum Gemma2Error: Error, CustomStringConvertible {
-    case missingConfig
-    public var description: String {
-        switch self {
-        case .missingConfig:
-            return "Gemma2: required config field missing"
-        }
-    }
-}
-
-public protocol Gemma2Variant {
-    static var availableCapabilities: Set<Capability> { get }
-    static var defaultGenerationParameters: GenerationParameters { get }
-    static func loadModel(
-        config: ModelConfig,
-        weights: SafeTensorsBundle,
-        options: LoadOptions,
-        device: Device
-    ) throws -> Gemma2Model
-}
 
 // MARK: - Gemma2Dense — 2B / 9B / 27B text decoder
 

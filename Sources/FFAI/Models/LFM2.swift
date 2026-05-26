@@ -1,32 +1,85 @@
-// LFM2 VL — LiquidAI's LFM2 vision-language model (the
-// `Lfm2VlForConditionalGeneration` checkpoints).
+// LFM2 family root — LiquidAI's Liquid Foundation Models 2 line
+// (`lfm2` / `lfm2_moe` model_type) and the LFM2-VL orchestrator
+// (`Lfm2VlForConditionalGeneration`).
 //
-// Composition:
-//   • SigLIP2 vision tower — a standard ViT loaded into the shared
-//     `VisionEncoder`. Weight keys are `vision_tower.embeddings.*` /
-//     `vision_tower.encoder.layers.*` / `vision_tower.post_layernorm.*`,
-//     matching `VisionEncoder.parameters()` exactly after prefixing.
-//     The patch embed is a flattened linear projection `[hidden, 768]`
-//     (= `[hidden, channels * patchSize * patchSize]`); reshaped to
-//     `[hidden, channels, patchSize, patchSize]` (OIHW) it is exactly
-//     the `Ops.conv2d` weight layout FFAI uses.
-//   • Pixel-unshuffle — collapses a `downsampleFactor × downsampleFactor`
-//     neighbourhood of adjacent ViT patches into one super-patch,
-//     multiplying the feature dim by `downsampleFactor²` and reducing
-//     the token count by the same factor. `downsample_factor = 2` is the
-//     published default: 256 ViT tokens → 64 projected tokens.
-//   • Multi-modal projector — `LayerNorm` over the pixel-unshuffled tokens
-//     (dim = `hiddenSize * downsampleFactor²`), then `linear_1` (GELU) →
-//     `linear_2` projecting into the text hidden dim.
-//   • LFM2 text backbone — the existing `LFM2Model` stack-interleaved
-//     hybrid, loaded from the `language_model.`-prefixed sub-tree.
+// This file is the **main model interface** for the family:
+//   • the text family enum `LFM2` (modelTypes, architectures, variant
+//     dispatch — picks dense or MoE),
+//   • the `LFM2Variant` protocol every concrete text variant conforms
+//     to,
+//   • the `LFM2Error` type the loader / decode site raises,
+//   • the VL family orchestrator `LFM2VL` (and its `LFM2VLError`
+//     type) — the SigLIP2 vision tower + pixel-unshuffle projector +
+//     LFM2 text backbone splice.
 //
-// This file is the family orchestrator (load entry-point + the
-// `image_token_index` token id). Vision tower internals live in
-// `Models/Vision/LFM2Vision.swift`.
+// Concrete text variants + the hybrid decoder + per-layer impl live
+// under `Models/Text/LFM2Text.swift`:
+//   - `LFM2Dense` / `LFM2MoE` — stack-interleaved conv + attention
+//     mixers; per-layer SwiGLU MLP (`lfm2`) or block-sparse MoE FFN
+//     (`lfm2_moe`).
+//   - `LFM2LayerKind`, `LFM2ConvCache`, `LFM2Model` — per-layer +
+//     full-model impl.
+//
+// Vision tower internals live in `Models/Vision/LFM2Vision.swift`.
 
 import Foundation
 import Metal
+
+// ─── Family entry point ──────────────────────────────────────────────
+
+public enum LFM2 {
+    public static let modelTypes: Set<String> = ["lfm2", "lfm2_moe"]
+    public static let architectures: Set<String> =
+        ["Lfm2ForCausalLM", "Lfm2MoeForCausalLM"]
+
+    /// True when the config names the mixture-of-experts checkpoint.
+    static func isMoE(_ config: ModelConfig) -> Bool {
+        config.modelType == "lfm2_moe"
+            || config.architecture == "Lfm2MoeForCausalLM"
+    }
+
+    public static func variant(for config: ModelConfig) throws -> any LFM2Variant.Type {
+        return isMoE(config) ? LFM2MoE.self : LFM2Dense.self
+    }
+}
+
+// ─── Variant protocol ────────────────────────────────────────────────
+
+public protocol LFM2Variant {
+    static var availableCapabilities: Set<Capability> { get }
+    static var defaultGenerationParameters: GenerationParameters { get }
+    static func loadModel(
+        config: ModelConfig,
+        weights: SafeTensorsBundle,
+        options: LoadOptions,
+        device: Device
+    ) throws -> LFM2Model
+}
+
+// ─── Errors ──────────────────────────────────────────────────────────
+
+public enum LFM2Error: Error, CustomStringConvertible {
+    case missingConfig(String)
+    case unsupportedConfig(String)
+    public var description: String {
+        switch self {
+        case .missingConfig(let f):
+            return "LFM2: required config field missing: \(f)"
+        case .unsupportedConfig(let m):
+            return "LFM2: unsupported config: \(m)"
+        }
+    }
+}
+
+// ─── LFM2-VL orchestrator ────────────────────────────────────────────
+//
+// LFM2-VL (`Lfm2VlForConditionalGeneration`) composes:
+//   • SigLIP2 vision tower (standard ViT, OIHW patch embed),
+//   • pixel-unshuffle collapsing a `downsample_factor²` patch
+//     neighbourhood into one super-patch,
+//   • multi-modal projector (LayerNorm → linear_1 (GELU) → linear_2),
+//   • LFM2 text backbone loaded from `language_model.`-prefixed
+//     weights.
 
 // ─── Errors ──────────────────────────────────────────────────────────
 
