@@ -1,0 +1,43 @@
+name: PR Title
+
+# Validate that every pull-request title follows the
+# conventional-commits format (`type: description` or
+# `type(scope): description`). Keeps the release-notes generator + the
+# auto-label workflow consistent — both key off the title prefix.
+#
+# The label-applying half lives in .github/workflows/auto-label.yml so
+# each action is its own workflow file.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# `pull_request_target` (not `pull_request`) so the check can run on
+# PRs from forks without needing maintainer approval each time. Safe
+# here because the job never checks out PR code — it only reads
+# `pull_request.title`.
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint-title:
+    name: Title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title
+        run: |
+          PR_TITLE=$(jq -r '.pull_request.title' "$GITHUB_EVENT_PATH")
+          echo "PR title: $PR_TITLE"
+
+          if [[ ! "$PR_TITLE" =~ ^(release|feat|fix|chore|docs|refactor|test|style|ci|perf|data)(\(.*?\))?:\ .* ]]; then
+            echo "❌ Invalid PR title: '$PR_TITLE'"
+            echo "Expected format: 'type: description' or 'type(scope): description'"
+            echo "Allowed types: release, feat, fix, chore, docs, refactor, test, style, ci, perf, data."
+            exit 1
+          fi
+
+          echo "✅ PR title is valid"
