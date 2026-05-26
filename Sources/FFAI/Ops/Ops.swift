@@ -4483,6 +4483,13 @@ public enum Ops {
     /// The kernel takes `q_rot` as fp32; this wrapper casts on the
     /// caller's behalf into a scratch buffer if needed. Output dtype
     /// is the model's activation dtype.
+    /// - Parameter liveLength: number of populated K/V rows the loop
+    ///   should iterate over (the attention upper bound).
+    /// - Parameter kvStride: per-KV-head row stride of the cache —
+    ///   typically `maxSeq` of the AURA KVCache. MUST equal the cache's
+    ///   allocated stride, not `liveLength`, otherwise off-head reads
+    ///   alias into the previous head's tail bytes when the cache isn't
+    ///   fully populated.
     public static func auraFlashSdpa(
         q: Tensor, sinks: Tensor,
         kPacked: Tensor, kNorms: Tensor, kCodebook: Tensor,
@@ -4490,11 +4497,14 @@ public enum Ops {
         into out: Tensor,
         nQHeads: Int, nKVHeads: Int, headDim: Int,
         kPackedWidth: Int, vPackedWidth: Int,
-        liveLength: Int,
+        liveLength: Int, kvStride: Int,
         keyBits: Int, valueBits: Int,
         hasSinks: Bool = false, windowSize: Int = 0,
         on cmd: MTLCommandBuffer
     ) {
+        precondition(
+            kvStride >= liveLength,
+            "Ops.auraFlashSdpa: kvStride (\(kvStride)) must be ≥ liveLength (\(liveLength))")
         precondition(
             nQHeads % nKVHeads == 0,
             "Ops.auraFlashSdpa: nQHeads (\(nQHeads)) must be divisible by nKVHeads (\(nKVHeads))")
@@ -4524,6 +4534,7 @@ public enum Ops {
         let kpw = UInt32(kPackedWidth)
         let vpw = UInt32(vPackedWidth)
         let tokens = UInt32(liveLength)
+        let kvStrideU = UInt32(kvStride)
         let repeatCount = UInt32(nQHeads / nKVHeads)
         let numQ = UInt32(nQHeads)
         let sinksFlag: UInt32 = hasSinks ? 1 : 0
@@ -4547,7 +4558,8 @@ public enum Ops {
                 sinks: sinks.buffer, sinksOffset: sinks.offset,
                 out: out.buffer, outOffset: out.offset,
                 dim: dim, key_packed_width: kpw, value_packed_width: vpw,
-                tokens: tokens, repeat_count: repeatCount, num_q_heads: numQ,
+                tokens: tokens, kv_stride: kvStrideU,
+                repeat_count: repeatCount, num_q_heads: numQ,
                 has_sinks: sinksFlag, window_size: win,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (4, 2, 128, .f16):
@@ -4562,7 +4574,8 @@ public enum Ops {
                 sinks: sinks.buffer, sinksOffset: sinks.offset,
                 out: out.buffer, outOffset: out.offset,
                 dim: dim, key_packed_width: kpw, value_packed_width: vpw,
-                tokens: tokens, repeat_count: repeatCount, num_q_heads: numQ,
+                tokens: tokens, kv_stride: kvStrideU,
+                repeat_count: repeatCount, num_q_heads: numQ,
                 has_sinks: sinksFlag, window_size: win,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (4, 2, 128, .bf16):
@@ -4577,7 +4590,8 @@ public enum Ops {
                 sinks: sinks.buffer, sinksOffset: sinks.offset,
                 out: out.buffer, outOffset: out.offset,
                 dim: dim, key_packed_width: kpw, value_packed_width: vpw,
-                tokens: tokens, repeat_count: repeatCount, num_q_heads: numQ,
+                tokens: tokens, kv_stride: kvStrideU,
+                repeat_count: repeatCount, num_q_heads: numQ,
                 has_sinks: sinksFlag, window_size: win,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (4, 4, 128, .f32):
@@ -4592,7 +4606,8 @@ public enum Ops {
                 sinks: sinks.buffer, sinksOffset: sinks.offset,
                 out: out.buffer, outOffset: out.offset,
                 dim: dim, key_packed_width: kpw, value_packed_width: vpw,
-                tokens: tokens, repeat_count: repeatCount, num_q_heads: numQ,
+                tokens: tokens, kv_stride: kvStrideU,
+                repeat_count: repeatCount, num_q_heads: numQ,
                 has_sinks: sinksFlag, window_size: win,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (4, 4, 128, .f16):
@@ -4607,7 +4622,8 @@ public enum Ops {
                 sinks: sinks.buffer, sinksOffset: sinks.offset,
                 out: out.buffer, outOffset: out.offset,
                 dim: dim, key_packed_width: kpw, value_packed_width: vpw,
-                tokens: tokens, repeat_count: repeatCount, num_q_heads: numQ,
+                tokens: tokens, kv_stride: kvStrideU,
+                repeat_count: repeatCount, num_q_heads: numQ,
                 has_sinks: sinksFlag, window_size: win,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (4, 4, 128, .bf16):
@@ -4622,7 +4638,8 @@ public enum Ops {
                 sinks: sinks.buffer, sinksOffset: sinks.offset,
                 out: out.buffer, outOffset: out.offset,
                 dim: dim, key_packed_width: kpw, value_packed_width: vpw,
-                tokens: tokens, repeat_count: repeatCount, num_q_heads: numQ,
+                tokens: tokens, kv_stride: kvStrideU,
+                repeat_count: repeatCount, num_q_heads: numQ,
                 has_sinks: sinksFlag, window_size: win,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         default:
