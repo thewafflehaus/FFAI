@@ -710,6 +710,65 @@ public final class NemotronDiffusionModel: LanguageModel {
         return perPositionLogits.last!
     }
 
+    // ─── VLM embedding-input path ────────────────────────────────────
+    //
+    // NemotronDiffusion is the text backbone of the Nemotron-Labs-
+    // Diffusion VLM (see Models/Nemotron.swift `NemotronDiffusionVL`).
+    // The VLM splice supplies a `[hidden]` row directly — either a
+    // projected vision token or a text-token embedding the VL model
+    // looked up. The forward is identical to `forward(tokenId:)`
+    // minus the embedding gather. The diffusion + self-speculation
+    // paths (`forwardBlock`) are unaffected — they take token IDs and
+    // do their own batched embed.
+
+    public var supportsEmbeddingInput: Bool { true }
+
+    public func forward(inputEmbedding: Tensor, position: Int,
+                        caches: [any LayerCacheProtocol],
+                        on cmd: MTLCommandBuffer, device: Device) -> Tensor {
+        precondition(inputEmbedding.elementCount == hidden,
+                     "NemotronDiffusionModel.forward(inputEmbedding:): expected "
+                     + "[\(hidden)], got \(inputEmbedding.shape)")
+        let tap = InspectTap.fromEnvironment
+        var workCmd = tap.makeWorkCmd(from: cmd, device: device)
+
+        var h = inputEmbedding.reshaped(to: [hidden])
+        workCmd = tap.dumpLayerBoundary(h, label: "embed_in", layer: -1,
+                                        cmd: workCmd, device: device)
+
+        for (i, layer) in layers.enumerated() {
+            h = layer.forward(h, position: position,
+                              cache: caches[i] as! any KVCacheProtocol,
+                              cmd: workCmd, device: device)
+            workCmd = tap.dumpLayerBoundary(h, label: "layer_out", layer: i,
+                                            cmd: workCmd, device: device)
+        }
+
+        let normed = finalNorm(h, on: workCmd)
+        let logits = lmHead(normed, on: workCmd)
+        if tap.active {
+            workCmd.commit()
+            workCmd.waitUntilCompleted()
+        }
+        return logits
+    }
+
+    /// Raw embedding-table lookup for one text token. The VLM splice
+    /// calls this when filling in text positions of the multimodal
+    /// prompt.
+    public func textEmbedding(tokenId: Int, device: Device) -> Tensor {
+        let cmd = device.makeCommandBuffer()
+        let tokenBuf = device.makeBuffer(length: 4)
+        var tid = UInt32(tokenId)
+        memcpy(tokenBuf.contents(), &tid, 4)
+        let tokenTensor = Tensor(buffer: tokenBuf, offset: 0,
+                                 shape: [1], dtype: .u32)
+        let embed = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return embed
+    }
+
     /// Multi-token block forward — the primitive diffusion-denoising and
     /// self-speculation build on. Runs `tokenIds` (at absolute
     /// `positions`) through every layer and returns one `[vocab]` logits

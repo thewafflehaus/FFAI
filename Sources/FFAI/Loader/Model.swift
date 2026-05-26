@@ -92,6 +92,21 @@ func isNemotronVisionLanguage(_ config: ModelConfig) -> Bool {
     return NemotronH.architectures.contains(textArch)
 }
 
+/// True if `config` is a Nemotron-Labs-Diffusion VLM checkpoint — a VL
+/// checkpoint (`vision_config` present) whose top-level model_type /
+/// architecture declares the diffusion VLM. Unlike the hybrid Nemotron
+/// VL above, the diffusion VLM ships a canonical top-level model_type
+/// (`nemotron_labs_diffusion_vlm`) and architecture string
+/// (`NemotronLabsDiffusionVLMModel`), so we route on those directly.
+func isNemotronDiffusionVisionLanguage(_ config: ModelConfig) -> Bool {
+    guard config.nested("vision_config") != nil else { return false }
+    if let mt = config.modelType,
+       NemotronDiffusionVL.modelTypes.contains(mt) { return true }
+    if let arch = config.architecture,
+       NemotronDiffusionVL.architectures.contains(arch) { return true }
+    return false
+}
+
 /// Routes a config to the right family file. Family files declare which
 /// architecture / model_type strings they handle. Add a new family by
 /// extending `dispatchAndLoad` here.
@@ -356,6 +371,23 @@ public enum ModelRegistry {
                 return Loaded(
                     engine: vlm.engine,
                     defaultGenerationParameters: NemotronHHybrid.defaultGenerationParameters,
+                    availableCapabilities: Capability.textOnly.union([.visionIn]),
+                    vlModel: vlm)
+            }
+            // Nemotron-Labs-Diffusion VLM — Pixtral ViT vision tower +
+            // Mistral3-style patch-merger projector + the
+            // NemotronDiffusion tri-mode text backbone. The diffusion
+            // VLM ships with a canonical top-level model_type /
+            // architecture so it routes directly (unlike the hybrid
+            // Nemotron VL above, which relies on the `text_config`
+            // sniff).
+            if isNemotronDiffusionVisionLanguage(config) {
+                let vlm = try NemotronDiffusionVL.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: NemotronDiffusionDense.defaultGenerationParameters,
                     availableCapabilities: Capability.textOnly.union([.visionIn]),
                     vlModel: vlm)
             }

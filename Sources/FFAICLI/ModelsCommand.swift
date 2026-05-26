@@ -118,8 +118,10 @@ private let modelCatalog: [CatalogGroup] = [
                     "mlx-community/Falcon-H1-1.5B-Instruct-bf16"]),
         CatalogEntry(
             family: "NemotronH", modelType: "nemotron_h",
-            summary: "Stack-interleaved Mamba 2 / attention / MLP. Raw bf16/f16 only.",
-            repos: ["nvidia/Nemotron-H-4B-Base-8K"]),
+            summary: "Stack-interleaved Mamba 2 / attention / MLP or MoE. Raw bf16/f16 only.",
+            repos: ["nvidia/Nemotron-H-4B-Base-8K",
+                    "nvidia/Nemotron-Cascade-2-30B-A3B",
+                    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"]),
         CatalogEntry(
             family: "Granite4", modelType: "granitemoehybrid",
             summary: "Stack-interleaved Mamba 2 / attention + dense or MoE FFN. Raw bf16/f16 only.",
@@ -134,6 +136,11 @@ private let modelCatalog: [CatalogGroup] = [
             family: "Nemotron-Labs-Diffusion", modelType: "nemotron_labs_diffusion",
             summary: "Tri-mode — autoregressive / block diffusion / self-speculation.",
             repos: ["nvidia/Nemotron-Labs-Diffusion-3B"]),
+        CatalogEntry(
+            family: "Nemotron-Labs-Diffusion VLM",
+            modelType: "nemotron_labs_diffusion_vlm",
+            summary: "Tri-mode diffusion text backbone + Pixtral ViT vision tower.",
+            repos: ["nvidia/Nemotron-Labs-Diffusion-VLM-8B"]),
     ]),
 ]
 
