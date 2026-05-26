@@ -1,28 +1,30 @@
 #!/usr/bin/env bash
 #
-# pre-commit — minimum gate: a clean Swift build + the full unit suite
-# must pass before the diff hits git history.
+# pre-commit — fast local lint (~1-3 s). Cheap things only, so the hook
+# stays out of the way of normal commits.
 #
 # Covers:
-#   - make build      (~10-15 s when the kernel cache is warm; longer
-#                      on first regenerate)
-#   - make test-unit  (~2 min — FFAITests + MetalTileSwiftTests at the
-#                      production cap, FFAI_MAX_COMMAND_BUFFERS=16)
+#   - make format-check  (swift-format lint across the repo)
 #
 # Skipped here (live in other hooks or CI):
-#   - make test-integration  — multi-GB checkpoint downloads, too
-#                              heavyweight to run on every commit. We
-#                              may refine + require this in the future
-#                              as the integration suite gets faster.
-#   - banned-term scan       — fires in commit-msg, sees the actual
-#                              message.
+#   - banned-term + trailer-shape scan      — fires in commit-msg, sees
+#                                              the actual commit message.
+#   - make build / make test-unit           — runs in pre-push, where
+#                                              the latency is amortised
+#                                              across the commit range.
+#   - make test-integration                 — multi-GB checkpoint
+#                                              downloads, too
+#                                              heavyweight to run on
+#                                              every commit (or push).
+#                                              The release workflow
+#                                              covers it pre-tag.
 #
 # Bypass with `git commit --no-verify` only when you know what you're
 # doing.
 
 set -e
-# Without pipefail, `make build 2>&1 | tail -20` returns tail's exit
-# status (always 0), so a failing build would never trip the `if !`
+# Without pipefail, `make format-check 2>&1 | tail -20` returns tail's
+# exit status (always 0), so a failing lint would never trip the `if !`
 # guard below. Pipefail propagates the leftmost-failing command's
 # status.
 set -o pipefail
@@ -30,28 +32,12 @@ set -o pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
-echo "→ pre-commit: make build + make test-unit"
+echo "→ pre-commit: make format-check"
 
-if ! make build 2>&1 | tail -20; then
+if ! make format-check 2>&1 | tail -20; then
     echo
-    echo "✗ make build failed. Fix the errors above and re-stage."
+    echo "✗ swift-format lint failed. Run 'make format' and re-stage."
     exit 1
 fi
-
-if ! make test-unit 2>&1 | tail -10; then
-    echo
-    echo "✗ make test-unit failed. Fix the failures above and re-stage."
-    exit 1
-fi
-
-# Future: integration suite gate. Disabled by default because the
-# checkpoints are multi-GB and the suite takes 15-30 min. Uncomment
-# when the suite is fast enough to gate every commit on.
-#
-# if ! make test-integration 2>&1 | tail -10; then
-#     echo
-#     echo "✗ make test-integration failed. Fix the failures above and re-stage."
-#     exit 1
-# fi
 
 echo "✓ pre-commit OK"

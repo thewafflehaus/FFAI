@@ -25,7 +25,7 @@ git -C "$REPO_ROOT" config core.hooksPath "scripts/hooks"
 
 echo "✓ Installed hooks (core.hooksPath = scripts/hooks)"
 echo
-echo "  pre-commit:  make build + make test-unit (~2-3 min)"
+echo "  pre-commit:  make format-check (~1-3 s)"
 echo "  commit-msg:  banned-term + trailer-shape scan (~50ms)"
 echo "  pre-push:    make build + make test-unit (~2-3 min)"
 echo
