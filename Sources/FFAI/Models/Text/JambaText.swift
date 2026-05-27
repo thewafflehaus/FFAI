@@ -83,11 +83,19 @@ public struct JambaHybrid: JambaVariant {
         let eps = Float(config.rmsNormEps ?? 1e-6)
         let tieEmbed = config.tieWordEmbeddings
 
-        guard config.quantization == nil else {
-            throw JambaError.unsupportedConfig(
-                "quantized Jamba checkpoints not yet supported — load a raw "
-                    + "bf16/f16 variant (e.g. mlx-community/AI21-Jamba-Reasoning-3B-bf16)")
-        }
+        // Quantized branch — Jamba 4-bit conversions (e.g.
+        // mlx-community/AI21-Jamba-Reasoning-3B-4bit) ship per-projection
+        // `weight + scales + biases` triplets for in_proj / out_proj /
+        // x_proj on the mamba mixer, q/k/v/o on the attention mixer, and
+        // gate/up/down on the feed-forward MLP. The conv1d, dt_proj,
+        // A_log, D, and dt/B/C layernorm tensors remain raw fp16/bf16
+        // (they're either tiny or have a custom kernel that wants raw
+        // weights). The embedding table is also quantized; lm_head is
+        // tied. This matches the FalconH1 quantized loader contract:
+        // route every quantized projection through `loadLinear` /
+        // `loadEmbedding`, leave the raw tensors alone.
+        let quant = config.quantization
+        let isQuantized = quant != nil
 
         // ── Mamba (Mamba 1) mixer geometry ────────────────────────────
         guard let dState = config.int("mamba_d_state")
@@ -135,12 +143,32 @@ public struct JambaHybrid: JambaVariant {
         }
 
         // ── Activation dtype — taken from the embedding table ─────────
-        let embedW = try weights.tensor(named: "model.embed_tokens.weight")
-        let activationDtype = embedW.dtype
+        // Quantized: derive activation dtype from `embed_tokens.scales`
+        // (the packed `.weight` is u32 packed pairs/nibbles and isn't an
+        // activation dtype). Raw: read it off `embed_tokens.weight`. The
+        // unscaled raw embed tensor is kept aside for the tied-lm_head
+        // raw path; nil under quantization (tied head reuses the
+        // quantized embed triplet instead).
+        let activationDtype: DType
+        let embedWRawForTiedLmHead: Tensor?
+        let embedTokens: AnyEmbedding
+        if isQuantized, weights.isQuantized("model.embed_tokens"),
+            let scales = try? weights.tensor(named: "model.embed_tokens.scales")
+        {
+            activationDtype = scales.dtype
+            embedTokens = try loadEmbedding(
+                base: "model.embed_tokens", in: weights,
+                hidden: hidden, quantization: quant)
+            embedWRawForTiedLmHead = nil
+        } else {
+            let embedW = try weights.tensor(named: "model.embed_tokens.weight")
+            activationDtype = embedW.dtype
+            embedTokens = AnyEmbedding(Embedding(weight: embedW))
+            embedWRawForTiedLmHead = embedW
+        }
         precondition(
             activationDtype == .f32 || activationDtype == .bf16 || activationDtype == .f16,
             "Jamba: unexpected activation dtype \(activationDtype)")
-        let embedTokens = AnyEmbedding(Embedding(weight: embedW))
 
         // ── Per-layer construction ────────────────────────────────────
         var layers: [any DecoderLayer] = []
@@ -155,22 +183,49 @@ public struct JambaHybrid: JambaVariant {
                 eps: eps)
 
             // ── Feed-forward half — dense SwiGLU MLP or MoE ───────────
+            // Quantized: each projection is a triplet, route through
+            // loadLinear. Raw: plain Linear(weight: …) as before.
             let ffn: JambaFFN
             if useMoE {
                 ffn = .moe(
                     try buildMoE(
                         prefix: p, weights: weights,
                         hidden: hidden, moeIntermediate: intermediate,
-                        numExperts: numExperts, topK: numExpertsPerToken))
+                        numExperts: numExperts, topK: numExpertsPerToken,
+                        quantization: quant))
             } else {
-                let gateW = try weights.tensor(named: "\(p).feed_forward.gate_proj.weight")
-                let upW = try weights.tensor(named: "\(p).feed_forward.up_proj.weight")
-                let downW = try weights.tensor(named: "\(p).feed_forward.down_proj.weight")
+                let gateProj: AnyLinear
+                let upProj: AnyLinear
+                let downProj: AnyLinear
+                if isQuantized {
+                    gateProj = try loadLinear(
+                        base: "\(p).feed_forward.gate_proj",
+                        in: weights, quantization: quant)
+                    upProj = try loadLinear(
+                        base: "\(p).feed_forward.up_proj",
+                        in: weights, quantization: quant)
+                    downProj = try loadLinear(
+                        base: "\(p).feed_forward.down_proj",
+                        in: weights, quantization: quant)
+                } else {
+                    gateProj = AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(
+                                named: "\(p).feed_forward.gate_proj.weight")))
+                    upProj = AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(
+                                named: "\(p).feed_forward.up_proj.weight")))
+                    downProj = AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(
+                                named: "\(p).feed_forward.down_proj.weight")))
+                }
                 ffn = .dense(
                     JambaDenseMLP(
-                        gateProj: AnyLinear(Linear(weight: gateW)),
-                        upProj: AnyLinear(Linear(weight: upW)),
-                        downProj: AnyLinear(Linear(weight: downW))))
+                        gateProj: gateProj,
+                        upProj: upProj,
+                        downProj: downProj))
             }
 
             switch kind {
@@ -180,25 +235,49 @@ public struct JambaHybrid: JambaVariant {
                     hidden: hidden, dInner: dInner, dState: dState,
                     dtRank: dtRank, convKernel: convKernel,
                     useConvBias: useConvBias, useProjBias: useProjBias, eps: eps,
-                    dtype: activationDtype, device: device)
+                    dtype: activationDtype, device: device,
+                    quantization: quant)
                 layers.append(
                     JambaMambaLayer(
                         inputNorm: inputNorm, preFFNorm: preFFNorm,
                         mixer: mixer, ffn: ffn, hidden: hidden))
 
             case .attention:
-                let qProj = AnyLinear(
-                    Linear(
-                        weight: try weights.tensor(named: "\(p).self_attn.q_proj.weight")))
-                let kProj = AnyLinear(
-                    Linear(
-                        weight: try weights.tensor(named: "\(p).self_attn.k_proj.weight")))
-                let vProj = AnyLinear(
-                    Linear(
-                        weight: try weights.tensor(named: "\(p).self_attn.v_proj.weight")))
-                let oProj = AnyLinear(
-                    Linear(
-                        weight: try weights.tensor(named: "\(p).self_attn.o_proj.weight")))
+                let qProj: AnyLinear
+                let kProj: AnyLinear
+                let vProj: AnyLinear
+                let oProj: AnyLinear
+                if isQuantized {
+                    qProj = try loadLinear(
+                        base: "\(p).self_attn.q_proj",
+                        in: weights, quantization: quant)
+                    kProj = try loadLinear(
+                        base: "\(p).self_attn.k_proj",
+                        in: weights, quantization: quant)
+                    vProj = try loadLinear(
+                        base: "\(p).self_attn.v_proj",
+                        in: weights, quantization: quant)
+                    oProj = try loadLinear(
+                        base: "\(p).self_attn.o_proj",
+                        in: weights, quantization: quant)
+                } else {
+                    qProj = AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(
+                                named: "\(p).self_attn.q_proj.weight")))
+                    kProj = AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(
+                                named: "\(p).self_attn.k_proj.weight")))
+                    vProj = AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(
+                                named: "\(p).self_attn.v_proj.weight")))
+                    oProj = AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(
+                                named: "\(p).self_attn.o_proj.weight")))
+                }
                 let mixer = JambaAttentionMixer(
                     qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
                     nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim)
@@ -212,11 +291,39 @@ public struct JambaHybrid: JambaVariant {
         let finalNorm = RMSNorm(
             weight: try weights.tensor(named: "model.final_layernorm.weight"), eps: eps)
 
+        // lm_head — untied/quantized routes through loadLinear; tied/raw
+        // reuses the unscaled embed tensor (the original Jamba contract).
+        // Tied + quantized wraps the quantized embed triplet as a
+        // QuantizedLinear so gemv dispatches identically to the per-row
+        // attention/MLP projections above. Matches the FalconH1 tied-
+        // lm_head pattern (and Qwen3.6 / GlmOcr before it).
         let lmHead: AnyLinear
         if !tieEmbed, weights.has("lm_head.weight") {
-            lmHead = AnyLinear(Linear(weight: try weights.tensor(named: "lm_head.weight")))
-        } else {
+            if isQuantized, weights.isQuantized("lm_head") {
+                lmHead = try loadLinear(
+                    base: "lm_head", in: weights, quantization: quant)
+            } else {
+                lmHead = AnyLinear(
+                    Linear(weight: try weights.tensor(named: "lm_head.weight")))
+            }
+        } else if let q = quant, weights.isQuantized("model.embed_tokens") {
+            let t = try weights.quantizedTriplet("model.embed_tokens")
+            let bits = deriveAffineQuantBits(
+                weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
+                scaleCols: t.scales.shape[t.scales.shape.count - 1],
+                groupSize: q.groupSize)
+            lmHead = AnyLinear(
+                QuantizedLinear(
+                    weight: t.weight, scales: t.scales, biases: t.biases,
+                    bits: bits, groupSize: q.groupSize))
+        } else if let embedW = embedWRawForTiedLmHead {
             lmHead = AnyLinear(Linear(weight: embedW))
+        } else {
+            // Defensive: quantized config declared but neither
+            // lm_head.weight nor a quantized embed triplet is on disk.
+            throw JambaError.unsupportedConfig(
+                "quantized Jamba checkpoint missing both an explicit "
+                    + "lm_head.weight and a quantized embed_tokens triplet")
         }
 
         let maxSeq = config.int("max_position_embeddings") ?? 8192
@@ -238,21 +345,37 @@ public struct JambaHybrid: JambaVariant {
         prefix p: String, weights: SafeTensorsBundle,
         hidden: Int, dInner: Int, dState: Int, dtRank: Int,
         convKernel: Int, useConvBias: Bool, useProjBias: Bool, eps: Float,
-        dtype: DType, device: Device
+        dtype: DType, device: Device,
+        quantization: ModelConfig.QuantizationConfig?
     ) throws -> JambaMambaMixer {
-        // in_proj: hidden → 2*d_inner  (split into x | z).
-        let inProjW = try weights.tensor(named: "\(p).in_proj.weight")
-        let inProjB = useProjBias ? try? weights.tensor(named: "\(p).in_proj.bias") : nil
-        let inProj = AnyLinear(Linear(weight: inProjW, bias: inProjB))
-        // out_proj: d_inner → hidden.
-        let outProjW = try weights.tensor(named: "\(p).out_proj.weight")
-        let outProjB = useProjBias ? try? weights.tensor(named: "\(p).out_proj.bias") : nil
-        let outProj = AnyLinear(Linear(weight: outProjW, bias: outProjB))
-        // x_proj: d_inner → dt_rank + 2*d_state  (split into dt | B | C).
-        let xProj = AnyLinear(
-            Linear(
-                weight: try weights.tensor(named: "\(p).x_proj.weight")))
-        // dt_proj: dt_rank → d_inner, always biased.
+        // in_proj / out_proj / x_proj: quantized triplets on 4-bit
+        // checkpoints; raw weights otherwise. dt_proj.weight stays raw
+        // (dt_rank is small; quantizing the low-rank projection is not
+        // worth it and dt_proj.bias is mandatory anyway).
+        let inProj: AnyLinear
+        let outProj: AnyLinear
+        let xProj: AnyLinear
+        if quantization != nil, weights.isQuantized("\(p).in_proj") {
+            // in_proj: hidden → 2*d_inner  (split into x | z).
+            inProj = try loadLinear(
+                base: "\(p).in_proj", in: weights, quantization: quantization)
+            // out_proj: d_inner → hidden.
+            outProj = try loadLinear(
+                base: "\(p).out_proj", in: weights, quantization: quantization)
+            // x_proj: d_inner → dt_rank + 2*d_state  (split into dt | B | C).
+            xProj = try loadLinear(
+                base: "\(p).x_proj", in: weights, quantization: quantization)
+        } else {
+            let inProjW = try weights.tensor(named: "\(p).in_proj.weight")
+            let inProjB = useProjBias ? try? weights.tensor(named: "\(p).in_proj.bias") : nil
+            inProj = AnyLinear(Linear(weight: inProjW, bias: inProjB))
+            let outProjW = try weights.tensor(named: "\(p).out_proj.weight")
+            let outProjB = useProjBias ? try? weights.tensor(named: "\(p).out_proj.bias") : nil
+            outProj = AnyLinear(Linear(weight: outProjW, bias: outProjB))
+            xProj = AnyLinear(
+                Linear(weight: try weights.tensor(named: "\(p).x_proj.weight")))
+        }
+        // dt_proj: dt_rank → d_inner, always biased and never quantized.
         let dtProj = AnyLinear(
             Linear(
                 weight: try weights.tensor(named: "\(p).dt_proj.weight"),
@@ -312,9 +435,25 @@ public struct JambaHybrid: JambaVariant {
     private static func buildMoE(
         prefix p: String, weights: SafeTensorsBundle,
         hidden: Int, moeIntermediate: Int,
-        numExperts: Int, topK: Int
+        numExperts: Int, topK: Int,
+        quantization: ModelConfig.QuantizationConfig?
     ) throws -> MoELayer {
-        // Router: hidden → numExperts logits.
+        // Router: hidden → numExperts logits. The router is small (one
+        // weight per expert per channel) and never quantized in the
+        // mlx-community conversions.
+        if quantization != nil,
+            weights.isQuantized("\(p).feed_forward.switch_mlp.gate_proj")
+        {
+            // Quantized MoE expert slicing isn't wired into MoELayer yet
+            // (a quantized stacked switch_mlp triplet would need a
+            // per-expert sliceRows on packed u32 weight + scales/biases,
+            // the same pattern Qwen3.6 / GlmOcr use). Surface a clear
+            // error rather than silently falling through to a raw load.
+            throw JambaError.unsupportedConfig(
+                "quantized Jamba MoE expert slicing not yet implemented "
+                    + "— load a raw bf16/f16 Jamba MoE variant, or load "
+                    + "the dense 3B-A0 quantized checkpoint")
+        }
         let gate = AnyLinear(
             Linear(
                 weight: try weights.tensor(named: "\(p).feed_forward.router.weight")))
