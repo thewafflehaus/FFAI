@@ -128,9 +128,9 @@ Full API surface lands in **Phase 2** (with only `.textIn`/`.textOut` exercised)
 | Format | What | Status |
 |---|---|---|
 | **safetensors** (fp16/bf16) | HF default. Header (JSON) + raw tensor bytes. mmap-friendly. | ✅ shipped |
-| **mlx-format** (quantized safetensors, 3/4/5/6/8-bit affine) | Same file format; mlx-community quant layout (weight + scale + bias per group). | ✅ shipped |
-| **mlx-format** (2-bit affine) | Same group-affine layout, 16 codes per uint32 word. Needs a `dequant_gemv` kernel variant + `loadLinear` bits decoder update. | 🚧 planned (see `session-plan.md`) |
-| **mixed quantization** (per-tensor / per-layer bit-width recipes) | Different layers carry different bit-widths in a single checkpoint (e.g. K/V cache at 4-bit while attention is 8-bit). Loader needs per-tensor `quantization` block parsing; today only the top-level `quantization.bits` is honored uniformly. | 🚧 planned (see `session-plan.md`) |
+| **mlx-format** (quantized safetensors, **2/3/4/5/6/8-bit** affine) | Same file format; mlx-community quant layout (weight + scale + bias per group). 2-bit added Phase E (`dequant_gemv_int2` + `dequant_gather_int2` + `mt_qmm_mma_int2` in metaltile; `Ops.dequantGemv` / `dequantGather` / `dispatchQmmMma` dispatch arms in FFAI). | ✅ shipped |
+| **mixed per-role quantization** (`ffai convert --bits / --embedding-bits / --lm-head-bits / --vision-bits`) | Each role independently takes any of `2 / 3 / 4 / 5 / 6 / 8 / fp16 / bf16` via `QuantSpec`. Loader's per-tensor `deriveAffineQuantBits` reads each width from saved shape — no per-tensor `config.json` entries needed. | ✅ shipped |
+| **mixed per-LAYER quantization** | Different layers in the same role at different bit-widths (e.g. first 4 attention layers at 2-bit, rest at 4-bit). Needs a recipe-file format and per-layer dispatch — separate from per-role. | 🚧 planned (see `session-plan.md`) |
 | **gguf** | llama.cpp single-file format, embeds quant + tokenizer + per-arch name mapping. | 🚧 planned (see `session-plan.md`) |
 | **onnx** | Graph format, embedded weights. Wrong fit — would need a graph executor. | ❌ skipped (doesn't align with static-kernel approach) |
 
