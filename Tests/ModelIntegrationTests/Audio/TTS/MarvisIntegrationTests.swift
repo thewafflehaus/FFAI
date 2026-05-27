@@ -37,7 +37,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Marvis Integration", .serialized)
+@Suite(
+    "Marvis Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct MarvisIntegrationTests {
 
     /// Canonical HF repo id. The 4-bit MLX conversion is the smallest

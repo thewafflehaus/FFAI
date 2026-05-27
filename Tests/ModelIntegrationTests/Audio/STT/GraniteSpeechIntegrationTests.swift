@@ -26,11 +26,17 @@
 // LM backbone does a full 40-layer decode; peak memory ~3 GB.
 
 import Foundation
+import TestHelpers
 import Testing
 
 @testable import FFAI
 
-@Suite("GraniteSpeech Integration", .serialized)
+@Suite(
+    "GraniteSpeech Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct GraniteSpeechIntegrationTests {
 
     // MARK: - Fixture helpers

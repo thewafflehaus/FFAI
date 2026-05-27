@@ -34,7 +34,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Gemma4 Vision Integration", .serialized)
+@Suite(
+    "Gemma4 Vision Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableVisionSuites,
+        IntegrationGroupGating.visionSkipReason)
+)
 struct Gemma4VisionIntegrationTests {
 
     static let modelId = "mlx-community/gemma-4-e2b-it-4bit"

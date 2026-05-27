@@ -30,7 +30,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("QwenOmni Integration", .serialized)
+@Suite(
+    "QwenOmni Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableOmniSuites,
+        IntegrationGroupGating.omniSkipReason)
+)
 struct QwenOmniIntegrationTests {
 
     /// Canonical HF repo id. No 4-bit MLX conversion exists at time of

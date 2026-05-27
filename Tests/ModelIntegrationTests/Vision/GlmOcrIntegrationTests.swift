@@ -38,7 +38,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("GlmOcr Vision Integration", .serialized)
+@Suite(
+    "GlmOcr Vision Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableVisionSuites,
+        IntegrationGroupGating.visionSkipReason)
+)
 struct GlmOcrIntegrationTests {
 
     static let modelId = "mlx-community/GLM-OCR-4bit"

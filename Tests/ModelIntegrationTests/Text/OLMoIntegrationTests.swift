@@ -23,7 +23,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("OLMo Integration", .serialized)
+@Suite(
+    "OLMo Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableTextSuites,
+        IntegrationGroupGating.textSkipReason)
+)
 struct OLMoIntegrationTests {
 
     @Test("OLMo-2-1124-7B-Instruct (Olmo2ForCausalLM) decodes coherently")

@@ -29,11 +29,17 @@
 // DO NOT RUN this suite via `make test-integration` until weights are cached.
 
 import Foundation
+import TestHelpers
 import Testing
 
 @testable import FFAI
 
-@Suite("MossFormer2SE Integration", .serialized)
+@Suite(
+    "MossFormer2SE Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct MossFormer2SEIntegrationTests {
 
     // ─── Checkpoint resolution ────────────────────────────────────────

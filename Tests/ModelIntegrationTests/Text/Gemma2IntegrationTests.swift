@@ -28,7 +28,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Gemma2 Integration", .serialized)
+@Suite(
+    "Gemma2 Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableTextSuites,
+        IntegrationGroupGating.textSkipReason)
+)
 struct Gemma2IntegrationTests {
 
     @Test("load + greedy generate produces coherent output")

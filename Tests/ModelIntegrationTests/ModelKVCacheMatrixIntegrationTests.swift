@@ -329,7 +329,12 @@ enum MatrixCatalog {
 
 // ─── The matrix test ──────────────────────────────────────────────────
 
-@Suite("Model × KV-cache Matrix Coherent Output", .serialized)
+@Suite(
+    "Model × KV-cache Matrix Coherent Output", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableKVCacheMatrixSuite,
+        IntegrationGroupGating.kvCacheMatrixSkipReason)
+)
 struct ModelKVCacheMatrixIntegrationTests {
 
     @Test("matrix cell decodes coherent output", arguments: MatrixCatalog.cases)

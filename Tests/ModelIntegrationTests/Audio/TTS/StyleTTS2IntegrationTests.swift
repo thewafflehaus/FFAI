@@ -30,11 +30,17 @@
 // Run via `make test-integration` (serialized, --num-workers 1).
 
 import Foundation
+import TestHelpers
 import Testing
 
 @testable import FFAI
 
-@Suite("StyleTTS2 Integration", .serialized)
+@Suite(
+    "StyleTTS2 Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct StyleTTS2IntegrationTests {
 
     /// Cached snapshot directory for `mlx-community/kitten-tts-nano-0.8-fp16`.

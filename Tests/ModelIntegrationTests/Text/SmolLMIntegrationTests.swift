@@ -29,7 +29,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("SmolLM Integration", .serialized)
+@Suite(
+    "SmolLM Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableTextSuites,
+        IntegrationGroupGating.textSkipReason)
+)
 struct SmolLMIntegrationTests {
 
     @Test("SmolLM-360M (SmolLMForCausalLM, original family) decodes coherently")

@@ -35,7 +35,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("FastVLM Vision Integration", .serialized)
+@Suite(
+    "FastVLM Vision Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableVisionSuites,
+        IntegrationGroupGating.visionSkipReason)
+)
 struct FastVLMIntegrationTests {
 
     // mlx-community ships the bf16 conversion as the canonical FastVLM

@@ -31,7 +31,12 @@ import Testing
 
 private let qwen36VerifyPath = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
 
-@Suite("SpecDecode verify-cost bench")
+@Suite(
+    "SpecDecode verify-cost bench",
+    .enabled(
+        if: IntegrationGroupGating.enableTextSuites,
+        IntegrationGroupGating.textSkipReason)
+)
 struct SpecDecodeVerifyCostBench {
 
     @Test("Compare forwardManyAllLogits(T=3) vs 3× forward() at decode shape")

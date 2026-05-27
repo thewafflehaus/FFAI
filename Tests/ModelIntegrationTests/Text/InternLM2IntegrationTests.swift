@@ -22,7 +22,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("InternLM2 Integration", .serialized)
+@Suite(
+    "InternLM2 Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableTextSuites,
+        IntegrationGroupGating.textSkipReason)
+)
 struct InternLM2IntegrationTests {
 
     @Test("InternLM2.5-7B-Chat (InternLM2ForCausalLM) decodes coherently")

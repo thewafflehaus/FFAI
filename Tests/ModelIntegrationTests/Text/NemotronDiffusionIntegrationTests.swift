@@ -26,7 +26,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("NemotronDiffusion Integration", .serialized)
+@Suite(
+    "NemotronDiffusion Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableTextSuites,
+        IntegrationGroupGating.textSkipReason)
+)
 struct NemotronDiffusionIntegrationTests {
 
     @Test("load + tri-mode generation produces coherent output")

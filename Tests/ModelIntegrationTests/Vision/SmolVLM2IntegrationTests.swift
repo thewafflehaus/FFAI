@@ -34,7 +34,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("SmolVLM2 Vision Integration (image + video)", .serialized)
+@Suite(
+    "SmolVLM2 Vision Integration (image + video)", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableVisionSuites,
+        IntegrationGroupGating.visionSkipReason)
+)
 struct SmolVLM2IntegrationTests {
 
     /// Number of evenly-spaced frames to pull from cat.mp4.

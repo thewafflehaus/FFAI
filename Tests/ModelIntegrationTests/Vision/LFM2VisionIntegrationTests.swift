@@ -34,7 +34,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("LFM2 Vision Integration", .serialized)
+@Suite(
+    "LFM2 Vision Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableVisionSuites,
+        IntegrationGroupGating.visionSkipReason)
+)
 struct LFM2VisionIntegrationTests {
 
     static let modelId = "mlx-community/LFM2-VL-1.6B-4bit"

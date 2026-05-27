@@ -33,7 +33,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("SmartTurn Integration", .serialized)
+@Suite(
+    "SmartTurn Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct SmartTurnIntegrationTests {
 
     /// The published SmartTurn-v3 checkpoint (matches the

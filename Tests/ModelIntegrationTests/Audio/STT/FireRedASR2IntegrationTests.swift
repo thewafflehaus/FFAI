@@ -35,7 +35,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("FireRedASR2 Integration", .serialized)
+@Suite(
+    "FireRedASR2 Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct FireRedASR2IntegrationTests {
 
     /// Canonical HF repo id. No 4-bit MLX conversion exists at time of

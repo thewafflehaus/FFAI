@@ -34,7 +34,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("FalconH1 Integration", .serialized)
+@Suite(
+    "FalconH1 Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableTextSuites,
+        IntegrationGroupGating.textSkipReason)
+)
 struct FalconH1IntegrationTests {
 
     @Test("load + greedy generate produces coherent hybrid output")

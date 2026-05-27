@@ -35,11 +35,17 @@
 // The Qwen3Dense loader handles the quantized weight layout transparently.
 
 import Foundation
+import TestHelpers
 import Testing
 
 @testable import FFAI
 
-@Suite("Qwen3TTSBase Integration", .serialized)
+@Suite(
+    "Qwen3TTSBase Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct Qwen3TTSBaseIntegrationTests {
 
     /// Resolve and load the VyvoTTS checkpoint. Throws on failure so a

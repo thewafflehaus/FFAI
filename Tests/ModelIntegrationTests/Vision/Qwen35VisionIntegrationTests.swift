@@ -33,7 +33,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Qwen35 Vision Integration", .serialized)
+@Suite(
+    "Qwen35 Vision Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableVisionSuites,
+        IntegrationGroupGating.visionSkipReason)
+)
 struct Qwen35VisionIntegrationTests {
 
     static let modelId = "mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit"

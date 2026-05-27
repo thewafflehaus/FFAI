@@ -27,7 +27,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Phi Integration", .serialized)
+@Suite(
+    "Phi Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableTextSuites,
+        IntegrationGroupGating.textSkipReason)
+)
 struct Phi3IntegrationTests {
 
     @Test("load + greedy generate produces coherent output")

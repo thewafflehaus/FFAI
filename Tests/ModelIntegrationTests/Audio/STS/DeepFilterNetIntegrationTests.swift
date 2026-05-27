@@ -49,7 +49,12 @@ enum DeepFilterNetFixtures {
     }
 }
 
-@Suite("DeepFilterNet Integration", .serialized)
+@Suite(
+    "DeepFilterNet Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct DeepFilterNetIntegrationTests {
 
     /// Canonical HF repo id. DeepFilterNet does not ship a 4-bit

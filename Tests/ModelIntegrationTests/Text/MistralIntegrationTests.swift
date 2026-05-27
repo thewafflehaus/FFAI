@@ -26,7 +26,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Mistral Integration", .serialized)
+@Suite(
+    "Mistral Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableTextSuites,
+        IntegrationGroupGating.textSkipReason)
+)
 struct MistralIntegrationTests {
 
     @Test("load + greedy generate produces coherent output")

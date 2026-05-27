@@ -34,7 +34,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("MiniCPM5 Integration", .serialized)
+@Suite(
+    "MiniCPM5 Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableTextSuites,
+        IntegrationGroupGating.textSkipReason)
+)
 struct MiniCPM5IntegrationTests {
 
     @Test("MiniCPM5-1B (bf16) — Llama dispatch + coherent decode")

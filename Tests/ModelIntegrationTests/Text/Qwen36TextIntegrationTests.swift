@@ -35,8 +35,9 @@ private let qwen36CheckpointAvailable =
 @Suite(
     "Qwen3.6 Text Integration", .serialized,
     .enabled(
-        if: qwen36CheckpointAvailable,
-        "Qwen3.6 integration requires a local checkpoint at \(qwen36LocalPath)")
+        if: qwen36CheckpointAvailable && IntegrationGroupGating.enableTextSuites,
+        "Qwen3.6 integration requires a local checkpoint at \(qwen36LocalPath) "
+            + "AND IntegrationGroupGating.enableTextSuites = true")
 )
 struct Qwen36TextIntegrationTests {
 

@@ -43,7 +43,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Jamba Integration", .serialized)
+@Suite(
+    "Jamba Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableTextSuites,
+        IntegrationGroupGating.textSkipReason)
+)
 struct JambaIntegrationTests {
 
     @Test("load + greedy generate produces coherent hybrid output")

@@ -31,7 +31,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Qwen3ASR Integration", .serialized)
+@Suite(
+    "Qwen3ASR Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct Qwen3ASRIntegrationTests {
 
     /// Canonical HF repo id. The 4-bit MLX conversion is the smallest

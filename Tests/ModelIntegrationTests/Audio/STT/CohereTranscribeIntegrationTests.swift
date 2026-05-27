@@ -36,7 +36,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("CohereTranscribe Integration", .serialized)
+@Suite(
+    "CohereTranscribe Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct CohereTranscribeIntegrationTests {
 
     /// Canonical HF repo id. The 8-bit MLX conversion is the smallest

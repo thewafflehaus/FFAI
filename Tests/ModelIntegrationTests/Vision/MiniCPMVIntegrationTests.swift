@@ -34,7 +34,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("MiniCPMV Vision Integration (image + video)", .serialized)
+@Suite(
+    "MiniCPMV Vision Integration (image + video)", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableVisionSuites,
+        IntegrationGroupGating.visionSkipReason)
+)
 struct MiniCPMVIntegrationTests {
 
     static let modelId = "mlx-community/MiniCPM-V-4.6-4bit"

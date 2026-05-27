@@ -35,7 +35,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Qwen2.5 Vision Integration (image + video)", .serialized)
+@Suite(
+    "Qwen2.5 Vision Integration (image + video)", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableVisionSuites,
+        IntegrationGroupGating.visionSkipReason)
+)
 struct Qwen25VisionIntegrationTests {
 
     static let modelId = "mlx-community/Qwen2.5-VL-3B-Instruct-4bit"

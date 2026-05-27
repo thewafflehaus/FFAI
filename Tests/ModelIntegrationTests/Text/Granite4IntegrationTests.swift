@@ -41,7 +41,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Granite4 Integration", .serialized)
+@Suite(
+    "Granite4 Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableTextSuites,
+        IntegrationGroupGating.textSkipReason)
+)
 struct Granite4IntegrationTests {
 
     @Test("load + greedy generate produces coherent hybrid output")

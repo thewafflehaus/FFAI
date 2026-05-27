@@ -34,7 +34,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Whisper Integration", .serialized)
+@Suite(
+    "Whisper Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct WhisperIntegrationTests {
 
     /// Canonical HF repo id. The 4-bit MLX conversion is the smallest

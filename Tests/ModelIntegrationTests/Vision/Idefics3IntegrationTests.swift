@@ -32,7 +32,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Idefics3 Vision Integration", .serialized)
+@Suite(
+    "Idefics3 Vision Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableVisionSuites,
+        IntegrationGroupGating.visionSkipReason)
+)
 struct Idefics3IntegrationTests {
 
     /// Load dog.jpeg from the test Fixtures directory.

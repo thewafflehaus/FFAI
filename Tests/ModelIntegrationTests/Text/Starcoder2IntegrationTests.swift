@@ -22,7 +22,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Starcoder2 Integration", .serialized)
+@Suite(
+    "Starcoder2 Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableTextSuites,
+        IntegrationGroupGating.textSkipReason)
+)
 struct Starcoder2IntegrationTests {
 
     @Test("Starcoder2-3B (Starcoder2ForCausalLM, attention biases) decodes coherently")

@@ -27,7 +27,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Mamba2 Integration", .serialized)
+@Suite(
+    "Mamba2 Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableTextSuites,
+        IntegrationGroupGating.textSkipReason)
+)
 struct Mamba2IntegrationTests {
 
     @Test("load + greedy generate produces non-degenerate text")

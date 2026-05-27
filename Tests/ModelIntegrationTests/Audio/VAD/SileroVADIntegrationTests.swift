@@ -30,7 +30,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("SileroVAD Integration", .serialized)
+@Suite(
+    "SileroVAD Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct SileroVADIntegrationTests {
 
     /// The published SileroVAD checkpoint.

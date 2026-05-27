@@ -30,7 +30,12 @@ import Testing
 
 private let qwen36SpecPath = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
 
-@Suite("SpecDecode end-to-end vs baseline greedy")
+@Suite(
+    "SpecDecode end-to-end vs baseline greedy",
+    .enabled(
+        if: IntegrationGroupGating.enableTextSuites,
+        IntegrationGroupGating.textSkipReason)
+)
 struct SpecDecodeBenchTests {
 
     @Test("SpecDecode + NGramDrafter produces same tokens as baseline greedy, with measurable tps")

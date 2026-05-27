@@ -37,7 +37,12 @@ import Tokenizers
 
 @testable import FFAI
 
-@Suite("GLMASR Integration", .serialized)
+@Suite(
+    "GLMASR Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct GLMASRIntegrationTests {
 
     /// Canonical HF repo id. The 4-bit MLX conversion is already the

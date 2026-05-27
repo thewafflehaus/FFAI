@@ -39,7 +39,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("NemotronH Text Integration", .serialized)
+@Suite(
+    "NemotronH Text Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableTextSuites,
+        IntegrationGroupGating.textSkipReason)
+)
 struct NemotronHTextIntegrationTests {
 
     @Test("load + greedy generate produces coherent stack-interleaved hybrid output")

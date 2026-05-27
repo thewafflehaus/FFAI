@@ -39,7 +39,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Sortformer Integration", .serialized)
+@Suite(
+    "Sortformer Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct SortformerIntegrationTests {
 
     /// Canonical HF repo id. No 4-bit MLX conversion exists at time of

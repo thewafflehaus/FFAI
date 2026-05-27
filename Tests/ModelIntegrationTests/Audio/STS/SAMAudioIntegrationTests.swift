@@ -24,11 +24,17 @@
 //   • `segment` returns waveforms with the expected length for the input.
 
 import Foundation
+import TestHelpers
 import Testing
 
 @testable import FFAI
 
-@Suite("SAMAudio Integration", .serialized)
+@Suite(
+    "SAMAudio Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct SAMAudioIntegrationTests {
 
     @Test("load + segment produces correctly-shaped output")

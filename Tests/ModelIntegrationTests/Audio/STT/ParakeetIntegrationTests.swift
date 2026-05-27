@@ -30,7 +30,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Parakeet Integration", .serialized)
+@Suite(
+    "Parakeet Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct ParakeetIntegrationTests {
 
     /// Canonical HF repo id. No 4-bit MLX conversion exists at time of

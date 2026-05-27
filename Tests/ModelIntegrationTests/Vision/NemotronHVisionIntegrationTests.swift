@@ -40,7 +40,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("NemotronH Vision Integration", .serialized)
+@Suite(
+    "NemotronH Vision Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableVisionSuites,
+        IntegrationGroupGating.visionSkipReason)
+)
 struct NemotronHVisionIntegrationTests {
 
     static let modelId = "mlx-community/Llama-3.1-Nemotron-Nano-VL-8B-V1-4bit"

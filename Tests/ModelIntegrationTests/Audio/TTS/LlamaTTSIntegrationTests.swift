@@ -31,7 +31,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("LlamaTTS Integration", .serialized)
+@Suite(
+    "LlamaTTS Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct LlamaTTSIntegrationTests {
 
     /// Canonical HF repo id. The 4-bit MLX conversion is the smallest

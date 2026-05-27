@@ -31,7 +31,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("LFMAudio Integration", .serialized)
+@Suite(
+    "LFMAudio Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableOmniSuites,
+        IntegrationGroupGating.omniSkipReason)
+)
 struct LFMAudioIntegrationTests {
 
     /// Canonical HF repo id for the LFM2.5-Audio checkpoint. The 4-bit

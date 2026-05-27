@@ -29,7 +29,12 @@ import Testing
 
 private let qwen35MoELocalPath = "/Users/tom/models/Qwen3.5-35B-A3B-4bit"
 
-@Suite("Qwen3.5-35B-A3B local-checkpoint bench", .serialized)
+@Suite(
+    "Qwen3.5-35B-A3B local-checkpoint bench", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableTextSuites,
+        IntegrationGroupGating.textSkipReason)
+)
 struct Qwen35MoEBenchIntegrationTests {
 
     @Test("Qwen3.5-35B-A3B decode T=1 tps — 5 runs, median over 32 steps")

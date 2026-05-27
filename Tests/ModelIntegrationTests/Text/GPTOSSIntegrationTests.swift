@@ -52,8 +52,10 @@ import Testing
 @Suite(
     "GPTOSS Integration", .serialized,
     .enabled(
-        if: ProcessInfo.processInfo.environment["FFAI_BUILD_MACHINE"] != nil,
-        "GPT-OSS-20B is build-machine-only; set FFAI_BUILD_MACHINE to run")
+        if: ProcessInfo.processInfo.environment["FFAI_BUILD_MACHINE"] != nil
+            && IntegrationGroupGating.enableTextSuites,
+        "GPT-OSS-20B is build-machine-only; set FFAI_BUILD_MACHINE to run "
+            + "AND IntegrationGroupGating.enableTextSuites = true")
 )
 struct GPTOSSIntegrationTests {
 

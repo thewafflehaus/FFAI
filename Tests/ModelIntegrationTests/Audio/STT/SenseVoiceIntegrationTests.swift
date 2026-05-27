@@ -29,7 +29,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("SenseVoice Integration", .serialized)
+@Suite(
+    "SenseVoice Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct SenseVoiceIntegrationTests {
 
     /// Canonical HF repo id. No 4-bit MLX conversion exists at time of

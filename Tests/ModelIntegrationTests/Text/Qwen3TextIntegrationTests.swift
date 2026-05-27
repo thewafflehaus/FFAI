@@ -24,7 +24,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Qwen3 Text Integration", .serialized)
+@Suite(
+    "Qwen3 Text Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableTextSuites,
+        IntegrationGroupGating.textSkipReason)
+)
 struct Qwen3TextIntegrationTests {
 
     @Test("load + greedy generate produces coherent output")

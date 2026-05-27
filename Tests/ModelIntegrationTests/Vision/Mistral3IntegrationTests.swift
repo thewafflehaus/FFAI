@@ -32,7 +32,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Mistral3 Vision Integration", .serialized)
+@Suite(
+    "Mistral3 Vision Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableVisionSuites,
+        IntegrationGroupGating.visionSkipReason)
+)
 struct Mistral3IntegrationTests {
 
     static let modelId = "mlx-community/Mistral-Small-3.1-24B-Instruct-2503-4bit"

@@ -39,7 +39,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("VoxtralRealtime Integration", .serialized)
+@Suite(
+    "VoxtralRealtime Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct VoxtralRealtimeIntegrationTests {
 
     /// Canonical HF repo id. The 4-bit MLX conversion is the smallest

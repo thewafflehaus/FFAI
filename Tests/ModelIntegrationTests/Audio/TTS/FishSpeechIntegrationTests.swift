@@ -36,7 +36,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("FishSpeech Integration", .serialized)
+@Suite(
+    "FishSpeech Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct FishSpeechIntegrationTests {
 
     /// Canonical HF repo id — the 8-bit MLX conversion of fish-audio-s2-pro.

@@ -34,7 +34,12 @@ import Testing
 
 @testable import FFAI
 
-@Suite("Kokoro Integration", .serialized)
+@Suite(
+    "Kokoro Integration", .serialized,
+    .enabled(
+        if: IntegrationGroupGating.enableAudioSuites,
+        IntegrationGroupGating.audioSkipReason)
+)
 struct KokoroIntegrationTests {
 
     /// Canonical HF repo id. The 4-bit MLX conversion is the smallest
