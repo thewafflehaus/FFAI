@@ -1068,63 +1068,75 @@ final class GlmOcrVisionBlock {
             for d in 0 ..< hidden { V[tok * hidden + d] = qkv[vBase + d] }
         }
 
-        // Bidirectional multi-head attention — now GPU-resident via
-        // `Ops.sdpaBidirectional` (no causal mask within one image).
-        // mlx-community's GLM-OCR-4bit vision tower ships hidden=1024
-        // / heads=16, headDim=64 — squarely in the d=64 bidirectional
-        // variant. (The earlier `sdpaMulti` route assumed a d=128 head
-        // and the precondition rejected this checkpoint at first
-        // attention dispatch.) `sdpaBidirectional` covers d∈{32,64,72};
-        // other GLM-OCR variants with d=128 would still need a
-        // `sdpaMulti(causal: false)` fallback.
+        // Bidirectional multi-head attention — pure CPU per-head for
+        // correctness. mlx-community's GLM-OCR-4bit vision tower ships
+        // hidden=1024 / heads=16 → headDim=64 at nPatches=576 (24×24
+        // patches for the 336×336 input at patch=14). The GPU path
+        // (`Ops.sdpaBidirectional` d=64) was tried and pinned the GPU
+        // at this production shape during the 2026-05-27 bisect; the
+        // pre-PR-#14 `Ops.sdpaMulti(causal:false)` route had been
+        // dead-on-arrival since `sdpaMulti` rejects d=64 at its
+        // precondition (so this vision tower had never actually run
+        // its attention on a real image before the loader fix landed).
         //
-        // Buffer layout reminder:
-        //   Q in [nPatches, hidden] row-major → [nPatches, numHeads, headDim]
-        //     matches the kernel's Q contract directly (one copy).
-        //   K/V in [nPatches, hidden] row-major → transpose to
-        //     [numHeads, nPatches, headDim] for the kernel's KV cache.
-        var kFlat = [Float](repeating: 0, count: numHeads * nPatches * headDim)
-        var vFlat = [Float](repeating: 0, count: numHeads * nPatches * headDim)
-        for j in 0 ..< nPatches {
-            for h in 0 ..< numHeads {
-                let src = j * hidden + h * headDim
-                let dst = (h * nPatches + j) * headDim
-                for d in 0 ..< headDim {
-                    kFlat[dst + d] = K[src + d]
-                    vFlat[dst + d] = V[src + d]
+        // CPU dispatch is `DispatchQueue.concurrentPerform` over (head ·
+        // query) — same pattern Idefics3 / Mistral3 / FastVLM use for
+        // their vision-tower attention CPU paths. ~576² · 16 · 64 ≈
+        // 340 M FLOPs per encoder block; the GLM-OCR ViT is small enough
+        // that this is dominated by the projection GEMMs that already
+        // run on GPU.
+        //
+        // GPU re-port: requires a paired GPU correctness test for
+        // `mt_sdpa_bidirectional_d64_*` at (nQHeads=16, nQuery=576,
+        // kvStride=576, f32) against a CPU oracle in metaltile-std, plus
+        // a fix to whatever in the kernel's bounds / reduction
+        // arithmetic pegs the GPU at that shape. Tracked in
+        // `planning/known-issues.md`.
+        var attn = [Float](repeating: 0, count: nPatches * hidden)
+        attn.withUnsafeMutableBufferPointer { attnBuf in
+            nonisolated(unsafe) let attnPtr = attnBuf.baseAddress!
+            Q.withUnsafeBufferPointer { qBuf in
+                K.withUnsafeBufferPointer { kBuf in
+                    V.withUnsafeBufferPointer { vBuf in
+                        nonisolated(unsafe) let qb = qBuf.baseAddress!
+                        nonisolated(unsafe) let kb = kBuf.baseAddress!
+                        nonisolated(unsafe) let vb = vBuf.baseAddress!
+                        DispatchQueue.concurrentPerform(iterations: numHeads * nPatches) { work in
+                            let head = work / nPatches
+                            let i = work % nPatches
+                            let hOff = head * headDim
+                            var scores = [Float](repeating: 0, count: nPatches)
+                            var maxScore = -Float.greatestFiniteMagnitude
+                            let qBase = i * hidden + hOff
+                            for j in 0 ..< nPatches {
+                                var dot: Float = 0
+                                let kBase = j * hidden + hOff
+                                for d in 0 ..< headDim { dot += qb[qBase + d] * kb[kBase + d] }
+                                let s = dot * scale
+                                scores[j] = s
+                                if s > maxScore { maxScore = s }
+                            }
+                            var sumExp: Float = 0
+                            for j in 0 ..< nPatches {
+                                let e = exp(scores[j] - maxScore)
+                                scores[j] = e
+                                sumExp += e
+                            }
+                            let invSum = 1.0 / sumExp
+                            let outBase = i * hidden + hOff
+                            for d in 0 ..< headDim { attnPtr[outBase + d] = 0 }
+                            for j in 0 ..< nPatches {
+                                let w = scores[j] * invSum
+                                let vBase = j * hidden + hOff
+                                for d in 0 ..< headDim {
+                                    attnPtr[outBase + d] += w * vb[vBase + d]
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
-        let qT = Tensor.empty(
-            shape: [nPatches, numHeads, headDim],
-            dtype: .f32, device: device)
-        let kT = Tensor.empty(
-            shape: [numHeads, nPatches, headDim],
-            dtype: .f32, device: device)
-        let vT = Tensor.empty(
-            shape: [numHeads, nPatches, headDim],
-            dtype: .f32, device: device)
-        qT.copyIn(from: Q)
-        kT.copyIn(from: kFlat)
-        vT.copyIn(from: vFlat)
-        let attnCmd = device.makeCommandBuffer()
-        let attnSdpaT: Tensor
-        if headDim == 128 || headDim == 256 {
-            attnSdpaT = Ops.sdpaMulti(
-                q: qT, k: kT, v: vT,
-                nQHeads: numHeads, nKVHeads: numHeads, headDim: headDim,
-                baseKV: 0, nQuery: nPatches, kvStride: nPatches,
-                causal: false, scale: scale, on: attnCmd)
-        } else {
-            attnSdpaT = Ops.sdpaBidirectional(
-                q: qT, k: kT, v: vT,
-                nQHeads: numHeads, nKVHeads: numHeads, headDim: headDim,
-                baseKV: 0, nQuery: nPatches, kvStride: nPatches,
-                scale: scale, on: attnCmd)
-        }
-        attnCmd.commit()
-        attnCmd.waitUntilCompleted()
-        let attn = attnSdpaT.toFloatArray()  // [nPatches, numHeads, headDim] = [nPatches, hidden]
 
         // Projection + bias on the GPU: [nPatches, hidden]
         let attnInT = glmOcrFloatsToTensor(
