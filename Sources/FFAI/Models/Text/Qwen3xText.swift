@@ -328,17 +328,43 @@ public struct Qwen35Hybrid: Qwen35Variant {
         // convention; detect the raw centered layout and fold +1 at
         // load time when needed.
         //
-        // Signal: raw HF stores the GDN inner `linear_attn.norm.weight`
-        // as F32; mlx-community downcasts it to BF16 during conversion.
-        // The dtype is a reliable origin marker independent of value
-        // magnitudes (the actual `linear_attn.norm.weight` values cluster
-        // near 1.0 in both layouts — it's the *outer* norms that get
-        // the +1 shift).
-        let needsCenteredNormFold: Bool = {
-            guard let gdnNorm = try? weights.tensor(named: "\(modelPrefix).layers.0.linear_attn.norm.weight")
+        // Detection — two *architectural* fingerprints, either sufficient.
+        // The inner `Qwen3_5RMSNormGated` (the GDN `linear_attn.norm`)
+        // is always vanilla RMSNorm with `weight = ones` and is *not*
+        // folded; only the outer norms (input_layernorm,
+        // post_attention_layernorm, q_norm, k_norm, model.norm) ever
+        // need the +1 shift.
+        //
+        //   1. MTP heads — raw HF ships Multi-Token Prediction heads
+        //      under `mtp.*`; every mlx-community sanitize drops them.
+        //      Verified on `Qwen/Qwen3.5-0.8B`.
+        //
+        //   2. Unsanitized conv1d shape — raw HF stores the GDN depthwise
+        //      conv1d as `[channels, 1, kernel]`; mlx-community moveaxis'd
+        //      it to `[channels, kernel, 1]`. mlx-lm's `qwen3_5.py`
+        //      sanitize uses `v.shape[-1] != 1` for the same purpose.
+        //      (FFAI's `transposeConv1dWeight35` consumes either layout
+        //      because the middle 1-dim collapses in row-major — the
+        //      shape mismatch is metadata-only.)
+        //
+        // Previous heuristic gated on `linear_attn.norm.weight.dtype == .f32`,
+        // which works empirically but is a side-effect of mlx-community's
+        // current F32→BF16 cast policy, not an architectural marker — a
+        // future conversion-pipeline drift could flip it silently. The
+        // MTP / conv1d pair is the same pattern mlx-lm uses, so it stays
+        // in lockstep with upstream sanitize.
+        let hasMTPWeights = weights.allKeys.contains(where: {
+            $0.contains(".mtp.") || $0.hasPrefix("mtp.")
+        })
+        let hasUnsanitizedConv1d: Bool = {
+            guard
+                let conv = try? weights.tensor(
+                    named: "\(modelPrefix).layers.0.linear_attn.conv1d.weight")
             else { return false }
-            return gdnNorm.dtype == .f32
+            // Raw HF: [C, 1, K]; mlx-community sanitized: [C, K, 1].
+            return conv.shape.last != 1
         }()
+        let needsCenteredNormFold = hasMTPWeights || hasUnsanitizedConv1d
 
         // Wrap `weights.tensor(...)` for RMSNorm tensors that need the
         // +1 fold under the centered convention.
