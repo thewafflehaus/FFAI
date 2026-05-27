@@ -329,48 +329,69 @@ private func geluTanh(_ x: Float) -> Float {
 /// Scaled dot-product attention for the vision encoder.
 /// q, k, v: [nHeads, seqLen, headDim] — output: [seqLen, nHeads * headDim]
 ///
-/// Now GPU-resident: one `Ops.sdpaBidirectional(headDim: 64)` dispatch.
-/// K/V layout `[nHeads, seqLen, headDim]` matches the kernel's
-/// `[nKVHeads, kvStride, headDim]` contract (vision MHA: nQHeads ==
-/// nKVHeads, kvStride == seqLen, baseKV == 0). Q is transposed once
-/// from `[nHeads, seqLen, headDim]` → `[seqLen, nHeads, headDim]` to
-/// match the kernel's Q layout. Output `[seqLen, nHeads, headDim]` is
-/// reinterpreted flat as `[seqLen, nHeads*headDim]` for the caller.
+/// Pure-CPU `concurrentPerform` over (head · query) — the GPU path
+/// (`Ops.sdpaBidirectional` d=64) was tried and pinned the GPU at the
+/// GlmOcr production shape (nQuery=576, nQHeads=16, f32) during the
+/// 2026-05-27 bisect; SmolVLM2's SigLIP-style tower uses the same d=64
+/// kernel at the same MHA shape (nQHeads = nKVHeads), inheriting the
+/// same pin risk. Switched back to CPU until the kernel ships a paired
+/// GPU correctness test at production shape and a fix to its inner-
+/// loop / bounds-select arithmetic. Tracked in `planning/known-issues.md`.
 private func visionSDPA(
     q: [Float], k: [Float], v: [Float],
     nHeads: Int, seqLen: Int, headDim: Int
 ) -> [Float] {
     let scale = 1.0 / Float(headDim).squareRoot()
-    let device = Device.shared
+    let H = nHeads * headDim
+    var out = [Float](repeating: 0, count: seqLen * H)
 
-    // Transpose Q from [nHeads, seqLen, headDim] → [seqLen, nHeads, headDim].
-    var qSeqMajor = [Float](repeating: 0, count: seqLen * nHeads * headDim)
-    for h in 0 ..< nHeads {
-        for s in 0 ..< seqLen {
-            let src = (h * seqLen + s) * headDim
-            let dst = (s * nHeads + h) * headDim
-            for d in 0 ..< headDim { qSeqMajor[dst + d] = q[src + d] }
+    out.withUnsafeMutableBufferPointer { outBuf in
+        nonisolated(unsafe) let outPtr = outBuf.baseAddress!
+        q.withUnsafeBufferPointer { qBuf in
+            k.withUnsafeBufferPointer { kBuf in
+                v.withUnsafeBufferPointer { vBuf in
+                    nonisolated(unsafe) let qb = qBuf.baseAddress!
+                    nonisolated(unsafe) let kb = kBuf.baseAddress!
+                    nonisolated(unsafe) let vb = vBuf.baseAddress!
+                    DispatchQueue.concurrentPerform(iterations: nHeads * seqLen) { work in
+                        let head = work / seqLen
+                        let i = work % seqLen
+                        // q is [nHeads, seqLen, headDim], k/v are
+                        // [nHeads, seqLen, headDim] — same head-major
+                        // layout for all three.
+                        let qBase = (head * seqLen + i) * headDim
+                        var scores = [Float](repeating: 0, count: seqLen)
+                        var maxScore = -Float.greatestFiniteMagnitude
+                        for j in 0 ..< seqLen {
+                            let kBase = (head * seqLen + j) * headDim
+                            var dot: Float = 0
+                            for d in 0 ..< headDim { dot += qb[qBase + d] * kb[kBase + d] }
+                            let s = dot * scale
+                            scores[j] = s
+                            if s > maxScore { maxScore = s }
+                        }
+                        var sumExp: Float = 0
+                        for j in 0 ..< seqLen {
+                            let e = exp(scores[j] - maxScore)
+                            scores[j] = e
+                            sumExp += e
+                        }
+                        let invSum = 1.0 / sumExp
+                        let outBase = i * H + head * headDim
+                        for d in 0 ..< headDim { outPtr[outBase + d] = 0 }
+                        for j in 0 ..< seqLen {
+                            let w = scores[j] * invSum
+                            let vBase = (head * seqLen + j) * headDim
+                            for d in 0 ..< headDim {
+                                outPtr[outBase + d] += w * vb[vBase + d]
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
-
-    let qT = floatsToTensor(
-        qSeqMajor, shape: [seqLen, nHeads, headDim],
-        dtype: .f32, device: device)
-    let kT = floatsToTensor(
-        k, shape: [nHeads, seqLen, headDim],
-        dtype: .f32, device: device)
-    let vT = floatsToTensor(
-        v, shape: [nHeads, seqLen, headDim],
-        dtype: .f32, device: device)
-    let cmd = device.makeCommandBuffer()
-    let outT = Ops.sdpaBidirectional(
-        q: qT, k: kT, v: vT,
-        nQHeads: nHeads, nKVHeads: nHeads, headDim: headDim,
-        baseKV: 0, nQuery: seqLen, kvStride: seqLen,
-        scale: scale, on: cmd)
-    cmd.commit()
-    cmd.waitUntilCompleted()
-    return outT.toFloatArray()
+    return out
 }
 
 // ─── Vision encoder layers (GPU GEMM-resident projections) ───────────────────

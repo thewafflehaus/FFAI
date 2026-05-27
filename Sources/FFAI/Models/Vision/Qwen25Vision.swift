@@ -241,15 +241,24 @@ final class Qwen25VLVisionBlock {
         }
 
         // Stage 2: Attention. The full-attention blocks (caller passes a
-        // single group spanning every token — `fullattBlockIndexes`) run
-        // through the GPU `Ops.sdpaBidirectional` kernel. The windowed
-        // blocks keep the parallel CPU loop because `sdpaBidirectional`
-        // is fully bidirectional and the kernel surface has no per-group
-        // mask today.
+        // single group spanning every token — `fullattBlockIndexes`) used
+        // to run through the GPU `Ops.sdpaBidirectional` kernel; the
+        // windowed blocks always kept the parallel CPU loop.
+        //
+        // GUARD: Qwen 2.5-VL's full-attention head_dim is 80 (ragged
+        // variant). That kernel hasn't been validated at this production
+        // shape (nTokens grows with image resolution; the same class of
+        // kernel at d=64 / nQuery=576 pinned the GPU on GlmOcr during
+        // the 2026-05-27 bisect). Default to the CPU fallback until a
+        // paired GPU correctness test for `mt_sdpa_bidirectional_d80_*`
+        // at the Qwen 2.5-VL shape lands in metaltile-std; opt back in
+        // for benchmarking via `FFAI_QWEN25VL_GPU_SDPA=1`.
         let isFullAttention =
             windowGroups.count == 1
             && windowGroups[0].count == nTokens
-        if isFullAttention
+        let useGPUSDPA =
+            ProcessInfo.processInfo.environment["FFAI_QWEN25VL_GPU_SDPA"] != nil
+        if useGPUSDPA && isFullAttention
             && OpsValidation.sdpaBidirectionalSupportedHeadDims.contains(headDim)
         {
             // GPU path. qH/kH/vH are already laid out as

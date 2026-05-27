@@ -167,23 +167,42 @@ public final class VisionEncoderLayer: Module {
         let v = projectRows(vProj, normed, nTokens: nTokens, on: cmd)
 
         // Bidirectional multi-head attention. GPU path when the kernel
-        // exists at this head_dim; CPU fallback otherwise.
+        // is known-safe at this head_dim; CPU fallback otherwise.
+        //
+        // GUARD: `Ops.sdpaBidirectional(headDim: 64)` pinned the GPU at
+        // the GlmOcr production shape (nQuery=576, nQHeads=16, f32)
+        // during the 2026-05-27 bisect. Until a paired GPU correctness
+        // test for `mt_sdpa_bidirectional_d64_*` at production shape
+        // lands in metaltile-std and the inner-loop / bounds-select
+        // arithmetic is verified, force d=64 (LFM2-VL SigLIP2,
+        // SigLIP-base / CLIP-L users) through the CPU path. d=72
+        // (SigLIP-So400m → Paligemma / Gemma3VL / Idefics3 /
+        // NemotronVL / MiniCPMV) is confirmed-safe via Paligemma's
+        // 2026-05-27 PASS. Other dims have not pinned but also have
+        // not been validated at production shapes; treat them as
+        // medium-risk and gate to CPU until per-dim correctness lands.
         let attnFlat: Tensor
-        if OpsValidation.sdpaBidirectionalSupportedHeadDims.contains(headDim) {
-            // {32, 64, 72, 80, 96} — covers FastViT-HD, SigLIP-base/
-            // CLIP-L/Mistral3/Gemma4-E2/Qwen3-VL-2B/4B (64),
-            // SigLIP-So400m (72), Qwen2.5-VL (80), Qwen2-VL (96).
+        let useGPUSdpaBidirectional = headDim == 72
+        if useGPUSdpaBidirectional
+            && OpsValidation.sdpaBidirectionalSupportedHeadDims.contains(headDim)
+        {
             attnFlat = gpuAttention(
                 q: q, k: k, v: v, nTokens: nTokens,
                 device: device, on: cmd)
         } else if headDim == 128 {
-            // Pixtral, Mistral3 Pixtral-based, GlmOcr.
+            // Pixtral, Mistral3 Pixtral-based, GlmOcr d=128 variants.
+            // `sdpaMulti(causal: false)` hasn't been observed to pin
+            // at vision-tower shapes but also hasn't been independently
+            // verified — leave it on the GPU path for now; revisit if
+            // a Pixtral integration test pins the GPU.
             attnFlat = gpuAttentionMulti(
                 q: q, k: k, v: v, nTokens: nTokens,
                 device: device, on: cmd)
         } else {
-            // Flush the projection GEMMs so their results are CPU-readable
-            // for the fallback attention core.
+            // d ∈ {32, 64, 80, 96} → CPU fallback under the GUARD.
+            // d ∉ supported → CPU per the original contract.
+            // Flush the projection GEMMs so their results are CPU-
+            // readable for the fallback attention core.
             cmd.commit()
             cmd.waitUntilCompleted()
             attnFlat = cpuAttention(
