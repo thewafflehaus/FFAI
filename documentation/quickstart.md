@@ -152,7 +152,7 @@ let model = try await Model.load(
 | Field | Default | Notes |
 |---|---|---|
 | `capabilities` | `[.textIn, .textOut]` | Which capabilities to load. Disabled modalities skip weight allocation entirely (relevant for VLMs in Phase 6). |
-| `kvCache` | `.raw` | Raw fp16 / bf16 today. `.affineQuantized` and `.turbo` land in Phase 5. |
+| `kvCache` | `.raw` | KV cache scheme. `.raw` keeps unquantized fp16 / bf16 K/V tensors (the default — zero overhead per step). `.affineQuantized(bits:groupSize:)` compresses K/V to int4 / int8 with a shared per-layer working buffer + a `bulk_dequant_kv` pre-pass before SDPA (~45 % memory savings at 8-bit, ~65 % at 4-bit; CLI: `--kv-cache affine8` / `affine4`). `.auraQuantized(scheme:)` is AURA — rotated + Lloyd-Max scalar-quantized + bit-packed, with compressed-domain attention via the `aura_flash_p1` / `aura_flash_pass2` kernel pair (~4× memory savings at `aura4v2`; CLI: `--kv-cache aura4v2` / `aura4` / `aura3`). See [kv-cache.md](kv-cache.md) for the per-scheme trade-offs. |
 | `dispatchMode` | `.eager` | Standard `MTLComputeCommandEncoder` per kernel. `.argumentBuffers` / `.icb` land in Phase 8+ if profiles justify. |
 | `prewarm` | `true` | Run one no-op forward to compile the PSOs before the first user-visible decode. |
 | `lazyCapabilities` | `true` | Allow runtime `enable(_:)` / `disable(_:)` after load. |
