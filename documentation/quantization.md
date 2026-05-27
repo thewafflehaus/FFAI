@@ -87,7 +87,7 @@ GPT-OSS-20B publishes its MoE experts **MXFP4**-quantized (Microscaling FP4 with
 
 ## Per-tensor mixed-bit conversions
 
-`ffai convert` writes per-tensor-class bit-widths in a single pass:
+`ffai convert` writes per-tensor-class specs in a single pass. Each role accepts an affine bit-width (`2` / `3` / `4` / `5` / `6` / `8`) or a pure downcast (`fp16` / `bf16`):
 
 ```bash
 # 4-bit linears + 4-bit embedding + 8-bit untied lm_head + bf16 vision tower:
@@ -95,17 +95,27 @@ ffai convert <repo> --bits 4 --embedding-bits 4 --lm-head-bits 8
 
 # 2-bit text path + 2-bit embedding, vision stays bf16 (default):
 ffai convert <repo> --bits 2 --embedding-bits 2
+
+# 3 / 5 / 6-bit are first-class — odd-width byte-stream packing.
+ffai convert <repo> --bits 5 --embedding-bits 6 --lm-head-bits 8
+
+# Pure downcast — no quantization, publish as fp16 (typical for
+# downstream platforms that prefer fp16 over bf16).
+ffai convert <repo> --bits fp16
+
+# Mixed: 3-bit body, fp16 vision tower (vision stays callable
+# through plain Linear; the rest runs through QuantizedLinear).
+ffai convert <vlm> --bits 3 --embedding-bits 3 --vision-bits fp16
 ```
 
-The loader's per-tensor bit-width detection (`deriveAffineQuantBits`) handles the resulting mixed layout without per-tensor entries in `config.json` — each `name.weight` / `name.scales` / `name.biases` triplet's shape determines its bit-width at load time. The top-level `quantization.bits` written into `config.json` records the `--bits` value (the canonical text-path width); the other widths are inferred per tensor at load. See [`using-the-cli.md` → `convert`](using-the-cli.md#convert--quantize-a-checkpoint-to-mlx-affine-format) for the full flag table.
+The loader's per-tensor bit-width detection (`deriveAffineQuantBits`) handles the resulting mixed layout without per-tensor entries in `config.json` — each `name.weight` / `name.scales` / `name.biases` triplet's shape determines its bit-width at load time, and any non-triplet tensor's dtype comes from the safetensors header. The top-level `quantization.bits` written into `config.json` records the `--bits` value when it's quantized; a pure-downcast conversion writes no `quantization` block at all. See [`using-the-cli.md` → `convert`](using-the-cli.md#convert--quantize-a-checkpoint-to-mlx-affine-format) for the full flag table.
 
-Vision-tower quantization is intentionally off by default (`--vision-bits` omitted). FFAI's VL towers — Qwen 3-VL / 3.5-VL, Pixtral, SigLIP, Idefics3, MiniCPM-V, FastVLM — all run plain `Linear`, not `QuantizedLinear`, so a quantized tower would crash the loader. Set `--vision-bits` only when wiring a new VL tower that consumes `QuantizedLinear`.
+Vision-tower quantization is intentionally off by default (`--vision-bits` omitted). FFAI's VL towers — Qwen 3-VL / 3.5-VL, Pixtral, SigLIP, Idefics3, MiniCPM-V, FastVLM — all run plain `Linear`, not `QuantizedLinear`, so a quantized tower would crash the loader. Set `--vision-bits` to a quantized value only when wiring a new VL tower that consumes `QuantizedLinear`; `--vision-bits fp16` / `bf16` are always safe (the tower stays plain `Linear`).
 
 ## What's not supported (yet)
 
 - **GGUF** quantizations (`Q4_K_M`, `Q5_K_M`, `Q8_0`, …) — different binary layout, different per-block scales, different tensor naming. Planned: a per-arch name mapper alongside the GGUF reader. Not currently scheduled.
 - **Native mxfp4 / nvfp4 inference** — FFAI transcodes GPT-OSS's MXFP4 experts to affine-int4 at load (see above). A native MXFP4-scale-layout decode kernel — keeping the FP8-block scales rather than transcoding — is not implemented. `nvfp4` is not handled at all.
-- **3 / 5 / 6-bit conversion via `ffai convert`** — the *inference* kernels exist (`dequant_gemv_int{3,5,6}` ship from metaltile; loader path is plumbed via `Ops.dequantGemv` and `QuantizedLinear`), but the convert driver currently only emits the clean pack-factor widths `{2, 4, 8}`. The odd-width pack format is well-defined and the kernels are tested; wiring it through `ffai convert` is a separate piece of work. Load existing mlx-community / unsloth `*-3bit` / `*-5bit` / `*-6bit` checkpoints in the meantime.
 - **Per-layer (not just per-role) bit budgets** — the per-tensor-class flags cover the common case (text vs embedding vs lm_head vs vision tower). True per-layer recipes — e.g. "first 4 attention layers at 2-bit, rest at 4-bit" — need a config file format and are planned alongside the autotuner.
 
 ## See also

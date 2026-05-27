@@ -1015,7 +1015,7 @@ struct ModelsCommand: ParsableCommand {
               ffai generate --model mlx-community/Qwen3.5-0.8B-MLX-4bit --prompt "Hello"
               ffai bench    --model mlx-community/Qwen3-1.7B-8bit --prompt "Hello" --stats
 
-            Any mlx-format 3/4/5/6/8-bit conversion of a supported
+            Any mlx-format 2/3/4/5/6/8-bit conversion of a supported
             architecture also loads — the IDs above are the published
             examples we verified. Repos are resolved + cached through the
             HuggingFace Hub.
