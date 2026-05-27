@@ -24,5 +24,7 @@ Sources/MetalTileSwift/Generated/*
 planning/session-plan.md
 
 # Per-run output from scripts/integration-bisect.sh — the script tool
-# itself stays tracked; only the log dump is local.
+# itself stays tracked; only the log dump + per-run markdown summaries
+# are local (timestamped, regenerated on every run).
 planning/integration-bisect-logs/
+planning/integration-bisect-*.md
