@@ -100,26 +100,30 @@ public enum MiniCPMV4_6 {
         }
 
         // ── Text backbone: Qwen3.5 from `text_config` ─────────────────
-        // Raw checkpoint stores text weights as
-        // `model.language_model.{embed_tokens, layers.*, norm}.weight`
-        // (no inner `model.`). The Qwen3.5 loader reads `model.X` —
-        // strip the outer namespace, then re-prepend `model.` so the
-        // existing loader runs unchanged. Qwen3.5's loader pulls every
-        // text hyper-parameter from `config.text_config`, so we hand it
-        // the full MiniCPM root config.
-        let textWeights =
-            weights
-            .prefixed("model.language_model.")
-            .withAddedPrefix("model.")
+        // mlx-community's MiniCPM-V 4.6-4bit conversion stores text
+        // weights as `language_model.model.{embed_tokens, layers.*, norm}.weight`
+        // (outer `language_model.` wrapping the inner `model.`). The
+        // Qwen3.5 loader already probes the `language_model.model.`
+        // prefix candidate, so we hand the full bundle through
+        // unmodified — Qwen3.5 picks the right prefix from its own
+        // `prefixCandidates` automatically. The earlier
+        // `prefixed("model.language_model.").withAddedPrefix("model.")`
+        // chain assumed an internal layout no mlx-community release
+        // actually ships; on the real bundle no key carries the
+        // `model.language_model.` prefix, so the strip returned an
+        // empty view and the Qwen3.5 loader crashed at `embed_tokens.weight`.
         let textEngine = try Qwen35Hybrid.loadModel(
-            config: config, weights: textWeights,
+            config: config, weights: weights,
             options: options, device: device)
 
         // ── Vision tower: SigLIP2 encoder + vit_merger + merger ───────
-        // All vision weights live under `model.vision_tower.*` and
-        // `model.merger.*` — strip those outer prefixes.
-        let visionWeights = weights.prefixed("model.vision_tower.")
-        let mergerWeights = weights.prefixed("model.merger.")
+        // All vision weights live at the top level — `vision_tower.*`
+        // (SigLIP encoder), `vit_merger.*` (window-attention merger),
+        // and `merger.*` (down-projection to text hidden) — with no
+        // `model.` wrapper in the mlx-community release.
+        let visionWeights = weights.prefixed("vision_tower.")
+        let mergerWeights = weights.prefixed("merger.")
+        let vitMergerWeights = weights.prefixed("vit_merger.")
         let composed = try MiniCPMVComposedEncoder.load(
             visionConfig: visionConfig,
             insertLayerId: config.int("insert_layer_id") ?? 6,
@@ -128,6 +132,7 @@ public enum MiniCPMV4_6 {
             textHidden: textEngine.hidden,
             visionWeights: visionWeights,
             mergerWeights: mergerWeights,
+            vitMergerOverride: vitMergerWeights,
             device: device)
 
         let imageTokenId = config.int("image_token_id") ?? defaultImageTokenId

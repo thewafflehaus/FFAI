@@ -514,13 +514,17 @@ final class MiniCPMVComposedEncoder: VisionEncoder {
     }
 
     /// Load the composed tower. `visionWeights` is prefixed at
-    /// `model.vision_tower.`; `mergerWeights` at `model.merger.`. The
-    /// shipped `position_embedding` (`[stored²·hidden]`) is bilinearly
+    /// `vision_tower.`; `mergerWeights` at `merger.`. `vitMergerOverride`
+    /// is the bundle for `vit_merger.*` when the conversion ships those
+    /// keys at the top level (mlx-community MiniCPM-V 4.6-4bit) rather
+    /// than nested under `vision_tower.vit_merger.*`. The shipped
+    /// `position_embedding` (`[stored²·hidden]`) is bilinearly
     /// interpolated to the runtime grid at load.
     static func load(
         visionConfig: ModelConfig, insertLayerId: Int,
         mergerTimes: Int, runtimeImageSize: Int, textHidden: Int,
         visionWeights: SafeTensorsBundle, mergerWeights: SafeTensorsBundle,
+        vitMergerOverride: SafeTensorsBundle,
         device: Device
     ) throws -> MiniCPMVComposedEncoder {
         guard let hidden = visionConfig.int("hidden_size"),
@@ -547,10 +551,19 @@ final class MiniCPMVComposedEncoder: VisionEncoder {
                 + "(2,2)·(2,2) = 4-divisible for vit_merger + merger")
 
         // ── Patch embed + interpolated position embedding ─────────────
-        // patch_embedding.weight ships [hidden, 3, patch, patch] (PyTorch
-        // OIHW) — Ops.conv2d consumes it directly.
-        let patchW = try visionWeights.tensor(
+        // patch_embedding.weight ships in mlx-community's OHWI layout
+        // `[hidden, patch, patch, 3]` (= `[1152, 14, 14, 3]` for the
+        // SigLIP-2 backbone). `Ops.conv2d` expects PyTorch OIHW
+        // `[hidden, 3, patch, patch]`; transpose when the trailing
+        // dim is the in-channel count (3 for RGB). Mirrors the same
+        // detection used in `Gemma3Vision` / `NemotronHVision` /
+        // `FastVLMVision` / `PixtralVision`.
+        let patchWRaw = try visionWeights.tensor(
             named: "embeddings.patch_embedding.weight")
+        let patchW =
+            patchWRaw.shape.count == 4 && patchWRaw.shape[3] == 3
+            ? transposeOHWItoOIHW(patchWRaw)
+            : patchWRaw
         let patchB = try visionWeights.tensor(
             named: "embeddings.patch_embedding.bias")
         let posEmbRaw = try visionWeights.tensor(
@@ -594,8 +607,19 @@ final class MiniCPMVComposedEncoder: VisionEncoder {
             bias: try visionWeights.tensor(named: "post_layernorm.bias"),
             eps: eps)
 
-        // ── vit_merger — load from `model.vision_tower.vit_merger.` ───
-        let vitMergerWeights = visionWeights.prefixed("vit_merger.")
+        // ── vit_merger ────────────────────────────────────────────────
+        // mlx-community's MiniCPM-V 4.6-4bit conversion keeps `vit_merger.*`
+        // at the top level of the bundle (sibling of `vision_tower.*` /
+        // `merger.*`), NOT nested inside `vision_tower.`. Some older
+        // conversions did nest it (`vision_tower.vit_merger.*`); try both
+        // so either layout loads.
+        let vitMergerWeights: SafeTensorsBundle
+        if visionWeights.has("vit_merger.linear_1.weight") {
+            vitMergerWeights = visionWeights.prefixed("vit_merger.")
+        } else {
+            // Top-level layout — passed in alongside `visionWeights`.
+            vitMergerWeights = vitMergerOverride
+        }
         // window_intermediate_size: infer from the linear_1 weight shape
         // (the config also carries it but the weight is authoritative).
         let l1 = try vitMergerWeights.tensor(named: "linear_1.weight")
