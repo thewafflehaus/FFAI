@@ -272,7 +272,31 @@ public final class SafeTensorsBundle: @unchecked Sendable {
                 throw SafeTensorsError.headerJSONMalformed
             }
             let unique = Set(weightMap.values).sorted()
-            fileURLs = unique.map { directory.appendingPathComponent($0) }
+            let shardURLs = unique.map { directory.appendingPathComponent($0) }
+            // Cache-corruption fallback: huggingface_hub occasionally
+            // produces a snapshot where the `model.safetensors.index.json`
+            // declares sharded files but only a non-sharded
+            // `model.safetensors` was actually pulled to disk (this hit
+            // `mlx-community/gemma-3-4b-it-4bit` on 2026-05-27 — see
+            // `planning/known-issues.md`). If any index-listed shard is
+            // missing AND a single-file `model.safetensors` exists,
+            // load that instead so the user isn't blocked on a manual
+            // cache wipe + re-download.
+            let allShardsPresent = shardURLs.allSatisfy {
+                FileManager.default.fileExists(atPath: $0.path)
+            }
+            if allShardsPresent {
+                fileURLs = shardURLs
+            } else {
+                let single = directory.appendingPathComponent("model.safetensors")
+                if FileManager.default.fileExists(atPath: single.path) {
+                    fileURLs = [single]
+                } else {
+                    // No usable fallback — surface the original missing
+                    // shard so the failure mode is loud and obvious.
+                    fileURLs = shardURLs
+                }
+            }
         } else {
             // Single file at model.safetensors
             let single = directory.appendingPathComponent("model.safetensors")
