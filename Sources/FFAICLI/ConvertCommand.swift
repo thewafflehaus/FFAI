@@ -147,6 +147,14 @@ struct ConvertCommand: AsyncParsableCommand {
         opts.embeddingSpec = embeddingBits
         opts.lmHeadSpec = lmHeadBits
         opts.visionSpec = visionBits
+        // The driver emits a README.md (HF model card) only when
+        // sourceID is set; pass the user-supplied source verbatim so
+        // the card's `base_model:` field and the example `ffai convert`
+        // command match what the user typed. Same goes for
+        // `uploadRepo` — it appears in the example command when set
+        // so the reader can reproduce the upload step.
+        opts.sourceID = source
+        opts.uploadRepo = uploadRepo
 
         // ─── Run conversion ──────────────────────────────────────────
         // Swift 6 strict concurrency: the progress closure is @Sendable so

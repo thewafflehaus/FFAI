@@ -90,6 +90,20 @@ public struct ConvertOptions: Sendable {
     /// consumes `QuantizedLinear`.
     public var visionSpec: QuantSpec? = nil
 
+    /// Original source identifier — HF repo id (`org/repo`) or local
+    /// path — used to fill in the `base_model:` field of the emitted
+    /// README.md model card and the human-readable conversion command.
+    /// `nil` (default) suppresses the card entirely; set to the same
+    /// value the caller would pass to `Model.load` so downstream users
+    /// can trace provenance.
+    public var sourceID: String? = nil
+
+    /// Optional target HF repo id for the conversion (the `--upload-repo`
+    /// value when used via the CLI). Surfaced in the emitted model card's
+    /// example conversion command so a reader can reproduce the upload
+    /// step. Has no side-effect on the conversion itself.
+    public var uploadRepo: String? = nil
+
     public init() {}
 }
 
@@ -234,6 +248,17 @@ public enum ConvertDriver {
 
         // ─── Copy tokenizer + auxiliary files ────────────────────────
         copyAuxiliaryFiles(from: sourceDir, to: destDir, progress: progress)
+
+        // ─── Emit README.md (HF model card) ──────────────────────────
+        // Only when the caller supplied `sourceID` — without it the
+        // card would be missing the most important piece (the base
+        // model link), so it's better to skip than to publish a
+        // partial card.
+        if let sourceID = options.sourceID {
+            try writeModelCard(
+                destDir: destDir, sourceID: sourceID, options: options,
+                progress: progress)
+        }
     }
 
     // ─── Quantization eligibility ────────────────────────────────────
@@ -590,6 +615,160 @@ public enum ConvertDriver {
                     progress?("warning: could not copy \(name): \(error)")
                 }
             }
+        }
+    }
+
+    // ─── Model card (README.md) ──────────────────────────────────────
+
+    /// Write a minimal HF-style README.md to `destDir`, describing the
+    /// conversion: YAML frontmatter (license / base_model / language /
+    /// tags), title, one-line provenance summary linking back to the
+    /// source repo and to FFAI, an example `ffai convert` command the
+    /// reader can copy verbatim, and the FFAI version that produced
+    /// this artifact. Mirrors the format of
+    /// https://huggingface.co/ekryski/Qwen3.5-0.8B-2bit.
+    ///
+    /// The card is best-effort — a failure to write doesn't fail the
+    /// conversion (the model artifacts on disk are still valid). We
+    /// surface a warning through `progress` so the user sees it.
+    private static func writeModelCard(
+        destDir: URL, sourceID: String, options: ConvertOptions,
+        progress: (@Sendable (String) -> Void)?
+    ) throws {
+        let cardURL = destDir.appendingPathComponent("README.md")
+        let card = renderModelCard(sourceID: sourceID, options: options)
+        do {
+            try card.write(to: cardURL, atomically: true, encoding: .utf8)
+            progress?("wrote     README.md")
+        } catch {
+            // Convert artifacts on disk are still fine — surface and continue.
+            progress?("warning: could not write README.md: \(error)")
+        }
+    }
+
+    /// Build the README.md body. Pure-function — pulled out of
+    /// `writeModelCard` so it's covered by unit tests without touching
+    /// the filesystem.
+    static func renderModelCard(
+        sourceID: String, options: ConvertOptions
+    ) -> String {
+        let isHFRepo = sourceID.contains("/") && !sourceID.hasPrefix("/")
+        let sourceLink =
+            isHFRepo
+            ? "[\(sourceID)](https://huggingface.co/\(sourceID))"
+            : "`\(sourceID)`"
+
+        // Display title — prefer the upload-repo's last segment (matches
+        // what HF shows in the page header); fall back to the source's
+        // last segment.
+        let title: String = {
+            if let upload = options.uploadRepo,
+                let last = upload.split(separator: "/").last
+            {
+                return String(last)
+            }
+            if let last = sourceID.split(separator: "/").last {
+                return String(last)
+            }
+            return "Converted model"
+        }()
+
+        // Tags: always mlx + ffai; add quantization-mode tags so HF
+        // filters surface this checkpoint under the right buckets.
+        var tags = ["mlx", "ffai"]
+        switch options.bits {
+        case .bits(let n):
+            tags.append("quantized")
+            tags.append("\(n)bit")
+            tags.append("affine")
+        case .fp16:
+            tags.append("fp16")
+        case .bf16:
+            tags.append("bf16")
+        }
+
+        // Per-role overrides also show up as tags so a reader can spot
+        // mixed-precision conversions at a glance.
+        if let e = options.embeddingSpec, e != options.bits {
+            tags.append("embed-\(e.label)")
+        }
+        if let h = options.lmHeadSpec, h != options.bits {
+            tags.append("lmhead-\(h.label)")
+        }
+        if let v = options.visionSpec, v != options.bits {
+            tags.append("vision-\(v.label)")
+        }
+
+        let tagsBlock = tags.map { "  - \($0)" }.joined(separator: "\n")
+
+        // Human-readable spec description for the lead sentence.
+        let specDesc: String
+        switch options.bits {
+        case .bits(let n): specDesc = "\(n)-bit affine quantization"
+        case .fp16: specDesc = "fp16 downcast"
+        case .bf16: specDesc = "bf16 downcast"
+        }
+
+        // Example `ffai convert` command — uses the same source id +
+        // every non-default spec the conversion actually used, plus the
+        // upload-repo when set. `ffai convert` accepts both `--bits 4`
+        // and `--bits fp16` so the same field reconstructs both forms.
+        var cmd = "ffai convert \(sourceID) --bits \(cliBitsValue(options.bits))"
+        if let e = options.embeddingSpec {
+            cmd += " --embedding-bits \(cliBitsValue(e))"
+        }
+        if let h = options.lmHeadSpec {
+            cmd += " --lm-head-bits \(cliBitsValue(h))"
+        }
+        if let v = options.visionSpec {
+            cmd += " --vision-bits \(cliBitsValue(v))"
+        }
+        if let r = options.uploadRepo {
+            cmd += " \\\n    --upload-repo \(r)"
+        }
+
+        // FFAI version — pinned in `Sources/FFAI/FFAI.swift`. Reading
+        // it through the public `FFAI.version` constant keeps the card
+        // and the `ffai --version` output in sync.
+        let ffaiVersion = FFAI.version
+
+        return """
+            ---
+            license: apache-2.0
+            base_model: \(sourceID)
+            language:
+              - en
+            tags:
+            \(tagsBlock)
+            ---
+
+            # \(title)
+
+            \(specDesc) of \(sourceLink), produced with [FFAI](https://github.com/thewafflehaus/FFAI) \(ffaiVersion)'s `ffai convert` (mlx-affine format, `group_size=64`).
+
+            ## Conversion
+
+            ```bash
+            \(cmd)
+            ```
+
+            ## See also
+
+            - [FFAI](https://github.com/thewafflehaus/FFAI) — fast Apple Silicon LLM inference. `Model.load("\(options.uploadRepo ?? sourceID)")` runs this checkpoint end-to-end.
+            - [FFAI quickstart](https://github.com/thewafflehaus/FFAI/blob/main/documentation/quickstart.md)
+            - [FFAI quantization docs](https://github.com/thewafflehaus/FFAI/blob/main/documentation/quantization.md)
+            """
+    }
+
+    /// Render a `QuantSpec` as the string the `--bits` flag accepts on
+    /// the CLI side: `"4"` / `"fp16"` / `"bf16"`. This differs from
+    /// `QuantSpec.label` (`"4bit"` / `"fp16"` / `"bf16"`) — the label
+    /// is the log-line rendering; this is the CLI argument rendering.
+    private static func cliBitsValue(_ spec: QuantSpec) -> String {
+        switch spec {
+        case .bits(let n): return "\(n)"
+        case .fp16: return "fp16"
+        case .bf16: return "bf16"
         }
     }
 }
