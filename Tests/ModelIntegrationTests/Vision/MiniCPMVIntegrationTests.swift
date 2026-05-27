@@ -86,9 +86,14 @@ struct MiniCPMVIntegrationTests {
         // exactly how this test had been failing.
         let imageTokenId = vlm.imageTokenId
         let header = m.tokenizer.encode(text: "<|im_start|>user\n")
+        // The chat_template.jinja with the default `enable_thinking=false`
+        // appends `<think>\n\n</think>\n\n` after `<|im_start|>assistant\n`.
+        // Skipping that opener leaves the model in an undefined state
+        // (the Qwen3.5 backbone was fine-tuned with the marker present)
+        // and it loops on newlines as the lowest-perplexity continuation.
         let trailer = m.tokenizer.encode(
             text: "\nDescribe this image briefly.<|im_end|>\n"
-                + "<|im_start|>assistant\n")
+                + "<|im_start|>assistant\n<think>\n\n</think>\n\n")
         let promptTokens =
             header
             + Array(repeating: imageTokenId, count: vlm.imageTokenCount)
@@ -171,9 +176,12 @@ struct MiniCPMVIntegrationTests {
         //   \nWhat's in this video?<|im_end|>\n
         //   <|im_start|>assistant\n
         let header = m.tokenizer.encode(text: "<|im_start|>user\n")
+        // Mirror the image-path opener (`<think>\n\n</think>\n\n` after
+        // `<|im_start|>assistant\n`) so video-mode generation gets the
+        // same assistant-turn signal the backbone was fine-tuned on.
         let trailer = m.tokenizer.encode(
             text: "\nWhat's in this video?<|im_end|>\n"
-                + "<|im_start|>assistant\n")
+                + "<|im_start|>assistant\n<think>\n\n</think>\n\n")
         let promptTokens =
             header
             + Array(repeating: videoTokenId, count: videoTokenCount)
