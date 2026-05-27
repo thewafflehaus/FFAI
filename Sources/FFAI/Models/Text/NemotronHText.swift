@@ -225,15 +225,19 @@ public struct NemotronHHybrid: NemotronHVariant {
         }()
 
         // ── Activation dtype — taken from the embedding table ─────────
+        // NemotronH 4-bit conversions (e.g. ekryski/Nemotron-H-4B-Base-8K-4bit)
+        // leave the embedding + lm_head as raw bf16/f16 and only quantize
+        // the per-layer projections (mixer.in_proj / out_proj on Mamba
+        // layers, q/k/v/o on attention layers, up_proj / down_proj on
+        // MLP layers). Same FalconH1 quantized-loader pattern as Jamba
+        // (commit cd74616) / LFM2 (commit 3227355).
+        let quant = config.quantization
+        let isQuantized = quant != nil
         let embedWRaw = try weights.tensor(named: "backbone.embeddings.weight")
         let activationDtype = embedWRaw.dtype
         precondition(
             activationDtype == .f32 || activationDtype == .bf16 || activationDtype == .f16,
             "NemotronH: unexpected activation dtype \(activationDtype)")
-        guard config.quantization == nil else {
-            throw NemotronHError.unsupportedConfig(
-                "quantized NemotronH checkpoints not yet supported — load a raw bf16/f16 variant")
-        }
         let embedTokens = AnyEmbedding(Embedding(weight: embedWRaw))
 
         // ── MoE hyper-parameters (only read when an "E" layer exists) ─
@@ -283,21 +287,37 @@ public struct NemotronHHybrid: NemotronHVariant {
                         nGroups: nGroups, convKernel: convKernel,
                         useConvBias: useConvBias, eps: eps,
                         tsMin: tsMin, tsMax: tsMax,
-                        dtype: activationDtype, device: device))
+                        dtype: activationDtype, device: device,
+                        quantization: quant))
 
             case .attention:
-                let qProj = AnyLinear(
-                    Linear(
-                        weight: try weights.tensor(named: "\(p).mixer.q_proj.weight")))
-                let kProj = AnyLinear(
-                    Linear(
-                        weight: try weights.tensor(named: "\(p).mixer.k_proj.weight")))
-                let vProj = AnyLinear(
-                    Linear(
-                        weight: try weights.tensor(named: "\(p).mixer.v_proj.weight")))
-                let oProj = AnyLinear(
-                    Linear(
-                        weight: try weights.tensor(named: "\(p).mixer.o_proj.weight")))
+                let qProj: AnyLinear
+                let kProj: AnyLinear
+                let vProj: AnyLinear
+                let oProj: AnyLinear
+                if isQuantized {
+                    qProj = try loadLinear(
+                        base: "\(p).mixer.q_proj", in: weights, quantization: quant)
+                    kProj = try loadLinear(
+                        base: "\(p).mixer.k_proj", in: weights, quantization: quant)
+                    vProj = try loadLinear(
+                        base: "\(p).mixer.v_proj", in: weights, quantization: quant)
+                    oProj = try loadLinear(
+                        base: "\(p).mixer.o_proj", in: weights, quantization: quant)
+                } else {
+                    qProj = AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(named: "\(p).mixer.q_proj.weight")))
+                    kProj = AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(named: "\(p).mixer.k_proj.weight")))
+                    vProj = AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(named: "\(p).mixer.v_proj.weight")))
+                    oProj = AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(named: "\(p).mixer.o_proj.weight")))
+                }
                 layers.append(
                     NemotronHAttentionLayer(
                         norm: norm,
@@ -305,12 +325,21 @@ public struct NemotronHHybrid: NemotronHVariant {
                         nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim))
 
             case .mlp:
-                let upProj = AnyLinear(
-                    Linear(
-                        weight: try weights.tensor(named: "\(p).mixer.up_proj.weight")))
-                let downProj = AnyLinear(
-                    Linear(
-                        weight: try weights.tensor(named: "\(p).mixer.down_proj.weight")))
+                let upProj: AnyLinear
+                let downProj: AnyLinear
+                if isQuantized {
+                    upProj = try loadLinear(
+                        base: "\(p).mixer.up_proj", in: weights, quantization: quant)
+                    downProj = try loadLinear(
+                        base: "\(p).mixer.down_proj", in: weights, quantization: quant)
+                } else {
+                    upProj = AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(named: "\(p).mixer.up_proj.weight")))
+                    downProj = AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(named: "\(p).mixer.down_proj.weight")))
+                }
                 layers.append(
                     NemotronHMLPLayer(
                         norm: norm, upProj: upProj, downProj: downProj,
@@ -326,16 +355,29 @@ public struct NemotronHHybrid: NemotronHVariant {
                         sharedExpertIntermediate: sharedExpertIntermediate,
                         routedScalingFactor: routedScalingFactor,
                         normTopkProb: normTopkProb,
-                        dtype: activationDtype, device: device))
+                        dtype: activationDtype, device: device,
+                        quantization: quant))
             }
         }
 
         let finalNorm = RMSNorm(
             weight: try weights.tensor(named: "backbone.norm_f.weight"), eps: eps)
 
+        // lm_head — NemotronH 4-bit conversions ship `lm_head.weight` as
+        // raw bf16 (NOT quantized), but be quantization-aware for any
+        // future checkpoint that does quantize it. Tied + quantized
+        // path falls through to the embed table; ekryski/Nemotron-H
+        // 4-bit doesn't quantize the embedding either, so the raw arm
+        // is correct.
         let lmHead: AnyLinear
         if !tieEmbed, weights.has("lm_head.weight") {
-            lmHead = AnyLinear(Linear(weight: try weights.tensor(named: "lm_head.weight")))
+            if isQuantized, weights.isQuantized("lm_head") {
+                lmHead = try loadLinear(
+                    base: "lm_head", in: weights, quantization: quant)
+            } else {
+                lmHead = AnyLinear(
+                    Linear(weight: try weights.tensor(named: "lm_head.weight")))
+            }
         } else {
             lmHead = AnyLinear(Linear(weight: embedWRaw))
         }
@@ -361,14 +403,24 @@ public struct NemotronHHybrid: NemotronHVariant {
         nHeads: Int, headDim: Int, stateDim: Int, nGroups: Int,
         convKernel: Int, useConvBias: Bool, eps: Float,
         tsMin: Float, tsMax: Float,
-        dtype: DType, device: Device
+        dtype: DType, device: Device,
+        quantization: ModelConfig.QuantizationConfig?
     ) throws -> NemotronHMambaLayer {
-        let inProj = AnyLinear(
-            Linear(
-                weight: try weights.tensor(named: "\(p).in_proj.weight")))
-        let outProj = AnyLinear(
-            Linear(
-                weight: try weights.tensor(named: "\(p).out_proj.weight")))
+        // in_proj / out_proj quantized on 4-bit checkpoints; conv1d,
+        // A_log, D, dt_bias, and the per-group mixer RMSNorm stay raw.
+        let inProj: AnyLinear
+        let outProj: AnyLinear
+        if quantization != nil, weights.isQuantized("\(p).in_proj") {
+            inProj = try loadLinear(
+                base: "\(p).in_proj", in: weights, quantization: quantization)
+            outProj = try loadLinear(
+                base: "\(p).out_proj", in: weights, quantization: quantization)
+        } else {
+            inProj = AnyLinear(
+                Linear(weight: try weights.tensor(named: "\(p).in_proj.weight")))
+            outProj = AnyLinear(
+                Linear(weight: try weights.tensor(named: "\(p).out_proj.weight")))
+        }
 
         // conv1d.weight ships [conv_dim, 1, kernel]; the metaltile kernel
         // wants [kernel, conv_dim].
@@ -907,8 +959,26 @@ private func buildNemotronHMoELayer(
     nRoutedExperts: Int, topK: Int,
     nSharedExperts: Int, sharedExpertIntermediate: Int,
     routedScalingFactor: Float, normTopkProb: Bool,
-    dtype: DType, device: Device
+    dtype: DType, device: Device,
+    quantization: ModelConfig.QuantizationConfig?
 ) throws -> NemotronHMoELayer {
+    // Quantized NemotronH MoE: per-expert + shared-expert up/down_proj
+    // sliceRows over packed u32 isn't wired into our per-expert load
+    // path yet. The 4B-Base test target is Mamba+attention+MLP only
+    // (no MoE), so this gate fires only for the bigger Cascade-2-Ultra
+    // checkpoints — guard with a clear error rather than missing-key
+    // failure. Same follow-up as Jamba / LFM2.
+    if quantization != nil,
+        weights.isQuantized("\(p).experts.0.up_proj")
+            || weights.isQuantized("\(p).shared_experts.up_proj")
+    {
+        throw NemotronHError.unsupportedConfig(
+            "quantized NemotronH MoE expert slicing not yet implemented "
+                + "— load a raw bf16/f16 NemotronH MoE variant (test "
+                + "target Nemotron-H-4B-Base-8K-4bit has no MoE layers "
+                + "and loads through this builder only on Cascade-class)")
+    }
+    _ = quantization  // suppress unused-parameter warning on raw path
     // Router: hidden → nRouted logits. NemotronH MoE checkpoints ship
     // these projections as plain (non-quantized) Linear (the family
     // rejects quantized configs at load), so we read the raw weight.
