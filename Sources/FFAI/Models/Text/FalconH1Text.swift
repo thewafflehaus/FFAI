@@ -145,25 +145,60 @@ public struct FalconH1Hybrid: FalconH1Variant {
                 ?? [1.0, 1.0, 1.0, 1.0, 1.0]
 
         let quant = config.quantization
-        guard quant == nil else {
-            // Quantized FalconH1 checkpoints store the per-channel µP
-            // scaling already baked into their packed weights/scales;
-            // folding the config multipliers on top would double-apply.
-            // Raw bf16/f16 checkpoints are the supported path for now.
-            throw FalconH1Error.unsupportedConfig(
-                "quantized FalconH1 checkpoints not yet supported — load a raw bf16/f16 variant")
-        }
+        let isQuantized = quant != nil
 
-        // ── Activation dtype — taken from the embedding table ─────────
-        let embedWRaw = try weights.tensor(named: "model.embed_tokens.weight")
-        let activationDtype = embedWRaw.dtype
+        // ── Activation dtype — derive from embed scales when quantized,
+        //    embed weight dtype otherwise. mlx-community's quantized
+        //    FalconH1 packs `embed_tokens.weight` as u32, with the
+        //    activation dtype carried on the `.scales` tensor (the same
+        //    pattern Qwen3.6 / GlmOcr use).
+        let activationDtype: DType
+        if let q = quant, weights.isQuantized("model.embed_tokens"),
+            let scales = try? weights.tensor(named: "model.embed_tokens.scales")
+        {
+            _ = q  // silence unused-binding warning; presence already gated by `quant != nil`
+            activationDtype = scales.dtype
+        } else {
+            let embedWRaw = try weights.tensor(named: "model.embed_tokens.weight")
+            activationDtype = embedWRaw.dtype
+        }
         precondition(
             activationDtype == .f32 || activationDtype == .bf16 || activationDtype == .f16,
             "FalconH1: unexpected activation dtype \(activationDtype)")
 
-        // Embedding table folds in `embedding_multiplier`.
-        let embedW = scaleTensor(embedWRaw, by: embeddingMultiplier, device: device)
-        let embedTokens = AnyEmbedding(Embedding(weight: embedW))
+        // Per the µP design + verified against mlx-community's
+        // `Falcon-H1-Tiny-90M-Instruct-4bit` conversion: the quantize
+        // pass bakes every config-driven scaling factor
+        // (`embedding_multiplier`, `attention_in_multiplier`,
+        // `attention_out_multiplier`, `key_multiplier`,
+        // `mlp_multipliers`, `ssm_in_multiplier`, `ssm_multipliers`,
+        // `ssm_out_multiplier`, `lm_head_multiplier`) into the packed
+        // `.weight` u32 + `.scales` triplet. Folding the multipliers
+        // again at load time would double-apply them. The helpers
+        // below take that as a precondition: for the quantized path
+        // they call `loadLinear` / `loadEmbedding` (which return
+        // `QuantizedLinear`-wrapping `AnyLinear`) with NO scaling; for
+        // the raw bf16/f16 path they fold the multiplier into the
+        // unpacked weight as before.
+
+        // Embedding table folds in `embedding_multiplier` (raw path).
+        let embedTokens: AnyEmbedding
+        // Keep an unscaled raw-bf16 copy on hand for the tied-lm_head
+        // path below; nil when quantized so the tied path picks the
+        // quantized-embedding route instead.
+        let embedWRawForTiedLmHead: Tensor?
+        if isQuantized {
+            embedTokens = try loadEmbedding(
+                base: "model.embed_tokens", in: weights,
+                hidden: hidden, quantization: quant)
+            embedWRawForTiedLmHead = nil
+        } else {
+            let embedWRaw = try weights.tensor(named: "model.embed_tokens.weight")
+            let embedW = scaleTensor(
+                embedWRaw, by: embeddingMultiplier, device: device)
+            embedTokens = AnyEmbedding(Embedding(weight: embedW))
+            embedWRawForTiedLmHead = embedWRaw
+        }
 
         // The µP vector multiplies the in_proj weight per *output* row.
         // It segments the in_proj output [gate | conv(x|B|C) | dt] and
@@ -183,33 +218,62 @@ public struct FalconH1Hybrid: FalconH1Variant {
             // ── Attention path ────────────────────────────────────────
             // q_proj / k_proj fold attention_in_multiplier; k_proj also
             // folds key_multiplier; o_proj folds attention_out_multiplier.
-            let qW = scaleTensor(
-                try weights.tensor(named: "\(p).self_attn.q_proj.weight"),
-                by: attnInMultiplier, device: device)
-            let kW = scaleTensor(
-                try weights.tensor(named: "\(p).self_attn.k_proj.weight"),
-                by: attnInMultiplier * keyMultiplier, device: device)
-            let vW = try weights.tensor(named: "\(p).self_attn.v_proj.weight")
-            let oW = scaleTensor(
-                try weights.tensor(named: "\(p).self_attn.o_proj.weight"),
-                by: attnOutMultiplier, device: device)
-            let qProj = AnyLinear(Linear(weight: qW))
-            let kProj = AnyLinear(Linear(weight: kW))
-            let vProj = AnyLinear(Linear(weight: vW))
-            let oProj = AnyLinear(Linear(weight: oW))
+            // Quantized: scaling is baked into the packed weight; route
+            // through loadLinear which returns a QuantizedLinear-wrapping
+            // AnyLinear and skip the scale step entirely.
+            let qProj: AnyLinear
+            let kProj: AnyLinear
+            let vProj: AnyLinear
+            let oProj: AnyLinear
+            if isQuantized {
+                qProj = try loadLinear(
+                    base: "\(p).self_attn.q_proj", in: weights, quantization: quant)
+                kProj = try loadLinear(
+                    base: "\(p).self_attn.k_proj", in: weights, quantization: quant)
+                vProj = try loadLinear(
+                    base: "\(p).self_attn.v_proj", in: weights, quantization: quant)
+                oProj = try loadLinear(
+                    base: "\(p).self_attn.o_proj", in: weights, quantization: quant)
+            } else {
+                let qW = scaleTensor(
+                    try weights.tensor(named: "\(p).self_attn.q_proj.weight"),
+                    by: attnInMultiplier, device: device)
+                let kW = scaleTensor(
+                    try weights.tensor(named: "\(p).self_attn.k_proj.weight"),
+                    by: attnInMultiplier * keyMultiplier, device: device)
+                let vW = try weights.tensor(named: "\(p).self_attn.v_proj.weight")
+                let oW = scaleTensor(
+                    try weights.tensor(named: "\(p).self_attn.o_proj.weight"),
+                    by: attnOutMultiplier, device: device)
+                qProj = AnyLinear(Linear(weight: qW))
+                kProj = AnyLinear(Linear(weight: kW))
+                vProj = AnyLinear(Linear(weight: vW))
+                oProj = AnyLinear(Linear(weight: oW))
+            }
 
             // ── Mamba 2 mixer path ────────────────────────────────────
             // in_proj folds the per-row µP vector; out_proj folds
-            // ssm_out_multiplier.
-            let inProjRaw = try weights.tensor(named: "\(p).mamba.in_proj.weight")
-            let inProjW = scaleRows(
-                inProjRaw, byRowVector: mupVector,
-                dtype: activationDtype, device: device)
-            let outProjW = scaleTensor(
-                try weights.tensor(named: "\(p).mamba.out_proj.weight"),
-                by: ssmOutMultiplier, device: device)
-            let inProj = AnyLinear(Linear(weight: inProjW))
-            let outProj = AnyLinear(Linear(weight: outProjW))
+            // ssm_out_multiplier. Quantized: same pre-baked contract as
+            // the attention projections — scaling is in the packed
+            // weight; load through loadLinear with no µP folding.
+            let inProj: AnyLinear
+            let outProj: AnyLinear
+            if isQuantized {
+                inProj = try loadLinear(
+                    base: "\(p).mamba.in_proj", in: weights, quantization: quant)
+                outProj = try loadLinear(
+                    base: "\(p).mamba.out_proj", in: weights, quantization: quant)
+            } else {
+                let inProjRaw = try weights.tensor(named: "\(p).mamba.in_proj.weight")
+                let inProjW = scaleRows(
+                    inProjRaw, byRowVector: mupVector,
+                    dtype: activationDtype, device: device)
+                let outProjW = scaleTensor(
+                    try weights.tensor(named: "\(p).mamba.out_proj.weight"),
+                    by: ssmOutMultiplier, device: device)
+                inProj = AnyLinear(Linear(weight: inProjW))
+                outProj = AnyLinear(Linear(weight: outProjW))
+            }
 
             // conv1d.weight ships [conv_dim, 1, kernel]; the metaltile
             // kernel wants [kernel, conv_dim]. Same transpose Mamba 2 does.
@@ -244,16 +308,29 @@ public struct FalconH1Hybrid: FalconH1Variant {
                 dtype: activationDtype, device: device)
 
             // ── MLP (SwiGLU) — gate/down fold mlp_multipliers ─────────
-            let gateW = scaleTensor(
-                try weights.tensor(named: "\(p).feed_forward.gate_proj.weight"),
-                by: mlpGateMultiplier, device: device)
-            let upW = try weights.tensor(named: "\(p).feed_forward.up_proj.weight")
-            let downW = scaleTensor(
-                try weights.tensor(named: "\(p).feed_forward.down_proj.weight"),
-                by: mlpDownMultiplier, device: device)
-            let gateProj = AnyLinear(Linear(weight: gateW))
-            let upProj = AnyLinear(Linear(weight: upW))
-            let downProj = AnyLinear(Linear(weight: downW))
+            // Quantized: same pre-baked-multiplier contract.
+            let gateProj: AnyLinear
+            let upProj: AnyLinear
+            let downProj: AnyLinear
+            if isQuantized {
+                gateProj = try loadLinear(
+                    base: "\(p).feed_forward.gate_proj", in: weights, quantization: quant)
+                upProj = try loadLinear(
+                    base: "\(p).feed_forward.up_proj", in: weights, quantization: quant)
+                downProj = try loadLinear(
+                    base: "\(p).feed_forward.down_proj", in: weights, quantization: quant)
+            } else {
+                let gateW = scaleTensor(
+                    try weights.tensor(named: "\(p).feed_forward.gate_proj.weight"),
+                    by: mlpGateMultiplier, device: device)
+                let upW = try weights.tensor(named: "\(p).feed_forward.up_proj.weight")
+                let downW = scaleTensor(
+                    try weights.tensor(named: "\(p).feed_forward.down_proj.weight"),
+                    by: mlpDownMultiplier, device: device)
+                gateProj = AnyLinear(Linear(weight: gateW))
+                upProj = AnyLinear(Linear(weight: upW))
+                downProj = AnyLinear(Linear(weight: downW))
+            }
 
             // ── Norms ─────────────────────────────────────────────────
             let inputNorm = RMSNorm(
@@ -285,18 +362,61 @@ public struct FalconH1Hybrid: FalconH1Variant {
         let finalNorm = RMSNorm(
             weight: try weights.tensor(named: "model.final_layernorm.weight"), eps: eps)
 
-        // lm_head folds lm_head_multiplier. When tied, the head shares
-        // the *unscaled* embed table — so we build a separate scaled
-        // copy rather than reusing the embedding-multiplier-scaled one.
+        // lm_head folds lm_head_multiplier (raw path). When tied, the
+        // head shares the *unscaled* embed table — so we build a
+        // separate scaled copy rather than reusing the embedding-
+        // multiplier-scaled one. Quantized path: the multiplier is
+        // pre-baked into the packed weight, so just route through
+        // loadLinear (untied) or reuse the quantized embedding triplet
+        // (tied) — same pattern Qwen3.6 / GlmOcr use for tied lm_head.
         let lmHead: AnyLinear
-        if !tieEmbed, weights.has("lm_head.weight") {
-            let lmW = scaleTensor(
-                try weights.tensor(named: "lm_head.weight"),
-                by: lmHeadMultiplier, device: device)
-            lmHead = AnyLinear(Linear(weight: lmW))
+        if isQuantized {
+            if !tieEmbed, weights.has("lm_head.weight") {
+                lmHead = try loadLinear(
+                    base: "lm_head", in: weights, quantization: quant)
+            } else if let q = quant, weights.isQuantized("model.embed_tokens") {
+                // Tied head — wrap the embedding triplet as a
+                // QuantizedLinear so gemv dispatches as a normal
+                // 4-bit projection.
+                let t = try weights.quantizedTriplet("model.embed_tokens")
+                let bits = deriveAffineQuantBits(
+                    weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
+                    scaleCols: t.scales.shape[t.scales.shape.count - 1],
+                    groupSize: q.groupSize)
+                lmHead = AnyLinear(
+                    QuantizedLinear(
+                        weight: t.weight, scales: t.scales, biases: t.biases,
+                        bits: bits, groupSize: q.groupSize))
+            } else {
+                // Quantized config declared but neither an explicit
+                // lm_head.weight nor a quantized embed triplet is on
+                // disk — fall back to the raw-bf16 path via the
+                // QuantizedLinear-unwrapped embedTokens. This branch
+                // is defensive; mlx-community Falcon-H1 conversions
+                // always satisfy one of the two arms above.
+                throw FalconH1Error.unsupportedConfig(
+                    "quantized FalconH1 checkpoint missing both an "
+                        + "explicit lm_head and a quantized embed_tokens triplet")
+            }
         } else {
-            let lmW = scaleTensor(embedWRaw, by: lmHeadMultiplier, device: device)
-            lmHead = AnyLinear(Linear(weight: lmW))
+            if !tieEmbed, weights.has("lm_head.weight") {
+                let lmW = scaleTensor(
+                    try weights.tensor(named: "lm_head.weight"),
+                    by: lmHeadMultiplier, device: device)
+                lmHead = AnyLinear(Linear(weight: lmW))
+            } else {
+                // For tied + raw, embedWRawForTiedLmHead is the
+                // unscaled embed table we kept aside; scale by the
+                // lm_head multiplier here.
+                let raw: Tensor
+                if let r = embedWRawForTiedLmHead {
+                    raw = r
+                } else {
+                    raw = try weights.tensor(named: "model.embed_tokens.weight")
+                }
+                let lmW = scaleTensor(raw, by: lmHeadMultiplier, device: device)
+                lmHead = AnyLinear(Linear(weight: lmW))
+            }
         }
 
         return FalconH1Model(
