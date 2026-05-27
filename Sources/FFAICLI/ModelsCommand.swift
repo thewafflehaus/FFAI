@@ -133,6 +133,10 @@ private let modelCatalog: [CatalogGroup] = [
                     "mlx-community/granite-3.3-8b-instruct-6bit",
                     "mlx-community/granite-3.3-8b-instruct-8bit",
                     "mlx-community/granite-3.3-8b-instruct-fp16",
+                    // FFAI-converted: original mlx-community
+                    // `granite-3.0-2b-instruct-bf16` 404'd 2026-05-27;
+                    // converted from `ibm-granite/granite-3.0-2b-instruct`.
+                    "ekryski/granite-3.0-2b-instruct-4bit",
                 ]),
             // InternLM 2 / 2.5.
             CatalogEntry(
@@ -142,6 +146,10 @@ private let modelCatalog: [CatalogGroup] = [
                     "mlx-community/internlm2_5-7b-chat-bf16",
                     "mlx-community/internlm2_5-7b-chat-4bit",
                     "mlx-community/internlm2_5-7b-chat-8bit",
+                    // FFAI-converted: original mlx-community
+                    // `internlm2-chat-1_8b-bf16` 404'd 2026-05-27;
+                    // converted from `internlm/internlm2-chat-1_8b`.
+                    "ekryski/internlm2-chat-1_8b-4bit",
                 ]),
             // Llama 3.x.
             CatalogEntry(
@@ -195,6 +203,10 @@ private let modelCatalog: [CatalogGroup] = [
                     "mlx-community/OLMo-2-1124-13B-Instruct-6bit",
                     "mlx-community/OLMo-2-1124-13B-Instruct-8bit",
                     "mlx-community/OLMo-2-0325-32B-Instruct-4bit",
+                    // FFAI-converted: original mlx-community
+                    // `OLMo-2-0425-1B-Instruct-bf16` 404'd 2026-05-27;
+                    // converted from `allenai/OLMo-2-0425-1B-Instruct`.
+                    "ekryski/OLMo-2-0425-1B-Instruct-4bit",
                 ]),
             // Phi 3 / 3.5.
             CatalogEntry(
@@ -305,6 +317,13 @@ private let modelCatalog: [CatalogGroup] = [
                     "mlx-community/SmolLM3-3B-5bit",
                     "mlx-community/SmolLM3-3B-6bit",
                     "mlx-community/SmolLM3-3B-8bit",
+                    // FFAI-converted: originals
+                    // `SmolLM-360M-Instruct-bf16` and
+                    // `SmolLM2-360M-Instruct-bf16` both 404'd 2026-05-27;
+                    // converted from `HuggingFaceTB/SmolLM-360M-Instruct`
+                    // and `HuggingFaceTB/SmolLM2-360M-Instruct`.
+                    "ekryski/SmolLM-360M-Instruct-4bit",
+                    "ekryski/SmolLM2-360M-Instruct-4bit",
                 ]),
             // Starcoder 2.
             CatalogEntry(
@@ -316,6 +335,10 @@ private let modelCatalog: [CatalogGroup] = [
                     "mlx-community/starcoder2-15b-4bit",
                     "mlx-community/starcoder2-15b-instruct-v0.1-4bit",
                     "mlx-community/starcoder2-15b-instruct-v0.1-8bit",
+                    // FFAI-converted: original mlx-community
+                    // `Starcoder2-3B-bf16` 404'd 2026-05-27; converted
+                    // from `bigcode/starcoder2-3b`.
+                    "ekryski/starcoder2-3b-4bit",
                 ]),
             // Yi.
             CatalogEntry(
@@ -482,6 +505,10 @@ private let modelCatalog: [CatalogGroup] = [
                     "nvidia/Nemotron-Cascade-8B-Thinking",
                     "nvidia/Nemotron-Cascade-14B-Thinking",
                     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+                    // FFAI-converted: smaller 4-bit derivative of
+                    // `nvidia/Nemotron-H-4B-Base-8K` for fast
+                    // integration coverage at the architecture level.
+                    "ekryski/Nemotron-H-4B-Base-8K-4bit",
                 ]),
             // Qwen 3.5 / 3.6 hybrid (Gated Delta Net ↔ attention, dense / MoE).
             CatalogEntry(
@@ -546,6 +573,15 @@ private let modelCatalog: [CatalogGroup] = [
                     "mlx-community/Qwen3.6-35B-A3B-5bit",
                     "mlx-community/Qwen3.6-35B-A3B-6bit",
                     "mlx-community/Qwen3.6-35B-A3B-8bit",
+                    // FFAI-converted: pure 2-bit affine of
+                    // `Qwen/Qwen3.5-0.8B`. Pinned by
+                    // `Quantized2bitIntegrationTests` to gate the int2
+                    // kernel surface + the centered-RMSNorm fold; pure
+                    // 2-bit at 0.8B is below the coherence threshold so
+                    // outputs are incoherent (mlx-community ships
+                    // `Qwen3.5-0.8B-mixed_2_6` instead for actual
+                    // generation use).
+                    "ekryski/Qwen3.5-0.8B-2bit",
                 ]),
         ]),
 
@@ -602,7 +638,26 @@ private let modelCatalog: [CatalogGroup] = [
                 family: "FastVLM", modelType: "llava_qwen2",
                 summary: "Apple FastVLM — LLaVA-style Qwen2 backbone + ViT projector.",
                 repos: [
-                    "mlx-community/FastVLM-0.5B-bf16"
+                    "mlx-community/FastVLM-0.5B-bf16",
+                    // FFAI-converted via `ffai convert` — succeeds where
+                    // mlx-lm fails on FastVLM's custom
+                    // `LlavaQwen2ForCausalLM` metaclass.
+                    "ekryski/FastVLM-0.5B-4bit",
+                ]),
+            // Nemotron-Llama VL.
+            // Stack-interleaved Mamba-2 + attention backbone (Nemotron-H)
+            // fronted by a Llama-3.1 image tower + SigLIP-style projector.
+            // The mlx-community Nano-VL variants (`-4bit`, `-8bit`,
+            // `-bf16`) all 404'd 2026-05-27, so the only working
+            // checkpoint today is the FFAI-converted 4-bit derivative
+            // of the upstream `nvidia/...` original.
+            CatalogEntry(
+                family: "Nemotron-Llama VL", modelType: "nemotron_h (+ vision_config)",
+                summary:
+                    "NVIDIA Nemotron-H text backbone + Llama-3.1 image tower + SigLIP-style projector.",
+                repos: [
+                    "nvidia/Llama-3.1-Nemotron-Nano-VL-8B-V1",
+                    "ekryski/Llama-3.1-Nemotron-Nano-VL-8B-V1-4bit",
                 ]),
             // Idefics3.
             CatalogEntry(
@@ -923,6 +978,9 @@ private let modelCatalog: [CatalogGroup] = [
                     "mlx-community/Soprano-1.1-80M-5bit",
                     "mlx-community/Soprano-1.1-80M-6bit",
                     "mlx-community/Soprano-1.1-80M-8bit",
+                    // FFAI-converted via `ffai convert` — succeeds where
+                    // mlx-lm fails on Soprano's custom `model_type`.
+                    "ekryski/Soprano-1.1-80M-4bit",
                 ]),
             // Voxtral (realtime).
             CatalogEntry(
