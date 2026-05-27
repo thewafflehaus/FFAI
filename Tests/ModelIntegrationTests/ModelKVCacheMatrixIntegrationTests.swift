@@ -294,7 +294,10 @@ enum MatrixCatalog {
             family: "Qwen35MoE", id: "mlx-community/Qwen3.5-35B-A3B-4bit",
             weightBits: 4, alwaysRun: false),
         MatrixModel(
-            family: "Qwen36MoE", id: "mlx-community/Qwen3.6-30B-A3B-4bit",
+            family: "Qwen36MoE", id: "mlx-community/Qwen3.6-35B-A3B-4bit",
+            weightBits: 4, alwaysRun: false),
+        MatrixModel(
+            family: "Qwen36", id: "mlx-community/Qwen3.6-27B-4bit",
             weightBits: 4, alwaysRun: false),
 
         MatrixModel(

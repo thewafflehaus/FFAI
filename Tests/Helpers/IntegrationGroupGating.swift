@@ -99,6 +99,16 @@ public enum IntegrationGroupGating {
     /// considerations as Audio. Status: pending verification (run last).
     public static let enableOmniSuites: Bool = false
 
+    /// Mixed / dynamic-precision suites — checkpoints where different
+    /// tensors carry different quant bit-widths inside the same model
+    /// (Unsloth's "UD-MLX-4bit" recipe, mlx-community's `mixed_4_8`
+    /// publishes, etc.). FFAI's `deriveAffineQuantBits` should handle
+    /// these by reading each tensor's saved shape, but the path isn't
+    /// pinned by a passing integration run yet. Status: pending
+    /// verification — see the "Ablated + mixed-precision follow-up"
+    /// section of `planning/session-plan.md`.
+    public static let enableMixedPrecisionSuites: Bool = false
+
     // ─── Skip-reason strings ──────────────────────────────────────────
     //
     // These appear in test output so the human reader sees WHY a suite
@@ -122,4 +132,7 @@ public enum IntegrationGroupGating {
 
     public static let omniSkipReason: Comment =
         "Omni suite group: not yet verified on current HEAD. Flip IntegrationGroupGating.enableOmniSuites to run."
+
+    public static let mixedPrecisionSkipReason: Comment =
+        "Mixed-precision suite group (Unsloth UD-MLX, mlx-community mixed_N_M, etc.): not yet verified on current HEAD. Flip IntegrationGroupGating.enableMixedPrecisionSuites to run; revisit per the 'Ablated + mixed-precision follow-up' section of planning/session-plan.md."
 }

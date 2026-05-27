@@ -51,3 +51,11 @@ We should add support for the following model families:
 - EPIC SHARC MOHTE - https://github.com/DjDevilCloud/EPIC-SHARC-MOHTE (unclear on architecture, needs analysis first to see if even relevant/novel)
 
 Yes I know that some of the models are too big to run on my machine. Code them up anyway. We can check out the model format and config files and still build out reference implementations and add unit tests. We can create integration tests but we'll just mark them as skipped with a reason of "requires hardware with {{amount_of_ram_needed}} unified memory". Follow the same patterns for implementation as we have with other models.
+
+## Ablated Models
+
+Community-distilled / "uncensored" / personality-merged derivatives of the supported families. These load through the parent family's loader unchanged — the weight surface is the same; only training data + final-stage merges differ — so coverage here is about pinning the loader behaviour on real-world derivative checkpoints, not net-new architectures. Add integration tests only once the parent family's coherence assertions are green; otherwise an ablation-side regression looks like a loader bug.
+
+- Qwen 3.6 35B-A3B Uncensored Heretic (MLX 4-bit) - https://huggingface.co/froggeric/Qwen3.6-35B-A3B-Uncensored-Heretic-MLX-4bit (Qwen 3.6 MoE, abliterated)
+- Qwopus 3.6 27B v2 (MLX 4-bit) - https://huggingface.co/Jackrong/Qwopus3.6-27B-v2-MLX-4bit (Qwen 3.6 27B dense merge)
+- Qwopus 3.5 27B v3 - https://huggingface.co/Jackrong/Qwopus3.5-27B-v3 (Qwen 3.5 27B dense merge, raw)
