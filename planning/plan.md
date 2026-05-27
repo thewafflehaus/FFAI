@@ -806,8 +806,24 @@ Each sub-phase = one or more PRs + integration test + doc update. Sub-phases lan
 
 ### 8.7 — Native MTP / EAGLE-3 draft heads (spec 030)
 
-- Variant A: stop stripping `mtp.*` in sanitize; ship `MTPSelfSpeculativeTokenIterator` + `scripts/mtp_convert.py`.
-- Variant B: companion EAGLE-style assistant draft + `AssistantDraftRegistry`.
+- **MTP weight preservation** — already done in `ConvertDriver` (no
+  sanitize step strips `mtp.*`; tensors flow through the default
+  per-bits route, verified on `ekryski/Qwen3.5-0.8B-2bit` which carries
+  31 MTP tensors post-quant). Loader also tolerant — `Qwen3xText.swift`
+  only reads `mtp.*` keys as a detector signal, never builds modules
+  from them, so both MTP-bearing and MTP-stripped checkpoints load
+  identically today. **Outstanding:** explicit unit + integration test
+  coverage that locks in both behaviors so a future loader refactor
+  can't silently drop MTP support. See `session-plan.md` →
+  "MTP head preservation across convert + load + re-host".
+- **Variant A** (DeepSeek-V3 / Qwen3-Next native path): ship
+  `MTPSelfSpeculativeTokenIterator` + the verify glue that consumes
+  the preserved MTP layer to produce draft tokens. Spec-decode
+  scaffolding (drafter / verify / KV snapshot+restore) shipped in
+  PR #14 (see Phase J.1 / J.2 in `session-plan.md`); MTP-specific
+  Drafter implementation is the remaining work.
+- **Variant B**: companion EAGLE-style assistant draft +
+  `AssistantDraftRegistry`.
 
 ### 8.8 — Tree attention (spec 014, phase 1: K=2 root branches)
 
