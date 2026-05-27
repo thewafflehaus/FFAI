@@ -187,11 +187,21 @@ func lfm2LoadModel(
         throw LFM2Error.unsupportedConfig(
             "head_dim \(headDim) — Ops.sdpaDecode supports {64,128,256,512}")
     }
-    guard config.quantization == nil else {
-        throw LFM2Error.unsupportedConfig(
-            "quantized LFM2 checkpoints not yet supported — "
-                + "load a raw bf16/f16 variant")
-    }
+    // Quantized branch — LFM2 4-bit conversions (e.g.
+    // mlx-community/LFM2-350M-4bit, LFM2-8B-A1B-4bit) ship per-projection
+    // `weight + scales + biases` triplets for the conv mixer
+    // (in_proj / out_proj), the attention mixer (q/k/v/out_proj),
+    // and the dense MLP (w1/w2/w3 or gate/up/down_proj). The conv1d
+    // weight itself, the q/k layernorms, and operator/ffn norms remain
+    // raw. The MoE variant additionally ships stacked
+    // `switch_mlp.{gate,up,down}_proj` quantized triplets; expert-wise
+    // sliced quantized loading is not yet wired into MoELayer — the
+    // quantized MoE path therefore surfaces a clear unsupportedConfig
+    // below, matching the Jamba / FalconH1 contract. Same FalconH1
+    // quantized-loader pattern: route every projection through
+    // `loadLinear` / `loadEmbedding` and leave the raw tensors alone.
+    let quant = config.quantization
+    let isQuantized = quant != nil
 
     // ── MoE geometry ──────────────────────────────────────────────────
     let numExperts = config.int("num_experts") ?? 0
@@ -214,13 +224,30 @@ func lfm2LoadModel(
         numLayers: nLayers)
 
     // ── Embedding ─────────────────────────────────────────────────────
-    let embedW = try weights.tensor(named: "model.embed_tokens.weight")
-    let activationDtype = embedW.dtype
+    // Quantized: derive activation dtype from `embed_tokens.scales`;
+    // raw: read it off `embed_tokens.weight`. The unscaled raw embed
+    // is kept aside for the tied-lm_head raw path (nil under quant).
+    let activationDtype: DType
+    let embedWRawForTiedLmHead: Tensor?
+    let embedTokens: AnyEmbedding
+    if isQuantized, weights.isQuantized("model.embed_tokens"),
+        let scales = try? weights.tensor(named: "model.embed_tokens.scales")
+    {
+        activationDtype = scales.dtype
+        embedTokens = try loadEmbedding(
+            base: "model.embed_tokens", in: weights,
+            hidden: hidden, quantization: quant)
+        embedWRawForTiedLmHead = nil
+    } else {
+        let embedW = try weights.tensor(named: "model.embed_tokens.weight")
+        activationDtype = embedW.dtype
+        embedTokens = AnyEmbedding(Embedding(weight: embedW))
+        embedWRawForTiedLmHead = embedW
+    }
     precondition(
         activationDtype == .f32 || activationDtype == .bf16
             || activationDtype == .f16,
         "LFM2: unexpected activation dtype \(activationDtype)")
-    let embedTokens = AnyEmbedding(Embedding(weight: embedW))
 
     // ── Per-layer construction ────────────────────────────────────────
     var layers: [any DecoderLayer] = []
@@ -237,12 +264,23 @@ func lfm2LoadModel(
         let mixer: LFM2Mixer
         switch kind {
         case .conv:
-            let inProj = AnyLinear(
-                Linear(
-                    weight: try weights.tensor(named: "\(p).conv.in_proj.weight")))
-            let outProj = AnyLinear(
-                Linear(
-                    weight: try weights.tensor(named: "\(p).conv.out_proj.weight")))
+            // conv.in_proj / out_proj quantized on 4-bit checkpoints.
+            // conv.conv.weight itself stays raw (custom causal-step kernel).
+            let inProj: AnyLinear
+            let outProj: AnyLinear
+            if isQuantized {
+                inProj = try loadLinear(
+                    base: "\(p).conv.in_proj", in: weights, quantization: quant)
+                outProj = try loadLinear(
+                    base: "\(p).conv.out_proj", in: weights, quantization: quant)
+            } else {
+                inProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).conv.in_proj.weight")))
+                outProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).conv.out_proj.weight")))
+            }
             // HF Conv1d weight ships [hidden, 1, kernel]; the metaltile
             // conv1d kernel wants [kernel, hidden].
             let convWSrc = try weights.tensor(named: "\(p).conv.conv.weight")
@@ -269,18 +307,36 @@ func lfm2LoadModel(
                     convW: convW, convB: convB,
                     hidden: hidden, kernel: convKernel, dtype: activationDtype))
         case .attention:
-            let qProj = AnyLinear(
-                Linear(
-                    weight: try weights.tensor(named: "\(p).self_attn.q_proj.weight")))
-            let kProj = AnyLinear(
-                Linear(
-                    weight: try weights.tensor(named: "\(p).self_attn.k_proj.weight")))
-            let vProj = AnyLinear(
-                Linear(
-                    weight: try weights.tensor(named: "\(p).self_attn.v_proj.weight")))
-            let outProj = AnyLinear(
-                Linear(
-                    weight: try weights.tensor(named: "\(p).self_attn.out_proj.weight")))
+            // q/k/v/out_proj quantized on 4-bit checkpoints; q/k_layernorm
+            // remain raw (small head-dim vectors). Reuses LFM2's
+            // `out_proj` naming (not `o_proj`).
+            let qProj: AnyLinear
+            let kProj: AnyLinear
+            let vProj: AnyLinear
+            let outProj: AnyLinear
+            if isQuantized {
+                qProj = try loadLinear(
+                    base: "\(p).self_attn.q_proj", in: weights, quantization: quant)
+                kProj = try loadLinear(
+                    base: "\(p).self_attn.k_proj", in: weights, quantization: quant)
+                vProj = try loadLinear(
+                    base: "\(p).self_attn.v_proj", in: weights, quantization: quant)
+                outProj = try loadLinear(
+                    base: "\(p).self_attn.out_proj", in: weights, quantization: quant)
+            } else {
+                qProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).self_attn.q_proj.weight")))
+                kProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).self_attn.k_proj.weight")))
+                vProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).self_attn.v_proj.weight")))
+                outProj = AnyLinear(
+                    Linear(
+                        weight: try weights.tensor(named: "\(p).self_attn.out_proj.weight")))
+            }
             let qNormW = lfm2CastVector(
                 try weights.tensor(named: "\(p).self_attn.q_layernorm.weight"),
                 count: headDim, dtype: activationDtype, device: device)
@@ -303,24 +359,24 @@ func lfm2LoadModel(
                     prefix: p, weights: weights,
                     hidden: hidden, moeIntermediate: moeIntermediate,
                     numExperts: numExperts, topK: numExpertsPerTok,
-                    normTopKProb: normTopKProb, useExpertBias: useExpertBias))
+                    normTopKProb: normTopKProb, useExpertBias: useExpertBias,
+                    quantization: quant))
         } else {
             // Dense SwiGLU — LFM2 names the projections w1 (gate) / w3
-            // (up) / w2 (down).
+            // (up) / w2 (down) historically; mlx-community sanitize
+            // output renames to gate_proj / up_proj / down_proj. The
+            // quantized + raw paths both adapt via lfm2MLPLinear.
             ffn = .dense(
                 LFM2MLP(
-                    w1: AnyLinear(
-                        Linear(
-                            weight: try lfm2MLPWeight(
-                                "\(p).feed_forward", "gate", in: weights))),
-                    w3: AnyLinear(
-                        Linear(
-                            weight: try lfm2MLPWeight(
-                                "\(p).feed_forward", "up", in: weights))),
-                    w2: AnyLinear(
-                        Linear(
-                            weight: try lfm2MLPWeight(
-                                "\(p).feed_forward", "down", in: weights)))))
+                    w1: try lfm2MLPLinear(
+                        "\(p).feed_forward", "gate",
+                        in: weights, quantization: quant),
+                    w3: try lfm2MLPLinear(
+                        "\(p).feed_forward", "up",
+                        in: weights, quantization: quant),
+                    w2: try lfm2MLPLinear(
+                        "\(p).feed_forward", "down",
+                        in: weights, quantization: quant)))
         }
 
         layers.append(
@@ -337,13 +393,34 @@ func lfm2LoadModel(
     // LFM2 ties the LM head to the embedding table (the reference
     // projects with `embed_tokens.as_linear`). A standalone
     // `lm_head.weight` is honoured if a checkpoint ever ships one.
+    // Quantized + tied: reuse the embed triplet wrapped as a
+    // QuantizedLinear (same FalconH1 / Qwen3.6 pattern).
     let lmHead: AnyLinear
     if weights.has("lm_head.weight") {
+        if isQuantized, weights.isQuantized("lm_head") {
+            lmHead = try loadLinear(
+                base: "lm_head", in: weights, quantization: quant)
+        } else {
+            lmHead = AnyLinear(
+                Linear(
+                    weight: try weights.tensor(named: "lm_head.weight")))
+        }
+    } else if let q = quant, weights.isQuantized("model.embed_tokens") {
+        let t = try weights.quantizedTriplet("model.embed_tokens")
+        let bits = deriveAffineQuantBits(
+            weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
+            scaleCols: t.scales.shape[t.scales.shape.count - 1],
+            groupSize: q.groupSize)
         lmHead = AnyLinear(
-            Linear(
-                weight: try weights.tensor(named: "lm_head.weight")))
-    } else {
+            QuantizedLinear(
+                weight: t.weight, scales: t.scales, biases: t.biases,
+                bits: bits, groupSize: q.groupSize))
+    } else if let embedW = embedWRawForTiedLmHead {
         lmHead = AnyLinear(Linear(weight: embedW))
+    } else {
+        throw LFM2Error.unsupportedConfig(
+            "quantized LFM2 checkpoint missing both an explicit "
+                + "lm_head.weight and a quantized embed_tokens triplet")
     }
 
     return LFM2Model(
@@ -363,8 +440,23 @@ private func buildLFM2MoE(
     prefix p: String, weights: SafeTensorsBundle,
     hidden: Int, moeIntermediate: Int,
     numExperts: Int, topK: Int,
-    normTopKProb: Bool, useExpertBias: Bool
+    normTopKProb: Bool, useExpertBias: Bool,
+    quantization: ModelConfig.QuantizationConfig?
 ) throws -> MoELayer {
+    // Quantized MoE on LFM2 (e.g. LFM2-8B-A1B-4bit) ships stacked
+    // `switch_mlp.{gate,up,down}_proj` triplets — per-expert sliceRows
+    // on packed u32 + scales/biases isn't wired into MoELayer yet.
+    // Surface a clear error rather than silently failing on a missing
+    // per-expert `.weight` key (the per-expert layout doesn't exist
+    // on the quantized conversions).
+    if quantization != nil,
+        weights.isQuantized("\(p).feed_forward.switch_mlp.gate_proj")
+    {
+        throw LFM2Error.unsupportedConfig(
+            "quantized LFM2 MoE expert slicing not yet implemented "
+                + "(stacked switch_mlp quantized triplets need per-expert "
+                + "u32 sliceRows) — load a raw bf16/f16 LFM2 MoE variant")
+    }
     let gate = AnyLinear(
         Linear(
             weight: try weights.tensor(named: "\(p).feed_forward.gate.weight")))
@@ -440,6 +532,44 @@ private func lfm2MLPWeight(
         return try weights.tensor(named: "\(base).\(wName).weight")
     }
     return try weights.tensor(named: "\(base).\(projName).weight")
+}
+
+/// Quantization-aware version of `lfm2MLPWeight` — returns an
+/// AnyLinear that may wrap a QuantizedLinear (if a quantized triplet
+/// is present under either the legacy `w*` or new `*_proj` name) or a
+/// plain Linear otherwise. Handles both naming conventions
+/// transparently. `which` ∈ {`gate`, `up`, `down`}.
+private func lfm2MLPLinear(
+    _ base: String, _ which: String,
+    in weights: SafeTensorsBundle,
+    quantization: ModelConfig.QuantizationConfig?
+) throws -> AnyLinear {
+    let wName: String
+    let projName: String
+    switch which {
+    case "gate":
+        wName = "w1"
+        projName = "gate_proj"
+    case "up":
+        wName = "w3"
+        projName = "up_proj"
+    case "down":
+        wName = "w2"
+        projName = "down_proj"
+    default: fatalError("lfm2MLPLinear: unknown projection '\(which)'")
+    }
+    // Pick whichever naming the checkpoint actually has, prefer w* if
+    // both somehow appear. The base passed to loadLinear is the
+    // projection base sans `.weight` — loadLinear adds it (and the
+    // `.scales`/`.biases` siblings) itself.
+    if weights.has("\(base).\(wName).weight")
+        || weights.isQuantized("\(base).\(wName)")
+    {
+        return try loadLinear(
+            base: "\(base).\(wName)", in: weights, quantization: quantization)
+    }
+    return try loadLinear(
+        base: "\(base).\(projName)", in: weights, quantization: quantization)
 }
 
 // ─── LFM2Mixer / LFM2FFN — the two halves of a layer ─────────────────
