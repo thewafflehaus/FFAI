@@ -14,20 +14,23 @@
 //
 // PaliGemma 2 integration test: loads the
 // mlx-community/paligemma2-3b-mix-448-4bit checkpoint (PaliGemma 2 =
-// SigLIP-So400m + Gemma 2 2B text backbone) and runs end-to-end image
-// captioning over the dog fixture.
+// SigLIP-So400m + Gemma 2 2B text backbone) and runs end-to-end OCR
+// over the `testocr.png` fixture. PaliGemma 2's `mix` checkpoints
+// support an `ocr en` task prefix that returns the printed text from
+// the image; that's the right correctness signal for a model used in
+// OCR contexts.
 //
 // PaliGemma's vision substitution happens INSIDE its `forward(tokenId:...)`:
 // the model precomputes image features via setImagePixels(_:) and, at every
 // image-token position, swaps the text embedding for the corresponding
 // vision feature. The integration path therefore:
 //   1. Load Model → engine downcasts to PaligemmaModel.
-//   2. Compute resize+CHW pixels via VisionTestHelpers.dogImageCHW(targetSize:)
+//   2. Compute resize+CHW pixels via VisionTestHelpers.ocrTestImageCHWNormalized
 //      using SigLIP-style mean 0.5 / std 0.5 (PaliGemma normalization).
 //   3. Call pg.setImagePixels(pixels) once.
 //   4. Build promptTokens = [imageTokenId × 1024] + textTokens.
 //   5. Drive the standard greedy decode via m.engine.forward + argmax.
-//   6. Assert the decoded caption mentions "dog".
+//   6. Assert the decoded transcript recovers phrases from testocr.png.
 //
 // This test is NOT run automatically (see CLAUDE.md → make test-integration).
 
@@ -40,7 +43,7 @@ import Testing
 @Suite("Paligemma Vision Integration", .serialized)
 struct PaligemmaIntegrationTests {
 
-    @Test("load + image+text generation mentions dog")
+    @Test("load + image+text generation recovers OCR passage")
     func loadAndGenerate() async throws {
         // PaliGemma 2 — the 2024 refresh using the Gemma 2 text backbone.
         // The original PaliGemma 1 (mlx-community/paligemma-3b-mix-448-8bit)
@@ -63,9 +66,9 @@ struct PaligemmaIntegrationTests {
             m.engine as? PaligemmaModel,
             "Expected a PaligemmaModel engine")
 
-        // Load + preprocess the dog fixture at PaliGemma's 448 resolution
+        // Load + preprocess the OCR fixture at PaliGemma's 448 resolution
         // with SigLIP normalization (mean 0.5 / std 0.5 per channel).
-        let pixels = try VisionTestHelpers.dogImageCHWNormalized(
+        let pixels = try VisionTestHelpers.ocrTestImageCHWNormalized(
             targetSize: 448, normalization: .siglip)
         #expect(pixels.count == 3 * 448 * 448)
         pg.setImagePixels(pixels)
@@ -83,7 +86,9 @@ struct PaligemmaIntegrationTests {
         //     instruction. Skipping it leaves the model in an undefined
         //     state and it immediately samples EOS.
         //   • <prompt> is free-form English for the mix-* checkpoints;
-        //     we use the canonical "caption en" task prefix.
+        //     we use the canonical `ocr en` task prefix to drive an
+        //     image-to-text transcription rather than a free-form
+        //     caption.
         //   • Trailing newline (id 108) terminates the prompt and is
         //     the model's signal to start generating the answer.
         let imageTokenId = pg.imageTokenIndex
@@ -92,7 +97,7 @@ struct PaligemmaIntegrationTests {
         // tokenizer.encode does NOT auto-prepend BOS on its own here —
         // we splice it in explicitly so the prompt structure is right
         // regardless of how the tokenizer is configured.
-        let textTokens = m.tokenizer.encode(text: "caption en\n")
+        let textTokens = m.tokenizer.encode(text: "ocr en\n")
         let promptTokens =
             Array(repeating: imageTokenId, count: numImageTokens)
             + [bosId] + textTokens.filter { $0 != bosId }
@@ -126,7 +131,7 @@ struct PaligemmaIntegrationTests {
 
         let text = m.tokenizer.decode(tokens: generated, skipSpecialTokens: true)
         print("PaliGemma generated (\(generated.count) tokens): \(text)")
-        VisionTestHelpers.expectMentionsDog(text, label: "PaliGemma")
+        VisionTestHelpers.expectRecognizesOCRText(text, label: "PaliGemma OCR")
     }
 }
 

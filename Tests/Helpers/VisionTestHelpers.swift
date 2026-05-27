@@ -251,6 +251,136 @@ public enum VisionTestHelpers {
             comment,
             sourceLocation: sourceLocation)
     }
+
+    // MARK: - OCR fixture (testocr.png)
+
+    /// Load `Resources/testocr.png` as an `RGBImage`. The fixture is a
+    /// 640×480 black-on-white scan that prints the canonical OCR test
+    /// passage ("This is a lot of 12 point text … The quick brown dog
+    /// jumped over the lazy fox."). Used by OCR-capable VLM tests
+    /// (GLM-OCR, PaliGemma `ocr en` task, …) to assert the model
+    /// actually recovers printed text, not just produces a plausible
+    /// English caption.
+    public static func ocrTestImage() throws -> RGBImage {
+        let url = resourceURL("testocr.png")
+        do {
+            return try RGBImage.load(contentsOf: url)
+        } catch {
+            let message = "VisionTestHelpers: failed to load testocr.png fixture: \(error)"
+            Issue.record(Comment(rawValue: message))
+            throw error
+        }
+    }
+
+    /// `ocrTestImage()` resized to `targetSize × targetSize` and packed
+    /// CHW (3·H·W floats in [0,1]). No normalisation; each caller picks
+    /// its own (CLIP for GLM-OCR, SigLIP for PaliGemma, …).
+    public static func ocrTestImageCHW(targetSize: Int) throws -> [Float] {
+        let img = try ocrTestImage()
+        let resized = ImagePreprocessing.resize(
+            img, targetW: targetSize, targetH: targetSize)
+        var planar = [Float](repeating: 0, count: 3 * targetSize * targetSize)
+        let plane = targetSize * targetSize
+        for y in 0 ..< targetSize {
+            for x in 0 ..< targetSize {
+                let srcBase = (y * targetSize + x) * 3
+                let dstBase = y * targetSize + x
+                planar[0 * plane + dstBase] = resized.pixels[srcBase]
+                planar[1 * plane + dstBase] = resized.pixels[srcBase + 1]
+                planar[2 * plane + dstBase] = resized.pixels[srcBase + 2]
+            }
+        }
+        return planar
+    }
+
+    /// `ocrTestImageCHW(targetSize:)` plus per-channel normalisation
+    /// applied in the same pass. Mirrors `dogImageCHWNormalized` but
+    /// for the OCR fixture.
+    public static func ocrTestImageCHWNormalized(
+        targetSize: Int, normalization: ImageNormalization
+    ) throws -> [Float] {
+        var pixels = try ocrTestImageCHW(targetSize: targetSize)
+        let plane = targetSize * targetSize
+        let means = [normalization.mean.0, normalization.mean.1, normalization.mean.2]
+        let stds = [normalization.std.0, normalization.std.1, normalization.std.2]
+        for c in 0 ..< 3 {
+            let m = means[c]
+            let s = stds[c]
+            for i in (c * plane) ..< ((c + 1) * plane) {
+                pixels[i] = (pixels[i] - m) / s
+            }
+        }
+        return pixels
+    }
+
+    /// `ocrTestImage()` resized to `targetSize × targetSize`, normalised
+    /// with the supplied mean/std, and returned in interleaved HWC float
+    /// layout (`[H, W, 3]`). This is what GLM-OCR's `GlmOcrRGBImage`
+    /// expects — the model's `setImagePixels`-style entrypoints accept
+    /// HWC, not CHW.
+    public static func ocrTestImageHWCNormalized(
+        targetSize: Int, normalization: ImageNormalization
+    ) throws -> [Float] {
+        let img = try ocrTestImage()
+        let resized = ImagePreprocessing.resize(
+            img, targetW: targetSize, targetH: targetSize)
+        let means = [normalization.mean.0, normalization.mean.1, normalization.mean.2]
+        let stds = [normalization.std.0, normalization.std.1, normalization.std.2]
+        var out = [Float](repeating: 0, count: resized.pixels.count)
+        var i = 0
+        while i < resized.pixels.count {
+            out[i + 0] = (resized.pixels[i + 0] - means[0]) / stds[0]
+            out[i + 1] = (resized.pixels[i + 1] - means[1]) / stds[1]
+            out[i + 2] = (resized.pixels[i + 2] - means[2]) / stds[2]
+            i += 3
+        }
+        return out
+    }
+
+    /// Phrases present in the canonical `testocr.png` passage. Used by
+    /// `expectRecognizesOCRText` — a generated string need only contain
+    /// *some* of these to count as having successfully read the image
+    /// (no OCR model recovers every word at every quantisation).
+    public static let ocrCandidatePhrases: [String] = [
+        // High-signal words: the OCR test image's distinctive content.
+        "quick brown",
+        "lazy fox",
+        "lazy dog",  // The classic typo-tolerant version.
+        "12 point",
+        "12-point",
+        "ocr",
+        "jumped over",
+        "file format",
+        "all types",
+        "see if it works",
+    ]
+
+    /// Assert a decoded VLM transcription recovers enough of the
+    /// `testocr.png` passage to count as having genuinely read the image.
+    /// Requires at least `minMatches` candidate phrases (default 2) from
+    /// `ocrCandidatePhrases` to appear in the lowercased output.
+    ///
+    /// This is intentionally lenient: any individual OCR model may
+    /// transcribe imperfectly (skip lines, drop punctuation, hallucinate
+    /// the trailing "lazy fox" as "lazy dog"). Requiring two phrases
+    /// catches the "model wrote real text" signal without locking us
+    /// into one verbatim output.
+    public static func expectRecognizesOCRText(
+        _ text: String, label: String, minMatches: Int = 2,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        let lowered = text.lowercased()
+        let matched = ocrCandidatePhrases.filter { lowered.contains($0) }
+        let comment = Comment(
+            rawValue:
+                "\(label): expected ≥\(minMatches) OCR phrases recovered "
+                + "from testocr.png; matched \(matched.count) (\(matched)) — got: \(text)"
+        )
+        #expect(
+            matched.count >= minMatches,
+            comment,
+            sourceLocation: sourceLocation)
+    }
 }
 
 public enum VisionTestHelpersError: Error, CustomStringConvertible {
