@@ -929,13 +929,13 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
 
         var out = [Float](repeating: 0, count: seqLen * qHeadDim)
         out.withUnsafeMutableBufferPointer { outBuf in
-            let outPtr = outBuf.baseAddress!
+            nonisolated(unsafe) let outPtr = outBuf.baseAddress!
             q.withUnsafeBufferPointer { qBuf in
                 k.withUnsafeBufferPointer { kBuf in
                     v.withUnsafeBufferPointer { vBuf in
-                        let qb = qBuf.baseAddress!
-                        let kb = kBuf.baseAddress!
-                        let vb = vBuf.baseAddress!
+                        nonisolated(unsafe) let qb = qBuf.baseAddress!
+                        nonisolated(unsafe) let kb = kBuf.baseAddress!
+                        nonisolated(unsafe) let vb = vBuf.baseAddress!
                         DispatchQueue.concurrentPerform(iterations: nQHeads * seqLen) { work in
                             let qHead = work / seqLen
                             let qRow = work % seqLen

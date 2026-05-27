@@ -708,13 +708,13 @@ public final class Qwen3ASRModel: @unchecked Sendable {
         var out = [Float](repeating: 0, count: seqLen * H)
 
         out.withUnsafeMutableBufferPointer { outBuf in
-            let outPtr = outBuf.baseAddress!
+            nonisolated(unsafe) let outPtr = outBuf.baseAddress!
             qa.withUnsafeBufferPointer { qPtr in
                 ka.withUnsafeBufferPointer { kPtr in
                     va.withUnsafeBufferPointer { vPtr in
-                        let qb = qPtr.baseAddress!
-                        let kb = kPtr.baseAddress!
-                        let vb = vPtr.baseAddress!
+                        nonisolated(unsafe) let qb = qPtr.baseAddress!
+                        nonisolated(unsafe) let kb = kPtr.baseAddress!
+                        nonisolated(unsafe) let vb = vPtr.baseAddress!
                         DispatchQueue.concurrentPerform(iterations: nHeads * seqLen) { work in
                             let head = work / seqLen
                             let i = work % seqLen

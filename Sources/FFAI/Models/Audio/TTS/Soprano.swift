@@ -714,7 +714,9 @@ private func sopranoInterpolate1d(
     }
 
     let scale = Float(inWidth - 1) / Float(size - 1)
-    var out = [Float](repeating: 0, count: c * size)
+    // `nonisolated(unsafe)`: each channel writes a disjoint `[ch*size ..< (ch+1)*size)`
+    // slice; no aliasing.
+    nonisolated(unsafe) var out = [Float](repeating: 0, count: c * size)
 
     // DispatchQueue.concurrentPerform over channels for parallelism on long
     // utterances (each channel is independent).

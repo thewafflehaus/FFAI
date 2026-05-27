@@ -346,13 +346,13 @@ public final class VisionEncoderLayer: Module {
         let headDimLocal = headDim
         let scaleLocal = scale
         out.withUnsafeMutableBufferPointer { outBuf in
-            let outPtr = outBuf.baseAddress!
+            nonisolated(unsafe) let outPtr = outBuf.baseAddress!
             qa.withUnsafeBufferPointer { qPtr in
                 ka.withUnsafeBufferPointer { kPtr in
                     va.withUnsafeBufferPointer { vPtr in
-                        let qb = qPtr.baseAddress!
-                        let kb = kPtr.baseAddress!
-                        let vb = vPtr.baseAddress!
+                        nonisolated(unsafe) let qb = qPtr.baseAddress!
+                        nonisolated(unsafe) let kb = kPtr.baseAddress!
+                        nonisolated(unsafe) let vb = vPtr.baseAddress!
                         DispatchQueue.concurrentPerform(iterations: nHeadsLocal * nTokens) { work in
                             let head = work / nTokens
                             let i = work % nTokens

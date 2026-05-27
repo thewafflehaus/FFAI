@@ -888,7 +888,7 @@ public final class ParakeetModel: @unchecked Sendable {
         // @Sendable closure without going through an unsafe pointer,
         // so write through `withUnsafeMutableBufferPointer`.)
         out.withUnsafeMutableBufferPointer { outBuf in
-            let outPtr = outBuf.baseAddress!
+            nonisolated(unsafe) let outPtr = outBuf.baseAddress!
             DispatchQueue.concurrentPerform(iterations: nHeads) { h in
                 let hOff = h * headDim
                 // q+u, q+v for this head

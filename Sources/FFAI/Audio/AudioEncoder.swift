@@ -205,13 +205,17 @@ public final class AudioEncoderLayer: Module {
         let headDimLocal = headDim
         let scaleLocal = scale
         out.withUnsafeMutableBufferPointer { outBuf in
-            let outPtr = outBuf.baseAddress!
+            // Pointers / handles below cross a `@Sendable` boundary. Safety:
+            // each `concurrentPerform` iteration writes to a distinct `(head, i)`
+            // pair of output rows, and the pointers' lifetime strictly contains
+            // the parallel work.
+            nonisolated(unsafe) let outPtr = outBuf.baseAddress!
             qa.withUnsafeBufferPointer { qPtr in
                 ka.withUnsafeBufferPointer { kPtr in
                     va.withUnsafeBufferPointer { vPtr in
-                        let qb = qPtr.baseAddress!
-                        let kb = kPtr.baseAddress!
-                        let vb = vPtr.baseAddress!
+                        nonisolated(unsafe) let qb = qPtr.baseAddress!
+                        nonisolated(unsafe) let kb = kPtr.baseAddress!
+                        nonisolated(unsafe) let vb = vPtr.baseAddress!
                         DispatchQueue.concurrentPerform(iterations: nHeadsLocal * nFrames) { work in
                             let head = work / nFrames
                             let i = work % nFrames

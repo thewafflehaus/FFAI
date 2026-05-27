@@ -1129,7 +1129,10 @@ extension DeepFilterNetModel {
         let outT = max(0, effectiveT + timePadLeft + timePadRight - kT + 1)
         let outF = max(0, (F + 2 * freqPad - kF) / fstride + 1)
 
-        var out = [Float](repeating: 0, count: B * outC * outT * outF)
+        // `nonisolated(unsafe)`: each `concurrentPerform` iteration writes a
+        // disjoint `[b*outC*outT*outF + oc*outT*outF + ot*outF ..< +outF)`
+        // slice of `out`; no overlap.
+        nonisolated(unsafe) var out = [Float](repeating: 0, count: B * outC * outT * outF)
 
         // For each output position compute convolution over kernel window.
         // This is O(B·outC·outT·outF·kT·kF·inCPerGroup) — acceptable for the

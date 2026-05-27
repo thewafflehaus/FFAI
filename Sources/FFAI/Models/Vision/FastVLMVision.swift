@@ -180,11 +180,11 @@ private func depthwiseConvNHWC(
     var output = [Float](repeating: 0, count: B * outH * outW * C)
     let totalWork = B * C
     output.withUnsafeMutableBufferPointer { outBuf in
-        let outPtr = outBuf.baseAddress!
+        nonisolated(unsafe) let outPtr = outBuf.baseAddress!
         input.withUnsafeBufferPointer { inBuf in
             w.withUnsafeBufferPointer { wBuf in
-                let inPtr = inBuf.baseAddress!
-                let wPtr = wBuf.baseAddress!
+                nonisolated(unsafe) let inPtr = inBuf.baseAddress!
+                nonisolated(unsafe) let wPtr = wBuf.baseAddress!
                 DispatchQueue.concurrentPerform(iterations: totalWork) { work in
                     let b = work / C
                     let c = work % C

@@ -179,9 +179,10 @@ final class Qwen2VLVisionBlock {
         // Stage 1: Extract and RoPE every (head, token) slice.
         // Index layout: qH[head * nTokens + t] — each (head, t) pair owns
         // its slot, so concurrent writes are race-free.
-        var qH = [[Float]](repeating: [], count: nHeads * nTokens)
-        var kH = [[Float]](repeating: [], count: nHeads * nTokens)
-        var vH = [[Float]](repeating: [], count: nHeads * nTokens)
+        // `nonisolated(unsafe)`: disjoint indices, no aliasing.
+        nonisolated(unsafe) var qH = [[Float]](repeating: [], count: nHeads * nTokens)
+        nonisolated(unsafe) var kH = [[Float]](repeating: [], count: nHeads * nTokens)
+        nonisolated(unsafe) var vH = [[Float]](repeating: [], count: nHeads * nTokens)
         DispatchQueue.concurrentPerform(iterations: nHeads * nTokens) { work in
             let head = work / nTokens
             let t = work % nTokens
@@ -212,7 +213,7 @@ final class Qwen2VLVisionBlock {
         // Stage 2: Full attention — every token attends to every token.
         // Each (head, i) writes to a disjoint [oBase, oBase+headDim) slice.
         out.withUnsafeMutableBufferPointer { outBuf in
-            let outPtr = outBuf.baseAddress!
+            nonisolated(unsafe) let outPtr = outBuf.baseAddress!
             DispatchQueue.concurrentPerform(iterations: nHeads * nTokens) { work in
                 let head = work / nTokens
                 let i = work % nTokens

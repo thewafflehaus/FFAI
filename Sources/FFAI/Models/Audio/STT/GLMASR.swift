@@ -645,13 +645,13 @@ public final class GLMASRModel: @unchecked Sendable {
         var out = [Float](repeating: 0, count: seqLen * H)
 
         out.withUnsafeMutableBufferPointer { outBuf in
-            let outPtr = outBuf.baseAddress!
+            nonisolated(unsafe) let outPtr = outBuf.baseAddress!
             qa.withUnsafeBufferPointer { qBuf in
                 ka.withUnsafeBufferPointer { kBuf in
                     va.withUnsafeBufferPointer { vBuf in
-                        let qb = qBuf.baseAddress!
-                        let kb = kBuf.baseAddress!
-                        let vb = vBuf.baseAddress!
+                        nonisolated(unsafe) let qb = qBuf.baseAddress!
+                        nonisolated(unsafe) let kb = kBuf.baseAddress!
+                        nonisolated(unsafe) let vb = vBuf.baseAddress!
                         DispatchQueue.concurrentPerform(iterations: nHeads * seqLen) { work in
                             let head = work / seqLen
                             let i = work % seqLen

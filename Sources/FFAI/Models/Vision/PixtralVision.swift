@@ -345,9 +345,12 @@ final class PixtralVisionBlock {
         // across concurrent iterations.
         // Per-head slice arrays — each (head, patch) writes to its own
         // disjoint element, so concurrent writes are race-free.
-        var qH = [[Float]](repeating: [], count: nHeads * nPatches)
-        var kH = [[Float]](repeating: [], count: nHeads * nPatches)
-        var vH = [[Float]](repeating: [], count: nHeads * nPatches)
+        // `nonisolated(unsafe)`: disjoint indices, no aliasing. `rope` is
+        // a class with read-only state for the duration of this call.
+        nonisolated(unsafe) var qH = [[Float]](repeating: [], count: nHeads * nPatches)
+        nonisolated(unsafe) var kH = [[Float]](repeating: [], count: nHeads * nPatches)
+        nonisolated(unsafe) var vH = [[Float]](repeating: [], count: nHeads * nPatches)
+        nonisolated(unsafe) let ropeLocal = rope
 
         DispatchQueue.concurrentPerform(iterations: nHeads * nPatches) { work in
             let head = work / nPatches
@@ -365,7 +368,7 @@ final class PixtralVisionBlock {
             // The [headDim] position encoding has height in [0, half) and
             // width in [half, D). rotate-half: out[d] = x[d]*cos - x[(d+half)%D]*sin
             // for the first half and x[d]*cos + x[d-half]*sin for the second.
-            let (cosSlice, sinSlice) = rope.cosSin(row: row, col: col)
+            let (cosSlice, sinSlice) = ropeLocal.cosSin(row: row, col: col)
             applyRoPE2D(&qSlice, cos: cosSlice, sin: sinSlice, half: half)
             applyRoPE2D(&kSlice, cos: cosSlice, sin: sinSlice, half: half)
 
