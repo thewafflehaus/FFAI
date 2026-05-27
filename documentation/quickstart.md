@@ -87,6 +87,52 @@ let result = try await model.generate(
 
 See [chat-templates.md](chat-templates.md) for the full options surface and per-family quirks.
 
+## Pre-fetching without loading (`ModelDownloader`)
+
+`Model.load(_:options:)` lazy-downloads the checkpoint on first use, which is the right behaviour for most apps but the wrong tool when you want to **warm the cache without paying the GPU prewarm cost** — for example, a test-runner setup script that pre-fetches every checkpoint the integration suite touches, or a UI that downloads a model in the background and only mounts it into the inference engine later.
+
+`ModelDownloader` is the bare cache-warm primitive: network + disk only, no model load, no GPU dispatch:
+
+```swift
+import FFAI
+
+let downloader = ModelDownloader()      // shares the runtime loader's HubClient + cache
+
+// One repo, default revision.
+let snapshotURL = try await downloader.download(
+    id: "mlx-community/Qwen3.5-0.8B-MLX-4bit"
+)
+// snapshotURL → ~/.cache/huggingface/hub/models--mlx-community--Qwen3.5-0.8B-MLX-4bit/snapshots/<sha>/
+
+// Specific revision, with progress callbacks on the main actor:
+let pinnedURL = try await downloader.download(
+    id: "mlx-community/Qwen3.5-0.8B-MLX-4bit",
+    revision: "v1.2",
+    progressHandler: { progress in
+        print("downloaded \(progress.completedUnitCount) / \(progress.totalUnitCount) bytes")
+    }
+)
+
+// Verify the snapshot is already on disk without hitting the network:
+do {
+    _ = try await downloader.download(
+        id: "mlx-community/Qwen3.5-0.8B-MLX-4bit",
+        localFilesOnly: true
+    )
+    // Already cached — no network call happened.
+} catch {
+    // Snapshot is missing or incomplete; fetch it without `localFilesOnly`.
+}
+
+// Point the cache at an external SSD (otherwise shares the loader's cache):
+let onSSD = ModelDownloader(cacheDirectory: URL(fileURLWithPath: "/Volumes/Scratch/hf"))
+_ = try await onSSD.download(id: "mlx-community/Qwen3-1.7B-4bit")
+```
+
+The CLI equivalent is `ffai download <repo-id> [...]` — see [using-the-cli.md § `download`](using-the-cli.md#download--pre-fetch-checkpoints-into-the-cache) for the full flag surface (multi-repo batches, `--cache`, `--continue-on-error`, `--local-files-only`). Both surfaces use the same `HubClient` under the hood, so a cache populated by either is consumed by both.
+
+After a pre-fetch, `Model.load(...)` on the same `id` finds the snapshot already on disk and skips straight to the load + prewarm path.
+
 ## Customizing the load
 
 `Model.load(_:options:)` takes a `LoadOptions`:

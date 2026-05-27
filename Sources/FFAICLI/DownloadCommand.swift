@@ -71,9 +71,14 @@ struct DownloadCommand: AsyncParsableCommand {
             """
     )
 
+    // Defaulted to `[]` (not "one or more required" via the parser) so
+    // the empty-args case can fire a helpful ValidationError from
+    // `run()` ("pass at least one repo id, e.g. …") rather than the
+    // generic `ArgumentParser` `.noArguments` message users would
+    // otherwise see. Pinned in DownloadCommandTests.
     @Argument(
         help: "One or more HuggingFace repo ids (e.g. `mlx-community/Qwen3-1.7B-4bit`).")
-    var repoIDs: [String]
+    var repoIDs: [String] = []
 
     @Option(
         name: .long,

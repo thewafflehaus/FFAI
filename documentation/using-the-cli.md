@@ -38,7 +38,8 @@ ffai generate -m mlx-community/Qwen3.5-0.8B-MLX-4bit -p "Once upon a time"
 | `generate` (default) | Stream a single prompt's continuation to stdout. | `ffai generate --help` |
 | `models` | List every supported model family with copy-paste example repo IDs (bf16 / 8-bit / 4-bit). | `ffai models` |
 | `inspect` | Load a model and dump architecture + tokenization + top-K logits for a fixed probe prompt. The first thing to reach for when a new model produces broken output. | `ffai inspect --help` |
-| `convert` | Quantize a bf16/fp16 HuggingFace checkpoint to MLX 4-bit affine format using FFAI's own GPU kernels — no Python / mlx-lm dependency. Optionally upload to HF. | [§ `convert`](#convert--quantize-a-checkpoint-to-mlx-4-bit) |
+| `download` | Pre-fetch one or more HuggingFace checkpoints into the local cache — no model load, no GPU work. | [§ `download`](#download--pre-fetch-checkpoints-into-the-cache) |
+| `convert` | Quantize a bf16/fp16 HuggingFace checkpoint to MLX 4-bit affine format using FFAI's own GPU kernels — no Python / mlx-lm dependency. Optionally upload to HF. | [§ `convert`](#convert--quantize-a-checkpoint-to-mlx-affine-format) |
 | `bench` | Run a benchmark method against a model, append to a per-day report. | [benchmarking.md](benchmarking.md) |
 
 ### `models` — what can I run?
@@ -99,6 +100,68 @@ ffai inspect -m <broken-model> --layer-trace --trace-layers 0,1,5,15
 This is the diagnostic that found the Gemma 3 bf16 GELU NaN in two runs (one to localise the failing layer, one to confirm the fix). The taps are zero-cost when the flag isn't set — they're a single `if active` compare on the hot path. To wire them into a new model family, see [`developing/adding-a-model.md` § Inspect hooks](developing/adding-a-model.md#step-7--inspect-hooks).
 
 Common cross-cutting flags (`--stats`, `--debug`, `--profiling`) are documented in [observability.md](observability.md).
+
+### `download` — pre-fetch checkpoints into the cache
+
+`ffai download <repo-id> [...]` pulls one or more HuggingFace repos into the local snapshot cache **without loading the model**. No weights are mapped into Metal buffers, no GPU dispatch fires, no prewarm forward pass runs — it's network + disk only. The cache layout is byte-identical to what `Model.load(...)` uses, so a subsequent `ffai generate / inspect / bench` on the same repo skips straight to load.
+
+The runtime loader will also lazy-download on first use; this command is the explicit cache-warm primitive for the common cases where lazy is the wrong tool:
+
+- Pre-fetching every checkpoint your integration tests touch before kicking off a long suite run, so a single suite's wall clock isn't dominated by a multi-GB cold download.
+- Provisioning a CI / batch box where you want to fail fast at setup time if a repo is gated or 404, not three hours into the run.
+- Mirroring a known-good set of checkpoints to an external SSD via `--cache /Volumes/...` so later runs use the SSD even when `$HF_HOME` points at the system disk.
+
+```bash
+# Single repo, default revision (main).
+ffai download mlx-community/Qwen3-1.7B-4bit
+
+# Multiple repos in one invocation — each gets its own progress block.
+ffai download \
+    mlx-community/Llama-3.2-1B-Instruct-4bit \
+    mlx-community/Qwen3-1.7B-4bit \
+    mlx-community/Qwen3.5-0.8B-MLX-4bit
+
+# Override the revision (branch / tag / commit hash).
+ffai download --revision dev mlx-community/Qwen3.5-0.8B-MLX-4bit
+
+# Point the cache at an external SSD (otherwise uses $HF_HOME, then
+# ~/.cache/huggingface/hub).
+ffai download --cache /Volumes/Scratch/hf mlx-community/Qwen3-1.7B-4bit
+
+# Drain a long list even if some repos fail — exit non-zero at the end
+# if any individual download failed.
+ffai download --continue-on-error \
+    mlx-community/Qwen3-1.7B-4bit \
+    mlx-community/known-gated-repo \
+    mlx-community/Llama-3.2-1B-Instruct-4bit
+
+# Verify a snapshot is already on disk without hitting the network.
+# Succeeds only if every file the index lists is present locally.
+ffai download --local-files-only mlx-community/Qwen3-1.7B-4bit
+```
+
+#### Flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `<repo-ids>` (positional) | — | One or more HuggingFace repo ids (`org/name`). Local paths aren't accepted here — for a model already on disk, just point `Model.load(...)` / `ffai generate -m <path>` at it directly. |
+| `--revision` | `"main"` | Git revision (branch / tag / commit) to download. |
+| `--cache` | — | Cache root override. Default discovery order: `$HF_HOME` then `~/.cache/huggingface/hub/`. See [quickstart.md § Custom model cache path](quickstart.md#custom-model-cache-path). |
+| `--continue-on-error` | off | When a single repo fails, log the failure and keep going through the rest of the batch. Without this flag the command stops at the first failure. Returns non-zero exit when any individual download failed. |
+| `--local-files-only` | off | Don't hit the network — succeed only if the snapshot is already on disk. Useful for verifying a cache without pulling. |
+
+#### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Every repo downloaded (or was already cached). |
+| 1 | At least one repo failed and either `--continue-on-error` was off (stopped at first failure) or all repos drained with at least one failure. |
+| 2 | Validation error — no repo ids passed. |
+
+#### See also
+
+- The Swift API equivalent — `ModelDownloader.download(id:revision:matching:localFilesOnly:progressHandler:)` — is covered in [quickstart.md § Pre-fetching without loading (`ModelDownloader`)](quickstart.md#pre-fetching-without-loading-modeldownloader).
+- Phase I in `planning/session-plan.md` tracks the future move of this subcommand under a `ffai model download` namespace alongside `ffai model {list, add, remove, search}`.
 
 ### `convert` — quantize a checkpoint to MLX affine format
 

@@ -122,5 +122,13 @@ let package = Package(
             dependencies: ["FFAI", "TestHelpers"],
             path: "Tests/ModelIntegrationTests"
         ),
+        .testTarget(
+            name: "FFAICLITests",
+            dependencies: [
+                "FFAICLI",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "Tests/FFAICLITests"
+        ),
     ]
 )
