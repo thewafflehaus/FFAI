@@ -1322,11 +1322,22 @@ public final class Qwen35GDNMixer: Module {
         self.aLogTF32 = makeF32Tensor35(aLog, device: device)
         self.dtBiasTF32 = makeF32Tensor35(dtBias, device: device)
         self.epsBufFused = makeF32Tensor35([eps], device: device)
-        // Fused-prep is DEFAULT ON for Qwen3.6-A3B. The legacy host-loop
-        // path lives behind `FFAI_GDN_NO_FUSED_PREP=1` for precision
-        // comparison.
+        // Fused-prep is DEFAULT ON for Qwen3.6-A3B. The underlying
+        // `mt_gated_delta_prep_step_{bf16,f16}` kernel was tuned for
+        // Qwen3.6-A3B's `numValueHeads = 32` shape; at the dense
+        // Qwen3.5-0.8B-4bit's `numValueHeads = 16` it silently produces
+        // degenerate output (every GDN layer's recurrence collapses;
+        // lm_head defaults to a narrow Chinese-token cluster — the
+        // exact 8-token 4 %-diversity loop `Qwen35TextIntegrationTests`
+        // catches). Gate on `numValueHeads % 32 == 0` until the kernel
+        // ships a paired GPU correctness test at hv=16 and the inner
+        // dispatch/loop arithmetic is verified at that shape. The
+        // legacy host-loop path lives behind `FFAI_GDN_NO_FUSED_PREP=1`
+        // for precision comparison; it's also the implicit fallback
+        // when the gate excludes the fused path.
         self.fused =
-            ProcessInfo.processInfo.environment["FFAI_GDN_NO_FUSED_PREP"] == nil
+            numValueHeads % 32 == 0
+            && ProcessInfo.processInfo.environment["FFAI_GDN_NO_FUSED_PREP"] == nil
 
         // Per-decode-token scratch — pre-allocated once at init so the
         // fused GDN path doesn't pay 6 × MTLBuffer allocations per call.
@@ -1359,11 +1370,22 @@ public final class Qwen35GDNMixer: Module {
                 aW: aQL.weight, aS: aQL.scales, aB: aQL.biases,
                 groupSize: qQL.groupSize
             )
-            // Single-dispatch fast path eligibility.
+            // Single-dispatch fast path eligibility. The underlying
+            // `ffai_batched_4_qgemv_fast_{bf16,f16}` kernel was tuned
+            // against Qwen 3.6-A3B's `numValueHeads = 32` shape; at the
+            // dense Qwen 3.5-0.8B's `numValueHeads = 16` it silently
+            // produces degenerate output (post-attn b_raw / a_raw rows
+            // computed against the wrong matrix bound, every layer's
+            // GDN recurrence collapses, lm_head defaults to a narrow
+            // Chinese-token cluster — the 4 % token-diversity loop
+            // surfaced by `Qwen35TextIntegrationTests`). Gate at
+            // `% 32 == 0` until the kernel ships a paired correctness
+            // test at out_c=out_d=16 and the v_matrix-indexed bounds
+            // select is fixed in metaltile-std.
             let inDim = qQL.weight.shape[1] * 8
             if inDim % 512 == 0
                 && convDim % 8 == 0 && valueDim % 8 == 0
-                && numValueHeads % 8 == 0
+                && numValueHeads % 32 == 0
                 && qQL.groupSize == 64
                 && ProcessInfo.processInfo.environment["FFAI_NO_FUSED_GDN_4"] == nil
             {
@@ -2765,7 +2787,12 @@ private func qwen35FinalNormLmHead(
     if let qLm = lmHead.inner as? QuantizedLinear, qLm.bits == 4,
         qLm.groupSize == 64,
         h.elementCount % 512 == 0,
-        qLm.weight.shape[0] % 8 == 0
+        qLm.weight.shape[0] % 8 == 0,
+        // Bypass for diagnostics — if degenerate output reproduces only
+        // with this fused path enabled, the `rmsNormQgemvInt4Fast`
+        // kernel mis-computes at this shape and we want to fall back to
+        // the unfused finalNorm + lmHead chain.
+        ProcessInfo.processInfo.environment["FFAI_NO_FUSED_LM_HEAD"] == nil
     {
         let outDim = qLm.weight.shape[0]
         let logits = Tensor.empty(shape: [outDim], dtype: h.dtype)
