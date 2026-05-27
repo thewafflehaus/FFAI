@@ -35,7 +35,14 @@
 //     approximated with sequential scalar positions for this coherence-first
 //     port.
 //   • Text weights live under `language_model.model.*` /
-//     `language_model.lm_head.*`; vision weights under `model.visual.*`.
+//     `language_model.lm_head.*`; vision weights under `vision_tower.*`.
+//     mlx-community's `GLM-OCR-4bit` fuses the MLP gate / up halves into
+//     a single `mlp.gate_up_proj` triplet (uint32 weight + scales + biases);
+//     the loader detects this layout, slices each tensor along dim 0, and
+//     hands the two halves to separate `QuantizedLinear` instances so the
+//     existing decoder-layer surface is unchanged. Raw HF releases that
+//     ship split `mlp.gate_proj` / `mlp.up_proj` also work through the
+//     standard `loadLinear` fast path.
 //     The checkpoint also ships a `num_nextn_predict_layers = 1` extra
 //     prediction head at layer index `hiddenLayers`; that layer is skipped
 //     during loading.
@@ -148,8 +155,24 @@ public enum GlmOcr {
             let kProj = try loadLinear(base: "\(p).self_attn.k_proj", in: tw, quantization: quant)
             let vProj = try loadLinear(base: "\(p).self_attn.v_proj", in: tw, quantization: quant)
             let oProj = try loadLinear(base: "\(p).self_attn.o_proj", in: tw, quantization: quant)
-            let gateProj = try loadLinear(base: "\(p).mlp.gate_proj", in: tw, quantization: quant)
-            let upProj = try loadLinear(base: "\(p).mlp.up_proj", in: tw, quantization: quant)
+            // MLP gate / up — fused as `mlp.gate_up_proj` in mlx-community's
+            // GLM-OCR-4bit conversion, split as `mlp.gate_proj` + `mlp.up_proj`
+            // in any raw HF release that doesn't pre-fuse. Detect and route.
+            let gateProj: AnyLinear
+            let upProj: AnyLinear
+            if tw.has("\(p).mlp.gate_up_proj.weight")
+                || tw.isQuantized("\(p).mlp.gate_up_proj")
+            {
+                (gateProj, upProj) = try loadFusedGateUp(
+                    base: "\(p).mlp.gate_up_proj",
+                    in: tw, quantization: quant,
+                    intermediate: intermed)
+            } else {
+                gateProj = try loadLinear(
+                    base: "\(p).mlp.gate_proj", in: tw, quantization: quant)
+                upProj = try loadLinear(
+                    base: "\(p).mlp.up_proj", in: tw, quantization: quant)
+            }
             let downProj = try loadLinear(base: "\(p).mlp.down_proj", in: tw, quantization: quant)
             // Sandwiched pre-post-norm: 4 RMSNorm weights per layer.
             let inputNorm = RMSNorm(
@@ -207,9 +230,9 @@ public enum GlmOcr {
         }
 
         // ── Vision tower ──
-        // Vision weights sit under `model.visual.` in the mlx-community
-        // GLM-OCR conversion.
-        let vw = weights.glmOcrPrefixed("model.visual.")
+        // Vision weights sit under `vision_tower.` in the mlx-community
+        // GLM-OCR conversion. The raw HF release uses the same prefix.
+        let vw = weights.glmOcrPrefixed("vision_tower.")
         let visionTower = try GlmOcrVisionTower.load(
             cfg: visCfg, textHidden: hidden,
             weights: vw, dtype: activationDtype, device: device)
@@ -227,4 +250,73 @@ public enum GlmOcr {
             imageTokenId: imageTokenId, eosTokenId: eosTokenId,
             kvCacheKind: options.kvCache)
     }
+}
+
+// ─── Fused gate_up_proj split ────────────────────────────────────────
+
+/// Load a fused `mlp.gate_up_proj` triplet (`weight`, `scales`, `biases`)
+/// shaped `[2 * intermediate, …]` along dim 0 and return the two
+/// `[intermediate, …]` halves as independent `AnyLinear` projections.
+/// mlx-community's GLM-OCR conversion ships the MLP this way; we keep
+/// the rest of the loader (and the `GlmOcrTextLayer` surface) operating
+/// on separate gate / up `AnyLinear` instances by slicing in place.
+///
+/// Both the quantized (`u32` packed) and non-quantized paths are
+/// supported; the slicing is dim-0-only so the existing
+/// `Tensor.slicedRows` view is sufficient — no allocation, no copy.
+/// Raw HF releases that ship the split form go through `loadLinear`
+/// directly and never reach this helper.
+private func loadFusedGateUp(
+    base: String, in bundle: SafeTensorsBundlePrefixView,
+    quantization: ModelConfig.QuantizationConfig?,
+    intermediate: Int
+) throws -> (AnyLinear, AnyLinear) {
+    if let q = quantization, bundle.isQuantized(base) {
+        let t = try bundle.quantizedTriplet(base)
+        let bits = deriveAffineQuantBits(
+            weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
+            scaleCols: t.scales.shape[t.scales.shape.count - 1],
+            groupSize: q.groupSize)
+        precondition(
+            t.weight.shape[0] == 2 * intermediate,
+            "GlmOcr: gate_up_proj.weight rows \(t.weight.shape[0]) ≠ 2 × intermediate \(intermediate)"
+        )
+        let gateW = t.weight.slicedRows(start: 0, count: intermediate)
+        let upW = t.weight.slicedRows(start: intermediate, count: intermediate)
+        let gateS = t.scales.slicedRows(start: 0, count: intermediate)
+        let upS = t.scales.slicedRows(start: intermediate, count: intermediate)
+        let gateB = t.biases.slicedRows(start: 0, count: intermediate)
+        let upB = t.biases.slicedRows(start: intermediate, count: intermediate)
+        // Optional additive bias is also fused along dim 0 when present.
+        let fusedAdd: Tensor? =
+            bundle.has("\(base).bias")
+            ? try bundle.tensor(named: "\(base).bias") : nil
+        let gateAdd = fusedAdd?.slicedRows(start: 0, count: intermediate)
+        let upAdd = fusedAdd?.slicedRows(start: intermediate, count: intermediate)
+        let gate = AnyLinear(
+            QuantizedLinear(
+                weight: gateW, scales: gateS, biases: gateB,
+                bits: bits, groupSize: q.groupSize, additiveBias: gateAdd))
+        let up = AnyLinear(
+            QuantizedLinear(
+                weight: upW, scales: upS, biases: upB,
+                bits: bits, groupSize: q.groupSize, additiveBias: upAdd))
+        return (gate, up)
+    }
+    let fused = try bundle.tensor(named: "\(base).weight")
+    precondition(
+        fused.shape[0] == 2 * intermediate,
+        "GlmOcr: gate_up_proj.weight rows \(fused.shape[0]) ≠ 2 × intermediate \(intermediate)"
+    )
+    let gateW = fused.slicedRows(start: 0, count: intermediate)
+    let upW = fused.slicedRows(start: intermediate, count: intermediate)
+    let fusedBias: Tensor? =
+        bundle.has("\(base).bias")
+        ? try bundle.tensor(named: "\(base).bias") : nil
+    let gateBias = fusedBias?.slicedRows(start: 0, count: intermediate)
+    let upBias = fusedBias?.slicedRows(start: intermediate, count: intermediate)
+    return (
+        AnyLinear(Linear(weight: gateW, bias: gateBias)),
+        AnyLinear(Linear(weight: upW, bias: upBias))
+    )
 }

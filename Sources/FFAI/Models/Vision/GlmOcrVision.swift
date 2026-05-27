@@ -136,10 +136,16 @@ public final class GlmOcrTextLayer: Module {
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
             nKV: cache.length, kvStride: cache.maxSeq,
             scale: scale, on: cmd)
-        // Post-attention norm on the attention output, then add residual.
-        let attnNormed = postAttnNorm(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
-        let oOut = oProj(attnNormed, on: cmd)
-        let postAttn = Ops.add(h, oOut, on: cmd)
+        // Sandwich norm: o_proj first to bring back to the residual-stream
+        // dim (hidden), then `post_self_attn_layernorm` over that, then
+        // residual add. `attnOut` is in head-space `[nHeads * headDim]`
+        // (2048 for GLM-OCR's 16×128 heads), but `post_self_attn_layernorm.
+        // weight` is `[hidden]` (1536) — the weight is over the residual
+        // stream, not the head space — so norming pre-o_proj would shape-
+        // mismatch.
+        let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
+        let attnNormed = postAttnNorm(oOut, on: cmd)
+        let postAttn = Ops.add(h, attnNormed, on: cmd)
 
         // ── MLP sub-block ──
         // Pre-MLP norm (applied to the updated residual stream).
@@ -1063,9 +1069,14 @@ final class GlmOcrVisionBlock {
         }
 
         // Bidirectional multi-head attention — now GPU-resident via
-        // `Ops.sdpaMulti(causal: false)`. GLM-OCR vision uses headDim=128
-        // (hidden 1536 / 12 heads), which the d128 sdpa_multi kernel
-        // covers; `sdpaBidirectional` only ships d∈{32,64,72} variants.
+        // `Ops.sdpaBidirectional` (no causal mask within one image).
+        // mlx-community's GLM-OCR-4bit vision tower ships hidden=1024
+        // / heads=16, headDim=64 — squarely in the d=64 bidirectional
+        // variant. (The earlier `sdpaMulti` route assumed a d=128 head
+        // and the precondition rejected this checkpoint at first
+        // attention dispatch.) `sdpaBidirectional` covers d∈{32,64,72};
+        // other GLM-OCR variants with d=128 would still need a
+        // `sdpaMulti(causal: false)` fallback.
         //
         // Buffer layout reminder:
         //   Q in [nPatches, hidden] row-major → [nPatches, numHeads, headDim]
@@ -1097,11 +1108,20 @@ final class GlmOcrVisionBlock {
         kT.copyIn(from: kFlat)
         vT.copyIn(from: vFlat)
         let attnCmd = device.makeCommandBuffer()
-        let attnSdpaT = Ops.sdpaMulti(
-            q: qT, k: kT, v: vT,
-            nQHeads: numHeads, nKVHeads: numHeads, headDim: headDim,
-            baseKV: 0, nQuery: nPatches, kvStride: nPatches,
-            causal: false, scale: scale, on: attnCmd)
+        let attnSdpaT: Tensor
+        if headDim == 128 || headDim == 256 {
+            attnSdpaT = Ops.sdpaMulti(
+                q: qT, k: kT, v: vT,
+                nQHeads: numHeads, nKVHeads: numHeads, headDim: headDim,
+                baseKV: 0, nQuery: nPatches, kvStride: nPatches,
+                causal: false, scale: scale, on: attnCmd)
+        } else {
+            attnSdpaT = Ops.sdpaBidirectional(
+                q: qT, k: kT, v: vT,
+                nQHeads: numHeads, nKVHeads: numHeads, headDim: headDim,
+                baseKV: 0, nQuery: nPatches, kvStride: nPatches,
+                scale: scale, on: attnCmd)
+        }
         attnCmd.commit()
         attnCmd.waitUntilCompleted()
         let attn = attnSdpaT.toFloatArray()  // [nPatches, numHeads, headDim] = [nPatches, hidden]
