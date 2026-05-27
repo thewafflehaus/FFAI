@@ -648,8 +648,9 @@ public enum ConvertDriver {
 
     /// Build the README.md body. Pure-function — pulled out of
     /// `writeModelCard` so it's covered by unit tests without touching
-    /// the filesystem.
-    static func renderModelCard(
+    /// the filesystem AND so the `ffai card` CLI surface can render
+    /// the same body for a repo that's already on HF.
+    public static func renderModelCard(
         sourceID: String, options: ConvertOptions
     ) -> String {
         let isHFRepo = sourceID.contains("/") && !sourceID.hasPrefix("/")
