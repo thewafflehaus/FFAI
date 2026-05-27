@@ -1591,18 +1591,49 @@ extension FireRedASR2Model {
             }
         }
 
-        // Transpose a Conv1d depthwise weight from OWI → OW (strip trivial dim).
-        // MLX stores depthwise_conv as [outCh, kW, 1]; we want [outCh, kW].
+        // Flatten a depthwise Conv1d weight to a 2D `[outCh, kW]` Linear.
+        // mlx-community FireRedASR2 ships the depthwise filter as one of:
+        //   • `[outCh, kW]`          — already 2D, just copy.
+        //   • `[outCh, kW, 1]`       — OWI; the trailing 1 is C_in/groups.
+        //   • `[outCh, 1, kW]`       — PyTorch-native OIH; the middle 1
+        //                              is C_in/groups (this is the layout
+        //                              the current mlx-community release
+        //                              actually ships — confirmed at
+        //                              [2560, 1, 33] for d_model=2560,
+        //                              kernel=33).
+        // In every layout the singleton dim is trivial (depthwise has
+        // C_in_per_group = 1), so the source memory is contiguous
+        // `outCh * kW` floats either way. We only need to pick the
+        // right `kW` for the destination shape.
         func loadDepthwiseWeight(_ key: String, kernelSize: Int) throws -> Linear {
             let raw = try t(key)
             let outCh = raw.shape[0]
-            let kW = raw.shape[1]
-            // raw.shape may be [outCh, kW] or [outCh, kW, 1] depending on
-            // mlx-community conversion. Flatten to [outCh, kW] either way.
+            let kW: Int
+            switch raw.shape.count {
+            case 2:
+                kW = raw.shape[1]
+            case 3:
+                // Pick the non-singleton dim. If both are non-1 we
+                // crash loudly rather than silently mis-shape; depthwise
+                // weights must have exactly one trivial channel-mult dim.
+                let d1 = raw.shape[1]
+                let d2 = raw.shape[2]
+                precondition(
+                    d1 == 1 || d2 == 1,
+                    "FireRedASR2 loadDepthwiseWeight: \(key) has shape "
+                        + "\(raw.shape); expected one trivial dim of size 1")
+                kW = (d1 == 1) ? d2 : d1
+            default:
+                preconditionFailure(
+                    "FireRedASR2 loadDepthwiseWeight: \(key) has rank "
+                        + "\(raw.shape.count); expected 2 or 3")
+            }
+            precondition(
+                kW == kernelSize,
+                "FireRedASR2 loadDepthwiseWeight: \(key) kW=\(kW) "
+                    + "≠ expected kernelSize=\(kernelSize)")
             let src = raw.toFloatArray()
             let flat = Tensor.empty(shape: [outCh, kW], dtype: dtype, device: device)
-            // src is already [outCh * kW] (or [outCh * kW * 1]) — first
-            // outCh*kW floats are correct regardless.
             let vals = Array(src.prefix(outCh * kW))
             AudioPreprocessing.copyFloats(vals, into: flat)
             return Linear(weight: flat, bias: nil)
