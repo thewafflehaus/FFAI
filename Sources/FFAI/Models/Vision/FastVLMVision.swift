@@ -111,7 +111,6 @@ public struct FastVLMVisionConfig {
         }
 
         let clsRatio = Float(c.float("cls_ratio") ?? 2.0)
-        let mmHidden = c.int("intermediate_size") ?? c.int("hidden_size") ?? 3072
         // intermediate_size in vision_config = mm_hidden_size (3072 for 0.5B).
         // Alternatively, derivable as int(embedDims.last * clsRatio).
         let derivedMmHidden = Int(Float(embedDims.last!) * clsRatio)
@@ -181,11 +180,11 @@ private func depthwiseConvNHWC(
     var output = [Float](repeating: 0, count: B * outH * outW * C)
     let totalWork = B * C
     output.withUnsafeMutableBufferPointer { outBuf in
-        let outPtr = outBuf.baseAddress!
+        nonisolated(unsafe) let outPtr = outBuf.baseAddress!
         input.withUnsafeBufferPointer { inBuf in
             w.withUnsafeBufferPointer { wBuf in
-                let inPtr = inBuf.baseAddress!
-                let wPtr = wBuf.baseAddress!
+                nonisolated(unsafe) let inPtr = inBuf.baseAddress!
+                nonisolated(unsafe) let wPtr = wBuf.baseAddress!
                 DispatchQueue.concurrentPerform(iterations: totalWork) { work in
                     let b = work / C
                     let c = work % C
@@ -365,7 +364,7 @@ struct ConvFFNParams {
         // GELU: 0.5 * x * (1 + erf(x / sqrt(2)))
         for i in 0 ..< y.count {
             let v = y[i]
-            y[i] = 0.5 * v * (1.0 + erff(v * Float(M_SQRT1_2)))
+            y[i] = 0.5 * v * (1.0 + erff(v * Float(0.5.squareRoot())))
         }
         // 3. fc2 (pointwise 1×1).
         let yT = floatToTensor(
@@ -1036,14 +1035,13 @@ final class FastVLMVisionTower {
         let seExpandW = try weights.tensor(named: "conv_exp.se.expand.weight")
         let seExpandBias = try loadBias("conv_exp.se.expand.bias")
         // SE weights are OHWI pointwise [outC, 1, 1, inC] → flatten to [outC, inC].
-        let seCR = seReduceBias.count  // squeezed channel count
         let convExpKH = try weights.tensor(named: "conv_exp.reparam_conv.weight").shape[1]
         let convExpKW = try weights.tensor(named: "conv_exp.reparam_conv.weight").shape[2]
         // SE reduce weight: [C_r, 1, 1, C_exp] → [C_r, C_exp].
         let seReduceFlat = seReduceW.toFloatArray()
         // SE expand weight: [C_exp, 1, 1, C_r] → [C_exp, C_r].
         let seExpandFlat = seExpandW.toFloatArray()
-        _ = lastDim  // suppress unused warning — seCR derived from checkpoint shape
+        _ = lastDim  // suppress unused warning — SE shape derived from checkpoint
         _ = expandedDim
         let se = SEGateParams(
             reduceWeight: seReduceFlat, reduceBias: seReduceBias,

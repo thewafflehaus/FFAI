@@ -927,19 +927,22 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         // Parallel attention over nH * T (head, query-row) pairs.
         var attnOut = [Float](repeating: 0, count: T * stride)
         attnOut.withUnsafeMutableBufferPointer { outBuf in
-            let outPtr = outBuf.baseAddress!
+            // Safety: each `concurrentPerform` head writes to a disjoint
+            // `[hOff ..< hOff + dK]` slice of every output row; the pointer
+            // lifetimes strictly contain the parallel work.
+            nonisolated(unsafe) let outPtr = outBuf.baseAddress!
             qParts.withUnsafeBufferPointer { qBuf in
                 kParts.withUnsafeBufferPointer { kBuf in
                     vParts.withUnsafeBufferPointer { vBuf in
                         pProj.withUnsafeBufferPointer { pBuf in
                             attn.posBiasU.withUnsafeBufferPointer { uBuf in
                                 attn.posBiasV.withUnsafeBufferPointer { vbBuf in
-                                    let qb = qBuf.baseAddress!
-                                    let kb = kBuf.baseAddress!
-                                    let vb = vBuf.baseAddress!
-                                    let pb = pBuf.baseAddress!
-                                    let ub = uBuf.baseAddress!
-                                    let vbb = vbBuf.baseAddress!
+                                    nonisolated(unsafe) let qb = qBuf.baseAddress!
+                                    nonisolated(unsafe) let kb = kBuf.baseAddress!
+                                    nonisolated(unsafe) let vb = vBuf.baseAddress!
+                                    nonisolated(unsafe) let pb = pBuf.baseAddress!
+                                    nonisolated(unsafe) let ub = uBuf.baseAddress!
+                                    nonisolated(unsafe) let vbb = vbBuf.baseAddress!
                                     DispatchQueue.concurrentPerform(iterations: nH) { h in
                                         let hOff = h * dK
                                         var scores = [Float](repeating: 0, count: T * T)
@@ -1291,13 +1294,15 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let scale = attn.scale
         var attnOut = [Float](repeating: 0, count: S * stride)
         attnOut.withUnsafeMutableBufferPointer { outBuf in
-            let outPtr = outBuf.baseAddress!
+            // Safety: each `concurrentPerform` head writes to a disjoint
+            // `[hOff ..< hOff + hd]` slice of every output row.
+            nonisolated(unsafe) let outPtr = outBuf.baseAddress!
             q.withUnsafeBufferPointer { qb in
                 k.withUnsafeBufferPointer { kb in
                     v.withUnsafeBufferPointer { vb in
-                        let qPtr = qb.baseAddress!
-                        let kPtr = kb.baseAddress!
-                        let vPtr = vb.baseAddress!
+                        nonisolated(unsafe) let qPtr = qb.baseAddress!
+                        nonisolated(unsafe) let kPtr = kb.baseAddress!
+                        nonisolated(unsafe) let vPtr = vb.baseAddress!
                         DispatchQueue.concurrentPerform(iterations: nH) { h in
                             let hOff = h * hd
                             for i in 0 ..< S {
@@ -1398,13 +1403,15 @@ public final class CohereTranscribeModel: @unchecked Sendable {
         let scale = attn.scale
         var attnOut = [Float](repeating: 0, count: S * stride)
         attnOut.withUnsafeMutableBufferPointer { outBuf in
-            let outPtr = outBuf.baseAddress!
+            // Safety: each `concurrentPerform` (h, i) pair writes to a disjoint
+            // `[i*stride + hOff ..< i*stride + hOff + hd]` slice.
+            nonisolated(unsafe) let outPtr = outBuf.baseAddress!
             qPart.withUnsafeBufferPointer { qb in
                 kPart.withUnsafeBufferPointer { kb in
                     vPart.withUnsafeBufferPointer { vb in
-                        let qPtr = qb.baseAddress!
-                        let kPtr = kb.baseAddress!
-                        let vPtr = vb.baseAddress!
+                        nonisolated(unsafe) let qPtr = qb.baseAddress!
+                        nonisolated(unsafe) let kPtr = kb.baseAddress!
+                        nonisolated(unsafe) let vPtr = vb.baseAddress!
                         DispatchQueue.concurrentPerform(iterations: nH * S) { work in
                             let h = work / S
                             let i = work % S

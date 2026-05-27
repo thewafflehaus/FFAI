@@ -65,6 +65,16 @@ struct PSOCacheTests {
         }
     }
 
+    /// Sendable adapter for `MTLComputePipelineState`. Older Xcode
+    /// toolchains (16.x SDK) don't mark the Metal protocol Sendable,
+    /// so passing one through a `TaskGroup` trips Swift 6 strict
+    /// concurrency. The underlying PSO IS thread-safe — Apple's docs
+    /// describe `MTLComputePipelineState` as safe to share across
+    /// threads for dispatch — so the `@unchecked` is sound here.
+    private struct SendablePSO: @unchecked Sendable {
+        let pso: any MTLComputePipelineState
+    }
+
     @Test("concurrent lookups of the same kernel return the same PSO instance")
     func concurrentLookupsDedupeUnderRace() async throws {
         let cache = try makeCache()
@@ -75,14 +85,14 @@ struct PSOCacheTests {
         // `compileLock` + the double-checked cache read collapse
         // concurrent compiles into one.
         let kernel = "vector_add_f32"
-        let psos = await withTaskGroup(of: MTLComputePipelineState.self) { group in
+        let psos = await withTaskGroup(of: SendablePSO.self) { group in
             for _ in 0 ..< 8 {
                 group.addTask {
-                    cache.pipelineState(for: kernel)
+                    SendablePSO(pso: cache.pipelineState(for: kernel))
                 }
             }
-            var collected: [MTLComputePipelineState] = []
-            for await pso in group { collected.append(pso) }
+            var collected: [any MTLComputePipelineState] = []
+            for await wrapped in group { collected.append(wrapped.pso) }
             return collected
         }
         #expect(psos.count == 8)

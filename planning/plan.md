@@ -128,9 +128,9 @@ Full API surface lands in **Phase 2** (with only `.textIn`/`.textOut` exercised)
 | Format | What | Status |
 |---|---|---|
 | **safetensors** (fp16/bf16) | HF default. Header (JSON) + raw tensor bytes. mmap-friendly. | ✅ shipped |
-| **mlx-format** (quantized safetensors, 3/4/5/6/8-bit affine) | Same file format; mlx-community quant layout (weight + scale + bias per group). | ✅ shipped |
-| **mlx-format** (2-bit affine) | Same group-affine layout, 16 codes per uint32 word. Needs a `dequant_gemv` kernel variant + `loadLinear` bits decoder update. | 🚧 planned (see `session-plan.md`) |
-| **mixed quantization** (per-tensor / per-layer bit-width recipes) | Different layers carry different bit-widths in a single checkpoint (e.g. K/V cache at 4-bit while attention is 8-bit). Loader needs per-tensor `quantization` block parsing; today only the top-level `quantization.bits` is honored uniformly. | 🚧 planned (see `session-plan.md`) |
+| **mlx-format** (quantized safetensors, **2/3/4/5/6/8-bit** affine) | Same file format; mlx-community quant layout (weight + scale + bias per group). 2-bit added Phase E (`dequant_gemv_int2` + `dequant_gather_int2` + `mt_qmm_mma_int2` in metaltile; `Ops.dequantGemv` / `dequantGather` / `dispatchQmmMma` dispatch arms in FFAI). | ✅ shipped |
+| **mixed per-role quantization** (`ffai convert --bits / --embedding-bits / --lm-head-bits / --vision-bits`) | Each role independently takes any of `2 / 3 / 4 / 5 / 6 / 8 / fp16 / bf16` via `QuantSpec`. Loader's per-tensor `deriveAffineQuantBits` reads each width from saved shape — no per-tensor `config.json` entries needed. | ✅ shipped |
+| **mixed per-LAYER quantization** | Different layers in the same role at different bit-widths (e.g. first 4 attention layers at 2-bit, rest at 4-bit). Needs a recipe-file format and per-layer dispatch — separate from per-role. | 🚧 planned (see `session-plan.md`) |
 | **gguf** | llama.cpp single-file format, embeds quant + tokenizer + per-arch name mapping. | 🚧 planned (see `session-plan.md`) |
 | **onnx** | Graph format, embedded weights. Wrong fit — would need a graph executor. | ❌ skipped (doesn't align with static-kernel approach) |
 
@@ -806,8 +806,24 @@ Each sub-phase = one or more PRs + integration test + doc update. Sub-phases lan
 
 ### 8.7 — Native MTP / EAGLE-3 draft heads (spec 030)
 
-- Variant A: stop stripping `mtp.*` in sanitize; ship `MTPSelfSpeculativeTokenIterator` + `scripts/mtp_convert.py`.
-- Variant B: companion EAGLE-style assistant draft + `AssistantDraftRegistry`.
+- **MTP weight preservation** — already done in `ConvertDriver` (no
+  sanitize step strips `mtp.*`; tensors flow through the default
+  per-bits route, verified on `ekryski/Qwen3.5-0.8B-2bit` which carries
+  31 MTP tensors post-quant). Loader also tolerant — `Qwen3xText.swift`
+  only reads `mtp.*` keys as a detector signal, never builds modules
+  from them, so both MTP-bearing and MTP-stripped checkpoints load
+  identically today. **Outstanding:** explicit unit + integration test
+  coverage that locks in both behaviors so a future loader refactor
+  can't silently drop MTP support. See `session-plan.md` →
+  "MTP head preservation across convert + load + re-host".
+- **Variant A** (DeepSeek-V3 / Qwen3-Next native path): ship
+  `MTPSelfSpeculativeTokenIterator` + the verify glue that consumes
+  the preserved MTP layer to produce draft tokens. Spec-decode
+  scaffolding (drafter / verify / KV snapshot+restore) shipped in
+  PR #14 (see Phase J.1 / J.2 in `session-plan.md`); MTP-specific
+  Drafter implementation is the remaining work.
+- **Variant B**: companion EAGLE-style assistant draft +
+  `AssistantDraftRegistry`.
 
 ### 8.8 — Tree attention (spec 014, phase 1: K=2 root branches)
 

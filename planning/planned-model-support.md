@@ -2,12 +2,15 @@ We should add support for the following model families:
 
 - Mamba - https://github.com/state-spaces/mamba. We have support for Mamba2 but not regular Mamba
 - Mamba 3 - https://arxiv.org/html/2603.15569v1, https://www.together.ai/blog/mamba-3
+- MOSS TTS 1.5 - https://huggingface.co/OpenMOSS-Team/MOSS-TTS-v1.5
 - MiniCPM 2 - use https://huggingface.co/openbmb/MiniCPM-V-2 as a reference
 - MiniCPM 3 - use https://huggingface.co/openbmb/MiniCPM3-4B as a reference
 - Llama 2 - use https://huggingface.co/meta-llama/Llama-2-7b as a reference
 - Microsoft Fara - use https://huggingface.co/microsoft/Fara-7B as a reference
 - Llama 4 - use https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E as a reference (multi-modal MoE, vision + text)
 - Falcon OCR - use https://huggingface.co/tiiuae/Falcon-OCR as a reference (image OCR model)
+- LightOn OCR - use https://huggingface.co/lightonai/LightOnOCR-2-1B as reference (image OCR model)
+- LightOn OCR BBOX - use https://huggingface.co/lightonai/LightOnOCR-2-1B-bbox as reference (image OCR model with bounding box support)
 - SAM 3.1 - use https://huggingface.co/facebook/sam3.1 as a reference (vision/video segmentation model)
 - Kimi K2 - use https://huggingface.co/moonshotai/Kimi-K2-Thinking as a reference
 - Kimi K2.5 - use https://huggingface.co/moonshotai/Kimi-K2.5 as a reference (multi-modal, vision + text)
@@ -30,11 +33,13 @@ We should add support for the following model families:
 - Deepsseek V3.1 - use https://huggingface.co/deepseek-ai/DeepSeek-V3.1 as reference
 - Deepseek V3.2 - use https://huggingface.co/deepseek-ai/DeepSeek-V3.2 as reference
 - Deepseek V4 Flash - use https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash as reference
-- Cohere A Pluse - use https://huggingface.co/CohereLabs/command-a-plus-05-2026-w4a4 as a reference
+- Cohere A Plus - use https://huggingface.co/CohereLabs/command-a-plus-05-2026-w4a4 as a reference
 - Tencent Hy3 - use https://huggingface.co/tencent/Hy3-preview as a reference
 - Tencent Hy2 - use https://huggingface.co/tencent/Hy-MT2-1.8B as our reference and test model. They have other model sizes including an MoE https://huggingface.co/tencent/Hy-MT2-30B-A3B. We should support them all.
 - LFM2 24B - use https://huggingface.co/LiquidAI/LFM2-24B-A2B as a reference
 - Microsoft Bitnet - use https://huggingface.co/microsoft/bitnet-b1.58-2B-4T as a reference
+- Bonsai Ternary - https://huggingface.co/collections/prism-ml/ternary-bonsai (ternary bit text llm, same concept as Bitnet, high priority!)
+- Bonsai Image - https://huggingface.co/collections/prism-ml/bonsai-image (ternary image gen model)
 - Nemotron OCR 2 - use https://huggingface.co/nvidia/nemotron-ocr-v2 as reference (image OCR)
 - Nvidia Canary - https://huggingface.co/nvidia/canary-1b-v2 (multi-lingual audio model)
 - Nvidia Nemotron Speech Streaming - https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b (streaming audio)

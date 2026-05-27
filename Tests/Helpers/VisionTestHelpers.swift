@@ -128,7 +128,14 @@ public enum VisionTestHelpers {
         precondition(maxFrames > 0, "maxFrames must be positive")
         let url = resourceURL("cat.mp4")
         let asset = AVURLAsset(url: url)
-        let durationSecs = CMTimeGetSeconds(asset.duration)
+        // `asset.duration` was deprecated in macOS 13 in favour of the
+        // async `load(.duration)` accessor; the test layer is sync, so
+        // bridge into a brief `DispatchSemaphore` wait. The captured
+        // result lives on a Sendable reference holder so the `Task`
+        // closure doesn't escape a mutable local across an isolation
+        // boundary (which Swift 6 strict concurrency refuses).
+        let durationCM = loadAssetDurationSync(asset)
+        let durationSecs = CMTimeGetSeconds(durationCM)
         guard durationSecs.isFinite, durationSecs > 0 else {
             throw VisionTestHelpersError.videoDecodeFailed(
                 "cat.mp4 has invalid duration \(durationSecs)")
@@ -255,4 +262,31 @@ public enum VisionTestHelpersError: Error, CustomStringConvertible {
             return "VisionTestHelpers video decode failed: \(msg)"
         }
     }
+}
+
+// MARK: - Internal sync bridge for async asset loading
+
+/// `final class` so we can pass a reference into the `Task` closure without
+/// Swift 6 complaining about sending a mutable local across an isolation
+/// boundary. `@unchecked Sendable` is safe here because the sole reader
+/// (after `sem.wait()`) has the only live reference once the producer
+/// returns — strict happens-before via the semaphore.
+private final class CMTimeBox: @unchecked Sendable {
+    var value: CMTime = .zero
+}
+
+/// Synchronously read `asset.duration` via the modern async loader, bridged
+/// onto a `DispatchSemaphore`. Used only in the sync test-helper API; real
+/// (non-test) code uses the async accessor directly.
+private func loadAssetDurationSync(_ asset: AVURLAsset) -> CMTime {
+    let box = CMTimeBox()
+    let sem = DispatchSemaphore(value: 0)
+    Task {
+        if let value = try? await asset.load(.duration) {
+            box.value = value
+        }
+        sem.signal()
+    }
+    sem.wait()
+    return box.value
 }

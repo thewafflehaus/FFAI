@@ -297,7 +297,10 @@ public struct Qwen35Hybrid: Qwen35Variant {
 
         // ── Weight prefix — VLM-wrapped checkpoints prefix every text
         //    weight with `language_model.model.`; a text-only conversion
-        //    would use `model.`. Detect from the embedding key. ──────────
+        //    would use `model.`. Detect from the embedding key. The raw
+        //    HF Qwen 3.5-VL release uses a different `model.language_model.`
+        //    wrapper which `Qwen35VL.load` rewrites to this layout before
+        //    calling in, so no extra prefix candidate is needed here. ─────
         let prefixCandidates = ["language_model.model", "model"]
         guard
             let modelPrefix = prefixCandidates.first(where: {
@@ -315,6 +318,61 @@ public struct Qwen35Hybrid: Qwen35Variant {
         })
 
         let quant = config.quantization
+
+        // ── Centered-RMSNorm detection ──────────────────────────────────
+        // Raw HF Qwen 3.5 ships outer RMSNorm weights *centered around 0*
+        // (the kernel-side `1.0 +` is implicit in the published
+        // checkpoint — matches the Gemma convention). mlx-community
+        // pre-folds the +1 during conversion so downstream loaders can
+        // use a standard RMSNorm kernel. We follow mlx-community's
+        // convention; detect the raw centered layout and fold +1 at
+        // load time when needed.
+        //
+        // Detection — two *architectural* fingerprints, either sufficient.
+        // The inner `Qwen3_5RMSNormGated` (the GDN `linear_attn.norm`)
+        // is always vanilla RMSNorm with `weight = ones` and is *not*
+        // folded; only the outer norms (input_layernorm,
+        // post_attention_layernorm, q_norm, k_norm, model.norm) ever
+        // need the +1 shift.
+        //
+        //   1. MTP heads — raw HF ships Multi-Token Prediction heads
+        //      under `mtp.*`; every mlx-community sanitize drops them.
+        //      Verified on `Qwen/Qwen3.5-0.8B`.
+        //
+        //   2. Unsanitized conv1d shape — raw HF stores the GDN depthwise
+        //      conv1d as `[channels, 1, kernel]`; mlx-community moveaxis'd
+        //      it to `[channels, kernel, 1]`. mlx-lm's `qwen3_5.py`
+        //      sanitize uses `v.shape[-1] != 1` for the same purpose.
+        //      (FFAI's `transposeConv1dWeight35` consumes either layout
+        //      because the middle 1-dim collapses in row-major — the
+        //      shape mismatch is metadata-only.)
+        //
+        // Previous heuristic gated on `linear_attn.norm.weight.dtype == .f32`,
+        // which works empirically but is a side-effect of mlx-community's
+        // current F32→BF16 cast policy, not an architectural marker — a
+        // future conversion-pipeline drift could flip it silently. The
+        // MTP / conv1d pair is the same pattern mlx-lm uses, so it stays
+        // in lockstep with upstream sanitize.
+        let hasMTPWeights = weights.allKeys.contains(where: {
+            $0.contains(".mtp.") || $0.hasPrefix("mtp.")
+        })
+        let hasUnsanitizedConv1d: Bool = {
+            guard
+                let conv = try? weights.tensor(
+                    named: "\(modelPrefix).layers.0.linear_attn.conv1d.weight")
+            else { return false }
+            // Raw HF: [C, 1, K]; mlx-community sanitized: [C, K, 1].
+            return conv.shape.last != 1
+        }()
+        let needsCenteredNormFold = hasMTPWeights || hasUnsanitizedConv1d
+
+        // Wrap `weights.tensor(...)` for RMSNorm tensors that need the
+        // +1 fold under the centered convention.
+        func loadRMSNorm(_ name: String) throws -> RMSNorm {
+            let raw = try weights.tensor(named: name)
+            let weight = needsCenteredNormFold ? foldGemmaRMSNormWeight(raw) : raw
+            return RMSNorm(weight: weight, eps: eps)
+        }
 
         // ── Activation dtype — from the embedding table ───────────────
         // Qwen3.6 ships a *quantized* embedding (uint32-packed weight +
@@ -345,12 +403,8 @@ public struct Qwen35Hybrid: Qwen35Variant {
         layers.reserveCapacity(nLayers)
         for (i, kind) in kinds.enumerated() {
             let p = "\(modelPrefix).layers.\(i)"
-            let inputNorm = RMSNorm(
-                weight: try weights.tensor(named: "\(p).input_layernorm.weight"),
-                eps: eps)
-            let postNorm = RMSNorm(
-                weight: try weights.tensor(named: "\(p).post_attention_layernorm.weight"),
-                eps: eps)
+            let inputNorm = try loadRMSNorm("\(p).input_layernorm.weight")
+            let postNorm = try loadRMSNorm("\(p).post_attention_layernorm.weight")
 
             // ── Feed-forward half ─────────────────────────────────────
             // A layer in `mlp_only_layers`, or one off the sparse-step
@@ -406,12 +460,8 @@ public struct Qwen35Hybrid: Qwen35Variant {
                     base: "\(p).self_attn.v_proj", in: weights, quantization: quant)
                 let oProj = try loadLinear(
                     base: "\(p).self_attn.o_proj", in: weights, quantization: quant)
-                let qNorm = RMSNorm(
-                    weight: try weights.tensor(named: "\(p).self_attn.q_norm.weight"),
-                    eps: eps)
-                let kNorm = RMSNorm(
-                    weight: try weights.tensor(named: "\(p).self_attn.k_norm.weight"),
-                    eps: eps)
+                let qNorm = try loadRMSNorm("\(p).self_attn.q_norm.weight")
+                let kNorm = try loadRMSNorm("\(p).self_attn.k_norm.weight")
                 let mixer = Qwen35AttentionMixer(
                     qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
                     qNorm: qNorm, kNorm: kNorm,
@@ -425,8 +475,7 @@ public struct Qwen35Hybrid: Qwen35Variant {
             }
         }
 
-        let finalNorm = RMSNorm(
-            weight: try weights.tensor(named: "\(modelPrefix).norm.weight"), eps: eps)
+        let finalNorm = try loadRMSNorm("\(modelPrefix).norm.weight")
 
         // lm_head — most Qwen3.5 dense checkpoints tie to the embedding
         // table; Qwen3.6 ships an UNTIED quantized lm_head under
@@ -2759,7 +2808,6 @@ private func qwen35ApplyFFNMany(
     cmd: MTLCommandBuffer, device: Device,
     preNormed: Tensor? = nil
 ) -> Tensor {
-    let dt = postMix.dtype
     // Post-norm over T rows of [hidden]. One rmsNormRows kernel —
     // unless the caller already produced the normed tensor via the
     // fused `mt_add_rms_norm` kernel.

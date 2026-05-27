@@ -432,8 +432,8 @@ public final class DACVAE: @unchecked Sendable {
     public func encode(waveform: Tensor) throws -> Tensor {
         let raw = AudioMath.floats(waveform)
         let padded = preprocess(raw)
-        var data = padded
-        var shape = [1, 1, padded.count]
+        let data = padded
+        let shape = [1, 1, padded.count]
 
         // Encoder: conv stem + downsampling blocks + Snake + conv_out.
         var (d, s) = encoderConvIn(data, shape: shape)

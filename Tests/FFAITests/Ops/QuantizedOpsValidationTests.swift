@@ -126,7 +126,7 @@ struct QuantizedOpsValidationTests {
     @Test("validateDequantGather accepts production shapes")
     func dequantGatherAcceptsLegal() {
         // Embedding gather: hidden=4096, group_size=64.
-        for bits in [3, 4, 5, 6, 8] {
+        for bits in [2, 3, 4, 5, 6, 8] {
             #expect(
                 OpsValidation.validateDequantGather(
                     hidden: 4096, bits: bits, groupSize: 64) == nil,
@@ -145,7 +145,7 @@ struct QuantizedOpsValidationTests {
 
     @Test("validateDequantGather rejects unsupported bit-widths")
     func dequantGatherRejectsBadBits() {
-        for badBits in [0, 1, 2, 7, 9, 16, -4] {
+        for badBits in [0, 1, 7, 9, 16, -4] {
             #expect(
                 OpsValidation.validateDequantGather(
                     hidden: 4096, bits: badBits, groupSize: 64) != nil,

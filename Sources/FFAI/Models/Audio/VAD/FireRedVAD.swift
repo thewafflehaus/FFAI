@@ -641,7 +641,7 @@ final class FireRedDFSMN: Sendable {
         let T = features.count
         guard T > 0 else { return [] }
         // Flatten to [T × idim] row-major.
-        var x = features.flatMap { $0 }
+        let x = features.flatMap { $0 }
 
         // fc1: idim → H, ReLU.
         var h = fc1.applyRows(x, rows: T)
@@ -702,7 +702,6 @@ enum FireRedVADPostprocessor {
             // The upstream does full convolution then boundary-corrects;
             // cumulative average over the first windowSize-1 frames is
             // equivalent to the boundary correction applied there.
-            let start = max(0, i - windowSize + 1)
             if i >= windowSize {
                 windowSum -= probs[i - windowSize]
                 smoothed[i] = windowSum / Float(windowSize)
@@ -1128,9 +1127,11 @@ public final class FireRedVADModel: @unchecked Sendable {
             return lo | (hi << 8)
         }
         func readUInt32LE() -> Int {
-            let v =
-                Int(pkl[pos]) | (Int(pkl[pos + 1]) << 8) | (Int(pkl[pos + 2]) << 16)
-                | (Int(pkl[pos + 3]) << 24)
+            // 4-byte LE read via a loop — same compile-time
+            // workaround as BINUNICODE8 above (Swift 5.10 type checker
+            // chokes on the inline 4-way Int(...) | <<shift expression).
+            var v = 0
+            for i in 0 ..< 4 { v |= Int(pkl[pos + i]) << (8 * i) }
             pos += 4
             return v
         }
@@ -1161,7 +1162,6 @@ public final class FireRedVADModel: @unchecked Sendable {
             case 0x80: _ = readByte()  // PROTO
             case 0x28: marks.append(stack.count)  // MARK
             case 0x2E: return  // STOP
-            case 0x28: break  // duplicate MARK (handled above)
             // Push values
             case 0x4E: stack.append(.none_val)  // NONE
             case 0x89: stack.append(.bool(false))  // NEWFALSE
@@ -1199,13 +1199,14 @@ public final class FireRedVADModel: @unchecked Sendable {
             case 0x8C:  // SHORT_BINUNICODE len1
                 stack.append(.str(readLen1String()))
             case 0x8D:  // BINUNICODE8
-                let nLo32 =
-                    Int(pkl[pos]) | (Int(pkl[pos + 1]) << 8)
-                    | (Int(pkl[pos + 2]) << 16) | (Int(pkl[pos + 3]) << 24)
-                let nHi32 =
-                    (Int(pkl[pos + 4]) << 32) | (Int(pkl[pos + 5]) << 40)
-                    | (Int(pkl[pos + 6]) << 48) | (Int(pkl[pos + 7]) << 56)
-                let n = nLo32 | nHi32
+                // Read 8 bytes little-endian into an Int. The full
+                // expression `Int(pkl[pos]) | ... | (Int(pkl[pos+7]) <<
+                // 56)` trips Swift 5.10's type checker with "unable to
+                // type-check in reasonable time" on the CI toolchain
+                // (Xcode 16.4); the loop form is identical at runtime
+                // and compiles in ~no time.
+                var n = 0
+                for i in 0 ..< 8 { n |= Int(pkl[pos + i]) << (8 * i) }
                 pos += 8
                 let s = String(bytes: pkl[pos ..< (pos + n)], encoding: .utf8) ?? ""
                 pos += n
@@ -1260,7 +1261,7 @@ public final class FireRedVADModel: @unchecked Sendable {
             case 0x52:  // REDUCE (fn, args) → call
                 guard stack.count >= 2 else { break }
                 let args = stack.removeLast()
-                let fn = stack.removeLast()
+                _ = stack.removeLast()
                 // If this is a PersistId call (the storage tuple), extract the id + count.
                 // The storage PersistId fires as a result pushed onto the stack marked
                 // .storage(id, count).
@@ -1286,7 +1287,7 @@ public final class FireRedVADModel: @unchecked Sendable {
                 stack.append(.reduced)
             case 0x62:  // BUILD (obj, state) — sets state on top-1
                 guard stack.count >= 2 else { break }
-                let state = stack.removeLast()
+                _ = stack.removeLast()
                 // If the top is a tensor being built, try to extract shape.
                 _ = stack.removeLast()
                 // The tensor is built from (storage, offset, shape, stride, …).
@@ -1323,7 +1324,6 @@ public final class FireRedVADModel: @unchecked Sendable {
                 _ = stack.popLast()
             case 0x32:  // POP_MARK
                 if let markIdx = marks.popLast() { stack.removeSubrange(markIdx...) }
-            case 0x32: break  // duplicate
             default: break
             }
 

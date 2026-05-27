@@ -252,13 +252,13 @@ final class MiniCPMVViTMerger {
         let sc = scale
         let nh = nHeads
         out.withUnsafeMutableBufferPointer { outBuf in
-            let outPtr = outBuf.baseAddress!
+            nonisolated(unsafe) let outPtr = outBuf.baseAddress!
             qa.withUnsafeBufferPointer { qPtr in
                 ka.withUnsafeBufferPointer { kPtr in
                     va.withUnsafeBufferPointer { vPtr in
-                        let qb = qPtr.baseAddress!
-                        let kb = kPtr.baseAddress!
-                        let vb = vPtr.baseAddress!
+                        nonisolated(unsafe) let qb = qPtr.baseAddress!
+                        nonisolated(unsafe) let kb = kPtr.baseAddress!
+                        nonisolated(unsafe) let vb = vPtr.baseAddress!
                         // Fan (window, head, query) across cores. 4 query tokens
                         // per window × 16 heads × N windows — embarrassingly
                         // parallel; each iteration writes a disjoint headDim slice.

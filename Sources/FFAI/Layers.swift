@@ -164,8 +164,8 @@ public final class QuantizedLinear: Module {
         precondition(weight.dtype == .u32, "QuantizedLinear: weight must be u32 packed")
         precondition(weight.shape.count == 2, "QuantizedLinear: weight must be 2D")
         precondition(
-            bits == 3 || bits == 4 || bits == 5 || bits == 6 || bits == 8,
-            "QuantizedLinear: bits must be one of 3, 4, 5, 6, or 8")
+            bits == 2 || bits == 3 || bits == 4 || bits == 5 || bits == 6 || bits == 8,
+            "QuantizedLinear: bits must be one of 2, 3, 4, 5, 6, or 8")
         if let ab = additiveBias {
             precondition(
                 ab.shape.count == 1,
@@ -221,21 +221,22 @@ public final class QuantizedLinear: Module {
     ) -> Tensor {
         let outDim = weight.shape[0]
         let inDim = scales.shape[scales.shape.count - 1] * groupSize
-        // 4-bit goes through the fast mt_qmm_mma path when the output
-        // dimension is a multiple of 32 (the BN tile of the underlying
-        // `dequantGemmDynamicM` kernel). Anything narrower — including
-        // 4-bit shared_expert_gate at outDim=1 — falls through to the
-        // per-row dequantGemv loop. Other bit-widths (commonly 8-bit
-        // on the same narrow projections) take the same fallback. Both
-        // fallbacks are bit-identical to the per-token path; their
-        // per-token launch overhead is in the noise on hidden→1 shapes.
+        // 4-bit and 2-bit go through the fast mt_qmm_mma path when the
+        // output dimension is a multiple of 32 (the BN tile of the
+        // underlying `dequantGemmDynamicM` kernel). Anything narrower —
+        // including 4-bit shared_expert_gate at outDim=1 — falls through
+        // to the per-row `dequantGemv` loop. Other bit-widths (commonly
+        // 8-bit on the same narrow projections, plus 3/5/6) take the
+        // same fallback. Both fallbacks are bit-identical to the
+        // per-token path; their per-token launch overhead is in the
+        // noise on hidden→1 shapes.
         let out: Tensor
-        if bits == 4 && outDim % 32 == 0 {
+        if (bits == 4 || bits == 2) && outDim % 32 == 0 {
             out = Tensor.empty(shape: [t, outDim], dtype: x.dtype, device: device)
             Ops.dequantGemmDynamicM(
                 input: x, weight: weight, scales: scales, biases: biases,
                 t: t, nOut: outDim, kIn: inDim, groupSize: groupSize,
-                on: cmd, device: device, into: out)
+                on: cmd, device: device, into: out, bits: bits)
         } else {
             let dtBytes = x.dtype.byteSize
             out = Tensor.empty(shape: [t, outDim], dtype: x.dtype, device: device)
@@ -377,7 +378,7 @@ public func loadLinear(
             weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
             scaleCols: t.scales.shape[t.scales.shape.count - 1],
             groupSize: q.groupSize)
-        if [3, 4, 5, 6, 8].contains(bits) {
+        if [2, 3, 4, 5, 6, 8].contains(bits) {
             // Pick up the additive output bias (e.g. Qwen 2.x QKV) if
             // the checkpoint ships it alongside the quantization triplet.
             // The mlx-community 4-bit Qwen 2.x conversions DO retain it
@@ -443,8 +444,8 @@ public final class QuantizedEmbedding: Module {
         hidden: Int, bits: Int, groupSize: Int
     ) {
         precondition(
-            bits == 3 || bits == 4 || bits == 5 || bits == 6 || bits == 8,
-            "QuantizedEmbedding: bits must be one of 3, 4, 5, 6, or 8")
+            bits == 2 || bits == 3 || bits == 4 || bits == 5 || bits == 6 || bits == 8,
+            "QuantizedEmbedding: bits must be one of 2, 3, 4, 5, 6, or 8")
         self.weight = weight
         self.scales = scales
         self.biases = biases
@@ -503,7 +504,7 @@ public func loadEmbedding(
             weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
             scaleCols: t.scales.shape[t.scales.shape.count - 1],
             groupSize: q.groupSize)
-        if [3, 4, 5, 6, 8].contains(bits) {
+        if [2, 3, 4, 5, 6, 8].contains(bits) {
             return AnyEmbedding(
                 QuantizedEmbedding(
                     weight: t.weight, scales: t.scales, biases: t.biases,

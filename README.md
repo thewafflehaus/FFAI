@@ -78,7 +78,7 @@ FFAI ships the most comprehensive Apple Silicon model coverage of any single lib
 
 Run `ffai models` for the live list with copy-paste repo IDs, or browse the full breakdown by family + capability in [`documentation/models.md`](documentation/models.md).
 
-**Quantization.** Affine 3 / 4 / 5 / 6 / 8-bit (mlx-community packed-uint32 format) ships today, with per-tensor bit-width derivation for mixed-precision checkpoints. **2-bit, fully mixed-quantization recipes, and GGUF format are coming soon** — see [`quantization.md`](documentation/quantization.md) for what's wired up now vs queued.
+**Quantization.** Affine **2 / 3 / 4 / 5 / 6 / 8-bit** (mlx-community packed-uint32 format) ships today, with per-tensor bit-width derivation for mixed-precision checkpoints. `ffai convert` accepts per-tensor specs — any of `2 / 3 / 4 / 5 / 6 / 8 / fp16 / bf16` independently for `--bits` / `--embedding-bits` / `--lm-head-bits` / `--vision-bits`, so a single conversion can mix bit-widths across roles. **GGUF format is the remaining gap** — see [`quantization.md`](documentation/quantization.md) for what's wired up now vs queued.
 
 ### Adding a model
 

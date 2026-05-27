@@ -42,20 +42,53 @@ import Foundation
 import Metal
 
 /// Options controlling quantization behaviour.
+///
+/// Each "role" in the checkpoint — main linear projections, token
+/// embedding, lm_head, vision tower — can independently take any
+/// `QuantSpec`. Affine `.bits(2 / 3 / 4 / 5 / 6 / 8)` triggers
+/// `QuantizedOps.quantizeAffine` to produce a `(weight, scales,
+/// biases)` triplet; `.fp16` / `.bf16` skip quantization and emit
+/// the source weight cast to the target dtype.
+///
+/// `nil` on a role override means "fall through to the default" —
+/// for embeddings / lm_head / vision tower the default is "leave
+/// unchanged" (mlx-lm convention: skip the embedding and lm_head;
+/// vision towers stay full-precision because FFAI's VL towers run
+/// plain `Linear`, not `QuantizedLinear`). The main `bits` always
+/// applies and has no nil case.
+///
+/// A single conversion can freely mix specs across roles — FFAI's
+/// `loadLinear` / `loadEmbedding` derive the per-tensor bit-width
+/// from the saved shapes via `deriveAffineQuantBits`, and the dtype
+/// is part of every tensor's safetensors header, so mixed checkpoints
+/// load correctly without per-tensor `config.json` entries.
 public struct ConvertOptions: Sendable {
-    /// Bit-width ∈ {2, 4, 8}. Default 4.
-    public var bits: Int = 4
+    /// Spec for the main linear projections (attention + MLP — i.e.
+    /// q/k/v/o, gate/up/down, MoE experts). Default `.bits(4)`.
+    public var bits: QuantSpec = .bits(4)
     /// Group size — must be 64 (kernel invariant). Do not change.
     public var groupSize: Int = 64
-    /// Dtype for non-quantized params (scales/biases inherit this from the
-    /// source weight's dtype; this field governs unquantized pass-throughs).
-    public var dtype: DType = .bf16
-    /// Quantize the token embedding table too (mlx-lm default: false).
-    public var quantizeEmbeddings: Bool = false
-    /// Quantize the lm_head projection too (mlx-lm default: false — usually
-    /// tied to embed_tokens, so quantizing would double the error for the
-    /// output distribution).
-    public var quantizeLmHead: Bool = false
+    /// Dtype for tensors that aren't quantized AND don't carry an
+    /// explicit downcast spec (norms, biases, conv1d kernels, RoPE
+    /// tables). `nil` (default) preserves each tensor's source dtype.
+    /// When the spec on a tensor is `.fp16` / `.bf16` that takes
+    /// precedence over this fallback for that role's tensors.
+    public var dtype: DType? = nil
+    /// Spec for the token embedding table. `nil` (default) keeps it
+    /// full-precision (mlx-lm convention).
+    public var embeddingSpec: QuantSpec? = nil
+    /// Spec for the `lm_head` projection. `nil` (default) keeps it
+    /// full-precision; when `lm_head` is tied to the embedding the
+    /// loader reuses the embedding triplet, so this knob only matters
+    /// for untied heads (Qwen 3.6, some Gemma).
+    public var lmHeadSpec: QuantSpec? = nil
+    /// Spec for vision-tower weights. `nil` (default) keeps the tower
+    /// full-precision — FFAI's VL towers (Qwen3-VL / Qwen3.5-VL,
+    /// Pixtral, SigLIP, Idefics3, MiniCPM-V, FastVLM) use plain
+    /// `Linear`, not `QuantizedLinear`, so a quantized tower would
+    /// crash the loader. Set only when wiring a new VL tower that
+    /// consumes `QuantizedLinear`.
+    public var visionSpec: QuantSpec? = nil
 
     public init() {}
 }
@@ -80,7 +113,7 @@ public enum ConvertDriverError: Error, CustomStringConvertible {
         case .noSafetensorsFound(let d):
             return "no .safetensors files found in: \(d.path)"
         case .unsupportedBits(let b):
-            return "unsupported bits=\(b) — must be 2, 4, or 8"
+            return "unsupported bits=\(b) — must be 2 / 3 / 4 / 5 / 6 / 8"
         case .mkdirFailed(let u, let e):
             return "failed to create output directory \(u.path): \(e)"
         }
@@ -100,10 +133,17 @@ public enum ConvertDriver {
         options: ConvertOptions = ConvertOptions(),
         progress: (@Sendable (String) -> Void)? = nil
     ) throws {
-        // Validate bit-width before doing any I/O so the error surfaces
-        // early rather than partway through a multi-GB conversion.
-        guard QuantizedOpsValidation.packFactor(forBits: options.bits) != nil else {
-            throw ConvertDriverError.unsupportedBits(options.bits)
+        // Validate every quantized spec up front so a bad bit-width
+        // surfaces before we touch the GPU or open the writer. Downcast
+        // specs (`.fp16` / `.bf16`) bypass quantization entirely so they
+        // need no validation here.
+        let allSpecs: [QuantSpec?] = [
+            options.bits, options.embeddingSpec, options.lmHeadSpec, options.visionSpec,
+        ]
+        for spec in allSpecs {
+            if case .bits(let b) = spec, !QuantSpec.supportedBits.contains(b) {
+                throw ConvertDriverError.unsupportedBits(b)
+            }
         }
 
         // Create the output directory (including parents).
@@ -129,29 +169,24 @@ public enum ConvertDriver {
 
         // Process tensors in sorted key order (deterministic output).
         let allKeys = bundle.allKeys.sorted()
-        let pf = QuantizedOpsValidation.packFactor(forBits: options.bits)!
 
         for key in allKeys {
             let entry = try bundle.tensor(named: key)
 
-            if shouldQuantize(
-                key: key, tensor: entry,
-                options: options, packFactor: pf)
-            {
+            switch effectiveSpec(key: key, tensor: entry, options: options) {
+            case .bits(let bits)?:
                 // ─── Quantize this weight ────────────────────────────
-                progress?("quantizing \(key) \(entry.shape)")
+                // Per-tensor bit-width — may differ from `options.bits`
+                // when an embedding / lm_head / vision override applied.
+                progress?("quantizing \(key) \(entry.shape) @ \(bits)bit")
                 let (packedBytes, scalesBytes, biasesBytes) = try quantizeTensor(
-                    entry, key: key, options: options,
-                    packFactor: pf, device: device)
+                    entry, key: key, options: options, bits: bits, device: device)
 
-                // The weight key in the output is unchanged (e.g.
-                // "model.layers.0.self_attn.q_proj.weight"). The triplet
-                // naming matches what SafeTensorsBundle.quantizedTriplet
-                // expects: base.weight / base.scales / base.biases.
-                //
-                // Derive the base from the key by dropping ".weight" suffix.
+                // Output naming matches SafeTensorsBundle.quantizedTriplet's
+                // expectation: <base>.weight (u32) + .scales + .biases.
                 let base = String(key.dropLast(".weight".count))
-                let weightShape = packedShape(original: entry.shape, packFactor: pf)
+                let weightShape = packedShape(
+                    original: entry.shape, numel: entry.elementCount, bits: bits)
                 let groupShape = scalesShape(original: entry.shape, groupSize: options.groupSize)
 
                 try writer.append(
@@ -163,7 +198,25 @@ public enum ConvertDriver {
                 try writer.append(
                     name: "\(base).biases", dtype: entry.dtype,
                     shape: groupShape, bytes: biasesBytes)
-            } else {
+
+            case .fp16?, .bf16?:
+                // ─── Downcast to a different float dtype ─────────────
+                // Used when a role explicitly opts for `.fp16` / `.bf16`
+                // (e.g. publish a bf16 checkpoint as fp16 for inference
+                // platforms that prefer it). 1D / norm / non-`.weight`
+                // tensors paired with the same role still go through here
+                // — the dtype on the OUT tensor is the role's target;
+                // shape is unchanged.
+                let targetDtype = effectiveSpec(key: key, tensor: entry, options: options)!
+                    .downcastDtype!
+                progress?(
+                    "downcasting \(key) \(entry.shape) → \(targetDtype.rawValue)")
+                let bytes = downcastBytes(from: entry, to: targetDtype)
+                try writer.append(
+                    name: key, dtype: targetDtype,
+                    shape: entry.shape, bytes: bytes)
+
+            case nil:
                 // ─── Pass through unchanged ──────────────────────────
                 progress?("copying   \(key) \(entry.shape)")
                 let bytes = rawBytes(from: entry)
@@ -185,62 +238,97 @@ public enum ConvertDriver {
 
     // ─── Quantization eligibility ────────────────────────────────────
 
-    /// Decide whether a tensor should be quantized. Follows mlx-lm rules:
-    /// only 2D Linear-shaped weights where the inner dim is divisible by
-    /// both group_size and pack_factor. Norm weights are always kept full-
-    /// precision; embeddings and lm_head follow the option flags.
-    private static func shouldQuantize(
-        key: String, tensor: Tensor,
-        options: ConvertOptions, packFactor: Int
-    ) -> Bool {
-        // Must be a 2D weight.
-        guard tensor.shape.count == 2, key.hasSuffix(".weight") else { return false }
-
-        let inDim = tensor.shape[1]
-
-        // Inner dim must be divisible by group_size (hard kernel constraint)
-        // and by pack_factor (packing constraint).
-        guard inDim.isMultiple(of: options.groupSize),
-            inDim.isMultiple(of: packFactor)
-        else { return false }
-
-        // Norm layers: never quantize (tiny + numerically critical).
-        // Match both `layernorm.weight` and `norm.weight` suffixes used
-        // by different architectures.
+    /// Pick the `QuantSpec` to use for `key`. `nil` means "pass this
+    /// tensor through unchanged in its source dtype" — every norm /
+    /// bias / 1D tensor lands here, plus any role whose spec is `nil`.
+    ///
+    /// Routing:
+    ///   * `embed_tokens.weight` / `embeddings.weight` → `embeddingSpec`
+    ///   * `lm_head.weight`                            → `lmHeadSpec`
+    ///   * vision-tower keys (matches `.visual.` / `visual.` /
+    ///     `vision_tower.` / `vision_model.` prefixes used across
+    ///     Qwen3-VL / Qwen3.5-VL / Pixtral / SigLIP / Idefics3 /
+    ///     MiniCPM-V / FastVLM)                       → `visionSpec`
+    ///   * everything else (attention + MLP)           → `bits`
+    ///
+    /// For a `.bits(N)` spec we further check that the tensor is 2D,
+    /// ends in `.weight`, and its inner dim is divisible by both
+    /// `group_size` and the chosen bit-width's storage stride — if not,
+    /// the tensor falls through to pass-through (`nil`) rather than
+    /// crashing the quantize kernel. `.fp16` / `.bf16` downcast applies
+    /// to any tensor that the role rule matches, regardless of shape.
+    private static func effectiveSpec(
+        key: String, tensor: Tensor, options: ConvertOptions
+    ) -> QuantSpec? {
+        // Norms always pass through (never quantized; never downcast
+        // implicitly — the kernel-side RMSNorm needs the original
+        // precision for stability).
         if key.hasSuffix("norm.weight") || key.hasSuffix("layernorm.weight") {
-            return false
+            return nil
         }
 
-        // Embedding table: skip unless explicitly requested.
+        // Pick the role-specific spec.
+        let roleSpec: QuantSpec?
         if key.contains("embed_tokens.weight") || key.contains("embeddings.weight") {
-            return options.quantizeEmbeddings
+            roleSpec = options.embeddingSpec
+        } else if key.contains("lm_head.weight") {
+            roleSpec = options.lmHeadSpec
+        } else if key.contains(".visual.") || key.hasPrefix("visual.")
+            || key.contains("vision_tower.") || key.contains("vision_model.")
+        {
+            roleSpec = options.visionSpec
+        } else {
+            // The main `bits` is always non-nil; wrap as Optional for
+            // uniform handling below.
+            roleSpec = options.bits
         }
+        guard let spec = roleSpec else { return nil }
 
-        // lm_head: skip unless explicitly requested (usually tied to
-        // embed_tokens, so quantizing it would apply error twice).
-        if key.contains("lm_head.weight") {
-            return options.quantizeLmHead
+        switch spec {
+        case .bits(let bits):
+            // Only 2D `.weight` tensors are eligible for affine quant.
+            guard tensor.shape.count == 2, key.hasSuffix(".weight") else { return nil }
+            // The bit-stream packing requires `inDim * bits` to be a
+            // multiple of 32 AND `inDim` to be a multiple of group_size.
+            let inDim = tensor.shape[1]
+            guard inDim.isMultiple(of: options.groupSize) else { return nil }
+            guard (inDim * bits) % 32 == 0 else { return nil }
+            return .bits(bits)
+
+        case .fp16, .bf16:
+            // Skip the source-already-target no-op. If the tensor's
+            // source dtype already matches the requested downcast,
+            // emit it unchanged through the pass-through path.
+            if tensor.dtype == spec.downcastDtype { return nil }
+            return spec
         }
-
-        return true
     }
 
     // ─── Per-tensor quantization ─────────────────────────────────────
 
-    /// GPU-quantize a single 2D weight tensor. Returns raw bytes for the
-    /// packed weight, scales, and biases buffers — ready for the writer.
+    /// GPU-quantize a single 2D weight tensor to `bits` bits per code.
+    /// Returns raw bytes for the packed weight, scales, and biases
+    /// buffers — ready for the writer.
     ///
-    /// The kernel operates on a flat [numel] view of the weight; the
-    /// original [out, in] shape is preserved at the caller level via
-    /// `packedShape` / `scalesShape`.
+    /// The kernel operates on a flat `[numel]` view of the weight; the
+    /// original `[out, in]` shape is preserved at the caller level via
+    /// `packedShape` / `scalesShape`. `bits` here may differ from
+    /// `options.bits.bits` when an embedding / lm_head / vision override
+    /// applied — every per-tensor knob runs through this same path,
+    /// just with a different `bits`. Storage size is computed via
+    /// `QuantizedOpsValidation.packedUInt32Count`, which generalises
+    /// `numel / packFactor` to the odd-width packings 3 / 5 / 6.
     private static func quantizeTensor(
         _ src: Tensor, key: String,
-        options: ConvertOptions, packFactor: Int,
+        options: ConvertOptions, bits: Int,
         device: Device
     ) throws -> (packed: Data, scales: Data, biases: Data) {
         let numel = src.elementCount
         let nGroups = numel / options.groupSize
-        let nPacks = numel / packFactor
+        guard let nPacks = QuantizedOpsValidation.packedUInt32Count(numel: numel, bits: bits)
+        else {
+            throw ConvertDriverError.unsupportedBits(bits)
+        }
 
         // Allocate output buffers.
         let packed = Tensor.empty(shape: [nPacks], dtype: .u32, device: device)
@@ -258,7 +346,7 @@ public enum ConvertDriver {
         QuantizedOps.quantizeAffine(
             weight: flat,
             packed: packed, scales: scales, biases: biases,
-            bits: options.bits, groupSize: options.groupSize,
+            bits: bits, groupSize: options.groupSize,
             on: cb)
         cb.commit()
         cb.waitUntilCompleted()
@@ -272,11 +360,16 @@ public enum ConvertDriver {
 
     // ─── Shape helpers ───────────────────────────────────────────────
 
-    /// Shape of the packed u32 tensor given the original [out, in] shape.
-    /// The pack collapses the innermost dim: [out, in / pack_factor].
-    private static func packedShape(original: [Int], packFactor: Int) -> [Int] {
+    /// Shape of the packed u32 tensor given the original `[out, in]`
+    /// shape and the chosen `bits`. The pack collapses the trailing dim
+    /// down to its `(numel * bits / 32) / out` width — which equals
+    /// `in / packFactor` for the clean widths 2 / 4 / 8 and the
+    /// `in * bits / 32` byte-stream stride for 3 / 5 / 6.
+    private static func packedShape(original: [Int], numel: Int, bits: Int) -> [Int] {
         var s = original
-        s[s.count - 1] = s[s.count - 1] / packFactor
+        let outerCount = numel / s[s.count - 1]
+        let packCount = QuantizedOpsValidation.packedUInt32Count(numel: numel, bits: bits) ?? 0
+        s[s.count - 1] = packCount / outerCount
         return s
     }
 
@@ -295,6 +388,38 @@ public enum ConvertDriver {
     private static func rawBytes(from tensor: Tensor) -> Data {
         let ptr = tensor.buffer.contents().advanced(by: tensor.offset)
         return Data(bytes: ptr, count: tensor.byteCount)
+    }
+
+    /// Convert a tensor's bytes to the requested floating-point dtype
+    /// (`.fp16` / `.bf16` / `.f32`). Used when a role explicitly opts
+    /// into `.fp16` / `.bf16` downcast via its `QuantSpec`. CPU-side
+    /// conversion through the canonical `Tensor.toFloatArray()` path —
+    /// fast enough for offline conversion (no GPU dispatch overhead
+    /// per-tensor) and avoids needing a dedicated `Ops.cast` kernel
+    /// for every dtype pair.
+    private static func downcastBytes(from src: Tensor, to target: DType) -> Data {
+        // Source-already-target shouldn't reach here (see `effectiveSpec`),
+        // but handle it gracefully if it does.
+        if src.dtype == target {
+            return rawBytes(from: src)
+        }
+        let floats = src.toFloatArray()
+        switch target {
+        case .f32:
+            return floats.withUnsafeBufferPointer { Data(buffer: $0) }
+        case .f16:
+            let halves = floats.map { Float16($0) }
+            return halves.withUnsafeBufferPointer { Data(buffer: $0) }
+        case .bf16:
+            let bits = floats.map { v -> UInt16 in
+                let b = v.bitPattern
+                let rounded = b &+ 0x7FFF &+ ((b >> 16) & 1)
+                return UInt16(rounded >> 16)
+            }
+            return bits.withUnsafeBufferPointer { Data(buffer: $0) }
+        default:
+            fatalError("ConvertDriver.downcastBytes: unsupported target dtype \(target)")
+        }
     }
 
     // ─── config.json ─────────────────────────────────────────────────
@@ -322,13 +447,31 @@ public enum ConvertDriver {
             throw ConvertDriverError.configJSONMalformed(srcURL)
         }
 
-        let quantBlock: [String: Any] = [
-            "bits": options.bits,
-            "group_size": options.groupSize,
-            "mode": "affine",
-        ]
-        obj["quantization"] = quantBlock
-        obj["quantization_config"] = quantBlock
+        // Write the quantization block only when something is actually
+        // affine-quantized. A pure downcast (e.g. `--bits fp16`)
+        // produces no `(weight, scales, biases)` triplets, so leaving
+        // the block out keeps the output a plain-precision checkpoint
+        // that loaders treat as bf16/fp16 by default.
+        //
+        // For mixed-spec conversions (e.g. `--bits 4 --embedding-bits 8`)
+        // the top-level `quantization.bits` records the MAIN spec's
+        // bit-width; per-tensor widths are recovered at load time from
+        // the saved shapes via `deriveAffineQuantBits`. The
+        // `quantization_config` mirror is for Transformers compat.
+        if let mainBits = options.bits.bits {
+            let quantBlock: [String: Any] = [
+                "bits": mainBits,
+                "group_size": options.groupSize,
+                "mode": "affine",
+            ]
+            obj["quantization"] = quantBlock
+            obj["quantization_config"] = quantBlock
+        } else {
+            // Pure downcast conversion — make sure we don't leave a
+            // stale quantization block from the source config.
+            obj.removeValue(forKey: "quantization")
+            obj.removeValue(forKey: "quantization_config")
+        }
 
         // Sanitize before NSJSONSerialization: Python's `json` module emits
         // `Infinity` / `-Infinity` / `NaN` literals when `allow_nan=True`

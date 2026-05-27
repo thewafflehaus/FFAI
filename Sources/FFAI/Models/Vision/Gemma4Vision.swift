@@ -236,9 +236,10 @@ final class Gemma4VLVisionBlock {
         // of qH / kH / vH — disjoint across tokens, so no synchronization
         // is needed. Both the q-head loop and the kv-head loop are nested
         // inside a single per-token iteration to keep the index space flat.
-        var qH = [[Float]](repeating: [], count: nTokens * nHeads)
-        var kH = [[Float]](repeating: [], count: nTokens * nKVHeads)
-        var vH = [[Float]](repeating: [], count: nTokens * nKVHeads)
+        // `nonisolated(unsafe)`: each token writes disjoint slots.
+        nonisolated(unsafe) var qH = [[Float]](repeating: [], count: nTokens * nHeads)
+        nonisolated(unsafe) var kH = [[Float]](repeating: [], count: nTokens * nKVHeads)
+        nonisolated(unsafe) var vH = [[Float]](repeating: [], count: nTokens * nKVHeads)
         DispatchQueue.concurrentPerform(iterations: nTokens) { t in
             // Inline RMSNorm: normalise an `[headDim]` slice in place,
             // optionally scaling by a per-dim weight vector.

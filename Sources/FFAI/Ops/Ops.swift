@@ -1435,6 +1435,33 @@ public enum Ops {
                 out: result.buffer, outOffset: result.offset,
                 hidden: hiddenU, group_size: groupSizeU,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (2, .f32):
+            MetalTileKernels.dequant_gather_int2_f32(
+                weight: weight.buffer, weightOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                indices: tokenIds.buffer, indicesOffset: tokenIds.offset,
+                out: result.buffer, outOffset: result.offset,
+                hidden: hiddenU, group_size: groupSizeU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (2, .f16):
+            MetalTileKernels.dequant_gather_int2_f16(
+                weight: weight.buffer, weightOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                indices: tokenIds.buffer, indicesOffset: tokenIds.offset,
+                out: result.buffer, outOffset: result.offset,
+                hidden: hiddenU, group_size: groupSizeU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (2, .bf16):
+            MetalTileKernels.dequant_gather_int2_bf16(
+                weight: weight.buffer, weightOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                indices: tokenIds.buffer, indicesOffset: tokenIds.offset,
+                out: result.buffer, outOffset: result.offset,
+                hidden: hiddenU, group_size: groupSizeU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
         default:
             fatalError("Ops.dequantGather: unsupported (bits=\(bits), dtype=\(scales.dtype))")
         }
@@ -1625,6 +1652,33 @@ public enum Ops {
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (5, .bf16):
             MetalTileKernels.dequant_gemv_int5_bf16(
+                weight: weight.buffer, weightOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                input: input.buffer, inputOffset: input.offset,
+                output: result.buffer, outputOffset: result.offset,
+                in_dim: inDimU, group_size: groupSizeU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (2, .f32):
+            MetalTileKernels.dequant_gemv_int2_f32(
+                weight: weight.buffer, weightOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                input: input.buffer, inputOffset: input.offset,
+                output: result.buffer, outputOffset: result.offset,
+                in_dim: inDimU, group_size: groupSizeU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (2, .f16):
+            MetalTileKernels.dequant_gemv_int2_f16(
+                weight: weight.buffer, weightOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                input: input.buffer, inputOffset: input.offset,
+                output: result.buffer, outputOffset: result.offset,
+                in_dim: inDimU, group_size: groupSizeU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (2, .bf16):
+            MetalTileKernels.dequant_gemv_int2_bf16(
                 weight: weight.buffer, weightOffset: weight.offset,
                 scales: scales.buffer, scalesOffset: scales.offset,
                 biases: biases.buffer, biasesOffset: biases.offset,
@@ -5384,7 +5438,8 @@ public enum Ops {
         groupSize: Int,
         on cmd: MTLCommandBuffer,
         device: Device,
-        into out: Tensor
+        into out: Tensor,
+        bits: Int = 4
     ) {
         precondition(
             weight.dtype == .u32,
@@ -5410,6 +5465,9 @@ public enum Ops {
         precondition(
             kIn % 32 == 0,
             "Ops.dequantGemmDynamicM: kIn (\(kIn)) must be multiple of 32 (BK tile)")
+        precondition(
+            bits == 2 || bits == 4,
+            "Ops.dequantGemmDynamicM: only int2 and int4 supported (got bits=\(bits))")
 
         let mPadded = ((t + 31) / 32) * 32
         let gsPerRow = kIn / groupSize
@@ -5421,7 +5479,7 @@ public enum Ops {
             dispatchQmmMma(
                 weight: weight, scales: scales, biases: biases,
                 input: input, output: out,
-                m: mPadded, n: nOut, k: kIn, gsPerRow: gsPerRow,
+                m: mPadded, n: nOut, k: kIn, gsPerRow: gsPerRow, bits: bits,
                 on: cmd)
             return
         }
@@ -5465,7 +5523,7 @@ public enum Ops {
         dispatchQmmMma(
             weight: weight, scales: scales, biases: biases,
             input: xPadded, output: outPadded,
-            m: mPadded, n: nOut, k: kIn, gsPerRow: gsPerRow,
+            m: mPadded, n: nOut, k: kIn, gsPerRow: gsPerRow, bits: bits,
             on: cmd)
 
         // Slice first T rows of outPadded → out (MTLBlit on `cmd`).
@@ -5481,10 +5539,12 @@ public enum Ops {
     /// Inner dispatcher for `dequantGemmDynamicM`. Grid is `[N/32, M/32, 1]`
     /// × tg `[128, 1, 1]` (4 SGs WM=WN=2 per the canonical `mt_qmm_mma`).
     /// `dispatchThreads` counts total threads per axis, so grid.x = N/32·128.
+    /// `bits` selects the int4 (unsuffixed) or int2 variant; the int2 kernel
+    /// uses the same geometry but unpacks 16 codes per u32 (vs 8 nibbles).
     private static func dispatchQmmMma(
         weight: Tensor, scales: Tensor, biases: Tensor,
         input: Tensor, output: Tensor,
-        m: Int, n: Int, k: Int, gsPerRow: Int,
+        m: Int, n: Int, k: Int, gsPerRow: Int, bits: Int,
         on cmd: MTLCommandBuffer
     ) {
         let tgWidth = 128
@@ -5496,8 +5556,8 @@ public enum Ops {
         let kU = UInt32(k)
         let nU = UInt32(n)
         let gsU = UInt32(gsPerRow)
-        switch input.dtype {
-        case .f32:
+        switch (bits, input.dtype) {
+        case (4, .f32):
             MetalTileKernels.mt_qmm_mma_f32(
                 w: weight.buffer, wOffset: weight.offset,
                 scales: scales.buffer, scalesOffset: scales.offset,
@@ -5506,7 +5566,7 @@ public enum Ops {
                 out: output.buffer, outOffset: output.offset,
                 k: kU, n: nU, gs_per_row: gsU,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .f16:
+        case (4, .f16):
             MetalTileKernels.mt_qmm_mma_f16(
                 w: weight.buffer, wOffset: weight.offset,
                 scales: scales.buffer, scalesOffset: scales.offset,
@@ -5515,7 +5575,7 @@ public enum Ops {
                 out: output.buffer, outOffset: output.offset,
                 k: kU, n: nU, gs_per_row: gsU,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
-        case .bf16:
+        case (4, .bf16):
             MetalTileKernels.mt_qmm_mma_bf16(
                 w: weight.buffer, wOffset: weight.offset,
                 scales: scales.buffer, scalesOffset: scales.offset,
@@ -5524,8 +5584,35 @@ public enum Ops {
                 out: output.buffer, outOffset: output.offset,
                 k: kU, n: nU, gs_per_row: gsU,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (2, .f32):
+            MetalTileKernels.mt_qmm_mma_int2_f32(
+                w: weight.buffer, wOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                x: input.buffer, xOffset: input.offset,
+                out: output.buffer, outOffset: output.offset,
+                k: kU, n: nU, gs_per_row: gsU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (2, .f16):
+            MetalTileKernels.mt_qmm_mma_int2_f16(
+                w: weight.buffer, wOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                x: input.buffer, xOffset: input.offset,
+                out: output.buffer, outOffset: output.offset,
+                k: kU, n: nU, gs_per_row: gsU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (2, .bf16):
+            MetalTileKernels.mt_qmm_mma_int2_bf16(
+                w: weight.buffer, wOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                x: input.buffer, xOffset: input.offset,
+                out: output.buffer, outOffset: output.offset,
+                k: kU, n: nU, gs_per_row: gsU,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
         default:
-            fatalError("Ops.dequantGemmDynamicM: unsupported dtype \(input.dtype)")
+            fatalError("Ops.dequantGemmDynamicM: unsupported (bits=\(bits), dtype=\(input.dtype))")
         }
     }
 

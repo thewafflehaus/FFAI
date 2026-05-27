@@ -630,11 +630,14 @@ public final class SAMAudioModel: @unchecked Sendable {
             let embDim = timestepInvFreq.count * 2
             var timeEmbeddingsFlat = [Float](repeating: 0, count: numSteps * embDim)
             timeEmbeddingsFlat.withUnsafeMutableBufferPointer { buf in
+                // `nonisolated(unsafe)`: each step writes a disjoint
+                // `[step*embDim ..< (step+1)*embDim)` slice.
+                nonisolated(unsafe) let bufPtr = buf.baseAddress!
                 DispatchQueue.concurrentPerform(iterations: numSteps) { step in
                     let t = Float(step) * ode.stepSize
                     let emb = self.sinusoidalTimeEmbedding(t)
                     let base = step * embDim
-                    for i in 0 ..< embDim { buf[base + i] = emb[i] }
+                    for i in 0 ..< embDim { bufPtr[base + i] = emb[i] }
                 }
             }
             // Wrap into per-step arrays for the ODE forward pass.

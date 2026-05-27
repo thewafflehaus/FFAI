@@ -605,7 +605,7 @@ private func conformerLayerForward(
     }
 
     // Pointwise conv1: [dModel → dModel*2], K=1.
-    var (cv, cvLen) = conv1dForward(
+    let (cv, cvLen) = conv1dForward(
         input: chMajor, inC: dModel, length: seqLen,
         weight: pw1W, bias: pw1B, outC: dModel * 2, kernelSize: 1)
     // GLU: split into two halves, apply sigmoid to second half.
@@ -641,7 +641,7 @@ private func conformerLayerForward(
     for d in 0 ..< dModel { for t in 0 ..< dwLen { dw[d * dwLen + t] = dwTime[t * dModel + d] } }
 
     // Pointwise conv2: [dModel → dModel], K=1.
-    var (pw2, _) = conv1dForward(
+    let (pw2, _) = conv1dForward(
         input: dw, inC: dModel, length: dwLen,
         weight: pw2W, bias: pw2B, outC: dModel, kernelSize: 1)
     // Transpose back to [seqLen, dModel] and add residual.

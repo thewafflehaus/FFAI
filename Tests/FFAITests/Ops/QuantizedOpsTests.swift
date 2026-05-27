@@ -45,6 +45,14 @@ struct QuantizedOpsTests {
         return w
     }
 
+    /// Pack 16 2-bit values (low crumb first) into one uint32.
+    static func pack16Twobit(_ q: [UInt32]) -> [UInt32] {
+        precondition(q.count == 16, "expected 16 2-bit values")
+        var w: UInt32 = 0
+        for i in 0 ..< 16 { w |= (q[i] & 0x3) << (2 * UInt32(i)) }
+        return [w]
+    }
+
     /// Pack 16 6-bit values into 3 uint32 (12 bytes).
     static func pack16Sixbit(_ q: [UInt32]) -> [UInt32] {
         precondition(q.count == 16, "expected 16 6-bit values")
@@ -332,6 +340,16 @@ struct QuantizedOpsTests {
             runDequantGemvCheck(
                 bits: 3, mask: 0x07, packPerChunk: 32, uint32sPerChunk: 3,
                 pack: Self.pack32Threebit)
+        }
+    }
+
+    @Test("int2 dequant gemv (group_size=64, bf16) matches CPU")
+    func roundTripInt2Bf16() {
+        autoreleasepool {
+            // 16 crumbs per uint32. inDim=64 → 4 uint32 per row at bits=2.
+            runDequantGemvCheck(
+                bits: 2, mask: 0x03, packPerChunk: 16, uint32sPerChunk: 1,
+                pack: Self.pack16Twobit)
         }
     }
 
@@ -1005,6 +1023,68 @@ struct QuantizedOpsTests {
             // Index 1 has the larger logit so its weight should dominate.
             let weightOf1 = idx[0] == 1 ? wts[0] : wts[1]
             #expect(weightOf1 > 0.7)
+        }
+    }
+
+    /// Direct test of the 2-bit path through `Ops.dequantGather`.
+    @Test("dequantGather(bits=2) — gather + dequant matches CPU q*scale+bias")
+    func dequantGatherInt2MatchesCPU() {
+        autoreleasepool {
+            let vocab = 4
+            let hidden = 32
+            let gs = 16
+            let nGroups = hidden / gs
+
+            // Deterministic 2-bit values per vocab row (codes ∈ 0..3).
+            var q = [[UInt32]](repeating: [], count: vocab)
+            for r in 0 ..< vocab {
+                q[r] = (0 ..< hidden).map { UInt32(($0 + r * 3) & 0x3) }
+            }
+            let scales: [Float] = (0 ..< (vocab * nGroups)).map { Float($0 + 1) * 0.05 }
+            let biases: [Float] = (0 ..< (vocab * nGroups)).map { Float($0) * -0.02 }
+
+            // Pack 16 crumbs per uint32 → hidden/16 = 2 words per row.
+            var packed: [UInt32] = []
+            for r in 0 ..< vocab {
+                for i in stride(from: 0, to: hidden, by: 16) {
+                    packed.append(contentsOf: Self.pack16Twobit(Array(q[r][i ..< i + 16])))
+                }
+            }
+
+            let tokens: [UInt32] = [3, 0, 2]
+            let nTokens = tokens.count
+
+            let weight = Tensor.empty(shape: [vocab, hidden / 16], dtype: .u32)
+            weight.copyIn(from: packed)
+            let scalesT = Tensor.empty(shape: [vocab, nGroups], dtype: .f32)
+            scalesT.copyIn(from: scales)
+            let biasesT = Tensor.empty(shape: [vocab, nGroups], dtype: .f32)
+            biasesT.copyIn(from: biases)
+            let idsT = Tensor.empty(shape: [nTokens], dtype: .u32)
+            idsT.copyIn(from: tokens)
+
+            var out: Tensor!
+            runAndWait { cb in
+                out = Ops.dequantGather(
+                    weight: weight, scales: scalesT, biases: biasesT,
+                    tokenIds: idsT, hidden: hidden, bits: 2, groupSize: gs, on: cb
+                )
+            }
+
+            let got = out.toArray(as: Float.self)
+            for t in 0 ..< nTokens {
+                let row = Int(tokens[t])
+                for d in 0 ..< hidden {
+                    let g = d / gs
+                    let s = scales[row * nGroups + g]
+                    let b = biases[row * nGroups + g]
+                    let expected = Float(q[row][d]) * s + b
+                    #expect(
+                        abs(got[t * hidden + d] - expected) < 1e-3,
+                        "token \(t) (row \(row)) d=\(d): got \(got[t * hidden + d]) expected \(expected)"
+                    )
+                }
+            }
         }
     }
 }

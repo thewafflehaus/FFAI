@@ -13,18 +13,50 @@
 // limitations under the License.
 //
 // `ffai convert` — quantize a bf16/fp16 HuggingFace checkpoint to
-// MLX 4-bit affine format using FFAI's own GPU kernels.
+// MLX affine format using FFAI's own GPU kernels.
+//
+// Per-tensor-class specs: `--bits` controls the attention + MLP
+// linears (the bulk of the model), and `--embedding-bits` /
+// `--lm-head-bits` / `--vision-bits` override the spec for those
+// specific tensors. Each flag accepts any of:
+//
+//   2 / 3 / 4 / 5 / 6 / 8   → affine-quantize to that bit-width
+//   fp16 / bf16             → downcast to that dtype (no quant)
+//
+// The `--*-bits` overrides are optional — omit one and that tensor
+// keeps its source dtype (mlx-lm convention for embeddings, lm_head,
+// vision tower).
 //
 // Examples:
 //   ffai convert HuggingFaceTB/SmolLM2-360M-Instruct --bits 4
-//   ffai convert HuggingFaceTB/SmolLM2-360M-Instruct --bits 4 \
-//       --output /tmp/smollm-4bit --quantize-embeddings
+//
+//   # Quantize text + embeddings (both at 4-bit), keep an untied
+//   # lm_head at 8-bit, leave vision full precision:
+//   ffai convert <repo> --bits 4 --embedding-bits 4 --lm-head-bits 8
+//
+//   # Mixed: text + embed at 3-bit, vision tower at 6-bit (requires
+//   # a VL tower that consumes QuantizedLinear — none ship today):
+//   ffai convert <vlm> --bits 3 --embedding-bits 3 --vision-bits 6
+//
+//   # Pure-downcast — no quantization, just publish the bf16 model
+//   # as fp16 (typical for downstream platforms that prefer fp16):
+//   ffai convert <repo> --bits fp16
+//
 //   ffai convert /local/path/to/model --bits 8 --output /tmp/out
 //   ffai convert mlx-community/Llama-3.2-1B-4bit --upload-repo ekryski/my-4bit
 
 import ArgumentParser
 import FFAI
 import Foundation
+
+/// Wrap `QuantSpec` for ArgumentParser. Lives in the CLI module so the
+/// FFAI library doesn't pull in an `ArgumentParser` dependency. The
+/// parser delegates to `QuantSpec.init(parsing:)` for the actual logic.
+extension QuantSpec: ExpressibleByArgument {
+    public init?(argument: String) {
+        self.init(parsing: argument)
+    }
+}
 
 struct ConvertCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -36,8 +68,12 @@ struct ConvertCommand: AsyncParsableCommand {
         help: "HF repo id (e.g. HuggingFaceTB/SmolLM2-360M-Instruct) or local directory path.")
     var source: String
 
-    @Option(name: .shortAndLong, help: "Bits per weight: 2, 4, or 8.")
-    var bits: Int = 4
+    @Option(
+        name: .shortAndLong,
+        help: ArgumentHelp(
+            "Spec for the main linear projections (q/k/v/o, gate/up/down, MoE experts). "
+                + "Accepts: 2 / 3 / 4 / 5 / 6 / 8 (affine bits) or fp16 / bf16 (pure downcast)."))
+    var bits: QuantSpec = .bits(4)
 
     @Option(
         name: .long, help: "Output directory. Defaults to ~/.cache/ffai/converts/<repo>-<bits>bit.")
@@ -48,11 +84,28 @@ struct ConvertCommand: AsyncParsableCommand {
         help: "Upload to HF repo (e.g. ekryski/foo-4bit). Requires `hf` CLI authenticated.")
     var uploadRepo: String?
 
-    @Flag(name: .long, help: "Quantize embed_tokens too (mlx-lm default: skip).")
-    var quantizeEmbeddings: Bool = false
+    @Option(
+        name: .long,
+        help: ArgumentHelp(
+            "Spec for embed_tokens (independent of --bits). Same accepted values as --bits. "
+                + "Omit to keep the embedding in its source dtype."))
+    var embeddingBits: QuantSpec?
 
-    @Flag(name: .long, help: "Quantize lm_head too (mlx-lm default: skip when tied).")
-    var quantizeLmHead: Bool = false
+    @Option(
+        name: .long,
+        help: ArgumentHelp(
+            "Spec for lm_head when untied (independent of --bits). Same accepted values as "
+                + "--bits. Omit to keep the head in its source dtype."))
+    var lmHeadBits: QuantSpec?
+
+    @Option(
+        name: .long,
+        help: ArgumentHelp(
+            "Spec for vision-tower weights (independent of --bits). Same accepted values as "
+                + "--bits. Omit to keep the tower in its source dtype — FFAI VL towers run plain "
+                + "Linear today, so a quantized spec here is only useful when wiring a new "
+                + "tower that consumes QuantizedLinear."))
+    var visionBits: QuantSpec?
 
     @Option(name: .long, help: "Revision (branch/tag/commit) to download from HF. Default: main.")
     var revision: String = "main"
@@ -84,15 +137,16 @@ struct ConvertCommand: AsyncParsableCommand {
             let expanded = (out as NSString).expandingTildeInPath
             destDir = URL(fileURLWithPath: expanded, isDirectory: true)
         } else {
-            destDir = defaultOutputDir(for: source, bits: bits)
+            destDir = defaultOutputDir(for: source, spec: bits)
         }
         print("output dir: \(destDir.path)")
 
         // ─── Build options ───────────────────────────────────────────
         var opts = ConvertOptions()
         opts.bits = bits
-        opts.quantizeEmbeddings = quantizeEmbeddings
-        opts.quantizeLmHead = quantizeLmHead
+        opts.embeddingSpec = embeddingBits
+        opts.lmHeadSpec = lmHeadBits
+        opts.visionSpec = visionBits
 
         // ─── Run conversion ──────────────────────────────────────────
         // Swift 6 strict concurrency: the progress closure is @Sendable so
@@ -119,10 +173,11 @@ struct ConvertCommand: AsyncParsableCommand {
 
     // ─── Helpers ─────────────────────────────────────────────────────
 
-    /// Default output path: `~/.cache/ffai/converts/<safe-name>-<bits>bit`.
+    /// Default output path: `~/.cache/ffai/converts/<safe-name>-<spec>`.
     /// `safe-name` is the source with "/" replaced by "--" so it stays
-    /// one directory level deep and is human-readable.
-    private func defaultOutputDir(for source: String, bits: Int) -> URL {
+    /// one directory level deep and is human-readable. `<spec>` is the
+    /// `QuantSpec.label` — `4bit`, `fp16`, etc.
+    private func defaultOutputDir(for source: String, spec: QuantSpec) -> URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let cacheRoot =
             home
@@ -138,7 +193,7 @@ struct ConvertCommand: AsyncParsableCommand {
         } else {
             baseName = source.replacingOccurrences(of: "/", with: "--")
         }
-        let dirName = "\(baseName)-\(bits)bit"
+        let dirName = "\(baseName)-\(spec.label)"
         return cacheRoot.appendingPathComponent(dirName)
     }
 

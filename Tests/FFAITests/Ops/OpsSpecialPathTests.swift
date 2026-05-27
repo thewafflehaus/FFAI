@@ -1168,4 +1168,44 @@ struct OpsSpecialPathTests {
             for v in got { #expect(v.isFinite, "non-finite: \(v)") }
         }
     }
+
+    @Test("dequantGemmDynamicM f32 (bits=2) — T=32 fast path runs finite")
+    func dequantGemmDynamicMInt2Smoke() {
+        // Smoke-test the 2-bit dispatch through mt_qmm_mma_int2. Same
+        // shape contract as the int4 smoke above but with packs sized
+        // for 16 codes per u32 (kIn/16 packs per row).
+        autoreleasepool {
+            let t = 32
+            let nOut = 32
+            let kIn = 64  // need ≥ group_size for the int2 layout
+            let groupSize = 64
+            let packs = kIn / 16  // 16 codes per uint32
+            let weight = Tensor.empty(shape: [nOut, packs], dtype: .u32)
+            // Wrap on multiply so the deterministic ramp doesn't blow past UInt32.max.
+            weight.copyIn(from: (0 ..< (nOut * packs)).map { UInt32($0 + 1) &* 0x5555_5555 })
+            let groups = kIn / groupSize
+            let scales = Tensor.empty(shape: [nOut, groups], dtype: .f32)
+            scales.copyIn(
+                from: (0 ..< (nOut * groups))
+                    .map { Float($0) * 0.01 + 0.05 })
+            let biases = Tensor.empty(shape: [nOut, groups], dtype: .f32)
+            biases.copyIn(
+                from: (0 ..< (nOut * groups))
+                    .map { Float($0) * -0.005 })
+            let input = Tensor.empty(shape: [t, kIn], dtype: .f32)
+            input.copyIn(from: (0 ..< (t * kIn)).map { Float($0) * 0.001 })
+            let out = Tensor.empty(shape: [t, nOut], dtype: .f32)
+            out.zero()
+            runAndWait { cb in
+                Ops.dequantGemmDynamicM(
+                    input: input,
+                    weight: weight, scales: scales, biases: biases,
+                    t: t, nOut: nOut, kIn: kIn, groupSize: groupSize,
+                    on: cb, device: .shared, into: out, bits: 2)
+            }
+            let got = out.toArray(as: Float.self)
+            #expect(got.count == t * nOut)
+            for v in got { #expect(v.isFinite, "non-finite: \(v)") }
+        }
+    }
 }

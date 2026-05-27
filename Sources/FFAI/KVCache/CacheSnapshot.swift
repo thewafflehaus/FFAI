@@ -62,9 +62,6 @@ extension Array where Element == any LayerCacheProtocol {
                     currentState: gdn.snapshot(device: device),
                     length: gdn.length)
             }
-            if let conv = cache as? ConvStateCache {
-                return .conv(state: conv.snapshot(device: device))
-            }
             if let kv = cache as? KVCache {
                 return .kv(
                     length: kv.length,
@@ -96,8 +93,6 @@ extension Array where Element == any LayerCacheProtocol {
             case let (gdn as GDNStateCache, .gdn(currentT, length)):
                 gdn.restore(from: currentT, device: device)
                 gdn.setLength(length)
-            case let (conv as ConvStateCache, .conv(stateT)):
-                conv.restore(from: stateT, device: device)
             case let (kv as KVCache, .kv(length, _)):
                 kv.truncate(toLength: length)
             default:

@@ -242,7 +242,9 @@ private func matVec(
 ) -> [Float] {
     precondition(w.count == outDim * inDim)
     precondition(x.count == inDim)
-    var y = [Float](repeating: 0, count: outDim)
+    // `nonisolated(unsafe)`: each `concurrentPerform` iteration writes to
+    // a distinct index `y[i]`; disjoint indices, no aliasing.
+    nonisolated(unsafe) var y = [Float](repeating: 0, count: outDim)
     // Parallelise over rows so multi-layer conformer attention
     // uses all CPU cores when processing the encoder.
     DispatchQueue.concurrentPerform(iterations: outDim) { i in
@@ -264,7 +266,10 @@ private func batchMatVec(
     outDim: Int, inDim: Int
 ) -> [[Float]] {
     let n = xRows.count
-    var out = [[Float]](repeating: [Float](repeating: 0, count: outDim), count: n)
+    // `nonisolated(unsafe)`: each `concurrentPerform` iteration writes a
+    // distinct `out[row]`; disjoint indices, no aliasing.
+    nonisolated(unsafe) var out = [[Float]](
+        repeating: [Float](repeating: 0, count: outDim), count: n)
     DispatchQueue.concurrentPerform(iterations: n) { row in
         let x = xRows[row]
         var y = [Float](repeating: 0, count: outDim)
@@ -622,12 +627,12 @@ private func extractMelFeatures(_ waveform: [Float]) -> [[Float]] {
     }
     // Pad: centre the winLen window in nFft
     let padLeft = (nFft - winLen) / 2
-    var winPadded = [Float](repeating: 0, count: nFft)
+    nonisolated(unsafe) var winPadded = [Float](repeating: 0, count: nFft)
     for i in 0 ..< winLen { winPadded[padLeft + i] = win[i] }
 
     // Reflect-pad audio so first and last windows are centred
     let halfWin = nFft / 2
-    var audio = [Float](repeating: 0, count: waveform.count + 2 * halfWin)
+    nonisolated(unsafe) var audio = [Float](repeating: 0, count: waveform.count + 2 * halfWin)
     for i in 0 ..< halfWin { audio[halfWin - 1 - i] = waveform[min(i, waveform.count - 1)] }
     for i in 0 ..< waveform.count { audio[halfWin + i] = waveform[i] }
     for i in 0 ..< halfWin {
@@ -638,8 +643,11 @@ private func extractMelFeatures(_ waveform: [Float]) -> [[Float]] {
     let nFrames = (audio.count - nFft) / hopLen + 1
     let nFreqs = nFft / 2 + 1
 
-    // STFT: magnitude squared spectrum [nFrames, nFreqs]
-    var powerSpec = [[Float]](repeating: [Float](repeating: 0, count: nFreqs), count: nFrames)
+    // STFT: magnitude squared spectrum [nFrames, nFreqs].
+    // `nonisolated(unsafe)`: `audio` / `winPadded` are read-only inside the
+    // closure; `powerSpec` is written at disjoint `[frame][freq]` indices.
+    nonisolated(unsafe) var powerSpec = [[Float]](
+        repeating: [Float](repeating: 0, count: nFreqs), count: nFrames)
     // Process frames — parallelise across frames for speed
     DispatchQueue.concurrentPerform(iterations: nFrames) { frame in
         let offset = frame * hopLen
@@ -675,7 +683,8 @@ private func extractMelFeatures(_ waveform: [Float]) -> [[Float]] {
     // Convert to bin indices
     let binPts = melPts.map { Int(($0 / (Float(sampleRate) / Float(nFft))).rounded()) }
     // Build filter bank
-    var melFB = [[Float]](repeating: [Float](repeating: 0, count: nMels), count: nFreqs)
+    nonisolated(unsafe) var melFB = [[Float]](
+        repeating: [Float](repeating: 0, count: nMels), count: nFreqs)
     for m in 0 ..< nMels {
         let fLeft = binPts[m]
         let fCenter = binPts[m + 1]
@@ -688,8 +697,10 @@ private func extractMelFeatures(_ waveform: [Float]) -> [[Float]] {
         }
     }
 
-    // Mel spectrogram [nFrames, nMels]
-    var melSpec = [[Float]](repeating: [Float](repeating: 0, count: nMels), count: nFrames)
+    // Mel spectrogram [nFrames, nMels].
+    // `nonisolated(unsafe)`: each iteration writes a disjoint `melSpec[frame]`.
+    nonisolated(unsafe) var melSpec = [[Float]](
+        repeating: [Float](repeating: 0, count: nMels), count: nFrames)
     DispatchQueue.concurrentPerform(iterations: nFrames) { frame in
         for m in 0 ..< nMels {
             var sum: Float = 0
@@ -737,7 +748,9 @@ private func depthwiseConv1d(
 
     // Weight layout from MLX (after sanitise transposition):
     // [kernelSize, 1, chan] — i.e., weight[k * chan + c] = filter coeff for channel c, offset k
-    var out = [[Float]](repeating: [Float](repeating: 0, count: chan), count: outT)
+    // `nonisolated(unsafe)`: each iteration writes a disjoint `out[t]`.
+    nonisolated(unsafe) var out = [[Float]](
+        repeating: [Float](repeating: 0, count: chan), count: outT)
     DispatchQueue.concurrentPerform(iterations: outT) { t in
         for c in 0 ..< chan {
             var acc: Float = 0
@@ -840,13 +853,15 @@ private func conformerAttn(
         let isLast = b == numBlocks - 1
         let validLen = isLast && remainder > 0 ? remainder : C
 
-        // Extract Q,K,V for this block: [C, H, Dh]
-        // Reshape: q[t][h*Dh + d] → q[h][t][d]
-        var qBlock = [[[Float]]](
+        // Extract Q,K,V for this block: [C, H, Dh].
+        // Reshape: q[t][h*Dh + d] → q[h][t][d].
+        // `nonisolated(unsafe)`: read-only inside the per-head concurrent
+        // closure below; populated serially here first.
+        nonisolated(unsafe) var qBlock = [[[Float]]](
             repeating: [[Float]](repeating: [Float](repeating: 0, count: Dh), count: C), count: H)
-        var kBlock = [[[Float]]](
+        nonisolated(unsafe) var kBlock = [[[Float]]](
             repeating: [[Float]](repeating: [Float](repeating: 0, count: Dh), count: C), count: H)
-        var vBlock = [[[Float]]](
+        nonisolated(unsafe) var vBlock = [[[Float]]](
             repeating: [[Float]](repeating: [Float](repeating: 0, count: Dh), count: C), count: H)
 
         for t in 0 ..< C {
@@ -869,7 +884,9 @@ private func conformerAttn(
         // bidirectional SDPA contract. Until a `sdpaBidirectionalRelPos`
         // / d128 kernel lands, this stays on the CPU concurrent loop. The
         // QFormer MHA below (16 × 64) already runs on GPU.
-        var headOuts = [[[Float]]](
+        // `nonisolated(unsafe)`: each `concurrentPerform` head writes a
+        // disjoint `headOuts[h]`.
+        nonisolated(unsafe) var headOuts = [[[Float]]](
             repeating: [[Float]](repeating: [Float](repeating: 0, count: Dh), count: C), count: H)
         DispatchQueue.concurrentPerform(iterations: H) { h in
             // Dot-product scores [C, C]: q[h][i] · k[h][j] * scale
@@ -1131,7 +1148,10 @@ private func qformerMHA(
     }
 
     // ── CPU fallback (rare head_dim, kept for safety) ───────────────
-    var out = [[Float]](repeating: [Float](repeating: 0, count: hs), count: L)
+    // `nonisolated(unsafe)`: each head writes a disjoint `[base ..< base + headDim]`
+    // slice of every output row.
+    nonisolated(unsafe) var out = [[Float]](
+        repeating: [Float](repeating: 0, count: hs), count: L)
     DispatchQueue.concurrentPerform(iterations: numHeads) { h in
         let base = h * headDim
         var scores = [[Float]](repeating: [Float](repeating: 0, count: M), count: L)
@@ -1630,13 +1650,13 @@ public final class GraniteSpeechModel: Module {
         let dstPtr = dst.buffer.contents().advanced(by: dst.offset)
         switch dst.dtype {
         case .f32:
-            src.withUnsafeBytes { memcpy(dstPtr, $0.baseAddress!, src.count * 4) }
+            _ = src.withUnsafeBytes { memcpy(dstPtr, $0.baseAddress!, src.count * 4) }
         case .f16:
             let bits = src.map { float32ToFloat16($0) }
-            bits.withUnsafeBytes { memcpy(dstPtr, $0.baseAddress!, src.count * 2) }
+            _ = bits.withUnsafeBytes { memcpy(dstPtr, $0.baseAddress!, src.count * 2) }
         case .bf16:
             let bits = src.map { float32ToBFloat16($0) }
-            bits.withUnsafeBytes { memcpy(dstPtr, $0.baseAddress!, src.count * 2) }
+            _ = bits.withUnsafeBytes { memcpy(dstPtr, $0.baseAddress!, src.count * 2) }
         default:
             fatalError("copyF32ToTensor: unsupported dtype \(dst.dtype)")
         }

@@ -80,7 +80,16 @@ public struct GPTOSSMoEVariant: GPTOSSVariant, ReasoningCapable {
         topK: 0,
         minP: 0.0,
         repetitionPenalty: 1.0,
-        reasoningLevel: .none
+        // `reasoningLevel: nil` — the field is `Optional<ReasoningLevel>`,
+        // so the bare `.none` literal previously inferred Optional's
+        // nil. The mechanical Swift 5.10 warning sweep wrongly qualified
+        // it as `ReasoningLevel.none` (the enum case, NOT nil), which
+        // wraps to `Optional.some(.none)` and breaks the
+        // `defaultGenerationParameters.reasoningLevel == .none` test.
+        // Write `nil` explicitly so the intent is unambiguous and the
+        // older toolchain doesn't surface its "assuming Optional.none"
+        // ambiguity warning.
+        reasoningLevel: nil
     )
 
     public static func loadModel(
@@ -507,7 +516,9 @@ public final class GPTOSSAttention: Module {
         let headsPerGroup = nHeads / nKVHeads
         // Per-kv-head live K slice [nKV, headDim], read once and reused
         // across the headsPerGroup query heads that share it.
-        var kLive = [[Float]](repeating: [], count: nKVHeads)
+        // `nonisolated(unsafe)`: read-only inside the per-head concurrent
+        // closure below; populated serially here first.
+        nonisolated(unsafe) var kLive = [[Float]](repeating: [], count: nKVHeads)
         if nKV > 0 {
             for kvHead in 0 ..< nKVHeads {
                 // kBuffer is [nKVHeads, maxSeq, headDim]; slice head
@@ -528,21 +539,31 @@ public final class GPTOSSAttention: Module {
         // independent (writes factors[h] only) so the head loop is
         // parallelised across (head) work items.
         var factors = [Float](repeating: 1, count: nHeads)
+        // Bind every self-borrowed value to a local before crossing the
+        // `@Sendable` boundary — otherwise the closure captures `self`
+        // (an actor-isolated GPTOSSAttention) just to read scalar
+        // properties like `headDim` / `scale` / `sinks`. The bindings
+        // themselves are Sendable (Int, Float, [Float]) so no
+        // `nonisolated(unsafe)` qualifier is needed; only the raw
+        // `fPtr` pointer write needs it.
+        let sinksLocal = sinks
+        let headDimLocal = headDim
+        let scaleLocal = scale
         factors.withUnsafeMutableBufferPointer { fBuf in
-            let fPtr = fBuf.baseAddress!
+            nonisolated(unsafe) let fPtr = fBuf.baseAddress!
             DispatchQueue.concurrentPerform(iterations: nHeads) { h in
                 let kvHead = h / headsPerGroup
-                let qBase = h * headDim
+                let qBase = h * headDimLocal
                 let kHead = kLive[kvHead]
-                var m = sinks[h]
+                var m = sinksLocal[h]
                 var z: Float = 0
                 for t in 0 ..< nKV {
-                    let kBase = t * headDim
+                    let kBase = t * headDimLocal
                     var dot: Float = 0
-                    for d in 0 ..< headDim {
+                    for d in 0 ..< headDimLocal {
                         dot += qHost[qBase + d] * kHead[kBase + d]
                     }
-                    let s = dot * scale
+                    let s = dot * scaleLocal
                     if s > m {
                         // Renormalise the running sum to the new max.
                         z = z * Foundation.exp(m - s)
@@ -550,7 +571,7 @@ public final class GPTOSSAttention: Module {
                     }
                     z += Foundation.exp(s - m)
                 }
-                let sinkTerm = Foundation.exp(sinks[h] - m)
+                let sinkTerm = Foundation.exp(sinksLocal[h] - m)
                 // O' = O · Z / (Z + exp(sink - M)). Z > 0 whenever nKV > 0.
                 fPtr[h] = z / (z + sinkTerm)
             }

@@ -53,9 +53,12 @@ public enum QuantizedOps {
     // ─── dequantizeAffine: packed u32 → fp32/16/bf16 ───────────────
 
     /// Affine-dequantize `w`'s packed `u32` entries into `out` for the
-    /// given `bits` ∈ {2, 4, 8} and `group_size`. `out.elementCount`
-    /// must equal `n_groups * group_size`; `w.elementCount` must equal
-    /// `n_groups * (group_size / pack_factor)`.
+    /// given `bits` ∈ {2, 3, 4, 5, 6, 8} and `group_size`.
+    /// `out.elementCount` must equal `n_groups * group_size`;
+    /// `w.elementCount` must equal `numel * bits / 32` (which for the
+    /// clean-pack widths 2/4/8 is `n_groups * group_size / pack_factor`,
+    /// and for the byte-stream widths 3/5/6 is the u32-aligned size of
+    /// the packed bit stream — use `QuantizedOpsValidation.packedUInt32Count`).
     public static func dequantizeAffine(
         weight: Tensor, scales: Tensor, biases: Tensor,
         into out: Tensor,
@@ -147,9 +150,72 @@ public enum QuantizedOps {
                 biases: biases.buffer, biasesOffset: biases.offset,
                 out: out.buffer, outOffset: out.offset,
                 group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (3, .f32):
+            MetalTileKernels.mt_affine_dequantize_int3_f32(
+                w: weight.buffer, wOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                out: out.buffer, outOffset: out.offset,
+                group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (3, .f16):
+            MetalTileKernels.mt_affine_dequantize_int3_f16(
+                w: weight.buffer, wOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                out: out.buffer, outOffset: out.offset,
+                group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (3, .bf16):
+            MetalTileKernels.mt_affine_dequantize_int3_bf16(
+                w: weight.buffer, wOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                out: out.buffer, outOffset: out.offset,
+                group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (5, .f32):
+            MetalTileKernels.mt_affine_dequantize_int5_f32(
+                w: weight.buffer, wOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                out: out.buffer, outOffset: out.offset,
+                group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (5, .f16):
+            MetalTileKernels.mt_affine_dequantize_int5_f16(
+                w: weight.buffer, wOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                out: out.buffer, outOffset: out.offset,
+                group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (5, .bf16):
+            MetalTileKernels.mt_affine_dequantize_int5_bf16(
+                w: weight.buffer, wOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                out: out.buffer, outOffset: out.offset,
+                group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (6, .f32):
+            MetalTileKernels.mt_affine_dequantize_int6_f32(
+                w: weight.buffer, wOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                out: out.buffer, outOffset: out.offset,
+                group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (6, .f16):
+            MetalTileKernels.mt_affine_dequantize_int6_f16(
+                w: weight.buffer, wOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                out: out.buffer, outOffset: out.offset,
+                group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (6, .bf16):
+            MetalTileKernels.mt_affine_dequantize_int6_bf16(
+                w: weight.buffer, wOffset: weight.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                out: out.buffer, outOffset: out.offset,
+                group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
         default:
             fatalError(
-                "QuantizedOps.dequantizeAffine: unsupported (bits=\(bits), dtype=\(out.dtype)); int3/5/6 not wrapped at this layer (see OpsCoverageNotes.swift)"
+                "QuantizedOps.dequantizeAffine: unsupported (bits=\(bits), dtype=\(out.dtype))"
             )
         }
     }
@@ -157,7 +223,9 @@ public enum QuantizedOps {
     // ─── quantizeAffine: fp32/16/bf16 → packed u32 ─────────────────
 
     /// Affine-quantize `weight` into packed `u32` `out` (+ per-group
-    /// scale + bias outputs). bits ∈ {2, 4, 8}.
+    /// scale + bias outputs). `bits` ∈ {2, 3, 4, 5, 6, 8}; `packed`
+    /// must be pre-sized to `QuantizedOpsValidation.packedUInt32Count(
+    /// numel: weight.elementCount, bits: bits)` entries.
     public static func quantizeAffine(
         weight: Tensor,
         packed: Tensor, scales: Tensor, biases: Tensor,
@@ -249,9 +317,72 @@ public enum QuantizedOps {
                 scales: scales.buffer, scalesOffset: scales.offset,
                 biases: biases.buffer, biasesOffset: biases.offset,
                 group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (3, .f32):
+            MetalTileKernels.mt_affine_quantize_int3_f32(
+                w: weight.buffer, wOffset: weight.offset,
+                out: packed.buffer, outOffset: packed.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (3, .f16):
+            MetalTileKernels.mt_affine_quantize_int3_f16(
+                w: weight.buffer, wOffset: weight.offset,
+                out: packed.buffer, outOffset: packed.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (3, .bf16):
+            MetalTileKernels.mt_affine_quantize_int3_bf16(
+                w: weight.buffer, wOffset: weight.offset,
+                out: packed.buffer, outOffset: packed.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (5, .f32):
+            MetalTileKernels.mt_affine_quantize_int5_f32(
+                w: weight.buffer, wOffset: weight.offset,
+                out: packed.buffer, outOffset: packed.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (5, .f16):
+            MetalTileKernels.mt_affine_quantize_int5_f16(
+                w: weight.buffer, wOffset: weight.offset,
+                out: packed.buffer, outOffset: packed.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (5, .bf16):
+            MetalTileKernels.mt_affine_quantize_int5_bf16(
+                w: weight.buffer, wOffset: weight.offset,
+                out: packed.buffer, outOffset: packed.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (6, .f32):
+            MetalTileKernels.mt_affine_quantize_int6_f32(
+                w: weight.buffer, wOffset: weight.offset,
+                out: packed.buffer, outOffset: packed.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (6, .f16):
+            MetalTileKernels.mt_affine_quantize_int6_f16(
+                w: weight.buffer, wOffset: weight.offset,
+                out: packed.buffer, outOffset: packed.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (6, .bf16):
+            MetalTileKernels.mt_affine_quantize_int6_bf16(
+                w: weight.buffer, wOffset: weight.offset,
+                out: packed.buffer, outOffset: packed.offset,
+                scales: scales.buffer, scalesOffset: scales.offset,
+                biases: biases.buffer, biasesOffset: biases.offset,
+                group_size: gs, gridSize: grid, threadgroupSize: tg, on: cmd)
         default:
             fatalError(
-                "QuantizedOps.quantizeAffine: unsupported (bits=\(bits), dtype=\(weight.dtype)); int3/5/6 not wrapped at this layer (see OpsCoverageNotes.swift)"
+                "QuantizedOps.quantizeAffine: unsupported (bits=\(bits), dtype=\(weight.dtype))"
             )
         }
     }

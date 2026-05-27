@@ -123,55 +123,70 @@ public enum DeepFilterNetSTFT {
         // Process frames (parallelised for large frame counts).
         let concurrentThreshold = 16
         if nFrames >= concurrentThreshold {
-            // Parallel: each frame is independent. Allocate per-frame scratch.
-            var realBuffers = [[Float]](
-                repeating: [Float](repeating: 0, count: fftPow2), count: nFrames)
-            var imagBuffers = [[Float]](
-                repeating: [Float](repeating: 0, count: fftPow2), count: nFrames)
-            DispatchQueue.concurrentPerform(iterations: nFrames) { frame in
-                let offset = frame * hopSize
-                var frameBuffer = [Float](repeating: 0, count: fftPow2)
-                // Apply window and fill frame buffer (zero-pad to fftPow2).
-                for i in 0 ..< fftSize {
-                    frameBuffer[i] = padded[offset + i] * window[i]
-                }
-                // Real FFT via split complex.
-                var splitComplex = DSPSplitComplex(
-                    realp: &realBuffers[frame],
-                    imagp: &imagBuffers[frame]
-                )
-                frameBuffer.withUnsafeBufferPointer { buf in
-                    buf.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftPow2 / 2) {
-                        cPtr in
-                        vDSP_ctoz(cPtr, 2, &splitComplex, 1, vDSP_Length(fftPow2 / 2))
+            // Parallel: each frame is independent. Allocate per-frame scratch
+            // as flat buffers so we can hand vDSP raw pointers with a lifetime
+            // that strictly contains the parallel work.
+            var realBuffers = [Float](repeating: 0, count: nFrames * fftPow2)
+            var imagBuffers = [Float](repeating: 0, count: nFrames * fftPow2)
+            realBuffers.withUnsafeMutableBufferPointer { rBuf in
+                imagBuffers.withUnsafeMutableBufferPointer { iBuf in
+                    // Safety: each `concurrentPerform` iteration writes to a
+                    // disjoint `[frame*fftPow2 ..< (frame+1)*fftPow2)` slice.
+                    nonisolated(unsafe) let rPtr = rBuf.baseAddress!
+                    nonisolated(unsafe) let iPtr = iBuf.baseAddress!
+                    nonisolated(unsafe) let fftSetupLocal = fftSetup
+                    DispatchQueue.concurrentPerform(iterations: nFrames) { frame in
+                        let offset = frame * hopSize
+                        var frameBuffer = [Float](repeating: 0, count: fftPow2)
+                        // Apply window and fill frame buffer (zero-pad to fftPow2).
+                        for i in 0 ..< fftSize {
+                            frameBuffer[i] = padded[offset + i] * window[i]
+                        }
+                        // Real FFT via split complex. Each frame's scratch
+                        // is the slice `rPtr + frame*fftPow2 ..< rPtr + (frame+1)*fftPow2`.
+                        let frameBase = frame * fftPow2
+                        var splitComplex = DSPSplitComplex(
+                            realp: rPtr.advanced(by: frameBase),
+                            imagp: iPtr.advanced(by: frameBase)
+                        )
+                        frameBuffer.withUnsafeBufferPointer { buf in
+                            buf.baseAddress!.withMemoryRebound(
+                                to: DSPComplex.self, capacity: fftPow2 / 2
+                            ) {
+                                cPtr in
+                                vDSP_ctoz(cPtr, 2, &splitComplex, 1, vDSP_Length(fftPow2 / 2))
+                            }
+                        }
+                        vDSP_fft_zrip(
+                            fftSetupLocal, &splitComplex, 1, log2N, FFTDirection(FFT_FORWARD))
+                        // Scale: vDSP forward FFT has an implicit factor of 2 vs DFT convention.
+                        // We apply wnorm here (matches libDF's fft_norm).
+                        let scale = wnorm / 2.0  // /2 because vDSP RFFT packs Nyquist in imag[0]
+                        rPtr[frameBase + 0] *= scale
+                        iPtr[frameBase + 0] = 0  // DC bin is purely real
+                        for b in 1 ..< (freqBins - 1) {
+                            rPtr[frameBase + b] *= scale
+                            iPtr[frameBase + b] *= scale
+                        }
+                        // Nyquist (freqBins-1) lives in splitComplex.imagp[0] for power-of-2 FFT.
+                        if freqBins - 1 < fftPow2 / 2 {
+                            rPtr[frameBase + freqBins - 1] *= scale
+                            iPtr[frameBase + freqBins - 1] *= scale
+                        } else {
+                            // Nyquist packed in imagp[0] by vDSP convention.
+                            rPtr[frameBase + freqBins - 1] = iPtr[frameBase + 0] * scale
+                            iPtr[frameBase + freqBins - 1] = 0
+                        }
                     }
-                }
-                vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2N, FFTDirection(FFT_FORWARD))
-                // Scale: vDSP forward FFT has an implicit factor of 2 vs DFT convention.
-                // We apply wnorm here (matches libDF's fft_norm).
-                let scale = wnorm / 2.0  // /2 because vDSP RFFT packs Nyquist in imag[0]
-                realBuffers[frame][0] *= scale
-                imagBuffers[frame][0] = 0  // DC bin is purely real
-                for b in 1 ..< (freqBins - 1) {
-                    realBuffers[frame][b] *= scale
-                    imagBuffers[frame][b] *= scale
-                }
-                // Nyquist (freqBins-1) lives in splitComplex.imagp[0] for power-of-2 FFT.
-                if freqBins - 1 < fftPow2 / 2 {
-                    realBuffers[frame][freqBins - 1] *= scale
-                    imagBuffers[frame][freqBins - 1] *= scale
-                } else {
-                    // Nyquist packed in imagp[0] by vDSP convention.
-                    realBuffers[frame][freqBins - 1] = imagBuffers[frame][0] * scale
-                    imagBuffers[frame][freqBins - 1] = 0
                 }
             }
             // Gather results into flat arrays.
             for frame in 0 ..< nFrames {
                 let base = frame * freqBins
+                let frameBase = frame * fftPow2
                 for b in 0 ..< freqBins {
-                    outReal[base + b] = realBuffers[frame][b]
-                    outImag[base + b] = imagBuffers[frame][b]
+                    outReal[base + b] = realBuffers[frameBase + b]
+                    outImag[base + b] = imagBuffers[frameBase + b]
                 }
             }
         } else {
@@ -188,14 +203,22 @@ public enum DeepFilterNetSTFT {
                 if fftPow2 > fftSize {
                     for i in fftSize ..< fftPow2 { frameBuffer[i] = 0 }
                 }
-                var splitComplex = DSPSplitComplex(realp: &realScratch, imagp: &imagScratch)
-                frameBuffer.withUnsafeBufferPointer { buf in
-                    buf.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftPow2 / 2) {
-                        cPtr in
-                        vDSP_ctoz(cPtr, 2, &splitComplex, 1, vDSP_Length(fftPow2 / 2))
+                realScratch.withUnsafeMutableBufferPointer { rBuf in
+                    imagScratch.withUnsafeMutableBufferPointer { iBuf in
+                        var splitComplex = DSPSplitComplex(
+                            realp: rBuf.baseAddress!, imagp: iBuf.baseAddress!)
+                        frameBuffer.withUnsafeBufferPointer { buf in
+                            buf.baseAddress!.withMemoryRebound(
+                                to: DSPComplex.self, capacity: fftPow2 / 2
+                            ) {
+                                cPtr in
+                                vDSP_ctoz(cPtr, 2, &splitComplex, 1, vDSP_Length(fftPow2 / 2))
+                            }
+                        }
+                        vDSP_fft_zrip(
+                            fftSetup, &splitComplex, 1, log2N, FFTDirection(FFT_FORWARD))
                     }
                 }
-                vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2N, FFTDirection(FFT_FORWARD))
                 let scale = wnorm / 2.0
                 let base = frame * freqBins
                 outReal[base] = realScratch[0] * scale
@@ -292,13 +315,20 @@ public enum DeepFilterNetSTFT {
                 realScratch[b] = 0
                 imagScratch[b] = 0
             }
-            var splitComplex = DSPSplitComplex(realp: &realScratch, imagp: &imagScratch)
-            vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2N, FFTDirection(FFT_INVERSE))
-            // Unpack split complex to interleaved.
-            timeBuf.withUnsafeMutableBufferPointer { buf in
-                buf.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftPow2 / 2) {
-                    cPtr in
-                    vDSP_ztoc(&splitComplex, 1, cPtr, 2, vDSP_Length(fftPow2 / 2))
+            realScratch.withUnsafeMutableBufferPointer { rBuf in
+                imagScratch.withUnsafeMutableBufferPointer { iBuf in
+                    var splitComplex = DSPSplitComplex(
+                        realp: rBuf.baseAddress!, imagp: iBuf.baseAddress!)
+                    vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2N, FFTDirection(FFT_INVERSE))
+                    // Unpack split complex to interleaved.
+                    timeBuf.withUnsafeMutableBufferPointer { buf in
+                        buf.baseAddress!.withMemoryRebound(
+                            to: DSPComplex.self, capacity: fftPow2 / 2
+                        ) {
+                            cPtr in
+                            vDSP_ztoc(&splitComplex, 1, cPtr, 2, vDSP_Length(fftPow2 / 2))
+                        }
+                    }
                 }
             }
             // Normalise by fftPow2 (vDSP IRFFT scaling).

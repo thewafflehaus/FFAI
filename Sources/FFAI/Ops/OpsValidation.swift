@@ -341,8 +341,8 @@ public enum OpsValidation {
         scalesCount: Int, biasesCount: Int
     ) -> String? {
         // Supported bit-widths (mirrors the wrapper's switch arms).
-        if !(bits == 3 || bits == 4 || bits == 5 || bits == 6 || bits == 8) {
-            return "bits=\(bits) unsupported — must be one of 3, 4, 5, 6, or 8"
+        if !(bits == 2 || bits == 3 || bits == 4 || bits == 5 || bits == 6 || bits == 8) {
+            return "bits=\(bits) unsupported — must be one of 2, 3, 4, 5, 6, or 8"
         }
         if outDim <= 0 {
             return "outDim must be positive (got \(outDim))"
@@ -359,8 +359,8 @@ public enum OpsValidation {
                 "inDim=\(inDim) must be a multiple of groupSize=\(groupSize) — partial trailing group would be silently dropped"
         }
         // Footgun 2: pack-alignment for pack-strided variants.
-        if bits == 4 || bits == 8 {
-            let valsPerPack = 32 / bits  // 8 for int4, 4 for int8
+        if bits == 2 || bits == 4 || bits == 8 {
+            let valsPerPack = 32 / bits  // 16 for int2, 8 for int4, 4 for int8
             if !inDim.isMultiple(of: valsPerPack) {
                 return
                     "inDim=\(inDim) must be a multiple of \(valsPerPack) for bits=\(bits) (pack-strided kernel — unaligned tail elements silently dropped)"
@@ -488,8 +488,8 @@ public enum OpsValidation {
     public static func validateDequantGather(
         hidden: Int, bits: Int, groupSize: Int
     ) -> String? {
-        if !(bits == 3 || bits == 4 || bits == 5 || bits == 6 || bits == 8) {
-            return "bits=\(bits) unsupported — must be one of 3, 4, 5, 6, or 8"
+        if !(bits == 2 || bits == 3 || bits == 4 || bits == 5 || bits == 6 || bits == 8) {
+            return "bits=\(bits) unsupported — must be one of 2, 3, 4, 5, 6, or 8"
         }
         if hidden <= 0 {
             return "hidden must be positive (got \(hidden))"

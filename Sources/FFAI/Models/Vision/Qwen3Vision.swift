@@ -180,9 +180,10 @@ final class Qwen3VLVisionBlock {
         // Stage 1: Extract and RoPE every (head, token) slice.
         // Index layout: qH[head * nTokens + t] — each (head, t) pair owns
         // its slot, so concurrent writes are race-free.
-        var qH = [[Float]](repeating: [], count: nHeads * nTokens)
-        var kH = [[Float]](repeating: [], count: nHeads * nTokens)
-        var vH = [[Float]](repeating: [], count: nHeads * nTokens)
+        // `nonisolated(unsafe)`: disjoint indices, no aliasing.
+        nonisolated(unsafe) var qH = [[Float]](repeating: [], count: nHeads * nTokens)
+        nonisolated(unsafe) var kH = [[Float]](repeating: [], count: nHeads * nTokens)
+        nonisolated(unsafe) var vH = [[Float]](repeating: [], count: nHeads * nTokens)
         DispatchQueue.concurrentPerform(iterations: nHeads * nTokens) { work in
             let head = work / nTokens
             let t = work % nTokens
@@ -213,7 +214,7 @@ final class Qwen3VLVisionBlock {
         // Stage 2: Full attention — every token attends to every token.
         // Each (head, i) writes to a disjoint [oBase, oBase+headDim) slice.
         out.withUnsafeMutableBufferPointer { outBuf in
-            let outPtr = outBuf.baseAddress!
+            nonisolated(unsafe) let outPtr = outBuf.baseAddress!
             DispatchQueue.concurrentPerform(iterations: nHeads * nTokens) { work in
                 let head = work / nTokens
                 let i = work % nTokens
@@ -973,3 +974,11 @@ public enum Qwen3VLMoe {
             imageTokenCount: vision.mergedTokenCount)
     }
 }
+
+// The Qwen 3.5-VL family orchestrator (`enum Qwen35VL`) lives in
+// `Qwen3xVision.swift` — same naming convention as `Qwen3xText.swift`
+// for the text variants. Qwen 3.5 reuses the Qwen 3-VL vision tower
+// module defined above; only the per-block sizing comes from its own
+// `vision_config`. `deepstack_visual_indexes` is the one config knob
+// that differs structurally (Qwen 3-VL ships `[5, 11, 17]`, Qwen 3.5-VL
+// ships `[]`), and FFAI doesn't implement deepstack for either variant.

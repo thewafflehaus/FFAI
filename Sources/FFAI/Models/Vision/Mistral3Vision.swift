@@ -154,7 +154,7 @@ final class Mistral3Projector: @unchecked Sendable {
 
         // Each merged patch writes to its own disjoint slot — race-free.
         merged.withUnsafeMutableBufferPointer { buf in
-            let ptr = buf.baseAddress!
+            nonisolated(unsafe) let ptr = buf.baseAddress!
             DispatchQueue.concurrentPerform(iterations: nMerged) { mi in
                 let mRow = mi / mergedW
                 let mCol = mi % mergedW

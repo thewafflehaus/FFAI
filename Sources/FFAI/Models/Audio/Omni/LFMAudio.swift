@@ -643,7 +643,7 @@ public final class LFMAudioModel: @unchecked Sendable {
         }
         // Convert to Hz then to bin index
         let freqStep = Double(sampleRate) / Double(nFFT)
-        var bins = melPts.map { Int(melToHz($0) / freqStep + 0.5) }
+        let bins = melPts.map { Int(melToHz($0) / freqStep + 0.5) }
 
         var fb = [Float](repeating: 0, count: nMels * nFreq)
         for m in 0 ..< nMels {
@@ -700,7 +700,7 @@ public final class LFMAudioModel: @unchecked Sendable {
         var curCh = 1
 
         // ── Stage 1: conv0 (1→convCh, 3×3, stride 2, pad 1) + ReLU ──
-        var (out1, t1, f1, ch1) = conv2DTHFReLU(
+        let (out1, t1, f1, ch1) = conv2DTHFReLU(
             input: current, T: curT, F: curF, inCh: curCh,
             weight: sub.conv0W, bias: sub.conv0B, outCh: convCh,
             kH: 3, kW: 3, strideH: 2, strideW: 2, padH: 1, padW: 1, relu: true)
@@ -710,7 +710,7 @@ public final class LFMAudioModel: @unchecked Sendable {
         curCh = ch1
 
         // ── Stage 2: depthwise + pointwise + ReLU ────────────────────
-        var (out2a, t2a, f2a, ch2a) = conv2DTHFReLU(
+        let (out2a, t2a, f2a, ch2a) = conv2DTHFReLU(
             input: current, T: curT, F: curF, inCh: curCh,
             weight: sub.conv2W, bias: sub.conv2B, outCh: convCh,
             kH: 3, kW: 3, strideH: 2, strideW: 2, padH: 1, padW: 1, relu: false,
@@ -719,7 +719,7 @@ public final class LFMAudioModel: @unchecked Sendable {
         curT = t2a
         curF = f2a
         curCh = ch2a
-        var (out2b, t2b, f2b, ch2b) = conv2DTHFReLU(
+        let (out2b, t2b, f2b, ch2b) = conv2DTHFReLU(
             input: current, T: curT, F: curF, inCh: curCh,
             weight: sub.conv3W, bias: sub.conv3B, outCh: convCh,
             kH: 1, kW: 1, strideH: 1, strideW: 1, padH: 0, padW: 0, relu: true)
@@ -729,7 +729,7 @@ public final class LFMAudioModel: @unchecked Sendable {
         curCh = ch2b
 
         // ── Stage 3: depthwise + pointwise + ReLU ────────────────────
-        var (out3a, t3a, f3a, ch3a) = conv2DTHFReLU(
+        let (out3a, t3a, f3a, ch3a) = conv2DTHFReLU(
             input: current, T: curT, F: curF, inCh: curCh,
             weight: sub.conv5W, bias: sub.conv5B, outCh: convCh,
             kH: 3, kW: 3, strideH: 2, strideW: 2, padH: 1, padW: 1, relu: false,
@@ -1206,7 +1206,6 @@ public final class LFMAudioModel: @unchecked Sendable {
 
     private func adapterForward(_ x: [Float], nTokens T: Int) -> [Float] {
         let inDim = adapter.inDim
-        let outDim = adapter.outDim
         var h = x
 
         // Optional LayerNorm
@@ -1631,7 +1630,7 @@ private func lfmAudioDepthwiseConv1dWeight(
     kernelSize: Int, channels: Int
 ) throws -> [Float] {
     let t = try bundle.tensor(named: "\(key).weight")
-    var floats = lfmAudioReadFloats(t)
+    let floats = lfmAudioReadFloats(t)
     // Checkpoint may store [channels, 1, kernel] or [channels, kernel]
     guard floats.count == channels * kernelSize else {
         if floats.count == channels * 1 * kernelSize {

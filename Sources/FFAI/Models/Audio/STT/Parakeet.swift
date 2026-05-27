@@ -615,7 +615,6 @@ public final class ParakeetModel: @unchecked Sendable {
         input: [Float], nFrames: Int, featIn: Int
     ) -> ([Float], Int) {
         let enc = config.encoder
-        let samplingNum = Int(log2(Double(enc.subsamplingFactor)))
         let convCh = enc.subsamplingConvChannels
         let stride = 2
         let kernelSize = 3
@@ -889,7 +888,7 @@ public final class ParakeetModel: @unchecked Sendable {
         // @Sendable closure without going through an unsafe pointer,
         // so write through `withUnsafeMutableBufferPointer`.)
         out.withUnsafeMutableBufferPointer { outBuf in
-            let outPtr = outBuf.baseAddress!
+            nonisolated(unsafe) let outPtr = outBuf.baseAddress!
             DispatchQueue.concurrentPerform(iterations: nHeads) { h in
                 let hOff = h * headDim
                 // q+u, q+v for this head
@@ -957,12 +956,6 @@ public final class ParakeetModel: @unchecked Sendable {
     /// mirroring the `rel_shift` operation from ESPnet / NeMo.
     private func relShift(_ bd: [Float], tq: Int, posLen: Int) -> [Float] {
         // bd: [tq, posLen]; posLen = 2*tq - 1
-        // Pad left: [tq, posLen+1]
-        let padded: [[Float]] = (0 ..< tq).map { row in
-            var r = [Float](repeating: 0, count: posLen + 1)
-            for c in 0 ..< posLen { r[c + 1] = bd[row * posLen + c] }
-            return r
-        }
         // Reshape to [posLen+1, tq], take rows 1...
         // Then reshape back to [tq, posLen] and slice [:, :tq]
         // Equivalent: for each row i, the shifted col j = padded[i][j+1] effectively
@@ -1568,7 +1561,6 @@ extension ParakeetModel {
     ) throws -> ParakeetModel {
         let enc = config.encoder
         let samplingNum = Int(log2(Double(enc.subsamplingFactor)))
-        let convCh = enc.subsamplingConvChannels
 
         // ── Subsampling weights ─────────────────────────────────────
         // The mlx-community Parakeet TDT export ships the NeMo conv
