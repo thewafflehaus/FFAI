@@ -48,6 +48,7 @@
 // "is the bisect allowed to fire this suite?".
 
 import Foundation
+import Testing
 
 public enum IntegrationGroupGating {
 
@@ -104,32 +105,21 @@ public enum IntegrationGroupGating {
     // didn't run. Keep them descriptive enough that the reader doesn't
     // need to open this file.
 
-    public static let textSkipReason =
-        "Text suite group: not yet verified on current HEAD. "
-            + "Flip IntegrationGroupGating.enableTextSuites to run the "
-            + "text-group bisect."
+    public static let textSkipReason: Comment =
+        "Text suite group: not yet verified on current HEAD. Flip IntegrationGroupGating.enableTextSuites to run the text-group bisect."
 
-    public static let quantizedSkipReason =
-        "Quantized suite group: not yet verified on current HEAD. "
-            + "Flip IntegrationGroupGating.enableQuantizedSuites to run."
+    public static let quantizedSkipReason: Comment =
+        "Quantized suite group: not yet verified on current HEAD. Flip IntegrationGroupGating.enableQuantizedSuites to run."
 
-    public static let kvCacheMatrixSkipReason =
-        "KVCacheMatrix suite: not yet verified on current HEAD. "
-            + "Flip IntegrationGroupGating.enableKVCacheMatrixSuite to run."
+    public static let kvCacheMatrixSkipReason: Comment =
+        "KVCacheMatrix suite: not yet verified on current HEAD. Flip IntegrationGroupGating.enableKVCacheMatrixSuite to run."
 
-    public static let visionSkipReason =
-        "Vision suite group: not yet verified on current HEAD. "
-            + "Vision-tower CPU-attention fallbacks landed in f8b87cb; "
-            + "flip IntegrationGroupGating.enableVisionSuites to run the "
-            + "vision-group bisect once the text + quantized groups are green."
+    public static let visionSkipReason: Comment =
+        "Vision suite group: not yet verified on current HEAD. Vision-tower CPU-attention fallbacks landed in f8b87cb; flip IntegrationGroupGating.enableVisionSuites to run the vision-group bisect once the text + quantized groups are green."
 
-    public static let audioSkipReason =
-        "Audio suite group: not yet verified on current HEAD. "
-            + "Many STT transcribe_realSpeech sub-tests are CPU-bound "
-            + "(see planning/known-issues.md § \"Audio model CPU bottlenecks\"); "
-            + "flip IntegrationGroupGating.enableAudioSuites to run."
+    public static let audioSkipReason: Comment =
+        "Audio suite group: not yet verified on current HEAD. Many STT transcribe_realSpeech sub-tests are CPU-bound (see planning/known-issues.md § \"Audio model CPU bottlenecks\"); flip IntegrationGroupGating.enableAudioSuites to run."
 
-    public static let omniSkipReason =
-        "Omni suite group: not yet verified on current HEAD. "
-            + "Flip IntegrationGroupGating.enableOmniSuites to run."
+    public static let omniSkipReason: Comment =
+        "Omni suite group: not yet verified on current HEAD. Flip IntegrationGroupGating.enableOmniSuites to run."
 }
