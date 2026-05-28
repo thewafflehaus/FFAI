@@ -110,42 +110,65 @@ public struct Phi3Dense: PhiVariant {
         for i in 0 ..< nLayers {
             let p = "model.layers.\(i)"
 
-            // Fused qkv split. Phi-3 quantized fused projections need
-            // group-aligned slicing (see header comment) — bail with a
-            // descriptive error rather than silently miscomputing.
-            if quant != nil, weights.isQuantized("\(p).self_attn.qkv_proj") {
-                throw PhiError.quantizedFusedNotSupported
+            // Fused qkv split. Phi-3 ships q/k/v fused along dim 0
+            // ([(Q + 2·KV) * head_dim, hidden]). Affine quantization
+            // groups the *hidden* dim (dim 1) — so axis-0 row slicing
+            // preserves group boundaries and is safe for both the
+            // raw weight and the packed u32 triplet (weight + scales
+            // + biases all share dim 0). The 4-bit conversion of
+            // Phi-3-mini-4k matches this contract: qSize = kvSize =
+            // 3072, both multiples of group_size and pack_factor.
+            let qProj: AnyLinear
+            let kProj: AnyLinear
+            let vProj: AnyLinear
+            if let q = quant, weights.isQuantized("\(p).self_attn.qkv_proj") {
+                let triplet = try weights.quantizedTriplet("\(p).self_attn.qkv_proj")
+                let qkvParts = splitQuantizedTripletRowsPhi(
+                    triplet, counts: [qSize, kvSize, kvSize], expectedTotalRows: qSize + 2 * kvSize,
+                    quantization: q, label: "qkv_proj")
+                qProj = qkvParts[0]
+                kProj = qkvParts[1]
+                vProj = qkvParts[2]
+            } else {
+                let qkvFused = try weights.tensor(named: "\(p).self_attn.qkv_proj.weight")
+                precondition(
+                    qkvFused.shape == [qSize + 2 * kvSize, hidden],
+                    "Phi3 qkv_proj shape mismatch: got \(qkvFused.shape), expected [\(qSize + 2 * kvSize), \(hidden)]"
+                )
+                let qWeight = qkvFused.slicedRows(start: 0, count: qSize)
+                let kWeight = qkvFused.slicedRows(start: qSize, count: kvSize)
+                let vWeight = qkvFused.slicedRows(start: qSize + kvSize, count: kvSize)
+                qProj = AnyLinear(Linear(weight: qWeight))
+                kProj = AnyLinear(Linear(weight: kWeight))
+                vProj = AnyLinear(Linear(weight: vWeight))
             }
-            let qkvFused = try weights.tensor(named: "\(p).self_attn.qkv_proj.weight")
-            // Sanity: [(Q + 2*KV) * head_dim, hidden]
-            precondition(
-                qkvFused.shape == [qSize + 2 * kvSize, hidden],
-                "Phi3 qkv_proj shape mismatch: got \(qkvFused.shape), expected [\(qSize + 2 * kvSize), \(hidden)]"
-            )
-            let qWeight = qkvFused.slicedRows(start: 0, count: qSize)
-            let kWeight = qkvFused.slicedRows(start: qSize, count: kvSize)
-            let vWeight = qkvFused.slicedRows(start: qSize + kvSize, count: kvSize)
-            let qProj = AnyLinear(Linear(weight: qWeight))
-            let kProj = AnyLinear(Linear(weight: kWeight))
-            let vProj = AnyLinear(Linear(weight: vWeight))
 
             let oProj = try loadLinear(
                 base: "\(p).self_attn.o_proj",
                 in: weights, quantization: quant)
 
-            // Fused gate_up split.
-            if quant != nil, weights.isQuantized("\(p).mlp.gate_up_proj") {
-                throw PhiError.quantizedFusedNotSupported
+            // Fused gate_up split — same axis-0 slicing argument.
+            let gateProj: AnyLinear
+            let upProj: AnyLinear
+            if let q = quant, weights.isQuantized("\(p).mlp.gate_up_proj") {
+                let triplet = try weights.quantizedTriplet("\(p).mlp.gate_up_proj")
+                let parts = splitQuantizedTripletRowsPhi(
+                    triplet, counts: [intermediate, intermediate],
+                    expectedTotalRows: 2 * intermediate,
+                    quantization: q, label: "gate_up_proj")
+                gateProj = parts[0]
+                upProj = parts[1]
+            } else {
+                let gateUpFused = try weights.tensor(named: "\(p).mlp.gate_up_proj.weight")
+                precondition(
+                    gateUpFused.shape == [2 * intermediate, hidden],
+                    "Phi3 gate_up_proj shape mismatch: got \(gateUpFused.shape), expected [\(2 * intermediate), \(hidden)]"
+                )
+                let gateWeight = gateUpFused.slicedRows(start: 0, count: intermediate)
+                let upWeight = gateUpFused.slicedRows(start: intermediate, count: intermediate)
+                gateProj = AnyLinear(Linear(weight: gateWeight))
+                upProj = AnyLinear(Linear(weight: upWeight))
             }
-            let gateUpFused = try weights.tensor(named: "\(p).mlp.gate_up_proj.weight")
-            precondition(
-                gateUpFused.shape == [2 * intermediate, hidden],
-                "Phi3 gate_up_proj shape mismatch: got \(gateUpFused.shape), expected [\(2 * intermediate), \(hidden)]"
-            )
-            let gateWeight = gateUpFused.slicedRows(start: 0, count: intermediate)
-            let upWeight = gateUpFused.slicedRows(start: intermediate, count: intermediate)
-            let gateProj = AnyLinear(Linear(weight: gateWeight))
-            let upProj = AnyLinear(Linear(weight: upWeight))
 
             let downProj = try loadLinear(
                 base: "\(p).mlp.down_proj",
@@ -210,4 +233,69 @@ public struct Phi3Dense: PhiVariant {
             kvEviction: options.kvEviction
         )
     }
+}
+
+// ─── Quantized fused-projection split helpers ────────────────────────
+//
+// Phi-3 ships `qkv_proj` and `gate_up_proj` as single fused tensors
+// along dim 0 (rows). The 4-bit (affine) conversion preserves the
+// fusion: the packed u32 `weight`, the bf16 `scales`, and the bf16
+// `biases` all share the same dim-0 layout, and the group_size /
+// pack_factor packing happens along dim 1. Row-wise slicing is
+// therefore safe for the quantized triplet — each slice is a
+// self-contained `QuantizedLinear` with its own row range and the
+// full hidden-side column range. This is the same axis-0-fused
+// pattern Llama-style models use for unfused QKV.
+
+/// Split a fused quantized triplet (`[fusedRows, hidden/{pack,group}]`)
+/// into N `AnyLinear`s by row counts. Preconditions: row counts must
+/// sum to `expectedTotalRows`; the triplet's three tensors must share
+/// dim 0 = expectedTotalRows.
+private func splitQuantizedTripletRowsPhi(
+    _ triplet: SafeTensorsBundle.QuantizedTriplet,
+    counts: [Int],
+    expectedTotalRows: Int,
+    quantization q: ModelConfig.QuantizationConfig,
+    label: String
+) -> [AnyLinear] {
+    precondition(
+        counts.reduce(0, +) == expectedTotalRows,
+        "Phi3 \(label): row counts \(counts) sum to "
+            + "\(counts.reduce(0, +)) but expected \(expectedTotalRows)")
+    precondition(
+        triplet.weight.shape.count == 2
+            && triplet.weight.shape[0] == expectedTotalRows,
+        "Phi3 \(label): weight rows \(triplet.weight.shape) "
+            + "≠ expected \(expectedTotalRows)")
+    precondition(
+        triplet.scales.shape.count == 2
+            && triplet.scales.shape[0] == expectedTotalRows,
+        "Phi3 \(label): scales rows \(triplet.scales.shape) "
+            + "≠ expected \(expectedTotalRows)")
+    precondition(
+        triplet.biases.shape.count == 2
+            && triplet.biases.shape[0] == expectedTotalRows,
+        "Phi3 \(label): biases rows \(triplet.biases.shape) "
+            + "≠ expected \(expectedTotalRows)")
+    // bits derives from the packed_cols / scale_cols ratio — same
+    // for every slice (they all share the hidden-side column range).
+    let bits = deriveAffineQuantBits(
+        weightPackedCols: triplet.weight.shape[triplet.weight.shape.count - 1],
+        scaleCols: triplet.scales.shape[triplet.scales.shape.count - 1],
+        groupSize: q.groupSize)
+    var out: [AnyLinear] = []
+    out.reserveCapacity(counts.count)
+    var rowStart = 0
+    for cnt in counts {
+        let w = triplet.weight.slicedRows(start: rowStart, count: cnt)
+        let s = triplet.scales.slicedRows(start: rowStart, count: cnt)
+        let b = triplet.biases.slicedRows(start: rowStart, count: cnt)
+        out.append(
+            AnyLinear(
+                QuantizedLinear(
+                    weight: w, scales: s, biases: b,
+                    bits: bits, groupSize: q.groupSize)))
+        rowStart += cnt
+    }
+    return out
 }
