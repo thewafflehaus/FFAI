@@ -616,49 +616,21 @@ public final class NemotronDiffusionModel: LanguageModel {
     }
 
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        let cap = maxSeq ?? self.maxContextWindow
-        let eviction = kvEviction
-        switch kvCacheKind {
-        case .raw:
-            // Diffusion / self-speculation stage scratch K/V into the
-            // buffer's free tail `[length, cap)` via `writeTimestepOnGPU`
-            // across denoise iterations before committing a block, so the
-            // cache MUST have all `cap` slots allocated up front —
-            // incremental growth (which starts below `cap`) would put
-            // those staging slots out of range. Force full preallocation.
-            return (0 ..< nLayers).map { _ in
-                KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                    dtype: dtype, eviction: eviction,
-                    preallocate: true, device: device)
-            }
-        case .affineQuantized(let bits, let groupSize):
-            let sharedK = Tensor.empty(
-                shape: [nKVHeads, cap, headDim],
-                dtype: dtype, device: device)
-            let sharedV = Tensor.empty(
-                shape: [nKVHeads, cap, headDim],
-                dtype: dtype, device: device)
-            return (0 ..< nLayers).map { _ in
-                AffineQuantizedKVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                    dtype: dtype, bits: bits, groupSize: groupSize,
-                    sharedWorkingK: sharedK, sharedWorkingV: sharedV,
-                    eviction: eviction, device: device)
-            }
-        case .auraQuantized:
-            // Diffusion / self-speculation require the raw KVCache (their
-            // multi-token forward stages scratch K/V in the buffer).
-            // AURA caches support AR mode only; fall back to raw so the
-            // tri-mode paths keep working. Preallocated for the same
-            // free-tail-staging reason as the `.raw` case above.
-            return (0 ..< nLayers).map { _ in
-                KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                    dtype: dtype, eviction: eviction,
-                    preallocate: true, device: device)
-            }
-        }
+        // Diffusion / self-speculation stage scratch K/V into the cache's
+        // free tail across denoise iterations, so the raw cache MUST be
+        // fully preallocated (incremental growth would put staging slots
+        // out of range). AURA can't support that staging → map to raw;
+        // affine is fine (its compressed storage is allocated up front).
+        let kind: KVCacheKind = {
+            if case .auraQuantized = kvCacheKind { return .raw }
+            return kvCacheKind
+        }()
+        return makeAttentionCaches(
+            kind: kind, count: nLayers,
+            nKVHeads: nKVHeads, headDim: headDim,
+            contextLength: maxSeq ?? maxContextWindow,
+            dtype: dtype, eviction: kvEviction,
+            preallocate: true, device: device)
     }
 
     /// Single-token AR forward — the `LanguageModel` primitive that

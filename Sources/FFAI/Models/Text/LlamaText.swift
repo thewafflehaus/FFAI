@@ -613,78 +613,12 @@ public final class LlamaModel: LanguageModel {
     /// time): raw `KVCache` for `.raw`, `AffineQuantizedKVCache` (with
     /// a shared working buffer pair) for `.affineQuantized`.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        let cap = maxSeq ?? self.maxContextWindow
-        let eviction = kvEviction
-        switch kvCacheKind {
-        case .raw:
-            return (0 ..< nLayers).map { _ in
-                KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                    dtype: dtype, eviction: eviction, device: device)
-            }
-        case .affineQuantized(let bits, let groupSize):
-            // One shared working buffer pair across every layer's
-            // cache — gives the real memory savings vs per-layer
-            // working buffers.
-            let sharedK = Tensor.empty(
-                shape: [nKVHeads, cap, headDim],
-                dtype: dtype, device: device)
-            let sharedV = Tensor.empty(
-                shape: [nKVHeads, cap, headDim],
-                dtype: dtype, device: device)
-            return (0 ..< nLayers).map { _ in
-                AffineQuantizedKVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                    dtype: dtype, bits: bits, groupSize: groupSize,
-                    sharedWorkingK: sharedK, sharedWorkingV: sharedV,
-                    eviction: eviction,
-                    device: device
-                )
-            }
-        case .auraQuantized(let scheme):
-            // Codebooks are shared across layers; rotations are per-layer
-            // (deterministic SRHT seeded by layer index). See Qwen3's
-            // matching case for the longer explanation.
-            let kCodebookData = AURACodebook.centroids(dim: headDim, bits: scheme.keyBits)
-            let kBoundariesData = AURACodebook.boundaries(dim: headDim, bits: scheme.keyBits)
-            let vCodebookData = AURACodebook.centroids(dim: headDim, bits: scheme.valueBits)
-            let vBoundariesData = AURACodebook.boundaries(dim: headDim, bits: scheme.valueBits)
-
-            let kCodebook = Tensor.empty(shape: [kCodebookData.count], dtype: .f32, device: device)
-            kCodebook.copyIn(from: kCodebookData)
-            let kBoundaries = Tensor.empty(
-                shape: [kBoundariesData.count], dtype: .f32, device: device)
-            kBoundaries.copyIn(from: kBoundariesData)
-            let vCodebook = Tensor.empty(shape: [vCodebookData.count], dtype: .f32, device: device)
-            vCodebook.copyIn(from: vCodebookData)
-            let vBoundaries = Tensor.empty(
-                shape: [vBoundariesData.count], dtype: .f32, device: device)
-            vBoundaries.copyIn(from: vBoundariesData)
-
-            let sharedK = Tensor.empty(
-                shape: [nKVHeads, cap, headDim],
-                dtype: dtype, device: device)
-            let sharedV = Tensor.empty(
-                shape: [nKVHeads, cap, headDim],
-                dtype: dtype, device: device)
-            return (0 ..< nLayers).map { i in
-                let rot = AURAQuantizedKVCacheRotations.build(
-                    headDim: headDim, layerIndex: i,
-                    activationDtype: dtype, device: device)
-                return AURAQuantizedKVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                    dtype: dtype, scheme: scheme,
-                    rotation: rot.rotation, rotationT: rot.rotationT,
-                    rotationDtype: rot.rotationDtype, rotationDtypeT: rot.rotationDtypeT,
-                    kCodebook: kCodebook, kBoundaries: kBoundaries,
-                    vCodebook: vCodebook, vBoundaries: vBoundaries,
-                    sharedWorkingK: sharedK, sharedWorkingV: sharedV,
-                    eviction: eviction,
-                    decodePath: auraDecodePath,
-                    device: device
-                )
-            }
-        }
+        makeAttentionCaches(
+            kind: kvCacheKind, count: nLayers,
+            nKVHeads: nKVHeads, headDim: headDim,
+            contextLength: maxSeq ?? maxContextWindow,
+            dtype: dtype, eviction: kvEviction,
+            auraDecodePath: auraDecodePath, device: device)
     }
 
     /// Single-token forward. `tokenId` is the input token; `position` is

@@ -230,36 +230,17 @@ public final class GlmOcrModel: LanguageModel {
     }
 
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        let cap = maxSeq ?? self.maxContextWindow
-        switch kvCacheKind {
-        case .raw:
-            return (0 ..< nLayers).map { _ in
-                KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                    dtype: dtype, device: device)
-            }
-        case .affineQuantized(let bits, let groupSize):
-            let sharedK = Tensor.empty(
-                shape: [nKVHeads, cap, headDim],
-                dtype: dtype, device: device)
-            let sharedV = Tensor.empty(
-                shape: [nKVHeads, cap, headDim],
-                dtype: dtype, device: device)
-            return (0 ..< nLayers).map { _ in
-                AffineQuantizedKVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                    dtype: dtype, bits: bits, groupSize: groupSize,
-                    sharedWorkingK: sharedK, sharedWorkingV: sharedV,
-                    device: device)
-            }
-        case .auraQuantized:
-            // GLM-OCR doesn't ship AURA conversions yet; fall back to raw.
-            return (0 ..< nLayers).map { _ in
-                KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                    dtype: dtype, device: device)
-            }
-        }
+        // GLM-OCR maps AURA → raw (no AURA decode path wired); raw +
+        // affine run through the shared factory.
+        let kind: KVCacheKind = {
+            if case .auraQuantized = kvCacheKind { return .raw }
+            return kvCacheKind
+        }()
+        return makeAttentionCaches(
+            kind: kind, count: nLayers,
+            nKVHeads: nKVHeads, headDim: headDim,
+            contextLength: maxSeq ?? maxContextWindow,
+            dtype: dtype, device: device)
     }
 
     // MARK: - Text-only forward (LanguageModel protocol)
