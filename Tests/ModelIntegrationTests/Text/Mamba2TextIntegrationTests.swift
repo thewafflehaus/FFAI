@@ -33,7 +33,7 @@ import Testing
         if: IntegrationGroupGating.enableTextSuites,
         IntegrationGroupGating.textSkipReason)
 )
-struct Mamba2IntegrationTests {
+struct Mamba2TextIntegrationTests {
 
     @Test("load + greedy generate produces non-degenerate text")
     func loadAndGenerate() async throws {

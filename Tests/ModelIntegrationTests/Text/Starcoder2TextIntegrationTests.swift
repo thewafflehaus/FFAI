@@ -42,7 +42,7 @@ import Testing
             && IntegrationGroupGating.enableStarcoder2Suite,
         IntegrationGroupGating.starcoder2SkipReason)
 )
-struct Starcoder2IntegrationTests {
+struct Starcoder2TextIntegrationTests {
 
     @Test("Starcoder2-3B (Starcoder2ForCausalLM, LayerNorm + GELU MLP) decodes coherently")
     func starcoder2() async throws {

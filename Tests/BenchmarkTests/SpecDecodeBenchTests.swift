@@ -28,27 +28,40 @@ import Testing
 
 @testable import FFAI
 
-private let qwen36SpecPath = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
+/// Bench target — the cached `mlx-community/Qwen3.6-35B-A3B-4bit`
+/// MoE checkpoint. Switched off Tom's prior `/Users/tom/models/...`
+/// hard-coded local path so the suite runs against the same
+/// checkpoint on any developer's machine once they've fetched it via
+/// `ffai download`. Matches the same identifier the sibling
+/// `Qwen36TextBenchTest` + `Qwen35MoEBenchIntegrationTests` use.
+private let qwen36SpecModelId = "mlx-community/Qwen3.6-35B-A3B-4bit"
+
+/// Local-cache predicate — bench is also disabled if the checkpoint
+/// isn't already cached (downloading a 20 GB MoE checkpoint inside a
+/// bench would itself dominate the bench).
+private let qwen36SpecCacheAvailable: Bool = {
+    let cache =
+        ("~/.cache/huggingface/hub/models--mlx-community--Qwen3.6-35B-A3B-4bit"
+            as NSString)
+        .expandingTildeInPath
+    return FileManager.default.fileExists(atPath: cache)
+}()
 
 @Suite(
     "SpecDecode end-to-end vs baseline greedy",
     .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+        if: IntegrationGroupGating.enableBenchmarkSuites && qwen36SpecCacheAvailable,
+        IntegrationGroupGating.benchmarkSkipReason)
 )
 struct SpecDecodeBenchTests {
 
     @Test("SpecDecode + NGramDrafter produces same tokens as baseline greedy, with measurable tps")
     func specDecodeMatchesBaselineGreedyTPSReport() async throws {
-        guard FileManager.default.fileExists(atPath: qwen36SpecPath) else {
-            print("SpecDecodeBench skipped: \(qwen36SpecPath) not found")
-            return
-        }
         var optsBuilder = LoadOptions()
         optsBuilder.prewarm = false
         let opts = optsBuilder
         let m: Model = try await ModelLoadLock.shared.loadSerially {
-            try await Model.load(qwen36SpecPath, options: opts)
+            try await Model.load(qwen36SpecModelId, options: opts)
         }
         guard let qwen = m.qwen35 else {
             Issue.record("expected Qwen35Model engine")

@@ -35,7 +35,7 @@ import Testing
         if: IntegrationGroupGating.enableTextSuites,
         IntegrationGroupGating.textSkipReason)
 )
-struct SmolLMIntegrationTests {
+struct SmolLMTextIntegrationTests {
 
     @Test("SmolLM-360M (SmolLMForCausalLM, original family) decodes coherently")
     func smolLM1() async throws {

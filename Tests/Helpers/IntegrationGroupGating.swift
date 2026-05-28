@@ -119,6 +119,19 @@ public enum IntegrationGroupGating {
     /// suite runs end-to-end.
     public static let enableStarcoder2Suite: Bool = true
 
+    /// Benchmark suite group — every test in `Tests/BenchmarkTests/`
+    /// (prefill/decode steady-state throughput, batched vs per-token
+    /// forwardMany speedup, spec-decode pipeline correctness +
+    /// verify-cost, etc). DISJOINT from the integration-group flags
+    /// above: benches are slow (multi-minute to multi-hour per cell),
+    /// often require a 14-20 GB checkpoint to be already cached,
+    /// and exist to characterise performance / batched-vs-per-token
+    /// equivalence — NOT to gate correctness on every PR. Default
+    /// `false` so neither `swift test` nor `make test-integration`
+    /// accidentally fire them. Flip when you intentionally want to
+    /// bench (typically after a kernel change / dispatch refactor).
+    public static let enableBenchmarkSuites: Bool = false
+
     // ─── Skip-reason strings ──────────────────────────────────────────
     //
     // These appear in test output so the human reader sees WHY a suite
@@ -148,4 +161,7 @@ public enum IntegrationGroupGating {
 
     public static let starcoder2SkipReason: Comment =
         "Starcoder2 suite: misrouted through Llama-compatible dispatch in Loader/Model.swift today (Starcoder2 is structurally different — LayerNorm + GELU-tanh single-projection MLP with c_fc/c_proj names, norm_epsilon config). Needs a dedicated Starcoder2 loader; until then this suite throws `Llama: required config field missing`. Flip IntegrationGroupGating.enableStarcoder2Suite once that loader lands."
+
+    public static let benchmarkSkipReason: Comment =
+        "Benchmark suite: disabled by default. Each benchmark cell is multi-minute to multi-hour and may require a 14-20 GB checkpoint to be already cached. Flip IntegrationGroupGating.enableBenchmarkSuites when you want to bench (typically after a kernel change / dispatch refactor)."
 }

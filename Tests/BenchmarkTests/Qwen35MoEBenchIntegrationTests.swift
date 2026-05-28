@@ -33,12 +33,6 @@ import Testing
 /// developer's machine once they've fetched it via `ffai download`.
 private let qwen35MoEModelId = "mlx-community/Qwen3.5-35B-A3B-4bit"
 
-/// Per-suite gate. Defaults to `false` so `swift test` never fires
-/// these multi-minute bench runs accidentally. Flip when you
-/// intentionally want to bench Qwen3.5-35B-A3B end-to-end. Pairs with
-/// the cache-availability check below.
-private let enableQwen35MoEBenchSuite: Bool = false
-
 /// Local-cache predicate — bench is also disabled if the checkpoint
 /// isn't already cached (downloading a 20 GB MoE checkpoint inside a
 /// bench would itself dominate the bench).
@@ -53,9 +47,8 @@ private let qwen35MoECacheAvailable: Bool = {
 @Suite(
     "Qwen3.5-35B-A3B bench", .serialized,
     .enabled(
-        if: enableQwen35MoEBenchSuite && qwen35MoECacheAvailable,
-        "Qwen3.5-35B-A3B bench requires `enableQwen35MoEBenchSuite = true` AND a cached `mlx-community/Qwen3.5-35B-A3B-4bit` (≈ 20 GB, fetch with `ffai download mlx-community/Qwen3.5-35B-A3B-4bit`)."
-    )
+        if: IntegrationGroupGating.enableBenchmarkSuites && qwen35MoECacheAvailable,
+        IntegrationGroupGating.benchmarkSkipReason)
 )
 struct Qwen35MoEBenchIntegrationTests {
 

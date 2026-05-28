@@ -49,7 +49,7 @@ import Testing
         if: IntegrationGroupGating.enableTextSuites,
         IntegrationGroupGating.textSkipReason)
 )
-struct JambaIntegrationTests {
+struct JambaTextIntegrationTests {
 
     @Test("load + greedy generate produces coherent hybrid output")
     func loadAndGenerate() async throws {

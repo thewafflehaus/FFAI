@@ -40,7 +40,7 @@ import Testing
         if: IntegrationGroupGating.enableTextSuites,
         IntegrationGroupGating.textSkipReason)
 )
-struct FalconH1IntegrationTests {
+struct FalconH1TextIntegrationTests {
 
     @Test("load + greedy generate produces coherent hybrid output")
     func loadAndGenerate() async throws {

@@ -32,7 +32,7 @@ import Testing
         if: IntegrationGroupGating.enableTextSuites,
         IntegrationGroupGating.textSkipReason)
 )
-struct NemotronDiffusionIntegrationTests {
+struct NemotronDiffusionTextIntegrationTests {
 
     @Test("load + tri-mode generation produces coherent output")
     func loadAndGenerate() async throws {

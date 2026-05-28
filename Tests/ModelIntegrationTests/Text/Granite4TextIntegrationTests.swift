@@ -47,7 +47,7 @@ import Testing
         if: IntegrationGroupGating.enableTextSuites,
         IntegrationGroupGating.textSkipReason)
 )
-struct Granite4IntegrationTests {
+struct Granite4TextIntegrationTests {
 
     @Test("load + greedy generate produces coherent hybrid output")
     func loadAndGenerate() async throws {

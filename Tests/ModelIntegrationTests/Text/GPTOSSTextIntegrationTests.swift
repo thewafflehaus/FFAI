@@ -59,7 +59,7 @@ import Testing
             && IntegrationGroupGating.enableTextSuites,
         "GPT-OSS-20B is build-machine-only; set FFAI_BUILD_MACHINE AND flip IntegrationGroupGating.enableTextSuites = true")
 )
-struct GPTOSSIntegrationTests {
+struct GPTOSSTextIntegrationTests {
 
     @Test("load + greedy generate produces coherent MoE output")
     func loadAndGenerate() async throws {

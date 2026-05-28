@@ -19,9 +19,10 @@
 // these bench runs are slow (T=32K prefill is ~85 minutes on M5 Max)
 // and would dominate a normal integration run.
 //
-// The whole suite is gated off by default behind
-// `enableQwen36BenchSuite` so `swift test` doesn't accidentally fire a
-// multi-hour prefill/decode sweep. Flip the flag when you want to
+// Gated behind `IntegrationGroupGating.enableBenchmarkSuites` (the
+// shared benchmark flag — disjoint from `enableTextSuites`) AND a
+// per-file cache predicate so `swift test` doesn't accidentally fire
+// a multi-hour prefill/decode sweep. Flip the flag when you want to
 // re-bench after a kernel / dispatch change.
 //
 // Coverage:
@@ -41,18 +42,10 @@ import Testing
 
 @testable import FFAI
 
-/// Per-suite gate. Defaults to `false` so `swift test` never fires
-/// these multi-hour benches accidentally. Flip when you intentionally
-/// want to bench Qwen3.6-A3B end-to-end. Pairs with the model availability
-/// check: the bench is also a no-op if the HF cache doesn't have
-/// `mlx-community/Qwen3.6-35B-A3B-4bit` locally (downloading a 20 GB
-/// MoE checkpoint inside a bench would itself dominate the bench).
-private let enableQwen36BenchSuite: Bool = false
-
 /// Local-cache predicate — bench suite is also disabled if the
 /// Qwen3.6-A3B 4-bit MoE checkpoint isn't already cached. Computed
 /// against the HF cache hub layout; pre-download via `ffai download`
-/// if the gate is on and the cache is empty.
+/// if the bench flag is on and the cache is empty.
 private let qwen36CacheAvailable: Bool = {
     let cache =
         ("~/.cache/huggingface/hub/models--mlx-community--Qwen3.6-35B-A3B-4bit"
@@ -64,9 +57,8 @@ private let qwen36CacheAvailable: Bool = {
 @Suite(
     "Qwen3.6 Text Benchmarks", .serialized,
     .enabled(
-        if: enableQwen36BenchSuite && qwen36CacheAvailable,
-        "Qwen3.6 bench requires `enableQwen36BenchSuite = true` AND a cached `mlx-community/Qwen3.6-35B-A3B-4bit` (≈ 20 GB, fetch with `ffai download mlx-community/Qwen3.6-35B-A3B-4bit`). Each prefill+decode bench run is multi-minute; the T=32K cell is ~85 minutes on M5 Max."
-    )
+        if: IntegrationGroupGating.enableBenchmarkSuites && qwen36CacheAvailable,
+        IntegrationGroupGating.benchmarkSkipReason)
 )
 struct Qwen36TextBenchTest {
 

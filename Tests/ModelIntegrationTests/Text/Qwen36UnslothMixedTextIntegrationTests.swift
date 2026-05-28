@@ -58,7 +58,7 @@ import Testing
         if: IntegrationGroupGating.enableMixedPrecisionSuites,
         IntegrationGroupGating.mixedPrecisionSkipReason)
 )
-struct Qwen36UnslothMixedIntegrationTests {
+struct Qwen36UnslothMixedTextIntegrationTests {
 
     // ─── Dense 27B — uniform 4-bit + UD-MLX dynamic 4-bit ──────────────
 

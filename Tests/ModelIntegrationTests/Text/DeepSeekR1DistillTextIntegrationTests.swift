@@ -27,7 +27,7 @@ import Testing
 @testable import FFAI
 
 @Suite("DeepSeek R1 Distill Integration", .serialized)
-struct DeepSeekR1DistillIntegrationTests {
+struct DeepSeekR1DistillTextIntegrationTests {
 
     @Test("R1-Distill-Llama-8B (Llama architecture) generates coherent output")
     func r1DistillLlama() async throws {

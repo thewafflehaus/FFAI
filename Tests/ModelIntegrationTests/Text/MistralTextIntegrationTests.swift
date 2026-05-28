@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// Granite 3 family integration coverage — IBM's Granite v3 dense text
-// models (granite-3.0, granite-3.1, granite-3.2). Llama-3-shaped
-// weights routed through `LlamaDense`.
+// Slow integration test for Mistral 7B Instruct. Mistral 7B uses the
+// Llama 3 architecture verbatim, so the FFAI engine returned is a
+// `LlamaModel`; this test just confirms that the dispatch path through
+// the Mistral family enum loads the checkpoint and decodes coherent
+// output.
 //
-// Granite 4 (granite-4.0-h, GraniteMoeHybrid) is a different
-// architecture (Mamba 2 / attention / MoE hybrid) and has its own
-// integration test under `Granite4IntegrationTests.swift`.
+// Skipped automatically if the checkpoint isn't available.
 
 import Foundation
 import TestHelpers
@@ -27,66 +27,62 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "Granite3 Integration", .serialized,
+    "Mistral Integration", .serialized,
     .enabled(
         if: IntegrationGroupGating.enableTextSuites,
         IntegrationGroupGating.textSkipReason)
 )
-struct Granite3IntegrationTests {
+struct MistralTextIntegrationTests {
 
-    @Test("Granite-3.2-2B-Instruct (GraniteForCausalLM) decodes coherently")
-    func granite3() async throws {
+    @Test("load + greedy generate produces coherent output")
+    func loadAndGenerate() async throws {
+        // mlx-community 4-bit pack — keeps the download manageable
+        // while still exercising the production Mistral weight layout
+        // + Llama-loader path.
+        let modelId = "mlx-community/Mistral-7B-Instruct-v0.3-4bit"
+        let prompt = "Once upon a time, in a quiet village"
+        let maxTokens = 200
+
         // ── 1. Load ──────────────────────────────────────────────────────
-        let m = try await ModelLoadLock.shared.loadSerially {
-            try await Model.load("mlx-community/IBM-granite-3.2-2b-instruct-4bit")
-        }
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // ── 2. Interfaces we expect ──────────────────────────────────────
-        // Granite 3 is Llama-shaped — engine routes through `m.llama`.
-        // Granite 4 (hybrid) is a different engine and stays nil here.
-        #expect(m.llama != nil)
-        #expect(m.graniteMoeHybrid == nil)
+        #expect(m.llama != nil, "Mistral 7B should load through the Llama engine")
         #expect(m.qwen3 == nil)
         #expect(m.jamba == nil)
-
-        // Granite 3.2 2B canonical (same dim as 3.0/3.1 — only the
-        // training data + alignment changed). head_dim is derived as
-        // hidden / num_attention_heads (config field is absent).
-        #expect(m.engine.hidden == 2048)
-        #expect(m.engine.nLayers == 40)
+        // Mistral 7B canonical shapes. GQA: nKVHeads = 8.
+        #expect(m.engine.hidden == 4096)
+        #expect(m.engine.nLayers == 32)
         #expect(m.engine.nHeads == 32)
         #expect(m.engine.nKVHeads == 8)
-        #expect(m.engine.headDim == 64)  // 2048 / 32
-        #expect(m.engine.vocab == 49155)
+        #expect(m.engine.headDim == 128)
+        #expect(m.engine.vocab == 32_768)
 
         // ── 3. Errors we expect ─────────────────────────────────────────
-        // Cache-kind alignment — every Llama layer expects a KVCache.
         let caches = m.engine.makeLayerCaches()
-        #expect(caches.count == 40)
+        #expect(caches.count == 32)
         for (i, c) in caches.enumerated() {
             if !(c is KVCache) {
-                Issue.record("Granite3: layer \(i) cache is \(type(of: c)), expected KVCache")
+                Issue.record("Mistral: layer \(i) cache is \(type(of: c)), expected KVCache")
             }
         }
 
         // ── 4. Forward pass produces expected output ────────────────────
         let logits = m.engine.forward(tokenId: 1, position: 0, caches: caches)
-        #expect(logits.elementCount == 49155)
+        #expect(logits.elementCount == 32_768)
         let top = Sampling.topN(logits, n: 5)
-        #expect(top.count == 5)
         #expect(top[0].1.isFinite)
-        // Strict ordering — all-equal logits indicate a forward-pass bug.
         #expect(top[0].1 > top[4].1)
 
         let result = try await m.generate(
-            prompt: "Once upon a time, in a quiet village",
-            parameters: GenerationParameters(maxTokens: 200, temperature: 0)
+            prompt: prompt,
+            parameters: GenerationParameters(maxTokens: maxTokens, temperature: 0)
         )
         #expect(result.tokensPerSecond > 0)
         expectCoherentOutput(
             result.generatedTokens,
             minTokens: 32,
-            label: "Granite 3.2 2B 4bit"
+            label: "Mistral 7B 4bit"
         )
     }
 }

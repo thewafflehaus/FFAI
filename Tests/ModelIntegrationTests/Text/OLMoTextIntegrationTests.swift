@@ -29,7 +29,7 @@ import Testing
         if: IntegrationGroupGating.enableTextSuites,
         IntegrationGroupGating.textSkipReason)
 )
-struct OLMoIntegrationTests {
+struct OLMoTextIntegrationTests {
 
     @Test("OLMo-2-1124-7B-Instruct (Olmo2ForCausalLM) decodes coherently")
     func olmo2() async throws {

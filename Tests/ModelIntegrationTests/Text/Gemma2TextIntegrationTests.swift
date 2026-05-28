@@ -34,7 +34,7 @@ import Testing
         if: IntegrationGroupGating.enableTextSuites,
         IntegrationGroupGating.textSkipReason)
 )
-struct Gemma2IntegrationTests {
+struct Gemma2TextIntegrationTests {
 
     @Test("load + greedy generate produces coherent output")
     func loadAndGenerate() async throws {

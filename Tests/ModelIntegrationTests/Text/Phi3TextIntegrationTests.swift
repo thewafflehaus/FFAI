@@ -33,7 +33,7 @@ import Testing
         if: IntegrationGroupGating.enableTextSuites,
         IntegrationGroupGating.textSkipReason)
 )
-struct Phi3IntegrationTests {
+struct Phi3TextIntegrationTests {
 
     @Test("load + greedy generate produces coherent output")
     func loadAndGenerate() async throws {

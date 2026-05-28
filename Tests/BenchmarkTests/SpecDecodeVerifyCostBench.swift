@@ -29,27 +29,37 @@ import Testing
 
 @testable import FFAI
 
-private let qwen36VerifyPath = "/Users/tom/models/Qwen3.6-35B-A3B-4bit"
+/// Bench target — the cached `mlx-community/Qwen3.6-35B-A3B-4bit`
+/// MoE checkpoint. Switched off Tom's prior `/Users/tom/models/...`
+/// hard-coded local path; matches the same identifier the sibling
+/// `Qwen36TextBenchTest` + `SpecDecodeBenchTests` use.
+private let qwen36VerifyModelId = "mlx-community/Qwen3.6-35B-A3B-4bit"
+
+/// Local-cache predicate — bench is also disabled if the checkpoint
+/// isn't already cached.
+private let qwen36VerifyCacheAvailable: Bool = {
+    let cache =
+        ("~/.cache/huggingface/hub/models--mlx-community--Qwen3.6-35B-A3B-4bit"
+            as NSString)
+        .expandingTildeInPath
+    return FileManager.default.fileExists(atPath: cache)
+}()
 
 @Suite(
     "SpecDecode verify-cost bench",
     .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+        if: IntegrationGroupGating.enableBenchmarkSuites && qwen36VerifyCacheAvailable,
+        IntegrationGroupGating.benchmarkSkipReason)
 )
 struct SpecDecodeVerifyCostBench {
 
     @Test("Compare forwardManyAllLogits(T=3) vs 3× forward() at decode shape")
     func compareBatchedVsSingleStep() async throws {
-        guard FileManager.default.fileExists(atPath: qwen36VerifyPath) else {
-            print("SpecDecodeVerifyCostBench skipped: \(qwen36VerifyPath) not found")
-            return
-        }
         var optsBuilder = LoadOptions()
         optsBuilder.prewarm = false
         let opts = optsBuilder
         let m: Model = try await ModelLoadLock.shared.loadSerially {
-            try await Model.load(qwen36VerifyPath, options: opts)
+            try await Model.load(qwen36VerifyModelId, options: opts)
         }
         guard let qwen = m.qwen35 else {
             Issue.record("expected Qwen35Model engine")
