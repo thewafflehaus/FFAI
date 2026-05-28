@@ -99,12 +99,12 @@ public enum OpsValidation {
     /// head_dim values for which a kernel specialization currently
     /// exists. Caller is responsible for routing to the matching
     /// kernel; see `Ops.sdpaDecode`.
-    public static let supportedSdpaHeadDims: Set<Int> = [64, 128, 256, 512]
+    public static let supportedSdpaHeadDims: Set<Int> = [64, 96, 128, 256, 512]
 
     /// head_dim values whose kernel variant carries the `sink_end` /
-    /// `window_start` constexprs. The d64 / d256 variants are dense-only
-    /// — passing a non-zero sink/window to `Ops.sdpaDecode` with those
-    /// head dims is rejected.
+    /// `window_start` constexprs. The d64 / d96 / d256 / d512 variants are
+    /// dense-only — passing a non-zero sink/window to `Ops.sdpaDecode`
+    /// with those head dims is rejected.
     public static let slidingWindowSdpaHeadDims: Set<Int> = [128]
 
     public static func validateSdpaDecode(

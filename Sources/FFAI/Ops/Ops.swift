@@ -3613,6 +3613,41 @@ public enum Ops {
                 heads_per_group: UInt32(headsPerGroup),
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
+        // d96 — Phi-3-mini (3072 / 32). Dense-only like d64/d256/d512;
+        // OpsValidation preconditions sinkEnd == 0 && windowStart == 0.
+        case (96, .f32):
+            MetalTileKernels.ffai_sdpa_decode_d96_f32(
+                q: q.buffer, qOffset: q.offset,
+                k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                out: result.buffer, outOffset: result.offset,
+                head_dim: UInt32(headDim), n_kv: UInt32(nKV),
+                kv_stride: UInt32(kvStride),
+                heads_per_group: UInt32(headsPerGroup),
+                scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (96, .f16):
+            MetalTileKernels.ffai_sdpa_decode_d96_f16(
+                q: q.buffer, qOffset: q.offset,
+                k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                out: result.buffer, outOffset: result.offset,
+                head_dim: UInt32(headDim), n_kv: UInt32(nKV),
+                kv_stride: UInt32(kvStride),
+                heads_per_group: UInt32(headsPerGroup),
+                scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (96, .bf16):
+            MetalTileKernels.ffai_sdpa_decode_d96_bf16(
+                q: q.buffer, qOffset: q.offset,
+                k: k.buffer, kOffset: k.offset,
+                v: v.buffer, vOffset: v.offset,
+                out: result.buffer, outOffset: result.offset,
+                head_dim: UInt32(headDim), n_kv: UInt32(nKV),
+                kv_stride: UInt32(kvStride),
+                heads_per_group: UInt32(headsPerGroup),
+                scale: scale,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
         case (256, .f32):
             MetalTileKernels.ffai_sdpa_decode_d256_f32(
                 q: q.buffer, qOffset: q.offset,
