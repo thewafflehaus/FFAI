@@ -48,14 +48,15 @@ struct KVCacheGrowthIntegrationTests {
         let modelId = "mlx-community/Qwen3.5-0.8B-4bit"
         let prompt = "The history of the printing press began when"
 
-        // Force growth during decode: start the cache at 16 slots so a
-        // 64-token generation crosses 16 → 32 → 64 → 128. Restore the
-        // production default afterwards.
-        let savedDefault = KVCache.defaultInitialCapacity
-        KVCache.defaultInitialCapacity = 16
-        defer { KVCache.defaultInitialCapacity = savedDefault }
-
-        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
+        // Force growth during decode via the real per-load override —
+        // start the cache at 16 slots so a 64-token generation crosses
+        // 16 → 32 → 64. Using LoadOptions.initialKVCacheCapacity (rather
+        // than poking the global KVCache.defaultInitialCapacity) tests
+        // the production override path AND keeps the global untouched so
+        // parallel unit suites aren't disturbed.
+        let m = try await ModelLoadLock.shared.loadSerially {
+            try await Model.load(modelId, options: LoadOptions(initialKVCacheCapacity: 16))
+        }
         #expect(m.qwen35 != nil)
 
         let result = try await m.generate(

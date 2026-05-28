@@ -1339,14 +1339,29 @@ public final class Model: @unchecked Sendable {
         let ceiling = try resolvedKVContextCeiling(
             generationBudget: generationBudget, device: device)
 
-        let savedInitial = KVCache.defaultInitialCapacity
-        if loadOptions.preallocateKVCache {
-            KVCache.defaultInitialCapacity = ceiling
-        } else if let ic = loadOptions.initialKVCacheCapacity {
-            KVCache.defaultInitialCapacity = Swift.max(1, ic)
+        // Common path: no per-load initial-capacity override → build at
+        // the global default, touching no shared state.
+        guard loadOptions.preallocateKVCache || loadOptions.initialKVCacheCapacity != nil
+        else {
+            return engine.makeLayerCaches(maxSeq: ceiling, device: device)
         }
-        defer { KVCache.defaultInitialCapacity = savedInitial }
 
+        // Override path: `preallocateKVCache` collapses to "start at the
+        // full ceiling"; `initialKVCacheCapacity` sets a custom start.
+        // We express both through the `KVCache.defaultInitialCapacity`
+        // knob around the SYNCHRONOUS build, saving + restoring it so the
+        // override doesn't leak to other models. (The save/restore window
+        // is synchronous — no `await` — so a single call is self-consistent;
+        // simultaneous generations on *different* models that both set an
+        // override could still race the global, but that only affects the
+        // initial allocation SIZE, never correctness, since growth
+        // reconstructs the cache faithfully regardless of where it starts.)
+        let saved = KVCache.defaultInitialCapacity
+        KVCache.defaultInitialCapacity =
+            loadOptions.preallocateKVCache
+            ? ceiling
+            : Swift.max(1, loadOptions.initialKVCacheCapacity ?? saved)
+        defer { KVCache.defaultInitialCapacity = saved }
         return engine.makeLayerCaches(maxSeq: ceiling, device: device)
     }
 }

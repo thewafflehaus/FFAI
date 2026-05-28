@@ -273,13 +273,21 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
         self.dtype = dtype
         self.device = device
 
-        // Initial physical capacity. Windows allocate their full ring
-        // (maxSize ≤ maxSeq) up front; unbounded caches start small and
-        // grow unless `preallocate` forces the full ceiling.
+        // Initial physical capacity. Both unbounded AND window caches
+        // start small and grow on demand — a window grows linearly up to
+        // its `maxSize` ring and only then begins rotating, so a 16K
+        // window that only sees 3K tokens never allocates the full 16K.
+        // `preallocate` forces the full target up front (the ceiling for
+        // unbounded, the ring size for a window).
         let startCapacity: Int
         switch eviction {
         case .window(let maxSize, _):
-            startCapacity = maxSize
+            if preallocate {
+                startCapacity = maxSize
+            } else {
+                let requested = initialCapacity ?? KVCache.defaultInitialCapacity
+                startCapacity = Swift.min(maxSize, Swift.max(1, requested))
+            }
         case .unbounded:
             if preallocate {
                 startCapacity = maxSeq
@@ -319,23 +327,31 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
     /// target of the caller's append + the source of its SDPA read,
     /// both correctly ordered on the caller's `cmd`.
     ///
-    /// No-op for `.window` caches (sized to maxSize up front) and once
-    /// `capacity == contextCeiling`.
+    /// Grows for both `.unbounded` (toward `contextCeiling`) and
+    /// `.window` (toward `maxSize`, after which rotation takes over —
+    /// the ring's linear pre-fill region grows on demand). No-op once
+    /// `capacity` has reached the relevant ceiling.
     private func ensureCapacityLocked(_ needed: Int) {
-        guard case .unbounded = _evictionState.policy else { return }
-        guard needed > capacity, capacity < contextCeiling else { return }
+        // The depth this cache may grow to: the rotation ring size for a
+        // window, the context ceiling otherwise.
+        let growthCeiling: Int
+        switch _evictionState.policy {
+        case .unbounded: growthCeiling = contextCeiling
+        case .window(let maxSize, _): growthCeiling = maxSize
+        }
+        guard needed > capacity, capacity < growthCeiling else { return }
 
         // Geometric growth (double) gives O(log N) reallocs + O(N) total
         // copy while keeping reads contiguous; clamp to the ceiling and
         // never below `needed`.
         var newCapacity = capacity
         while newCapacity < needed { newCapacity *= 2 }
-        newCapacity = Swift.min(newCapacity, contextCeiling)
+        newCapacity = Swift.min(newCapacity, growthCeiling)
         if newCapacity < needed {
             // `needed` exceeds the ceiling — let reserveNextSlot's own
             // precondition fire with its actionable message rather than
             // silently truncating here.
-            newCapacity = contextCeiling
+            newCapacity = growthCeiling
         }
         guard newCapacity > capacity else { return }
 

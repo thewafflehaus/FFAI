@@ -620,9 +620,13 @@ struct KVCacheTests {
 
     @Test("totalBytes accessors — bytesAllocated, bytesInUse, totalBytesAllocated")
     func totalBytesAccessors() {
-        // maxSeq 1024 ≤ defaultInitialCapacity (2048) → starts fully
-        // allocated at 1024, so the byte accounting is the full depth.
-        let c = KVCache(nKVHeads: 8, headDim: 64, maxSeq: 1024, dtype: .f16)
+        // `preallocate: true` pins the allocation to the full maxSeq
+        // (1024) deterministically — independent of the global
+        // `defaultInitialCapacity` knob (which another suite may have
+        // mutated under parallel test execution).
+        let c = KVCache(
+            nKVHeads: 8, headDim: 64, maxSeq: 1024, dtype: .f16,
+            eviction: .unbounded, preallocate: true)
         let elems = 2 * 8 * 1024 * 64
         #expect(c.bytesAllocated == elems * 2)  // fp16 = 2 bytes
         #expect(c.bytesInUse == 0)
@@ -785,13 +789,15 @@ struct KVCacheTests {
         }
     }
 
-    @Test("window eviction allocates its full ring and does not grow")
-    func windowNoGrowth() {
+    @Test("small window (maxSize ≤ initialCapacity) starts at its full ring")
+    func windowSmallStartsFull() {
         autoreleasepool {
+            // maxSize 4 ≤ defaultInitialCapacity (2048) → starts at 4, so
+            // there's nothing to grow; rotation begins once full.
             let c = KVCache(
                 nKVHeads: 1, headDim: 2, maxSeq: 64, dtype: .f32,
                 eviction: .window(maxSize: 4, keep: 0))
-            #expect(c.capacity == 4, "window sizes to maxSize up front")
+            #expect(c.capacity == 4, "small window sizes to maxSize up front")
             for p in 0 ..< 7 {
                 let kFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
                 let vFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
@@ -799,8 +805,54 @@ struct KVCacheTests {
                 vFlat.copyIn(from: [Float(p), Float(p)])
                 c.append(kFlat: kFlat, vFlat: vFlat)
             }
-            #expect(c.capacity == 4, "window never grows")
+            #expect(c.capacity == 4, "stays at maxSize")
             #expect(c.length == 4, "length saturates at the window size")
+        }
+    }
+
+    @Test("large window grows linearly up to maxSize, THEN rotates")
+    func windowGrowsThenRotates() {
+        autoreleasepool {
+            // maxSize 8, explicit initialCapacity 2 → grows 2 → 4 → 8
+            // during the linear pre-fill, then rotates the 8-slot ring.
+            let c = KVCache(
+                nKVHeads: 1, headDim: 2, maxSeq: 64, dtype: .f32,
+                eviction: .window(maxSize: 8, keep: 0), initialCapacity: 2)
+            #expect(c.capacity == 2, "starts below maxSize")
+            #expect(c.effectiveMaxSize == 8, "retained window is still maxSize")
+
+            // Pre-fill 8 tokens (p = 0..7): linear, growing 2 → 4 → 8.
+            for p in 0 ..< 8 {
+                let kFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
+                let vFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
+                kFlat.copyIn(from: [Float(p), Float(p)])
+                vFlat.copyIn(from: [Float(p), Float(p)])
+                c.append(kFlat: kFlat, vFlat: vFlat)
+            }
+            #expect(c.capacity == 8, "grew to the full ring")
+            #expect(c.length == 8)
+            // Pre-fill region is intact + linear (no rotation yet).
+            var k = c.kBuffer.toArray(as: Float.self)
+            for p in 0 ..< 8 {
+                #expect(Array(k[p * 2 ..< p * 2 + 2]) == [Float(p), Float(p)])
+            }
+
+            // Two more tokens (p = 8, 9): now rotating — capacity stays 8,
+            // slots 0 and 1 are overwritten (FIFO, keep=0).
+            for p in 8 ..< 10 {
+                let kFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
+                let vFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
+                kFlat.copyIn(from: [Float(p), Float(p)])
+                vFlat.copyIn(from: [Float(p), Float(p)])
+                c.append(kFlat: kFlat, vFlat: vFlat)
+            }
+            #expect(c.capacity == 8, "does not grow past maxSize — rotates instead")
+            #expect(c.length == 8, "length saturates at maxSize")
+            k = c.kBuffer.toArray(as: Float.self)
+            // Slot 0 ← token 8, slot 1 ← token 9; slots 2..7 still 2..7.
+            #expect(Array(k[0 ..< 2]) == [Float(8), Float(8)])
+            #expect(Array(k[2 ..< 4]) == [Float(9), Float(9)])
+            #expect(Array(k[4 ..< 6]) == [Float(2), Float(2)])
         }
     }
 }

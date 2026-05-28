@@ -92,10 +92,17 @@ public struct KVEvictionState {
             precondition(
                 keep < maxSize,
                 "KVEviction.window: keep (\(keep)) must be < maxSize (\(maxSize))")
+            // `bufferCapacity` may START smaller than `maxSize`: a
+            // growable window pre-fills linearly from a small initial
+            // allocation, growing toward `maxSize`, and only begins
+            // rotating once it has accumulated `maxSize` tokens (by which
+            // point the buffer has grown to `maxSize`). The cache's
+            // `ensureCapacity` guarantees capacity == maxSize before the
+            // first rotated slot is reserved — see the slot formula in
+            // `reserveNextSlot` (linear while absoluteCount < maxSize).
             precondition(
-                maxSize <= bufferCapacity,
-                "KVEviction.window: maxSize (\(maxSize)) must be ≤ bufferCapacity (\(bufferCapacity))"
-            )
+                bufferCapacity >= 1,
+                "KVEviction.window: bufferCapacity must be ≥ 1 (got \(bufferCapacity))")
         }
         self.policy = policy
         self.bufferCapacity = bufferCapacity
@@ -147,17 +154,22 @@ public struct KVEvictionState {
     }
 
     /// Raise the recorded buffer capacity after the parent cache
-    /// reallocates its backing buffers to a larger size. Only valid
-    /// for `.unbounded` policies (windows are sized to `maxSize` at
-    /// construction and never grow). `newCapacity` must be strictly
-    /// larger than the current capacity.
+    /// reallocates its backing buffers to a larger size. Valid for
+    /// `.unbounded` (grows toward the context ceiling) and `.window`
+    /// (grows toward `maxSize`, then rotation takes over — a growable
+    /// window pre-fills linearly before rotating, so it is more memory-
+    /// efficient than pre-allocating the full ring). `newCapacity` must
+    /// be strictly larger than the current capacity, and for a window
+    /// must not exceed `maxSize` (the ring never needs more slots).
     public mutating func grow(to newCapacity: Int) {
-        precondition(
-            { if case .unbounded = policy { return true } else { return false } }(),
-            "KVEvictionState.grow: only .unbounded caches grow (window is sized to maxSize)")
         precondition(
             newCapacity > bufferCapacity,
             "KVEvictionState.grow: newCapacity \(newCapacity) must exceed current \(bufferCapacity)")
+        if case .window(let maxSize, _) = policy {
+            precondition(
+                newCapacity <= maxSize,
+                "KVEvictionState.grow: window capacity \(newCapacity) must not exceed maxSize \(maxSize)")
+        }
         bufferCapacity = newCapacity
     }
 
