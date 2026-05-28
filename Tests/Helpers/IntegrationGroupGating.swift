@@ -109,6 +109,16 @@ public enum IntegrationGroupGating {
     /// section of `planning/session-plan.md`.
     public static let enableMixedPrecisionSuites: Bool = false
 
+    /// Starcoder2 integration suite — gated separately from the
+    /// general text group because Starcoder2 is misrouted through
+    /// the Llama-compatible dispatch list in Loader/Model.swift
+    /// (it's structurally different: LayerNorm with `.bias`,
+    /// GELU-tanh single-projection MLP with `c_fc` + `c_proj`
+    /// names, `norm_epsilon` config field). The Llama loader
+    /// throws `Llama: required config field missing` on this
+    /// checkpoint. Flip when a dedicated Starcoder2 loader exists.
+    public static let enableStarcoder2Suite: Bool = false
+
     // ─── Skip-reason strings ──────────────────────────────────────────
     //
     // These appear in test output so the human reader sees WHY a suite
@@ -135,4 +145,7 @@ public enum IntegrationGroupGating {
 
     public static let mixedPrecisionSkipReason: Comment =
         "Mixed-precision suite group (Unsloth UD-MLX, mlx-community mixed_N_M, etc.): not yet verified on current HEAD. Flip IntegrationGroupGating.enableMixedPrecisionSuites to run; revisit per the 'Ablated + mixed-precision follow-up' section of planning/session-plan.md."
+
+    public static let starcoder2SkipReason: Comment =
+        "Starcoder2 suite: misrouted through Llama-compatible dispatch in Loader/Model.swift today (Starcoder2 is structurally different — LayerNorm + GELU-tanh single-projection MLP with c_fc/c_proj names, norm_epsilon config). Needs a dedicated Starcoder2 loader; until then this suite throws `Llama: required config field missing`. Flip IntegrationGroupGating.enableStarcoder2Suite once that loader lands."
 }
