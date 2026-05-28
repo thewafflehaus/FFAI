@@ -87,7 +87,11 @@ struct Gemma2IntegrationTests {
             parameters: GenerationParameters(maxTokens: maxTokens, temperature: 0)
         )
         #expect(result.tokensPerSecond > 0)
-        expectCoherentOutput(result.generatedTokens, label: "Gemma 2 2B-it 4bit")
+        expectCoherentOutput(
+            result.generatedTokens,
+            minTokens: 32,
+            label: "Gemma 2 2B-it 4bit"
+        )
         let text = m.tokenizer.decode(
             tokens: result.generatedTokens,
             skipSpecialTokens: true)

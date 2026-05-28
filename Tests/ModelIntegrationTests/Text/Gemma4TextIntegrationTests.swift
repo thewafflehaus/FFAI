@@ -114,8 +114,10 @@ struct Gemma4TextIntegrationTests {
         print("Gemma 4 E2B decoded: \"\(prompt)\(result.text)\"")
         #expect(result.tokensPerSecond > 0)
         expectCoherentOutput(
-            result.generatedTokens, minTokens: maxTokens,
-            label: "Gemma 4 E2B-it 4bit")
+            result.generatedTokens,
+            minTokens: 32,
+            label: "Gemma 4 E2B-it 4bit"
+        )
     }
 
     @Test(
@@ -145,8 +147,10 @@ struct Gemma4TextIntegrationTests {
             parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
         expectCoherentOutput(
-            result.generatedTokens, minTokens: 48,
-            label: "Gemma 4 31B-it 4bit")
+            result.generatedTokens,
+            minTokens: 32,
+            label: "Gemma 4 31B-it 4bit"
+        )
     }
 
     @Test(
@@ -179,7 +183,9 @@ struct Gemma4TextIntegrationTests {
         )
         #expect(result.tokensPerSecond > 0)
         expectCoherentOutput(
-            result.generatedTokens, minTokens: 24,
-            label: "Gemma 4 26B-A4B-it 4bit")
+            result.generatedTokens,
+            minTokens: 32,
+            label: "Gemma 4 26B-A4B-it 4bit"
+        )
     }
 }

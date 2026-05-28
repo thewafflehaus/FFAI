@@ -85,7 +85,11 @@ struct NemotronDiffusionIntegrationTests {
             prompt: prompt,
             parameters: GenerationParameters(maxTokens: 200, temperature: 0))
         #expect(ar.tokensPerSecond > 0)
-        expectCoherentOutput(ar.generatedTokens, label: "Nemotron-Labs-Diffusion 3B AR")
+        expectCoherentOutput(
+            ar.generatedTokens,
+            minTokens: 32,
+            label: "Nemotron-Labs-Diffusion 3B 4bit AR"
+        )
 
         // Mode 2 — block-wise diffusion decoding.
         let diff = m.generateDiffusion(
@@ -96,7 +100,9 @@ struct NemotronDiffusionIntegrationTests {
         #expect(diff.forwardPasses > 0)
         expectCoherentOutput(
             diff.generatedTokens,
-            label: "Nemotron-Labs-Diffusion 3B diffusion")
+            minTokens: 32,
+            label: "Nemotron-Labs-Diffusion 3B 4bit diffusion"
+        )
 
         // Mode 3 — linear self-speculation (diffusion draft + AR verify).
         let ss = m.generateSelfSpeculative(
@@ -107,6 +113,8 @@ struct NemotronDiffusionIntegrationTests {
         #expect(ss.forwardPasses > 0)
         expectCoherentOutput(
             ss.generatedTokens,
-            label: "Nemotron-Labs-Diffusion 3B self-spec")
+            minTokens: 32,
+            label: "Nemotron-Labs-Diffusion 3B 4bit self-spec"
+        )
     }
 }

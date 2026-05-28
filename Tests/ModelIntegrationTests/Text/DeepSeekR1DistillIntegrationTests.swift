@@ -55,7 +55,11 @@ struct DeepSeekR1DistillIntegrationTests {
             parameters: GenerationParameters(maxTokens: maxTokens, temperature: 0)
         )
         #expect(result.tokensPerSecond > 0)
-        expectCoherentOutput(result.generatedTokens, label: "R1-Distill-Llama-8B")
+        expectCoherentOutput(
+            result.generatedTokens,
+            minTokens: 32,
+            label: "R1-Distill-Llama-8B 4bit"
+        )
     }
 
     @Test("R1-Distill-Qwen-1.5B (Qwen 2 architecture) generates coherent output")
@@ -100,7 +104,9 @@ struct DeepSeekR1DistillIntegrationTests {
         // penalty); 1.5B base models loop at greedy across families.
         expectCoherentOutput(
             result.generatedTokens,
+            minTokens: 32,
             minUniqueRatio: 0.10,
-            label: "R1-Distill-Qwen-1.5B")
+            label: "R1-Distill-Qwen-1.5B 4bit"
+        )
     }
 }

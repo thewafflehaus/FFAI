@@ -32,10 +32,13 @@
 // The MoE experts ship MXFP4-quantized; the loader transcodes them to
 // FFAI's affine-int4 format at load time (see GPTOSSMoE.swift).
 //
-// `mlx-community/gpt-oss-20b-MXFP4-Q8` (~11 GB) is the target — it fits
+// `loan-star/gpt-oss-20b-mlx-4Bit` (~11 GB) is the target — it fits
 // in the dev box's memory budget. The transcode is lossy, so the test
 // asserts pipeline-level *coherence* (the FFAI integration contract),
-// not cross-implementation token parity.
+// not cross-implementation token parity. (We may switch to a
+// `ekryski/` MXFP4 → affine-int4 conversion in future once we have
+// our own published checkpoint; one canonical target keeps the
+// suite consistent with the rest of the integration coverage.)
 //
 // Env-gated: GPT-OSS-20B is FFAI's heaviest integration target. A
 // debug-build greedy decode of a ~20B MoE runs for minutes, so this
@@ -60,33 +63,10 @@ struct GPTOSSIntegrationTests {
 
     @Test("load + greedy generate produces coherent MoE output")
     func loadAndGenerate() async throws {
-        // Candidate checkpoints, smallest-first. All ship MXFP4 experts;
-        // the loader transcodes them to affine int4.
-        let candidates = [
-            "mlx-community/gpt-oss-20b-MXFP4-Q8",
-            "loan-star/gpt-oss-20b-mlx-4Bit",
-            "sjgdr/gpt-oss-20b-mlx-fp16",
-        ]
+        let modelId = "loan-star/gpt-oss-20b-mlx-4Bit"
         let prompt = "The history of the printing press began when"
 
-        var loaded: Model?
-        var lastError: Error?
-        for modelId in candidates {
-            do {
-                loaded = try await ModelLoadLock.shared.loadSerially {
-                    try await Model.load(modelId)
-                }
-                print("GPT-OSS integration test using checkpoint: \(modelId)")
-                break
-            } catch {
-                lastError = error
-                continue
-            }
-        }
-        let m = try #require(
-            loaded,
-            "GPT-OSS-20B: none of \(candidates) loaded — \(lastError.map { "\($0)" } ?? "no checkpoint cached")"
-        )
+        let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
         // Engine should be GPT-OSS (not a dense / hybrid family).
         #expect(m.gptOSS != nil)

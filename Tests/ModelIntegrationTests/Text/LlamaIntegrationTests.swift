@@ -61,6 +61,10 @@ struct LlamaIntegrationTests {
             parameters: GenerationParameters(maxTokens: maxTokens, temperature: 0)
         )
         #expect(result.tokensPerSecond > 0)
-        expectCoherentOutput(result.generatedTokens, label: "Llama 3.2 1B 4bit")
+        expectCoherentOutput(
+            result.generatedTokens,
+            minTokens: 32,
+            label: "Llama 3.2 1B 4bit"
+        )
     }
 }

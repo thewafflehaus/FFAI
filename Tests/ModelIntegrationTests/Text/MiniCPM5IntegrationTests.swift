@@ -57,7 +57,11 @@ struct MiniCPM5IntegrationTests {
             prompt: "Once upon a time, in a quiet village",
             parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
-        expectCoherentOutput(result.generatedTokens, label: "MiniCPM5-1B bf16")
+        expectCoherentOutput(
+            result.generatedTokens,
+            minTokens: 32,
+            label: "MiniCPM5-1B bf16"
+        )
     }
 
     @Test("MiniCPM5-1B-MLX (int4) — Llama dispatch + QuantizedLinear forward")
@@ -74,6 +78,10 @@ struct MiniCPM5IntegrationTests {
             prompt: "Once upon a time, in a quiet village",
             parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
-        expectCoherentOutput(result.generatedTokens, label: "MiniCPM5-1B int4")
+        expectCoherentOutput(
+            result.generatedTokens,
+            minTokens: 32,
+            label: "MiniCPM5-1B int4"
+        )
     }
 }

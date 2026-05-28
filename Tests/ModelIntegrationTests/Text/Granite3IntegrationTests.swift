@@ -83,6 +83,10 @@ struct Granite3IntegrationTests {
             parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
         #expect(result.tokensPerSecond > 0)
-        expectCoherentOutput(result.generatedTokens, label: "Granite 3.2 2B 4bit")
+        expectCoherentOutput(
+            result.generatedTokens,
+            minTokens: 32,
+            label: "Granite 3.2 2B 4bit"
+        )
     }
 }

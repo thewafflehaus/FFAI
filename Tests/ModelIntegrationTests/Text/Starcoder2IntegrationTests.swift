@@ -61,6 +61,10 @@ struct Starcoder2IntegrationTests {
             prompt: "def fibonacci(n):\n",
             parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
-        expectCoherentOutput(result.generatedTokens, label: "Starcoder2 3B 4bit")
+        expectCoherentOutput(
+            result.generatedTokens,
+            minTokens: 32,
+            label: "Starcoder2 3B 4bit"
+        )
     }
 }

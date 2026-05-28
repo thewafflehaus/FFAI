@@ -82,6 +82,10 @@ struct Qwen2TextIntegrationTests {
             parameters: GenerationParameters(maxTokens: maxTokens, temperature: 0)
         )
         #expect(result.tokensPerSecond > 0)
-        expectCoherentOutput(result.generatedTokens, label: "Qwen 2.5 0.5B 4bit")
+        expectCoherentOutput(
+            result.generatedTokens,
+            minTokens: 32,
+            label: "Qwen 2.5 0.5B 4bit"
+        )
     }
 }

@@ -80,6 +80,10 @@ struct InternLM2IntegrationTests {
             parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
         #expect(result.tokensPerSecond > 0)
-        expectCoherentOutput(result.generatedTokens, label: "InternLM2.5 7B 4bit")
+        expectCoherentOutput(
+            result.generatedTokens,
+            minTokens: 32,
+            label: "InternLM2.5 7B 4bit"
+        )
     }
 }

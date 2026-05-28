@@ -77,6 +77,10 @@ struct OLMoIntegrationTests {
             parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
         #expect(result.tokensPerSecond > 0)
-        expectCoherentOutput(result.generatedTokens, label: "OLMo 2 7B 4bit")
+        expectCoherentOutput(
+            result.generatedTokens,
+            minTokens: 32,
+            label: "OLMo 2 7B 4bit"
+        )
     }
 }
