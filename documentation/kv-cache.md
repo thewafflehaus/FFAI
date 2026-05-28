@@ -6,7 +6,7 @@ The KV cache holds per-layer K and V tensors so subsequent decode steps don't re
 
 | Algorithm | When to use | Memory ratio | Status |
 |---|---|---|---|
-| **Raw fp16 / bf16** (`KVCache`, default) | All current models. | 1× | ✅ Shipped. |
+| **Raw fp16 / bf16** (`KVCache`, default) | All current models. | 1× | ✅ Shipped — grows incrementally (starts at 2048, doubles on demand) rather than pre-allocating the full context. See [Memory growth](#memory-growth). |
 | **`affine8`** (`AffineQuantizedKVCache`, 8-bit) | Memory-constrained; ~7% decode-tok/s tax. | ~0.55× (45% smaller) measured on Qwen3 1.7B | ✅ Shipped. |
 | **`affine4`** (`AffineQuantizedKVCache`, 4-bit) | Tight memory; same speed as `affine8`. | ~0.31× (69% smaller, group_size=32) | ✅ Shipped. |
 | **AURA** (Adaptive Unified Rotated Activations, `AURAQuantizedKVCache`) | Best memory ratio at minimal quality loss. | ~6–8× at `aura4v2` | ✅ Shipped — per-layer SRHT rotation; decodes coherently across `aura4v4` / `aura4v2` / `aura8v4` / `aura8v8`. See [`papers/aura-compression-algorithm.md`](../papers/aura-compression-algorithm.md). |
@@ -25,13 +25,53 @@ Each layer holds its own `KVCache` instance. During the forward pass:
 3. **`kv_cache_update`** kernel appends the new `K`/`V` rows into the per-layer cache buffer **on the GPU**. No CPU↔GPU sync — the append enqueues onto the same `MTLCommandBuffer` as the rest of the layer.
 4. `sdpa_decode` kernel scores the single query row against the full cached `K`/`V` slice up to the current position.
 
-The cache buffer is allocated once per layer at the configured max context length; appends bump an `offset` rather than reallocating. This is the same shape MLX uses, minus the Metal compile latency.
+The raw cache buffer **grows incrementally** — it starts at a small depth and doubles on demand as the conversation lengthens, rather than pre-allocating the model's full context window up front (see [Memory growth](#memory-growth) below). Appends bump an `offset` within the current allocation; a growth event reallocates to a larger buffer and copies the live region over.
 
 ```swift
 let caches = model.engine.makeLayerCaches()  // [any LayerCacheProtocol], one per layer
 ```
 
 `makeLayerCaches()` is on the `LanguageModel` protocol — `LlamaModel`, `Qwen3Model`, and `Mamba2Model` all implement it. The user owns the cache lifetime; keep it across `forward(...)` / `forwardSample(...)` calls for multi-turn or streaming.
+
+## Memory growth
+
+A model's advertised context window can be enormous — Qwen 3.6-27B publishes `max_position_embeddings = 262144` (256K). Pre-allocating a KV cache for the full window costs ~16 GB on that model (16 attention layers × 4 KV heads × 262144 × 256 × 2 (K+V) × 2 bytes) **before generating a single token** — enough to exhaust unified memory on its own. The raw `KVCache` avoids that by growing incrementally:
+
+- **Starts small.** The backing `[nKVHeads, capacity, headDim]` K and V buffers are allocated to `KVCache.defaultInitialCapacity` (**2048**) — or the context ceiling, whichever is smaller.
+- **Doubles on demand.** When the live length reaches the current `capacity`, the cache reallocates to `capacity × 2` (clamped to the ceiling) and copies the live region into the new buffer. Geometric growth means O(log N) reallocations and O(N) total copy across a full run — negligible next to the per-token matmul, and reads stay contiguous (no per-token gather penalty).
+- **Never exceeds the ceiling.** `contextCeiling` is the maximum depth the cache may grow to — the chosen context (`maxContextLength`, or the model's `max_position_embeddings`). The generation driver caps the ceiling at the actual generation budget (`prompt + maxTokens`), so a short request never grows beyond what it will use.
+
+Why 2048: decode throughput on Apple Silicon peaks in the ~2K–4K context band before the quadratic attention term and KV bandwidth start to dominate (past that, sparse decode + KV eviction are the levers — see below). Starting at 2048 means the entire common operating range incurs **zero reallocations**, while a 256K-context model still only allocates ~128 MB up front instead of ~16 GB.
+
+### Capacity vs ceiling — the three sizes
+
+| Property | Meaning |
+|---|---|
+| `capacity` | Current physical depth of the K/V buffers — the SDPA / append stride. Grows; never shrinks. |
+| `maxSeq` | Returns the current `capacity` (the buffer stride every SDPA dispatch uses). |
+| `contextCeiling` | The maximum depth growth may reach — the chosen context window. |
+| `effectiveMaxSize` | The retained-window size for reporting + sliding-window masks: `contextCeiling` for unbounded, `maxSize` for `.window`. |
+
+### Tuning the growth
+
+```swift
+// Global default — set once at startup, before any model load.
+KVCache.defaultInitialCapacity = 1024   // lower the baseline allocation
+
+// Per-cache overrides (on the KVCache initializer):
+KVCache(
+    nKVHeads: …, headDim: …, maxSeq: ceiling, dtype: …,
+    eviction: .unbounded,
+    preallocate: false,        // true → allocate the full ceiling up front (no growth)
+    initialCapacity: 4096      // nil → use defaultInitialCapacity
+)
+```
+
+- **`defaultInitialCapacity`** — process-global starting depth (2048). A startup tuning knob; not safe to mutate during concurrent inference.
+- **`initialCapacity:`** — per-cache starting depth override (clamped to the ceiling).
+- **`preallocate:`** — force full-ceiling allocation at init (the legacy fixed-allocation behaviour). Use when you want the entire context's memory reserved up front, or for callers that stage writes into the buffer's free tail (e.g. diffusion-block forwards). `.window` caches always preallocate to their `maxSize` ring.
+
+> **Note.** Incremental growth applies to the raw `KVCache` (the default). The quantized `affine8` / `affine4` and AURA caches still pre-allocate their (already-compressed) storage; growing them is a separate follow-up. Sliding-window (`.window`) caches allocate exactly their `maxSize` ring up front and never grow.
 
 ## Choosing a configuration
 
@@ -111,7 +151,7 @@ ffai --model mlx-community/Qwen3-1.7B-bf16 \
 
 What that does:
 
-- The cache buffer is still allocated for `maxSeq` (the model's `max_position_embeddings`); `maxSize` controls only how many *positions* the cache reports as live to SDPA.
+- The cache buffer is allocated for exactly `maxSize` positions (the ring is bounded, so there's no reason to reserve the model's full `max_position_embeddings`); `maxSize` is both the physical depth and how many *positions* the cache reports as live to SDPA. Window caches do not grow — the ring rotates in place.
 - The first `keep` positions are pinned — they're written linearly and never evicted. These map to the **attention-sink** tokens of Xiao et al. (2023): inputs the model relies on as anchor points, typically the first 4 tokens (BOS + tokenizer-special).
 - After the cache fills, the next `maxSize - keep` slots act as a FIFO ring: slot `keep + ((absolute - keep) % (maxSize - keep))` is overwritten by the new token's K/V.
 - Each K row was RoPE'd at its absolute insertion position, so softmax stays correct regardless of buffer order — the kernels see the same `[nKVHeads, maxSeq, headDim]` shape with `nKV = length`.
