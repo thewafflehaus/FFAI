@@ -222,3 +222,13 @@ Sketch: extend the config decoder to recognise per-key bit-widths (probably a `q
 - `make test-unit` must add a 2-bit dequant_gemv GPU correctness test mirroring the existing int4/int8 ones, against a CPU reference.
 - `Quantized2bitIntegrationTests` + `MixedPrecisionIntegrationTests` added to the bisect runner.
 
+## Tokenizers — InternLM2Tokenizer not registered
+
+**Symptom.** Loading any InternLM2 checkpoint (e.g. `mlx-community/internlm2_5-7b-chat-4bit`, `internlm/internlm2-chat-1_8b`) logs: `Warning: Tokenizer model class InternLM2Tokenizer is not registered, falling back to a standard BPE implementation.`
+
+**Status.** Low priority — InternLM2 is a niche family and the BPE fallback decodes coherently (verified: greedy generation produces correct output). The InternLM2-native tokenizer is SentencePiece-based with its own special-token handling, so the fallback could mishandle some special tokens / chat-template edges, but nothing wrong has been observed in practice.
+
+**Next steps when this lands as a priority.** Find FFAI's tokenizer model-class registration (where `LlamaTokenizer` / `Qwen2Tokenizer` etc. are mapped) and register `InternLM2Tokenizer` against the SentencePiece/BPE handler it needs. Verify the warning is gone and special tokens resolve on `internlm2_5-7b-chat-4bit`.
+
+**Context.** Surfaced 2026-05-28 while adding the dedicated InternLM2 loader (name remap + fused-`wqkv` split). Independent of the loader fix.
+
