@@ -455,8 +455,25 @@ public struct Granite4Hybrid: Granite4Variant {
     }
 
     /// Build the MoE feed-forward block: top-K SwiGLU experts plus an
-    /// always-on shared SwiGLU expert. The per-expert weights ship
-    /// stacked; the router + shared expert ship as plain 2D weights.
+    /// always-on shared SwiGLU expert. The per-expert weights ship in
+    /// the Granite4-specific "half-stacked" layout:
+    ///
+    ///   - `input_linear.weight`  : `[E, 2·moeI, hidden]`  — gate AND
+    ///     up fused along dim 1 for every expert.
+    ///   - `output_linear.weight` : `[E, hidden, moeI]`     — per-
+    ///     expert down only.
+    ///   - `shared_mlp.input_linear.weight`  : `[2·sharedI, hidden]` —
+    ///     same gate+up fuse on the single shared expert.
+    ///   - `shared_mlp.output_linear.weight` : `[hidden, sharedI]`.
+    ///
+    /// Raw + quantized layouts handled symmetrically:
+    ///   - Raw: slice per-expert then split dim 0 for gate/up.
+    ///   - Quantized: same axis-0 slicing on packed u32 weight +
+    ///     bf16/f16 scales+biases (group/pack are along the inner dim
+    ///     so axis-0 slicing preserves their boundaries). The
+    ///     down_proj triplet additionally folds Granite4's
+    ///     `residual_multiplier` into scales+biases via the same
+    ///     `loadLinearScaledGMH` math the dense path uses.
     private static func buildMoE(
         prefix p: String, weights: SafeTensorsBundle,
         hidden: Int, moeIntermediate: Int, sharedIntermediate: Int,
@@ -464,43 +481,12 @@ public struct Granite4Hybrid: Granite4Variant {
         device: Device,
         quantization: ModelConfig.QuantizationConfig?
     ) throws -> MoELayer {
-        // Quantized Granite4 MoE: per-expert sliceRows on packed u32
-        // input_linear / output_linear isn't wired up yet — same
-        // follow-up as Jamba / LFM2 / NemotronH. The 350m-h test
-        // target is dense (no MoE), so this gate fires only for the
-        // larger Granite4 MoE checkpoints — surface a clear error
-        // rather than silently failing on a missing per-expert key.
-        if quantization != nil,
-            weights.isQuantized("\(p).block_sparse_moe.input_linear")
-        {
-            throw Granite4Error.unsupportedConfig(
-                "quantized Granite4 MoE expert slicing not yet "
-                    + "implemented (stacked input_linear/output_linear "
-                    + "quantized triplets need per-expert u32 sliceRows) "
-                    + "— load a raw bf16/f16 Granite4 MoE variant")
-        }
-        _ = quantization  // suppress unused-parameter warning on raw path
-        // Router: hidden → numExperts logits.
+        // Router: hidden → numExperts logits. Small (one weight per
+        // expert per channel) — never quantized in the mlx-community
+        // conversions.
         let gate = AnyLinear(
             Linear(
                 weight: try weights.tensor(named: "\(p).block_sparse_moe.router.layer.weight")))
-
-        // Per-expert SwiGLU. `input_linear.weight` ships stacked
-        // [numExperts, 2*moeIntermediate, hidden] — slice expert e, then
-        // split dim-1 into gate / up. `output_linear.weight` ships
-        // [numExperts, hidden, moeIntermediate].
-        let inputLinear = try weights.tensor(
-            named: "\(p).block_sparse_moe.input_linear.weight")
-        let outputLinear = try weights.tensor(
-            named: "\(p).block_sparse_moe.output_linear.weight")
-        precondition(
-            inputLinear.shape == [numExperts, 2 * moeIntermediate, hidden],
-            "Granite4: block_sparse_moe.input_linear shape "
-                + "\(inputLinear.shape) ≠ [\(numExperts), \(2 * moeIntermediate), \(hidden)]")
-        precondition(
-            outputLinear.shape == [numExperts, hidden, moeIntermediate],
-            "Granite4: block_sparse_moe.output_linear shape "
-                + "\(outputLinear.shape) ≠ [\(numExperts), \(hidden), \(moeIntermediate)]")
 
         var gateProj: [AnyLinear] = []
         var upProj: [AnyLinear] = []
@@ -508,54 +494,185 @@ public struct Granite4Hybrid: Granite4Variant {
         gateProj.reserveCapacity(numExperts)
         upProj.reserveCapacity(numExperts)
         downProj.reserveCapacity(numExperts)
-        for e in 0 ..< numExperts {
-            // [1, 2*moeIntermediate, hidden] → [2*moeIntermediate, hidden].
-            let stacked = inputLinear.slicedRows(start: e, count: 1)
-                .reshaped(to: [2 * moeIntermediate, hidden])
-            gateProj.append(
-                AnyLinear(
-                    Linear(
-                        weight: stacked.slicedRows(start: 0, count: moeIntermediate))))
-            upProj.append(
-                AnyLinear(
-                    Linear(
-                        weight: stacked.slicedRows(start: moeIntermediate, count: moeIntermediate)))
+
+        let inputBase = "\(p).block_sparse_moe.input_linear"
+        let outputBase = "\(p).block_sparse_moe.output_linear"
+
+        if let q = quantization, weights.isQuantized(inputBase) {
+            // ── Quantized path ────────────────────────────────────────
+            // input_linear triplet: weight u32 [E, 2·moeI, hidden/pf],
+            // scales/biases bf16 [E, 2·moeI, hidden/gs]. Slice axis 0
+            // per expert → [2·moeI, ...]; then axis-0 again into gate
+            // (first moeI rows) and up (last moeI rows).
+            let inW = try weights.tensor(named: "\(inputBase).weight")
+            let inS = try weights.tensor(named: "\(inputBase).scales")
+            let inB = try weights.tensor(named: "\(inputBase).biases")
+            let inPackedCols = inW.shape[inW.shape.count - 1]
+            let inGroupCols = inS.shape[inS.shape.count - 1]
+            let inBits = deriveAffineQuantBits(
+                weightPackedCols: inPackedCols, scaleCols: inGroupCols,
+                groupSize: q.groupSize)
+            precondition(
+                [2, 3, 4, 5, 6, 8].contains(inBits),
+                "Granite4: input_linear derived \(inBits)-bit — unsupported")
+            // output_linear triplet: weight u32 [E, hidden, moeI/pf],
+            // scales/biases bf16 [E, hidden, moeI/gs]. Per-expert
+            // slice + multiplier-fold for the residual_multiplier.
+            let outW = try weights.tensor(named: "\(outputBase).weight")
+            let outS = try weights.tensor(named: "\(outputBase).scales")
+            let outB = try weights.tensor(named: "\(outputBase).biases")
+            let outPackedCols = outW.shape[outW.shape.count - 1]
+            let outGroupCols = outS.shape[outS.shape.count - 1]
+            let outBits = deriveAffineQuantBits(
+                weightPackedCols: outPackedCols, scaleCols: outGroupCols,
+                groupSize: q.groupSize)
+            precondition(
+                [2, 3, 4, 5, 6, 8].contains(outBits),
+                "Granite4: output_linear derived \(outBits)-bit — unsupported")
+
+            for e in 0 ..< numExperts {
+                // Per-expert input slice: [2·moeI, hidden/{pf,gs}].
+                let perExpertInW = inW.slicedRows(start: e, count: 1)
+                    .reshaped(to: [2 * moeIntermediate, inPackedCols])
+                let perExpertInS = inS.slicedRows(start: e, count: 1)
+                    .reshaped(to: [2 * moeIntermediate, inGroupCols])
+                let perExpertInB = inB.slicedRows(start: e, count: 1)
+                    .reshaped(to: [2 * moeIntermediate, inGroupCols])
+                // gate = first moeI rows, up = last moeI rows. Axis-0
+                // split preserves group/pack alignment.
+                gateProj.append(
+                    AnyLinear(
+                        QuantizedLinear(
+                            weight: perExpertInW.slicedRows(start: 0, count: moeIntermediate),
+                            scales: perExpertInS.slicedRows(start: 0, count: moeIntermediate),
+                            biases: perExpertInB.slicedRows(start: 0, count: moeIntermediate),
+                            bits: inBits, groupSize: q.groupSize)))
+                upProj.append(
+                    AnyLinear(
+                        QuantizedLinear(
+                            weight: perExpertInW.slicedRows(
+                                start: moeIntermediate, count: moeIntermediate),
+                            scales: perExpertInS.slicedRows(
+                                start: moeIntermediate, count: moeIntermediate),
+                            biases: perExpertInB.slicedRows(
+                                start: moeIntermediate, count: moeIntermediate),
+                            bits: inBits, groupSize: q.groupSize)))
+
+                // Per-expert output slice + residual_multiplier fold
+                // into scales/biases (same trick `loadLinearScaledGMH`
+                // uses on the dense path).
+                let perExpertOutS = outS.slicedRows(start: e, count: 1)
+                    .reshaped(to: [hidden, outGroupCols])
+                let perExpertOutB = outB.slicedRows(start: e, count: 1)
+                    .reshaped(to: [hidden, outGroupCols])
+                let scaledS = scaleTensorGMH(
+                    perExpertOutS, by: residualMultiplier, device: device)
+                let scaledB = scaleTensorGMH(
+                    perExpertOutB, by: residualMultiplier, device: device)
+                downProj.append(
+                    AnyLinear(
+                        QuantizedLinear(
+                            weight: outW.slicedRows(start: e, count: 1)
+                                .reshaped(to: [hidden, outPackedCols]),
+                            scales: scaledS, biases: scaledB,
+                            bits: outBits, groupSize: q.groupSize)))
+            }
+        } else {
+            // ── Raw path (unchanged) ──────────────────────────────────
+            let inputLinear = try weights.tensor(named: "\(inputBase).weight")
+            let outputLinear = try weights.tensor(named: "\(outputBase).weight")
+            precondition(
+                inputLinear.shape == [numExperts, 2 * moeIntermediate, hidden],
+                "Granite4: block_sparse_moe.input_linear shape "
+                    + "\(inputLinear.shape) ≠ [\(numExperts), \(2 * moeIntermediate), \(hidden)]"
             )
-            // down_proj folds residual_multiplier so the layer residual
-            // add stays a plain Ops.add (the routed combine sums all the
-            // pre-scaled expert outputs).
-            let downRaw = outputLinear.slicedRows(start: e, count: 1)
-                .reshaped(to: [hidden, moeIntermediate])
-            downProj.append(
-                AnyLinear(
-                    Linear(
-                        weight: scaleTensorGMH(downRaw, by: residualMultiplier, device: device))))
+            precondition(
+                outputLinear.shape == [numExperts, hidden, moeIntermediate],
+                "Granite4: block_sparse_moe.output_linear shape "
+                    + "\(outputLinear.shape) ≠ [\(numExperts), \(hidden), \(moeIntermediate)]"
+            )
+            for e in 0 ..< numExperts {
+                let stacked = inputLinear.slicedRows(start: e, count: 1)
+                    .reshaped(to: [2 * moeIntermediate, hidden])
+                gateProj.append(
+                    AnyLinear(
+                        Linear(
+                            weight: stacked.slicedRows(start: 0, count: moeIntermediate))))
+                upProj.append(
+                    AnyLinear(
+                        Linear(
+                            weight: stacked.slicedRows(
+                                start: moeIntermediate, count: moeIntermediate))))
+                let downRaw = outputLinear.slicedRows(start: e, count: 1)
+                    .reshaped(to: [hidden, moeIntermediate])
+                downProj.append(
+                    AnyLinear(
+                        Linear(
+                            weight: scaleTensorGMH(
+                                downRaw, by: residualMultiplier, device: device))))
+            }
         }
 
-        // Shared expert — a plain SwiGLU. `input_linear.weight` ships
-        // [2*sharedIntermediate, hidden] (gate/up stacked along dim 0).
-        let sharedInput = try weights.tensor(
-            named: "\(p).shared_mlp.input_linear.weight")
-        let sharedOutput = try weights.tensor(
-            named: "\(p).shared_mlp.output_linear.weight")
-        precondition(
-            sharedInput.shape == [2 * sharedIntermediate, hidden],
-            "Granite4: shared_mlp.input_linear shape "
-                + "\(sharedInput.shape) ≠ [\(2 * sharedIntermediate), \(hidden)]")
-        precondition(
-            sharedOutput.shape == [hidden, sharedIntermediate],
-            "Granite4: shared_mlp.output_linear shape "
-                + "\(sharedOutput.shape) ≠ [\(hidden), \(sharedIntermediate)]")
-        let sharedGate = AnyLinear(
-            Linear(
-                weight: sharedInput.slicedRows(start: 0, count: sharedIntermediate)))
-        let sharedUp = AnyLinear(
-            Linear(
-                weight: sharedInput.slicedRows(start: sharedIntermediate, count: sharedIntermediate)
-            ))
-        let sharedDown = AnyLinear(
-            Linear(
-                weight: scaleTensorGMH(sharedOutput, by: residualMultiplier, device: device)))
+        // Shared expert — a plain SwiGLU at `shared_mlp.*`. Shape is
+        // `[2·sharedI, hidden]` for input (NOT stacked-by-expert; it's
+        // a single shared expert). Quantized + raw handled the same way.
+        let sharedInputBase = "\(p).shared_mlp.input_linear"
+        let sharedOutputBase = "\(p).shared_mlp.output_linear"
+
+        let sharedGate: AnyLinear
+        let sharedUp: AnyLinear
+        let sharedDown: AnyLinear
+
+        if let q = quantization, weights.isQuantized(sharedInputBase) {
+            // Quantized shared input: axis-0 split into gate/up
+            // (preserves group/pack alignment). down folds the
+            // residual_multiplier into scales/biases.
+            let inT = try weights.quantizedTriplet(sharedInputBase)
+            let inBits = deriveAffineQuantBits(
+                weightPackedCols: inT.weight.shape[inT.weight.shape.count - 1],
+                scaleCols: inT.scales.shape[inT.scales.shape.count - 1],
+                groupSize: q.groupSize)
+            sharedGate = AnyLinear(
+                QuantizedLinear(
+                    weight: inT.weight.slicedRows(start: 0, count: sharedIntermediate),
+                    scales: inT.scales.slicedRows(start: 0, count: sharedIntermediate),
+                    biases: inT.biases.slicedRows(start: 0, count: sharedIntermediate),
+                    bits: inBits, groupSize: q.groupSize))
+            sharedUp = AnyLinear(
+                QuantizedLinear(
+                    weight: inT.weight.slicedRows(
+                        start: sharedIntermediate, count: sharedIntermediate),
+                    scales: inT.scales.slicedRows(
+                        start: sharedIntermediate, count: sharedIntermediate),
+                    biases: inT.biases.slicedRows(
+                        start: sharedIntermediate, count: sharedIntermediate),
+                    bits: inBits, groupSize: q.groupSize))
+            sharedDown = try loadLinearScaledGMH(
+                base: sharedOutputBase, in: weights,
+                quantization: q, by: residualMultiplier, device: device)
+        } else {
+            let sharedInput = try weights.tensor(named: "\(sharedInputBase).weight")
+            let sharedOutput = try weights.tensor(named: "\(sharedOutputBase).weight")
+            precondition(
+                sharedInput.shape == [2 * sharedIntermediate, hidden],
+                "Granite4: shared_mlp.input_linear shape "
+                    + "\(sharedInput.shape) ≠ [\(2 * sharedIntermediate), \(hidden)]")
+            precondition(
+                sharedOutput.shape == [hidden, sharedIntermediate],
+                "Granite4: shared_mlp.output_linear shape "
+                    + "\(sharedOutput.shape) ≠ [\(hidden), \(sharedIntermediate)]")
+            sharedGate = AnyLinear(
+                Linear(
+                    weight: sharedInput.slicedRows(start: 0, count: sharedIntermediate)))
+            sharedUp = AnyLinear(
+                Linear(
+                    weight: sharedInput.slicedRows(
+                        start: sharedIntermediate, count: sharedIntermediate)))
+            sharedDown = AnyLinear(
+                Linear(
+                    weight: scaleTensorGMH(
+                        sharedOutput, by: residualMultiplier, device: device)))
+        }
 
         // Granite4 routing is top-K of the raw logits, then a
         // softmax over just those K (`.topKThenSoftmax`) — always

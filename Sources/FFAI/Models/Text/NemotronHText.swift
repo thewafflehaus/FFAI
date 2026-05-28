@@ -962,26 +962,10 @@ private func buildNemotronHMoELayer(
     dtype: DType, device: Device,
     quantization: ModelConfig.QuantizationConfig?
 ) throws -> NemotronHMoELayer {
-    // Quantized NemotronH MoE: per-expert + shared-expert up/down_proj
-    // sliceRows over packed u32 isn't wired into our per-expert load
-    // path yet. The 4B-Base test target is Mamba+attention+MLP only
-    // (no MoE), so this gate fires only for the bigger Cascade-2-Ultra
-    // checkpoints — guard with a clear error rather than missing-key
-    // failure. Same follow-up as Jamba / LFM2.
-    if quantization != nil,
-        weights.isQuantized("\(p).experts.0.up_proj")
-            || weights.isQuantized("\(p).shared_experts.up_proj")
-    {
-        throw NemotronHError.unsupportedConfig(
-            "quantized NemotronH MoE expert slicing not yet implemented "
-                + "— load a raw bf16/f16 NemotronH MoE variant (test "
-                + "target Nemotron-H-4B-Base-8K-4bit has no MoE layers "
-                + "and loads through this builder only on Cascade-class)")
-    }
-    _ = quantization  // suppress unused-parameter warning on raw path
     // Router: hidden → nRouted logits. NemotronH MoE checkpoints ship
-    // these projections as plain (non-quantized) Linear (the family
-    // rejects quantized configs at load), so we read the raw weight.
+    // the router as plain (non-quantized) Linear; the per-expert
+    // projections route through `loadLinear` so quantized + raw share
+    // one path.
     let gate = AnyLinear(
         Linear(
             weight: try weights.tensor(named: "\(p).gate.weight")))
@@ -995,43 +979,42 @@ private func buildNemotronHMoELayer(
             + "\(eSCBRaw.elementCount) entries, expected \(nRoutedExperts)")
 
     // Routed experts: each is a squared-ReLU 2-layer MLP. The published
-    // checkpoint ships them as `mixer.experts.<e>.{up_proj,down_proj}.weight`
-    // (Python layout — the mlx-swift port stacks them into
+    // checkpoint ships them as `mixer.experts.<e>.{up_proj,down_proj}`
+    // (Python per-expert layout — the mlx-swift port stacks them into
     // `switch_mlp.fc1/fc2` at sanitize time, but FFAI keeps them
     // per-expert because we dispatch one expert per top-K slot and
-    // never need the stacked form).
+    // never need the stacked form). Quantized checkpoints keep the
+    // same per-expert layout; `loadLinear` handles both transparently.
     var experts: [NemotronHExpert] = []
     experts.reserveCapacity(nRoutedExperts)
     for e in 0 ..< nRoutedExperts {
-        let upProj = AnyLinear(
-            Linear(
-                weight: try weights.tensor(
-                    named: "\(p).experts.\(e).up_proj.weight")))
-        let downProj = AnyLinear(
-            Linear(
-                weight: try weights.tensor(
-                    named: "\(p).experts.\(e).down_proj.weight")))
+        let upProj = try loadLinear(
+            base: "\(p).experts.\(e).up_proj",
+            in: weights, quantization: quantization)
+        let downProj = try loadLinear(
+            base: "\(p).experts.\(e).down_proj",
+            in: weights, quantization: quantization)
         experts.append(NemotronHExpert(upProj: upProj, downProj: downProj))
     }
 
-    // Shared expert (n_shared_experts >= 1). The shape is wider
-    // (`moe_shared_expert_intermediate_size`, ≈ 2× the routed
-    // intermediate on Cascade-2) but otherwise the same squared-ReLU
-    // MLP. mlx-lm only supports nSharedExperts ∈ {0, 1}; we keep the
-    // same restriction here — the `n_shared_experts > 1` case has no
-    // shipped checkpoint exercising it.
+    // Shared expert (n_shared_experts >= 1). Same shape as a routed
+    // expert (just wider intermediate); same per-tensor loadLinear
+    // handles raw + quantized. mlx-lm only supports nSharedExperts ∈
+    // {0, 1}; we keep the same restriction here — the
+    // `n_shared_experts > 1` case has no shipped checkpoint
+    // exercising it.
     let sharedExpert: NemotronHExpert?
     if nSharedExperts > 0 {
         precondition(
             nSharedExperts == 1,
             "NemotronH MoE: n_shared_experts \(nSharedExperts) > 1 "
                 + "not supported (no shipped checkpoint uses it).")
-        let sharedUp = AnyLinear(
-            Linear(
-                weight: try weights.tensor(named: "\(p).shared_experts.up_proj.weight")))
-        let sharedDown = AnyLinear(
-            Linear(
-                weight: try weights.tensor(named: "\(p).shared_experts.down_proj.weight")))
+        let sharedUp = try loadLinear(
+            base: "\(p).shared_experts.up_proj",
+            in: weights, quantization: quantization)
+        let sharedDown = try loadLinear(
+            base: "\(p).shared_experts.down_proj",
+            in: weights, quantization: quantization)
         sharedExpert = NemotronHExpert(upProj: sharedUp, downProj: sharedDown)
         _ = sharedExpertIntermediate  // Plumbed for future shape checks.
     } else {

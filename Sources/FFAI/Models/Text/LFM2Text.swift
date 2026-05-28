@@ -436,6 +436,15 @@ func lfm2LoadModel(
 /// SwiGLU experts (no shared expert). Routing is softmax → add
 /// `expert_bias` → top-K → optional re-normalisation, wired through
 /// `MoERouter`'s `expertBias` parameter.
+///
+/// LFM2 MoE checkpoints ship in two layouts:
+///   - Stacked switch_mlp (mlx-community sanitize output):
+///     `switch_mlp.{gate,up,down}_proj.weight : [E, ...]` — routed
+///     through `sliceStackedExperts`, which handles both raw + 4-bit
+///     quantized stacks transparently.
+///   - Per-expert (raw HF):
+///     `feed_forward.experts.<e>.{gate,up,down}_proj.weight` — plain
+///     `Linear` per expert.
 private func buildLFM2MoE(
     prefix p: String, weights: SafeTensorsBundle,
     hidden: Int, moeIntermediate: Int,
@@ -443,20 +452,8 @@ private func buildLFM2MoE(
     normTopKProb: Bool, useExpertBias: Bool,
     quantization: ModelConfig.QuantizationConfig?
 ) throws -> MoELayer {
-    // Quantized MoE on LFM2 (e.g. LFM2-8B-A1B-4bit) ships stacked
-    // `switch_mlp.{gate,up,down}_proj` triplets — per-expert sliceRows
-    // on packed u32 + scales/biases isn't wired into MoELayer yet.
-    // Surface a clear error rather than silently failing on a missing
-    // per-expert `.weight` key (the per-expert layout doesn't exist
-    // on the quantized conversions).
-    if quantization != nil,
-        weights.isQuantized("\(p).feed_forward.switch_mlp.gate_proj")
-    {
-        throw LFM2Error.unsupportedConfig(
-            "quantized LFM2 MoE expert slicing not yet implemented "
-                + "(stacked switch_mlp quantized triplets need per-expert "
-                + "u32 sliceRows) — load a raw bf16/f16 LFM2 MoE variant")
-    }
+    // Router gate is small (one weight per expert per channel) and
+    // never quantized in the mlx-community conversions.
     let gate = AnyLinear(
         Linear(
             weight: try weights.tensor(named: "\(p).feed_forward.gate.weight")))
@@ -464,23 +461,49 @@ private func buildLFM2MoE(
     var gateProj: [AnyLinear] = []
     var upProj: [AnyLinear] = []
     var downProj: [AnyLinear] = []
-    gateProj.reserveCapacity(numExperts)
-    upProj.reserveCapacity(numExperts)
-    downProj.reserveCapacity(numExperts)
-    for e in 0 ..< numExperts {
-        let eb = "\(p).feed_forward.experts.\(e)"
-        gateProj.append(
-            AnyLinear(
-                Linear(
-                    weight: try lfm2MLPWeight(eb, "gate", in: weights))))
-        upProj.append(
-            AnyLinear(
-                Linear(
-                    weight: try lfm2MLPWeight(eb, "up", in: weights))))
-        downProj.append(
-            AnyLinear(
-                Linear(
-                    weight: try lfm2MLPWeight(eb, "down", in: weights))))
+
+    // Stacked switch_mlp layout — `sliceStackedExperts` handles raw +
+    // quantized triplets uniformly (per-expert axis-0 slicing of
+    // packed u32 weight + bf16/f16 scales + biases). The quantized
+    // path used to throw `unsupportedConfig`; lands via the shared
+    // helper now.
+    let stackedBase = "\(p).feed_forward.switch_mlp"
+    if weights.has("\(stackedBase).gate_proj.weight")
+        || weights.isQuantized("\(stackedBase).gate_proj")
+    {
+        gateProj = try sliceStackedExperts(
+            base: "\(stackedBase).gate_proj", in: weights,
+            numExperts: numExperts, outDim: moeIntermediate, inDim: hidden,
+            quantization: quantization)
+        upProj = try sliceStackedExperts(
+            base: "\(stackedBase).up_proj", in: weights,
+            numExperts: numExperts, outDim: moeIntermediate, inDim: hidden,
+            quantization: quantization)
+        downProj = try sliceStackedExperts(
+            base: "\(stackedBase).down_proj", in: weights,
+            numExperts: numExperts, outDim: hidden, inDim: moeIntermediate,
+            quantization: quantization)
+    } else {
+        // Per-expert tensor layout (raw HF). No quantized per-expert
+        // checkpoint exists in our LFM2 test surface today.
+        gateProj.reserveCapacity(numExperts)
+        upProj.reserveCapacity(numExperts)
+        downProj.reserveCapacity(numExperts)
+        for e in 0 ..< numExperts {
+            let eb = "\(p).feed_forward.experts.\(e)"
+            gateProj.append(
+                AnyLinear(
+                    Linear(
+                        weight: try lfm2MLPWeight(eb, "gate", in: weights))))
+            upProj.append(
+                AnyLinear(
+                    Linear(
+                        weight: try lfm2MLPWeight(eb, "up", in: weights))))
+            downProj.append(
+                AnyLinear(
+                    Linear(
+                        weight: try lfm2MLPWeight(eb, "down", in: weights))))
+        }
     }
 
     // Per-expert load-balancing bias — added to the post-softmax gate

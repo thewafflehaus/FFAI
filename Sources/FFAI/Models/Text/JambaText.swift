@@ -427,11 +427,18 @@ public struct JambaHybrid: JambaVariant {
             convKernel: convKernel, eps: eps, dtype: dtype)
     }
 
-    /// Build the MoE feed-forward block. Jamba's experts ship as either
-    /// per-expert tensors (`feed_forward.experts.<e>.{gate,up,down}_proj`)
-    /// or — for mlx-community conversions — pre-stacked switch_mlp
-    /// tensors. Both are non-quantized; quantized-MoE expert slicing is
-    /// not yet wired into `MoELayer` (see the planning notes).
+    /// Build the MoE feed-forward block. Jamba's experts ship in two
+    /// layouts:
+    ///   - Stacked switch_mlp (mlx-community sanitize output):
+    ///     `switch_mlp.{gate,up}_proj.weight : [E, moeInter, hidden]`,
+    ///     `switch_mlp.down_proj.weight     : [E, hidden, moeInter]`.
+    ///     Goes through `sliceStackedExperts` — handles both raw + 4-bit
+    ///     quantized stacks transparently.
+    ///   - Per-expert (raw HF):
+    ///     `feed_forward.experts.<e>.{gate,up,down}_proj.weight`. Plain
+    ///     `Linear` per expert; quantized per-expert tensors would need
+    ///     a separate `loadLinear` loop, but no checkpoint we ship today
+    ///     uses this layout for the quantized path.
     private static func buildMoE(
         prefix p: String, weights: SafeTensorsBundle,
         hidden: Int, moeIntermediate: Int,
@@ -441,19 +448,6 @@ public struct JambaHybrid: JambaVariant {
         // Router: hidden → numExperts logits. The router is small (one
         // weight per expert per channel) and never quantized in the
         // mlx-community conversions.
-        if quantization != nil,
-            weights.isQuantized("\(p).feed_forward.switch_mlp.gate_proj")
-        {
-            // Quantized MoE expert slicing isn't wired into MoELayer yet
-            // (a quantized stacked switch_mlp triplet would need a
-            // per-expert sliceRows on packed u32 weight + scales/biases,
-            // the same pattern Qwen3.6 / GlmOcr use). Surface a clear
-            // error rather than silently falling through to a raw load.
-            throw JambaError.unsupportedConfig(
-                "quantized Jamba MoE expert slicing not yet implemented "
-                    + "— load a raw bf16/f16 Jamba MoE variant, or load "
-                    + "the dense 3B-A0 quantized checkpoint")
-        }
         let gate = AnyLinear(
             Linear(
                 weight: try weights.tensor(named: "\(p).feed_forward.router.weight")))
@@ -461,42 +455,33 @@ public struct JambaHybrid: JambaVariant {
         var gateProj: [AnyLinear] = []
         var upProj: [AnyLinear] = []
         var downProj: [AnyLinear] = []
-        gateProj.reserveCapacity(numExperts)
-        upProj.reserveCapacity(numExperts)
-        downProj.reserveCapacity(numExperts)
 
-        // Stacked switch_mlp layout (mlx-community sanitize output):
-        //   switch_mlp.{gate,up}_proj.weight : [numExperts, moeInter, hidden]
-        //   switch_mlp.down_proj.weight      : [numExperts, hidden, moeInter]
-        let stackedGateKey = "\(p).feed_forward.switch_mlp.gate_proj.weight"
-        if weights.has(stackedGateKey) {
-            let stackedGate = try weights.tensor(named: stackedGateKey)
-            let stackedUp = try weights.tensor(
-                named: "\(p).feed_forward.switch_mlp.up_proj.weight")
-            let stackedDown = try weights.tensor(
-                named: "\(p).feed_forward.switch_mlp.down_proj.weight")
-            for e in 0 ..< numExperts {
-                gateProj.append(
-                    AnyLinear(
-                        Linear(
-                            weight:
-                                stackedGate.slicedRows(start: e, count: 1)
-                                .reshaped(to: [moeIntermediate, hidden]))))
-                upProj.append(
-                    AnyLinear(
-                        Linear(
-                            weight:
-                                stackedUp.slicedRows(start: e, count: 1)
-                                .reshaped(to: [moeIntermediate, hidden]))))
-                downProj.append(
-                    AnyLinear(
-                        Linear(
-                            weight:
-                                stackedDown.slicedRows(start: e, count: 1)
-                                .reshaped(to: [hidden, moeIntermediate]))))
-            }
+        // Stacked switch_mlp layout. `sliceStackedExperts` handles both
+        // raw + quantized stacks — per-expert axis-0 slicing of packed
+        // u32 weight + bf16/f16 scales/biases. The quantized path used
+        // to throw `unsupportedConfig`; lands via the shared helper now.
+        let stackedBase = "\(p).feed_forward.switch_mlp"
+        if weights.has("\(stackedBase).gate_proj.weight")
+            || weights.isQuantized("\(stackedBase).gate_proj")
+        {
+            gateProj = try sliceStackedExperts(
+                base: "\(stackedBase).gate_proj", in: weights,
+                numExperts: numExperts, outDim: moeIntermediate, inDim: hidden,
+                quantization: quantization)
+            upProj = try sliceStackedExperts(
+                base: "\(stackedBase).up_proj", in: weights,
+                numExperts: numExperts, outDim: moeIntermediate, inDim: hidden,
+                quantization: quantization)
+            downProj = try sliceStackedExperts(
+                base: "\(stackedBase).down_proj", in: weights,
+                numExperts: numExperts, outDim: hidden, inDim: moeIntermediate,
+                quantization: quantization)
         } else {
-            // Per-expert tensor layout.
+            // Per-expert tensor layout (raw HF). No quantized
+            // per-expert checkpoint exists in our test surface today.
+            gateProj.reserveCapacity(numExperts)
+            upProj.reserveCapacity(numExperts)
+            downProj.reserveCapacity(numExperts)
             for e in 0 ..< numExperts {
                 let ep = "\(p).feed_forward.experts.\(e)"
                 gateProj.append(

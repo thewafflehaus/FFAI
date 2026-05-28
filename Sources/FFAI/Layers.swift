@@ -407,6 +407,78 @@ public func loadLinear(
     return AnyLinear(Linear(weight: weight, bias: bias))
 }
 
+/// Slice a stacked `[numExperts, outDim, inDim]` expert tensor at
+/// `<base>.weight` into `numExperts` per-expert `AnyLinear`s. Handles
+/// both raw and mlx-quantized stacks:
+///
+///   - Raw stack: `weight [E, outDim, inDim]` — each slice is a 2-D
+///     view used to construct a plain `Linear`.
+///   - Quantized stack: `weight [E, outDim, inDim/pack_factor]` (u32),
+///     `scales / biases [E, outDim, inDim/group_size]`. Each slice is a
+///     row-range along dim 0 (the expert axis) — since both
+///     `group_size` and `pack_factor` partition the *hidden* dim
+///     (dim 2), row-wise slicing preserves group boundaries and pack
+///     alignment, so a per-expert `QuantizedLinear` is just three
+///     single-row slices reshaped to 2-D.
+///
+/// The derived bit-width is uniform across the stack (the stacked
+/// tensor is one shape for all experts) and validated against the
+/// supported affine-quant bit-widths {3, 4, 5, 6, 8}. Callers route
+/// every stacked-MoE family through this helper: Qwen 3.5 / 3.6
+/// (`<base>.feed_forward.switch_mlp.{gate,up,down}_proj`), Jamba MoE
+/// (same naming), LFM2 MoE (same naming), and Granite4 MoE (different
+/// naming + half-stacked input_linear; see Granite4Text for the
+/// per-family wiring).
+public func sliceStackedExperts(
+    base: String, in bundle: SafeTensorsBundle,
+    numExperts: Int, outDim: Int, inDim: Int,
+    quantization: ModelConfig.QuantizationConfig?
+) throws -> [AnyLinear] {
+    var out: [AnyLinear] = []
+    out.reserveCapacity(numExperts)
+
+    if let q = quantization, bundle.isQuantized(base) {
+        // Quantized stack.
+        let stackedW = try bundle.tensor(named: "\(base).weight")
+        let stackedS = try bundle.tensor(named: "\(base).scales")
+        let stackedB = try bundle.tensor(named: "\(base).biases")
+        let packedCols = stackedW.shape[stackedW.shape.count - 1]
+        let groupCols = stackedS.shape[stackedS.shape.count - 1]
+        let bits = deriveAffineQuantBits(
+            weightPackedCols: packedCols, scaleCols: groupCols,
+            groupSize: q.groupSize)
+        precondition(
+            [2, 3, 4, 5, 6, 8].contains(bits),
+            "sliceStackedExperts: derived \(bits)-bit for \(base) — "
+                + "unsupported quantization bit-width")
+        for e in 0 ..< numExperts {
+            let w = stackedW.slicedRows(start: e, count: 1)
+                .reshaped(to: [outDim, packedCols])
+            let s = stackedS.slicedRows(start: e, count: 1)
+                .reshaped(to: [outDim, groupCols])
+            let b = stackedB.slicedRows(start: e, count: 1)
+                .reshaped(to: [outDim, groupCols])
+            out.append(
+                AnyLinear(
+                    QuantizedLinear(
+                        weight: w, scales: s, biases: b,
+                        bits: bits, groupSize: q.groupSize)))
+        }
+    } else {
+        // Raw stack.
+        let stacked = try bundle.tensor(named: "\(base).weight")
+        for e in 0 ..< numExperts {
+            out.append(
+                AnyLinear(
+                    Linear(
+                        weight:
+                            stacked.slicedRows(start: e, count: 1)
+                            .reshaped(to: [outDim, inDim]))))
+        }
+    }
+    return out
+}
+
 // ─── Embedding ───────────────────────────────────────────────────────
 
 public final class Embedding: Module {

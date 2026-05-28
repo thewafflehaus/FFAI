@@ -613,15 +613,15 @@ public struct Qwen35Hybrid: Qwen35Variant {
         let gateProj = try sliceStackedExperts(
             base: "\(p).switch_mlp.gate_proj", in: weights,
             numExperts: numExperts, outDim: moeIntermediate, inDim: hidden,
-            quant: quant)
+            quantization: quant)
         let upProj = try sliceStackedExperts(
             base: "\(p).switch_mlp.up_proj", in: weights,
             numExperts: numExperts, outDim: moeIntermediate, inDim: hidden,
-            quant: quant)
+            quantization: quant)
         let downProj = try sliceStackedExperts(
             base: "\(p).switch_mlp.down_proj", in: weights,
             numExperts: numExperts, outDim: hidden, inDim: moeIntermediate,
-            quant: quant)
+            quantization: quant)
 
         // Qwen3.5 routing: softmax over ALL experts, then top-K of the
         // probabilities, then optional re-normalisation (`norm_topk_prob`).
@@ -738,63 +738,9 @@ public struct Qwen35Hybrid: Qwen35Variant {
         }
     }
 
-    /// Slice a stacked `[numExperts, outDim, inDim]` expert tensor into
-    /// `numExperts` per-expert `AnyLinear`s. Handles both raw and mlx-
-    /// quantized stacks: the quantized stack's weight / scales / biases
-    /// each slice along dim 0, so a per-expert `QuantizedLinear` is just
-    /// three single-row slices reshaped to 2-D.
-    private static func sliceStackedExperts(
-        base: String, in weights: SafeTensorsBundle,
-        numExperts: Int, outDim: Int, inDim: Int,
-        quant: ModelConfig.QuantizationConfig?
-    ) throws -> [AnyLinear] {
-        var out: [AnyLinear] = []
-        out.reserveCapacity(numExperts)
-
-        if let q = quant, weights.isQuantized(base) {
-            // Quantized stack: weight [E, outDim, inDim/packFactor] u32,
-            // scales / biases [E, outDim, inDim/groupSize].
-            let stackedW = try weights.tensor(named: "\(base).weight")
-            let stackedS = try weights.tensor(named: "\(base).scales")
-            let stackedB = try weights.tensor(named: "\(base).biases")
-            let packedCols = stackedW.shape[stackedW.shape.count - 1]
-            let groupCols = stackedS.shape[stackedS.shape.count - 1]
-            // The stacked tensor is one shape for all experts, so the
-            // derived bit-width is uniform across the stack.
-            let bits = deriveAffineQuantBits(
-                weightPackedCols: packedCols, scaleCols: groupCols,
-                groupSize: q.groupSize)
-            precondition(
-                [3, 4, 5, 6, 8].contains(bits),
-                "sliceStackedExperts: derived \(bits)-bit for "
-                    + "\(base) — unsupported quantization bit-width")
-            for e in 0 ..< numExperts {
-                let w = stackedW.slicedRows(start: e, count: 1)
-                    .reshaped(to: [outDim, packedCols])
-                let s = stackedS.slicedRows(start: e, count: 1)
-                    .reshaped(to: [outDim, groupCols])
-                let b = stackedB.slicedRows(start: e, count: 1)
-                    .reshaped(to: [outDim, groupCols])
-                out.append(
-                    AnyLinear(
-                        QuantizedLinear(
-                            weight: w, scales: s, biases: b,
-                            bits: bits, groupSize: q.groupSize)))
-            }
-        } else {
-            // Raw stack: weight [E, outDim, inDim].
-            let stacked = try weights.tensor(named: "\(base).weight")
-            for e in 0 ..< numExperts {
-                out.append(
-                    AnyLinear(
-                        Linear(
-                            weight:
-                                stacked.slicedRows(start: e, count: 1)
-                                .reshaped(to: [outDim, inDim]))))
-            }
-        }
-        return out
-    }
+    // `sliceStackedExperts(...)` lives in `Sources/FFAI/Layers.swift`
+    // as a top-level helper so every stacked-MoE family (Qwen3.5 /
+    // 3.6, Jamba, LFM2, Granite4) can reuse it.
 }
 
 // ─── FFN sub-block enum ──────────────────────────────────────────────
