@@ -67,7 +67,7 @@ public struct Starcoder2Dense: Starcoder2Variant {
     public static func loadModel(
         config: ModelConfig,
         weights: SafeTensorsBundle,
-        options _: LoadOptions,
+        options: LoadOptions,
         device _: Device
     ) throws -> Starcoder2Model {
         guard let hidden = config.hiddenSize,
@@ -189,7 +189,9 @@ public struct Starcoder2Dense: Starcoder2Variant {
             finalNorm: finalNorm, lmHead: lmHead,
             hidden: hidden, nLayers: nLayers, nHeads: nHeads,
             nKVHeads: nKVHeads, headDim: headDim, vocab: vocab,
-            maxContextWindow: maxSeq, ropeTheta: theta, dtype: activationDtype)
+            maxContextWindow: maxSeq, ropeTheta: theta, dtype: activationDtype,
+            kvCacheKind: options.kvCache, kvEviction: options.kvEviction,
+            auraDecodePath: options.auraDecodePath)
     }
 }
 
@@ -272,13 +274,36 @@ public final class Starcoder2Layer: Module {
             vFlat: v.reshaped(to: [nKVHeads, headDim]),
             on: cmd)
 
+        // AURA caches store K/V in Π-rotated space: rotate Q before SDPA
+        // and un-rotate the output before o_proj. Raw / affine skip both.
+        let qForSdpa: Tensor
+        if let auraCache = cache as? AURAQuantizedKVCache {
+            qForSdpa = Ops.auraRotatePerHead(
+                qRotated.reshaped(to: [nHeads * headDim]),
+                rotation: auraCache.rotationDtype,
+                nHeads: nHeads, headDim: headDim, on: cmd
+            ).reshaped(to: [nHeads, headDim])
+        } else {
+            qForSdpa = qRotated
+        }
+
         let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
         let attnOut = Ops.sdpaDecode(
-            q: qRotated, k: cacheK, v: cacheV,
+            q: qForSdpa, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
             nKV: cache.length, kvStride: cache.capacity,
             scale: scale, on: cmd)
-        let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
+
+        let attnReady: Tensor
+        if let auraCache = cache as? AURAQuantizedKVCache {
+            attnReady = Ops.auraRotatePerHead(
+                attnOut.reshaped(to: [nHeads * headDim]),
+                rotation: auraCache.rotationDtypeT,
+                nHeads: nHeads, headDim: headDim, on: cmd)
+        } else {
+            attnReady = attnOut.reshaped(to: [nHeads * headDim])
+        }
+        let oOut = oProj(attnReady, on: cmd)
 
         // Residual add + post-attention LayerNorm. LayerNorm has a
         // bias the fused `mt_add_rms_norm` kernel doesn't model — so
@@ -308,12 +333,18 @@ public final class Starcoder2Model: LanguageModel {
     public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxContextWindow: Int
     public let ropeTheta: Float
     public let dtype: DType
+    public let kvCacheKind: KVCacheKind
+    public let kvEviction: KVEviction
+    public let auraDecodePath: AURADecodePath
 
     init(
         embedTokens: AnyEmbedding, layers: [Starcoder2Layer],
         finalNorm: LayerNorm, lmHead: AnyLinear,
         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-        vocab: Int, maxContextWindow: Int, ropeTheta: Float, dtype: DType
+        vocab: Int, maxContextWindow: Int, ropeTheta: Float, dtype: DType,
+        kvCacheKind: KVCacheKind = .raw,
+        kvEviction: KVEviction = .unbounded,
+        auraDecodePath: AURADecodePath = .compressed
     ) {
         self.embedTokens = embedTokens
         self.layers = layers
@@ -328,6 +359,9 @@ public final class Starcoder2Model: LanguageModel {
         self.maxContextWindow = maxContextWindow
         self.ropeTheta = ropeTheta
         self.dtype = dtype
+        self.kvCacheKind = kvCacheKind
+        self.kvEviction = kvEviction
+        self.auraDecodePath = auraDecodePath
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -345,18 +379,17 @@ public final class Starcoder2Model: LanguageModel {
         return out
     }
 
-    /// Per-layer raw `KVCache` — Starcoder2 doesn't use any of the
-    /// affine-quantized / AURA cache modes the Llama dense path
-    /// exposes. The sliding-window declared in config is honored at
-    /// the prompt level rather than the cache level (truncation is the
-    /// caller's job).
+    /// Per-layer caches honoring `LoadOptions.kvCache` (raw / affine /
+    /// AURA) via the shared factory. The sliding-window declared in
+    /// config is honored at the prompt level rather than the cache level
+    /// (truncation is the caller's job).
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        let cap = maxSeq ?? self.maxContextWindow
-        return (0 ..< nLayers).map { _ in
-            KVCache(
-                nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                dtype: dtype, device: device)
-        }
+        makeAttentionCaches(
+            kind: kvCacheKind, count: nLayers,
+            nKVHeads: nKVHeads, headDim: headDim,
+            contextLength: maxSeq ?? maxContextWindow,
+            dtype: dtype, eviction: kvEviction,
+            auraDecodePath: auraDecodePath, device: device)
     }
 
     /// Queue a single-token forward pass on `cmd`. Does NOT commit —
@@ -376,9 +409,9 @@ public final class Starcoder2Model: LanguageModel {
         var h = embedTokens(tokenTensor, on: cmd).reshaped(to: [hidden])
 
         for (i, layer) in layers.enumerated() {
-            guard let kv = caches[i] as? KVCache else {
+            guard let kv = caches[i] as? any KVCacheProtocol else {
                 fatalError(
-                    "Starcoder2Model: expected KVCache at layer \(i), got "
+                    "Starcoder2Model: expected a KV cache at layer \(i), got "
                         + "\(type(of: caches[i]))")
             }
             h = layer.forward(h, position: position, cache: kv, cmd: cmd, device: device)
