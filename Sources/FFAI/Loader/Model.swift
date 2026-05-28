@@ -1196,6 +1196,14 @@ public final class Model: @unchecked Sendable {
     public let events: AsyncStream<ModelLifecycleEvent>
     private let eventsContinuation: AsyncStream<ModelLifecycleEvent>.Continuation
 
+    /// Weight buffers pinned into the device's residency set at load,
+    /// released in `deinit` so the wired memory doesn't accumulate across
+    /// models loaded in one process. Empty for models built outside the
+    /// `Model.load` path (e.g. tests) — `unmarkWeightsResident([])` no-ops.
+    private let residentWeightBuffers: [MTLBuffer]
+    /// The device whose residency set holds `residentWeightBuffers`.
+    private let residencyDevice: Device
+
     init(
         engine: any LanguageModel, tokenizer: any Tokenizer, config: ModelConfig,
         modelDirectory: URL,
@@ -1203,7 +1211,9 @@ public final class Model: @unchecked Sendable {
         enabledCapabilities: Set<Capability>,
         defaultGenerationParameters: GenerationParameters,
         loadOptions: LoadOptions = LoadOptions(),
-        vlModel: VisionModel? = nil
+        vlModel: VisionModel? = nil,
+        residentWeightBuffers: [MTLBuffer] = [],
+        residencyDevice: Device = .shared
     ) {
         self.engine = engine
         self.tokenizer = tokenizer
@@ -1212,6 +1222,8 @@ public final class Model: @unchecked Sendable {
         self.availableCapabilities = availableCapabilities
         self.loadOptions = loadOptions
         self.vlModel = vlModel
+        self.residentWeightBuffers = residentWeightBuffers
+        self.residencyDevice = residencyDevice
         // textIn / textOut are universal — always enabled. Other
         // requested capabilities are honored only if the model declares
         // them available.
@@ -1231,6 +1243,10 @@ public final class Model: @unchecked Sendable {
     }
 
     deinit {
+        // Release this model's weights from the device residency set so
+        // the wired memory is freed — otherwise every model loaded in a
+        // process stays resident and memory accumulates across loads.
+        residencyDevice.unmarkWeightsResident(residentWeightBuffers)
         eventsContinuation.finish()
     }
 
@@ -1346,7 +1362,9 @@ public final class Model: @unchecked Sendable {
                     enabledCapabilities: options.capabilities,
                     defaultGenerationParameters: loaded.defaultGenerationParameters,
                     loadOptions: options,
-                    vlModel: loaded.vlModel
+                    vlModel: loaded.vlModel,
+                    residentWeightBuffers: weightBuffers,
+                    residencyDevice: device
                 )
             }
         }

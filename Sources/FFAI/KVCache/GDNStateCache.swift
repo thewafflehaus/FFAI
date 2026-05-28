@@ -78,10 +78,15 @@ public final class GDNStateCache: LayerCacheProtocol, @unchecked Sendable {
     /// treat GDN layers as unlimited (mirrors `SSMStateCache`).
     public let capacity: Int = .max
 
+    /// The device whose residency set holds the state buffers — kept so
+    /// `deinit` can release them.
+    private let device: Device
+
     public init(
         numValueHeads: Int, valueHeadDim: Int, keyHeadDim: Int,
         device: Device = .shared
     ) {
+        self.device = device
         precondition(
             numValueHeads > 0,
             "GDNStateCache: numValueHeads must be positive")
@@ -104,6 +109,12 @@ public final class GDNStateCache: LayerCacheProtocol, @unchecked Sendable {
         // residency validation on the read/write/swap that fires each
         // token through the GDN layer.
         device.markWeightsResident([self.current.buffer, self.next.buffer])
+    }
+
+    deinit {
+        // Release the recurrent state buffers from the residency set so
+        // the wired memory is freed when the cache is dropped.
+        device.unmarkWeightsResident([current.buffer, next.buffer])
     }
 
     /// Exchange `current` and `next`. Call this after `Ops.gatedDeltaStep`

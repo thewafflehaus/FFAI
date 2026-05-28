@@ -34,6 +34,10 @@ public final class ConvStateCache: @unchecked Sendable {
     /// Rolling window, shape `[kernelSize - 1, nChannels]`.
     public let state: Tensor
 
+    /// The device whose residency set holds `state` — kept so `deinit`
+    /// can release it.
+    private let device: Device
+
     public init(
         nChannels: Int, kernelSize: Int, dtype: DType,
         device: Device = .shared
@@ -41,6 +45,7 @@ public final class ConvStateCache: @unchecked Sendable {
         precondition(
             kernelSize >= 2,
             "ConvStateCache: kernelSize must be >= 2 (1-tap conv has no state)")
+        self.device = device
         self.nChannels = nChannels
         self.kernelSize = kernelSize
         self.dtype = dtype
@@ -52,6 +57,12 @@ public final class ConvStateCache: @unchecked Sendable {
         // in the residency set so the driver skips per-dispatch
         // residency validation on the read+shift that fires each token.
         device.markWeightsResident([self.state.buffer])
+    }
+
+    deinit {
+        // Release the conv state buffer from the residency set so the
+        // wired memory is freed when the cache is dropped.
+        device.unmarkWeightsResident([state.buffer])
     }
 
     /// Reset to zero. Used between sessions; cheap (small fp16/bf16 buffer).

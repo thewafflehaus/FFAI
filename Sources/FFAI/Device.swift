@@ -97,4 +97,27 @@ public final class Device: @unchecked Sendable {
         set.commit()
         set.requestResidency()
     }
+
+    /// Remove `buffers` from the persistent weight residency set — the
+    /// inverse of `markWeightsResident`. Without this, the residency set
+    /// retains every buffer it was ever handed, so each model (and each
+    /// grown KV cache) loaded in a process stays wired forever and memory
+    /// accumulates across loads — e.g. a test suite or an app that swaps
+    /// models would exhaust the wired budget and GPU dispatches would
+    /// start silently failing (all-zero output). Call it when a Model or
+    /// cache is freed, or when a cache grows and retires its old buffers.
+    /// macOS 15+ / iOS 18+; older OSes and `FFAI_NO_RESIDENCY_SET=1`
+    /// no-op (matching `markWeightsResident`).
+    public func unmarkWeightsResident(_ buffers: [MTLBuffer]) {
+        if buffers.isEmpty { return }
+        if ProcessInfo.processInfo.environment["FFAI_NO_RESIDENCY_SET"] != nil { return }
+        guard #available(macOS 15.0, iOS 18.0, *) else { return }
+        residencyLock.lock()
+        defer { residencyLock.unlock() }
+        guard let set = weightResidencySet as? MTLResidencySet else { return }
+        for buf in buffers {
+            set.removeAllocation(buf)
+        }
+        set.commit()
+    }
 }

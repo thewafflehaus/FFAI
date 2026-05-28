@@ -388,6 +388,12 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
             cmd.waitUntilCompleted()
         }
 
+        // Drop the old buffers out of the residency set — the blit above
+        // already committed + waited, so no in-flight command references
+        // them. Without this each grow leaves its retired buffers wired
+        // forever. (They stay alive in `retiredBuffers` for GPU safety;
+        // removing them from residency only lets the driver evict them.)
+        device.unmarkWeightsResident([kBuffer.buffer, vBuffer.buffer])
         // Retire old buffers (kept until the next grow so nothing
         // dangles), swap in the new ones, bump capacity + eviction
         // bookkeeping, and pin the new buffers resident.
@@ -398,6 +404,15 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
         capacity = newCapacity
         _evictionState.grow(to: newCapacity)
         device.markWeightsResident([newK.buffer, newV.buffer])
+    }
+
+    deinit {
+        // Release the cache's live buffers from the residency set so the
+        // wired memory is freed when the cache is dropped — otherwise
+        // every cache created in a process accumulates (every generation
+        // session, every model swap). Retired buffers were already
+        // unmarked at grow time.
+        device.unmarkWeightsResident([kBuffer.buffer, vBuffer.buffer])
     }
 
     /// CPU-side legacy append. Caller must have already sync'd the
