@@ -141,7 +141,7 @@ struct GPTOSSTextIntegrationTests {
         expectCoherentOutput(
             result.generatedTokens,
             minTokens: 32,
-            label: "GPT-OSS-20B MXFP4"
+            label: "GPT-OSS-20B 4bit"
         )
     }
 }
