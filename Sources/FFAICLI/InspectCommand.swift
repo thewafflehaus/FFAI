@@ -275,20 +275,55 @@ struct InspectCommand: AsyncParsableCommand {
         print("└────────────────────────────────────────────────────────")
 
         // ─── KV Cache layout ─────────────────────────────────────
-        let caches = m.engine.makeLayerCaches()
+        // Inspect runs a single prefill of the (short) probe prompt, so
+        // it allocates the cache at the prompt depth — NOT the model's
+        // full `max_position_embeddings`. Long-context models publish
+        // 256K+ windows; allocating that for a 6-token probe would eat
+        // tens of GB (Qwen3.6-27B: 16 attn layers × 4 KV heads × 262144
+        // × 256 × 2(K+V) × 2 bytes ≈ 17 GB) and could exhaust unified
+        // memory on the very models inspect exists to diagnose. The
+        // full-context footprint is still reported below as a computed
+        // estimate so the "how much would a real session cost" signal —
+        // exactly the number that flags a runaway long-context cache —
+        // survives without being allocated.
+        let inspectCacheDepth = max(1, Swift.min(m.engine.maxSeq, promptTokens.count + 1))
+        let caches = m.engine.makeLayerCaches(maxSeq: inspectCacheDepth)
         let bytesAllocated = caches.reduce(0) { $0 + $1.bytesAllocated }
+
+        // Full-context footprint estimate — what a session at the
+        // model's full `maxSeq` would allocate. Seq-scaling attention
+        // caches grow with maxSeq; fixed-size state caches (GDN / conv /
+        // Mamba) don't, so they contribute their already-allocated bytes.
+        var fullContextBytes = 0
+        var attnLayerCount = 0
+        for cache in caches {
+            if let kv = cache as? any KVCacheProtocol {
+                attnLayerCount += 1
+                fullContextBytes +=
+                    kv.nKVHeads * m.engine.maxSeq * kv.headDim
+                    * 2 /* K + V */ * kv.dtype.byteSize
+            } else {
+                fullContextBytes += cache.bytesAllocated
+            }
+        }
+
         print("")
         print("┌─ KV Cache ─────────────────────────────────────────────")
         print("│ scheme             \(opts.kvCache)")
         print("│ eviction policy    \(opts.kvEviction)")
-        print("│ per-layer caches   \(caches.count)")
-        print("│ total bytes alloc  \(formatBytes(bytesAllocated))")
-        if let kv = caches.first as? any KVCacheProtocol {
+        print("│ per-layer caches   \(caches.count) (\(attnLayerCount) seq-scaling attention)")
+        print("│ model maxSeq       \(m.engine.maxSeq)")
+        print(
+            "│ full-ctx footprint \(formatBytes(fullContextBytes))  ← a session at maxSeq")
+        print(
+            "│ inspect alloc      \(formatBytes(bytesAllocated))  (probe depth \(inspectCacheDepth))"
+        )
+        if let kv = caches.first(where: { $0 is any KVCacheProtocol }) as? any KVCacheProtocol {
             print(
-                "│ layer 0 stride     [nKVHeads=\(kv.nKVHeads), maxSeq=\(kv.maxSeq), headDim=\(kv.headDim)]"
+                "│ attn stride        [nKVHeads=\(kv.nKVHeads), headDim=\(kv.headDim)] × maxSeq"
             )
-            print("│ layer 0 dtype      \(kv.dtype)")
-            print("│ layer 0 maxSize    \(kv.effectiveMaxSize)")
+            print("│ attn dtype         \(kv.dtype)")
+            print("│ attn maxSize       \(kv.effectiveMaxSize)")
         }
         print("└────────────────────────────────────────────────────────")
 

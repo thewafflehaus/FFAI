@@ -212,7 +212,14 @@ struct GenerateCommand: AsyncParsableCommand {
             let promptTokens = m.tokenizer.encode(text: prompt)
             print("prompt tokens: \(promptTokens)")
 
-            let caches = m.engine.makeLayerCaches()
+            // Verbose prefill only — size the cache to the probe prompt,
+            // not the model's full context window (long-context models
+            // would otherwise allocate tens of GB just for this sanity
+            // check). The actual streaming generation below goes through
+            // Model.generate, which computes its own prompt+maxTokens
+            // cache depth.
+            let verifyCacheDepth = max(1, Swift.min(m.engine.maxSeq, promptTokens.count + 1))
+            let caches = m.engine.makeLayerCaches(maxSeq: verifyCacheDepth)
             var lastLogits: Tensor?
             for (i, t) in promptTokens.enumerated() {
                 lastLogits = m.engine.forward(tokenId: t, position: i, caches: caches)
