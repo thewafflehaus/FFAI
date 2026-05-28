@@ -120,12 +120,12 @@ struct OpsValidationTests {
                 nKV: 1, kvStride: 128) == nil)
     }
 
-    @Test("sdpaDecode rejects head_dim outside {64, 128, 256, 512}")
+    @Test("sdpaDecode rejects head_dim outside {64, 96, 128, 256, 512}")
     func sdpaDecodeRejectsBadHeadDim() {
         // 2026-05-19 GPU freeze trigger: head_dim=4 with the elementwise
         // sizing helper → 4 threads → n_simd=0 → infinite loop. The set
         // also covers values we've never specialized.
-        for badHeadDim in [4, 32, 96, 127, 129, 192, 256 + 1, 1024] {
+        for badHeadDim in [4, 32, 127, 129, 192, 256 + 1, 1024] {
             #expect(
                 OpsValidation.validateSdpaDecode(
                     headDim: badHeadDim, nQHeads: 8, nKVHeads: 8,
@@ -140,8 +140,8 @@ struct OpsValidationTests {
         // requires updating both this set and the dispatch switch in
         // Ops.sdpaDecode in the same commit. Gemma 3 + Gemma 4 added
         // head_dim=256 in the Phase 6 wave; Gemma 4's global layers
-        // added head_dim=512.
-        #expect(OpsValidation.supportedSdpaHeadDims == [64, 128, 256, 512])
+        // added head_dim=512; Phi-3 added head_dim=96.
+        #expect(OpsValidation.supportedSdpaHeadDims == [64, 96, 128, 256, 512])
     }
 
     @Test("sdpaDecode rejects non-integer GQA fan-out")
