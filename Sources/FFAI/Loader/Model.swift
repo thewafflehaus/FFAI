@@ -1249,10 +1249,25 @@ public final class Model: @unchecked Sendable {
 
     /// Compile PSOs for the kernels we'll need during decode by running
     /// one no-op forward step. Costs ~100ms-1s on first load.
+    ///
+    /// The cache only ever holds the single position-0 token this
+    /// forward appends, so it is sized to a tiny fixed depth rather
+    /// than the model's full context window. Without the cap, a
+    /// long-context model (e.g. Qwen3.6-27B at max_position_embeddings
+    /// = 262144) would pre-allocate ~17 GB of KV cache here — at LOAD
+    /// time, before the caller has even asked to generate — and could
+    /// exhaust unified memory on its own. PSO compilation depends on
+    /// kernel shapes, not cache depth, so a depth of a few slots
+    /// compiles exactly the same pipeline states.
     public func prewarm() async {
-        let cache = engine.makeLayerCaches()
+        let cache = engine.makeLayerCaches(maxSeq: Self.prewarmCacheDepth)
         _ = engine.forward(tokenId: 0, position: 0, caches: cache)
     }
+
+    /// Cache depth used by `prewarm()`. A single position-0 forward
+    /// needs only one slot; the small margin is defensive headroom for
+    /// any family whose forward touches position+1 internally.
+    private static let prewarmCacheDepth = 8
 }
 
 // ─── Hot LoRA adapter management ─────────────────────────────────────
