@@ -27,22 +27,40 @@ import Testing
 
 @testable import FFAI
 
-private let qwen35MoELocalPath = "/Users/tom/models/Qwen3.5-35B-A3B-4bit"
+/// Bench target — the cached `mlx-community/Qwen3.5-35B-A3B-4bit`
+/// MoE checkpoint. Switched off Tom's prior `/Users/tom/...` hard-coded
+/// local path so the suite runs against the same checkpoint on any
+/// developer's machine once they've fetched it via `ffai download`.
+private let qwen35MoEModelId = "mlx-community/Qwen3.5-35B-A3B-4bit"
+
+/// Per-suite gate. Defaults to `false` so `swift test` never fires
+/// these multi-minute bench runs accidentally. Flip when you
+/// intentionally want to bench Qwen3.5-35B-A3B end-to-end. Pairs with
+/// the cache-availability check below.
+private let enableQwen35MoEBenchSuite: Bool = false
+
+/// Local-cache predicate — bench is also disabled if the checkpoint
+/// isn't already cached (downloading a 20 GB MoE checkpoint inside a
+/// bench would itself dominate the bench).
+private let qwen35MoECacheAvailable: Bool = {
+    let cache =
+        ("~/.cache/huggingface/hub/models--mlx-community--Qwen3.5-35B-A3B-4bit"
+            as NSString)
+        .expandingTildeInPath
+    return FileManager.default.fileExists(atPath: cache)
+}()
 
 @Suite(
-    "Qwen3.5-35B-A3B local-checkpoint bench", .serialized,
+    "Qwen3.5-35B-A3B bench", .serialized,
     .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+        if: enableQwen35MoEBenchSuite && qwen35MoECacheAvailable,
+        "Qwen3.5-35B-A3B bench requires `enableQwen35MoEBenchSuite = true` AND a cached `mlx-community/Qwen3.5-35B-A3B-4bit` (≈ 20 GB, fetch with `ffai download mlx-community/Qwen3.5-35B-A3B-4bit`)."
+    )
 )
 struct Qwen35MoEBenchIntegrationTests {
 
     @Test("Qwen3.5-35B-A3B decode T=1 tps — 5 runs, median over 32 steps")
     func decodeBenchT1() async throws {
-        guard FileManager.default.fileExists(atPath: qwen35MoELocalPath) else {
-            print("decodeBenchT1 skipped: \(qwen35MoELocalPath) not found")
-            return
-        }
         let m = try await loadModel()
         guard let qwen = m.qwen35 else {
             Issue.record("expected Qwen35Model engine")
@@ -91,10 +109,6 @@ struct Qwen35MoEBenchIntegrationTests {
 
     @Test("Qwen3.5-35B-A3B forwardMany T=8 smoke")
     func forwardManyT8Smoke() async throws {
-        guard FileManager.default.fileExists(atPath: qwen35MoELocalPath) else {
-            print("forwardManyT8Smoke skipped: \(qwen35MoELocalPath) not found")
-            return
-        }
         let m = try await loadModel()
         let qwen = try #require(m.qwen35, "expected Qwen35Model engine")
         let seed = "The quick brown fox"
@@ -115,10 +129,6 @@ struct Qwen35MoEBenchIntegrationTests {
 
     @Test("Qwen3.5-35B-A3B per-token forward T=128 (no batched)")
     func perTokenT128() async throws {
-        guard FileManager.default.fileExists(atPath: qwen35MoELocalPath) else {
-            print("perTokenT128 skipped: \(qwen35MoELocalPath) not found")
-            return
-        }
         let m = try await loadModel()
         let qwen = try #require(m.qwen35, "expected Qwen35Model engine")
         let seed = "The quick brown fox jumps over the lazy dog. "
@@ -154,10 +164,6 @@ struct Qwen35MoEBenchIntegrationTests {
 
     @Test("Qwen3.5-35B-A3B prefill T=32K + decode-after-prefill — long-context bench")
     func longContext32K() async throws {
-        guard FileManager.default.fileExists(atPath: qwen35MoELocalPath) else {
-            print("longContext32K skipped: \(qwen35MoELocalPath) not found")
-            return
-        }
         let m = try await loadModel()
         let qwen = try #require(m.qwen35, "expected Qwen35Model engine")
         let seed =
@@ -212,15 +218,11 @@ struct Qwen35MoEBenchIntegrationTests {
         optsBuilder.prewarm = false
         let opts = optsBuilder
         return try await ModelLoadLock.shared.loadSerially {
-            try await Model.load(qwen35MoELocalPath, options: opts)
+            try await Model.load(qwen35MoEModelId, options: opts)
         }
     }
 
     private func runForwardManyBench(targetT: Int) async throws {
-        guard FileManager.default.fileExists(atPath: qwen35MoELocalPath) else {
-            print("forwardManyBench skipped: \(qwen35MoELocalPath) not found")
-            return
-        }
         let m = try await loadModel()
         let qwen = try #require(m.qwen35, "expected Qwen35Model engine")
 

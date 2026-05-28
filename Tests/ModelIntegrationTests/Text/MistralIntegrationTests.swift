@@ -43,16 +43,36 @@ struct MistralIntegrationTests {
         let prompt = "Once upon a time, in a quiet village"
         let maxTokens = 200
 
+        // ── 1. Load ──────────────────────────────────────────────────────
         let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
-        // Mistral 7B canonical shapes.
+        // ── 2. Interfaces we expect ──────────────────────────────────────
+        #expect(m.llama != nil, "Mistral 7B should load through the Llama engine")
+        #expect(m.qwen3 == nil)
+        #expect(m.jamba == nil)
+        // Mistral 7B canonical shapes. GQA: nKVHeads = 8.
         #expect(m.engine.hidden == 4096)
         #expect(m.engine.nLayers == 32)
         #expect(m.engine.nHeads == 32)
-        // GQA: nKVHeads = 8.
         #expect(m.engine.nKVHeads == 8)
         #expect(m.engine.headDim == 128)
-        #expect(m.llama != nil, "Mistral 7B should load through the Llama engine")
+        #expect(m.engine.vocab == 32_768)
+
+        // ── 3. Errors we expect ─────────────────────────────────────────
+        let caches = m.engine.makeLayerCaches()
+        #expect(caches.count == 32)
+        for (i, c) in caches.enumerated() {
+            if !(c is KVCache) {
+                Issue.record("Mistral: layer \(i) cache is \(type(of: c)), expected KVCache")
+            }
+        }
+
+        // ── 4. Forward pass produces expected output ────────────────────
+        let logits = m.engine.forward(tokenId: 1, position: 0, caches: caches)
+        #expect(logits.elementCount == 32_768)
+        let top = Sampling.topN(logits, n: 5)
+        #expect(top[0].1.isFinite)
+        #expect(top[0].1 > top[4].1)
 
         let result = try await m.generate(
             prompt: prompt,

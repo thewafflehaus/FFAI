@@ -41,24 +41,47 @@ struct Qwen2TextIntegrationTests {
         let prompt = "Once upon a time, in a quiet village"
         let maxTokens = 200
 
+        // ── 1. Load ──────────────────────────────────────────────────────
         let m = try await ModelLoadLock.shared.loadSerially { try await Model.load(modelId) }
 
-        // Qwen 2.5 0.5B canonical shapes.
+        // ── 2. Interfaces we expect ──────────────────────────────────────
+        // Qwen 2.5 is Llama-shaped with bias-bearing QKV projections —
+        // routes through the bias-aware loadLinear path of the Llama
+        // engine (`m.llama`), NOT the bias-less 3-series engine.
+        #expect(
+            m.llama != nil,
+            "Qwen 2.5 should load through the Llama engine after bias-aware Linear")
+        #expect(m.qwen3 == nil)
+        #expect(m.qwen35 == nil)
+        // Qwen 2.5 0.5B canonical shapes. GQA: 2 KV heads.
         #expect(m.engine.hidden == 896)
         #expect(m.engine.nLayers == 24)
         #expect(m.engine.nHeads == 14)
-        // GQA: 2 KV heads.
         #expect(m.engine.nKVHeads == 2)
         #expect(m.engine.headDim == 64)
-        #expect(
-            m.llama != nil,
-            "Qwen 2.5 should load through the 3-series engine after bias-aware Linear")
+        #expect(m.engine.vocab == 151_936)
+
+        // ── 3. Errors we expect ─────────────────────────────────────────
+        let caches = m.engine.makeLayerCaches()
+        #expect(caches.count == 24)
+        for (i, c) in caches.enumerated() {
+            if !(c is KVCache) {
+                Issue.record("Qwen2.5: layer \(i) cache is \(type(of: c)), expected KVCache")
+            }
+        }
+
+        // ── 4. Forward pass produces expected output ────────────────────
+        let logits = m.engine.forward(tokenId: 1, position: 0, caches: caches)
+        #expect(logits.elementCount == 151_936)
+        let top = Sampling.topN(logits, n: 5)
+        #expect(top[0].1.isFinite)
+        #expect(top[0].1 > top[4].1)
 
         let result = try await m.generate(
             prompt: prompt,
             parameters: GenerationParameters(maxTokens: maxTokens, temperature: 0)
         )
         #expect(result.tokensPerSecond > 0)
-        expectCoherentOutput(result.generatedTokens, label: "Qwen 2.5 0.5B")
+        expectCoherentOutput(result.generatedTokens, label: "Qwen 2.5 0.5B 4bit")
     }
 }
