@@ -355,9 +355,9 @@ public final class NemotronDiffusionLayer: Module {
         let xNorm = Ops.rmsNormRows(
             h, weight: inputNorm.weight, eps: inputNorm.eps,
             nRows: n, rowSize: hidden, on: cmd)
-        let qBlock = nemotronBlockProject(qProj, xNorm, nRows: n, on: cmd)  // [n, qDim]
-        let kBlock = nemotronBlockProject(kProj, xNorm, nRows: n, on: cmd)  // [n, kvDim]
-        let vBlock = nemotronBlockProject(vProj, xNorm, nRows: n, on: cmd)  // [n, kvDim]
+        let qBlock = nemotronBlockProject(qProj, xNorm, nRows: n, on: cmd, device: device)  // [n, qDim]
+        let kBlock = nemotronBlockProject(kProj, xNorm, nRows: n, on: cmd, device: device)  // [n, kvDim]
+        let vBlock = nemotronBlockProject(vProj, xNorm, nRows: n, on: cmd, device: device)  // [n, kvDim]
 
         // RoPE per row (position-dependent) + K/V cache staging. RoPE
         // writes each rotated Q row straight into the contiguous `qAll`.
@@ -410,7 +410,7 @@ public final class NemotronDiffusionLayer: Module {
             causal: causal, scale: scale, on: cmd)
 
         // o_proj (GEMM), optional LoRA delta, residual — all batched.
-        var oBlock = nemotronBlockProject(oProj, attnAll, nRows: n, on: cmd)  // [n, hidden]
+        var oBlock = nemotronBlockProject(oProj, attnAll, nRows: n, on: cmd, device: device)  // [n, hidden]
         if useLora, let la = loraA, let lb = loraB {
             // o_proj(x) + loraB·(loraA·x); the alpha/rank scale is baked
             // into loraB. Each LoRA factor is one GEMM over the block.
@@ -436,32 +436,26 @@ public final class NemotronDiffusionLayer: Module {
         }
 
         // SwiGLU MLP — gate/up/down as block GEMMs.
-        let gate = nemotronBlockProject(gateProj, mlpNorm, nRows: n, on: cmd)
-        let up = nemotronBlockProject(upProj, mlpNorm, nRows: n, on: cmd)
+        let gate = nemotronBlockProject(gateProj, mlpNorm, nRows: n, on: cmd, device: device)
+        let up = nemotronBlockProject(upProj, mlpNorm, nRows: n, on: cmd, device: device)
         let mlpInner = Ops.mul(Ops.silu(gate, on: cmd), up, on: cmd)
-        let mlpOut = nemotronBlockProject(downProj, mlpInner, nRows: n, on: cmd)
+        let mlpOut = nemotronBlockProject(downProj, mlpInner, nRows: n, on: cmd, device: device)
         return Ops.add(postAttn, mlpOut, on: cmd)
     }
 }
 
-/// Project a `[nRows, inDim]` activation block through a dense linear
-/// layer in one `Ops.gemm`. Diffusion / self-speculation require a
-/// non-quantized checkpoint — a quantized weight hits the precondition
-/// (the block GEMM has no quantized path; AR mode handles quant fine).
+/// Project a `[nRows, inDim]` activation block through a linear layer in
+/// one batched GEMM. Routes through `AnyLinear.callMany`, which picks the
+/// right kernel per weight kind: dense `Ops.gemm` for raw weights, or
+/// `Ops.dequantGemmDynamicM` (the `mt_qmm_mma` batched dequant-GEMM, with
+/// a per-row `dequantGemv` fallback) for affine-quantized weights. This
+/// lets diffusion / self-speculation run on quantized checkpoints, not
+/// just raw ones.
 private func nemotronBlockProject(
     _ proj: AnyLinear, _ input: Tensor, nRows: Int,
-    on cmd: MTLCommandBuffer
+    on cmd: MTLCommandBuffer, device: Device
 ) -> Tensor {
-    guard let lin = proj.inner as? Linear else {
-        preconditionFailure(
-            "NemotronDiffusion diffusion / self-speculation require a "
-                + "non-quantized checkpoint — the block GEMM has no quantized path")
-    }
-    precondition(
-        lin.bias == nil,
-        "NemotronDiffusion: unexpected projection bias "
-            + "(config declares attention_bias / mlp_bias = false)")
-    return Ops.gemm(weight: lin.weight, input: input, nRows: nRows, on: cmd)
+    proj.callMany(input, t: nRows, on: cmd, device: device)
 }
 
 // ─── NemotronDiffusionModel ──────────────────────────────────────
@@ -876,7 +870,7 @@ public final class NemotronDiffusionModel: LanguageModel {
         let normed = Ops.rmsNormRows(
             hBlock, weight: finalNorm.weight, eps: finalNorm.eps,
             nRows: n, rowSize: hidden, on: cmd)
-        let logitsBlock = nemotronBlockProject(lmHead, normed, nRows: n, on: cmd)
+        let logitsBlock = nemotronBlockProject(lmHead, normed, nRows: n, on: cmd, device: device)
         cmd.commit()
         cmd.waitUntilCompleted()
 
