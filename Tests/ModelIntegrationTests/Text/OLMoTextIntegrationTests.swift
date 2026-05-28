@@ -39,8 +39,10 @@ struct OLMoTextIntegrationTests {
         }
 
         // ── 2. Interfaces we expect ──────────────────────────────────────
-        // OLMo 2 is Llama-shaped — routes through `m.llama`.
-        #expect(m.llama != nil)
+        // OLMo 2 is post-norm + q/k-norm — its own decoder, NOT the Llama
+        // path, so `m.olmo2` is set and `m.llama` is nil.
+        #expect(m.olmo2 != nil)
+        #expect(m.llama == nil)
         #expect(m.qwen3 == nil)
         #expect(m.jamba == nil)
         #expect(m.falconH1 == nil)

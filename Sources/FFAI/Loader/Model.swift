@@ -1167,6 +1167,13 @@ public final class Model: @unchecked Sendable {
     /// correct accessor for Starcoder2ForCausalLM checkpoints.
     public var starcoder2: Starcoder2Model? { engine as? Starcoder2Model }
 
+    /// Convenience accessor for the OLMo 2 engine. Returns nil if the
+    /// loaded engine isn't OLMo 2. OLMo 2 (`Olmo2ForCausalLM`) is
+    /// post-norm with q/k-norm and routes to its own decoder — not the
+    /// Llama path — so `m.llama` is nil for OLMo 2 checkpoints. (OLMo 1
+    /// stays Llama-shaped and does surface through `m.llama`.)
+    public var olmo2: OLMo2Model? { engine as? OLMo2Model }
+
     private let stateLock = NSLock()
     private var _currentState: ModelLifecycleState = .ready
 
