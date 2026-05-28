@@ -535,12 +535,10 @@ public enum ModelRegistry {
             SmolLM.architectures
             .union(OLMo.architectures)
             .union(Yi.architectures)
-            .union(InternLM2.architectures)
         let llamaCompatibleTypes: Set<String> =
             SmolLM.modelTypes
             .union(OLMo.modelTypes)
             .union(Yi.modelTypes)
-            .union(InternLM2.modelTypes)
         if let arch = config.architecture, llamaCompatibleArchs.contains(arch) {
             return try loadLlama(
                 config: config, weights: weights,
@@ -563,6 +561,20 @@ public enum ModelRegistry {
         }
         if let mt = config.modelType, Granite3.modelTypes.contains(mt) {
             return try loadGranite3(
+                config: config, weights: weights,
+                options: options, device: device)
+        }
+        // InternLM2 — Llama-shaped, but with InternLM2-native tensor
+        // names and a fused `wqkv` projection the plain Llama loader
+        // can't read. `loadInternLM2` remaps the names + splits wqkv.
+        // See `Models/Text/InternLM2Text.swift`.
+        if let arch = config.architecture, InternLM2.architectures.contains(arch) {
+            return try loadInternLM2(
+                config: config, weights: weights,
+                options: options, device: device)
+        }
+        if let mt = config.modelType, InternLM2.modelTypes.contains(mt) {
+            return try loadInternLM2(
                 config: config, weights: weights,
                 options: options, device: device)
         }
@@ -809,6 +821,20 @@ public enum ModelRegistry {
         return Loaded(
             engine: engine,
             defaultGenerationParameters: LlamaDense.defaultGenerationParameters)
+    }
+
+    /// InternLM2 (`InternLM2ForCausalLM`). Llama-shaped forward; the
+    /// dedicated loader remaps InternLM2's tensor names and splits the
+    /// fused `wqkv` into q/k/v. See `Models/Text/InternLM2Text.swift`.
+    public static func loadInternLM2(
+        config: ModelConfig, weights: SafeTensorsBundle,
+        options: LoadOptions, device: Device
+    ) throws -> Loaded {
+        let engine = try InternLM2Dense.loadModel(
+            config: config, weights: weights, options: options, device: device)
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: InternLM2Dense.defaultGenerationParameters)
     }
 
     public static func loadStarcoder2(
