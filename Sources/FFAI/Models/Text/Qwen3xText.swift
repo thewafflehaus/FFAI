@@ -2203,6 +2203,12 @@ public final class Qwen35AttentionMixer: Module {
             kFlat: kNormed.reshaped(to: [nKVHeads, headDim]),
             vFlat: v.reshaped(to: [nKVHeads, headDim]), on: cmd)
 
+        // AURA caches store K/V Π-rotated — rotate Q in (used by both
+        // SDPA paths) and un-rotate the output below (no-op for raw /
+        // affine).
+        let qForSdpa = auraRotatedQuery(
+            qNormed.reshaped(to: [nHeads, headDim]), cache: kv,
+            nHeads: nHeads, headDim: headDim, on: cmd)
         let (cacheK, cacheV) = kv.prepareForAttention(on: cmd)
         // Cached sdpaDecode output + sigmoidMul output scratches.
         if attnOutScratch == nil
@@ -2234,7 +2240,7 @@ public final class Qwen35AttentionMixer: Module {
                     shape: [nHeads, sdpa2PassBlocks], dtype: .f32, device: device)
             }
             Ops.sdpaDecode2Pass(
-                q: qNormed.reshaped(to: [nHeads, headDim]), k: cacheK, v: cacheV,
+                q: qForSdpa, k: cacheK, v: cacheV,
                 nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
                 nKV: kv.length, kvStride: kv.capacity, blocks: sdpa2PassBlocks,
                 scale: scale,
@@ -2245,7 +2251,7 @@ public final class Qwen35AttentionMixer: Module {
             attnOut = attnOutScratch!
         } else {
             attnOut = Ops.sdpaDecode(
-                q: qNormed.reshaped(to: [nHeads, headDim]), k: cacheK, v: cacheV,
+                q: qForSdpa, k: cacheK, v: cacheV,
                 nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
                 nKV: kv.length, kvStride: kv.capacity,
                 scale: scale, on: cmd, into: attnOutScratch)
@@ -2254,7 +2260,8 @@ public final class Qwen35AttentionMixer: Module {
         // Gated output: attnOut * sigmoid(gate), then o_proj.
         // Fused sigmoidMul via mt_sigmoid_mul into cached scratch —
         // saves 1 encoder per attn layer × 10 ≈ 170 µs/token.
-        var attnFlat = attnOut.reshaped(to: [nHeads * headDim])
+        var attnFlat = auraUnrotatedOutput(
+            attnOut, cache: kv, nHeads: nHeads, headDim: headDim, on: cmd)
         if let gate {
             attnFlat = Ops.sigmoidMul(
                 attnFlat, gate, on: cmd, into: attnFlatGatedScratch)
@@ -2977,15 +2984,11 @@ public final class Qwen35Model: LanguageModel {
     ///   GDN → GDNStateCache, attention → KVCache.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxContextWindow
-        // AURA needs per-layer Π wiring in the attention mixer (follow-up)
-        // — map it to raw; raw + affine run through the shared factory.
-        // One dequant scratch is shared across every attention layer.
-        let kind: KVCacheKind = {
-            if case .auraQuantized = kvCacheKind { return .raw }
-            return kvCacheKind
-        }()
+        // raw / affine / AURA all run through the shared factory; one
+        // dequant scratch is shared across every attention layer. (AURA
+        // prefill uses the per-token fallback in forwardMany.)
         let scratch = makeAttentionScratch(
-            kind: kind, nKVHeads: nKVHeads, headDim: headDim,
+            kind: kvCacheKind, nKVHeads: nKVHeads, headDim: headDim,
             contextLength: cap, dtype: dtype, device: device)
         return layerKinds.enumerated().map { (i, layerKind) in
             switch layerKind {
@@ -2999,7 +3002,7 @@ public final class Qwen35Model: LanguageModel {
                     dtype: dtype, device: device)
             case .attention:
                 return makeAttentionCache(
-                    kind: kind, scratch: scratch,
+                    kind: kvCacheKind, scratch: scratch,
                     nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                     dtype: dtype, eviction: kvEviction, layerIndex: i, device: device)
             }

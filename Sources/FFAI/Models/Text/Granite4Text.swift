@@ -890,14 +890,21 @@ public final class Granite4AttentionMixer: Module {
             kFlat: k.reshaped(to: [nKVHeads, headDim]),
             vFlat: v.reshaped(to: [nKVHeads, headDim]), on: cmd)
 
+        // AURA caches store K/V Π-rotated — rotate Q in / un-rotate out
+        // (no-op for raw / affine).
+        let qForSdpa = auraRotatedQuery(
+            q.reshaped(to: [nHeads, headDim]), cache: kv,
+            nHeads: nHeads, headDim: headDim, on: cmd)
         let (cacheK, cacheV) = kv.prepareForAttention(on: cmd)
         let attnOut = Ops.sdpaDecode(
-            q: q.reshaped(to: [nHeads, headDim]), k: cacheK, v: cacheV,
+            q: qForSdpa, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
             nKV: kv.length, kvStride: kv.capacity,
             scale: scale, on: cmd)
+        let outFlat = auraUnrotatedOutput(
+            attnOut, cache: kv, nHeads: nHeads, headDim: headDim, on: cmd)
 
-        return oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
+        return oProj(outFlat, on: cmd)
     }
 }
 
@@ -1187,15 +1194,10 @@ public final class Granite4Model: LanguageModel {
     ///   mamba → Mamba2LayerCache, attention → KVCache.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxContextWindow
-        // AURA needs per-layer Π wiring in the attention mixer (follow-up)
-        // — map it to raw; raw + affine run through the shared factory.
-        // One dequant scratch is shared across every attention layer.
-        let kind: KVCacheKind = {
-            if case .auraQuantized = kvCacheKind { return .raw }
-            return kvCacheKind
-        }()
+        // raw / affine / AURA all run through the shared factory; one
+        // dequant scratch is shared across every attention layer.
         let scratch = makeAttentionScratch(
-            kind: kind, nKVHeads: nKVHeads, headDim: headDim,
+            kind: kvCacheKind, nKVHeads: nKVHeads, headDim: headDim,
             contextLength: cap, dtype: dtype, device: device)
         return layerKinds.enumerated().map { (i, layerKind) in
             switch layerKind {
@@ -1206,7 +1208,7 @@ public final class Granite4Model: LanguageModel {
                     dtype: dtype, device: device)
             case .attention:
                 return makeAttentionCache(
-                    kind: kind, scratch: scratch,
+                    kind: kvCacheKind, scratch: scratch,
                     nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                     dtype: dtype, eviction: kvEviction, layerIndex: i, device: device)
             }

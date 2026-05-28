@@ -1344,18 +1344,25 @@ public final class Gemma4Layer: Module {
     )
         -> Tensor
     {
+        // AURA stores K/V Π-rotated — rotate Q in / un-rotate out against
+        // the cache actually attended (the donor's, for KV-shared layers).
+        // No-op for raw / affine.
         if let donorCache {
             // KV-shared layer: reuse the donor's already-updated slab.
             let q = projectAndNormQuery(xNorm, on: cmd)
             let qRotated = Ops.rope(
                 q, position: position, headDim: headDim,
                 thetaBase: ropeTheta, scaling: .none, on: cmd)
+            let qForSdpa = auraRotatedQuery(
+                qRotated, cache: donorCache, nHeads: nHeads, headDim: headDim, on: cmd)
             let (cacheK, cacheV) = donorCache.prepareForAttention(on: cmd)
-            return Ops.sdpaDecode(
-                q: qRotated, k: cacheK, v: cacheV,
+            let attnOut = Ops.sdpaDecode(
+                q: qForSdpa, k: cacheK, v: cacheV,
                 nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
                 nKV: donorCache.length, kvStride: donorCache.capacity,
                 scale: 1.0, on: cmd)
+            return auraUnrotatedOutput(
+                attnOut, cache: donorCache, nHeads: nHeads, headDim: headDim, on: cmd)
         }
         let (q, k, v) = projectAndNorm(xNorm, on: cmd)
         let qRotated = Ops.rope(
@@ -1365,13 +1372,17 @@ public final class Gemma4Layer: Module {
             k, position: position, headDim: headDim,
             thetaBase: ropeTheta, scaling: .none, on: cmd)
         cache.appendOnGPU(kFlat: kRotated, vFlat: v, on: cmd)
+        let qForSdpa = auraRotatedQuery(
+            qRotated, cache: cache, nHeads: nHeads, headDim: headDim, on: cmd)
         let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
         // Gemma 4 uses SDPA scale = 1.0 (pre-scaling lives in q_norm).
-        return Ops.sdpaDecode(
-            q: qRotated, k: cacheK, v: cacheV,
+        let attnOut = Ops.sdpaDecode(
+            q: qForSdpa, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
             nKV: cache.length, kvStride: cache.capacity,
             scale: 1.0, on: cmd)
+        return auraUnrotatedOutput(
+            attnOut, cache: cache, nHeads: nHeads, headDim: headDim, on: cmd)
     }
 
     /// Sliding attention that commits `cmd` and returns resident output
@@ -1434,14 +1445,20 @@ public final class Gemma4Layer: Module {
             q = qOwn
             attnCache = cache
         }
+        // AURA stores K/V Π-rotated — rotate Q in / un-rotate out against
+        // the attended cache (no-op for raw / affine).
+        let qForSdpa = auraRotatedQuery(
+            q, cache: attnCache, nHeads: nHeads, headDim: headDim, on: cmd)
         let (cacheK, cacheV) = attnCache.prepareForAttention(on: cmd)
         // Gemma 4 uses SDPA scale = 1.0 (pre-scaling lives in q_norm).
         // head_dim 512 routes to the d512 `sdpaDecode` specialization.
-        return Ops.sdpaDecode(
-            q: q, k: cacheK, v: cacheV,
+        let attnOut = Ops.sdpaDecode(
+            q: qForSdpa, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
             nKV: attnCache.length, kvStride: attnCache.capacity,
             scale: 1.0, on: cmd)
+        return auraUnrotatedOutput(
+            attnOut, cache: attnCache, nHeads: nHeads, headDim: headDim, on: cmd)
     }
 
     /// Global attention that commits `cmd` and returns resident output
@@ -1621,14 +1638,10 @@ public final class Gemma4Model: LanguageModel {
     /// the donor's cache (`params.previousKVs`).
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxContextWindow
-        // Gemma 4 has no AURA Π-rotation wiring (sliding / global / KV-shared
-        // donor attention paths) — map AURA to raw; raw + affine run through
-        // the shared factory, which groups the per-layer geometries
-        // (sliding vs global head dims) into one dequant scratch each.
-        let kind: KVCacheKind = {
-            if case .auraQuantized = kvCacheKind { return .raw }
-            return kvCacheKind
-        }()
+        // raw / affine / AURA all run through the shared factory, which
+        // groups the per-layer geometries (sliding vs global head dims)
+        // into one dequant scratch (+ AURA codebooks/rotations) each.
+        let kind = kvCacheKind
         let specs = layers.map { layer -> AttentionCacheSpec in
             // A KV-shared layer never appends to its own cache — a 1-slot
             // raw placeholder keeps the array index-aligned without a slab.

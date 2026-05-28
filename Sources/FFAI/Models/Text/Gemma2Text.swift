@@ -285,6 +285,10 @@ public final class Gemma2Layer: Module {
             kFlat: kRotated,
             vFlat: v.reshaped(to: [nKVHeads, headDim]),
             on: cmd)
+        // AURA caches store K/V Π-rotated — rotate Q in / un-rotate out
+        // (no-op for raw / affine).
+        let qForSdpa = auraRotatedQuery(
+            qRotated, cache: cache, nHeads: nHeads, headDim: headDim, on: cmd)
         let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
         // `attn_logit_softcapping` is intentionally NOT applied here —
         // see file header. `sdpaSinkWindow` returns the sliding-window
@@ -292,7 +296,7 @@ public final class Gemma2Layer: Module {
         // ring-buffer cache this is `(0, 0)` and is a no-op fast path.
         let (sinkEnd, windowStart) = cache.sdpaSinkWindow(nKV: cache.length)
         let attnOut = Ops.sdpaDecode(
-            q: qRotated, k: cacheK, v: cacheV,
+            q: qForSdpa, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
             nKV: cache.length, kvStride: cache.capacity,
             scale: scale, on: cmd,
@@ -303,7 +307,10 @@ public final class Gemma2Layer: Module {
         // can't be fused with post_attn_norm; the downstream
         // `h + normedAttn → preFFNorm` pair is the standard
         // add+rmsNorm pattern and is fused below.
-        let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
+        let oOut = oProj(
+            auraUnrotatedOutput(
+                attnOut, cache: cache, nHeads: nHeads, headDim: headDim, on: cmd),
+            on: cmd)
         let normedAttn = postAttnNorm(oOut, on: cmd)
 
         // Fused residual + pre-FFN RMSNorm (validator gates by row size
@@ -412,12 +419,8 @@ public final class Gemma2Model: LanguageModel {
     /// uniformly and overrides the per-layer heuristic — matches Gemma 3.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxContextWindow
-        // Gemma 2 has no AURA Π-rotation wiring in its layer yet — map
-        // AURA to raw; raw + affine run through the shared factory.
-        let kind: KVCacheKind = {
-            if case .auraQuantized = kvCacheKind { return .raw }
-            return kvCacheKind
-        }()
+        // raw / affine / AURA all run through the shared factory.
+        let kind = kvCacheKind
         let specs = (0 ..< nLayers).map { i -> AttentionCacheSpec in
             let eviction: KVEviction
             switch kvEviction {

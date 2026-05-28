@@ -491,9 +491,16 @@ public final class GPTOSSAttention: Module {
             vFlat: v.reshaped(to: [nKVHeads, headDim]), on: cmd)
 
         let nKV = cache.length
+        // AURA stores K/V Π-rotated — rotate Q in; the same rotated Q
+        // feeds the host-side sink correction (its dot products run
+        // against the Π-rotated cached K) and the output is un-rotated
+        // before o_proj below. No-op for raw / affine.
+        let qForSdpa = auraRotatedQuery(
+            qRot.reshaped(to: [nHeads, headDim]), cache: cache,
+            nHeads: nHeads, headDim: headDim, on: cmd)
         let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
         let attnOut = Ops.sdpaDecode(
-            q: qRot.reshaped(to: [nHeads, headDim]), k: cacheK, v: cacheV,
+            q: qForSdpa, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
             nKV: nKV, kvStride: cache.capacity,
             scale: scale, on: cmd)
@@ -513,7 +520,7 @@ public final class GPTOSSAttention: Module {
         // Only the LIVE [0, nKV) slice of each kv head is read back —
         // never the full maxSeq-capacity buffer (which can be 100k+
         // positions; copying it every token would dwarf the kernel).
-        let qHost = readGPTOSSFloats(qRot)  // [nHeads*headDim]
+        let qHost = readGPTOSSFloats(qForSdpa.reshaped(to: [nHeads * headDim]))  // Π-rotated for AURA
         let headsPerGroup = nHeads / nKVHeads
         // Per-kv-head live K slice [nKV, headDim], read once and reused
         // across the headsPerGroup query heads that share it.
@@ -592,7 +599,13 @@ public final class GPTOSSAttention: Module {
         let corrected = Ops.mul(
             attnOut.reshaped(to: [nHeads * headDim]),
             factorTensor, on: phase2)
-        let result = oProj(corrected, on: phase2)
+        // Un-rotate out of AURA's Π space before o_proj. The per-head
+        // sink factor is a scalar, so it commutes with Πᵀ — un-rotating
+        // after the rescale is equivalent. No-op for raw / affine.
+        let result = oProj(
+            auraUnrotatedOutput(
+                corrected, cache: cache, nHeads: nHeads, headDim: headDim, on: phase2),
+            on: phase2)
         phase2.commit()
         phase2.waitUntilCompleted()
         return result
@@ -828,14 +841,10 @@ public final class GPTOSSModel: LanguageModel {
     /// fast-path needed). Full-attention layers stay unbounded.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxContextWindow
-        // GPT-OSS's host-side sink correction reads the live K slice from
-        // the dequant mirror, which works for raw + affine — but AURA
-        // stores K Π-rotated, so the sink dot-products would be wrong.
-        // Map AURA to raw; raw + affine run through the shared factory.
-        let kind: KVCacheKind = {
-            if case .auraQuantized = kvCacheKind { return .raw }
-            return kvCacheKind
-        }()
+        // raw / affine / AURA all run through the shared factory. (The
+        // host-side sink correction reads the Π-rotated cached K and a
+        // Π-rotated query, so AURA scores stay correct — see `attention`.)
+        let kind = kvCacheKind
         let specs = attnKinds.map { attnKind -> AttentionCacheSpec in
             let eviction: KVEviction
             switch attnKind {

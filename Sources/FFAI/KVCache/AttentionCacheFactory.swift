@@ -230,6 +230,47 @@ func makeAttentionCaches(
     }
 }
 
+// ─── AURA per-layer Π rotation ───────────────────────────────────────
+//
+// AURA stores K/V in a per-layer SRHT-rotated space (Π·K, Π·V). To keep
+// attention scores + the residual stream correct, every attention layer
+// must rotate Q into that space before SDPA and un-rotate the SDPA output
+// before o_proj:
+//
+//     score = (Πq)·(Πk) = qᵀΠᵀΠk = qᵀk        (Π orthogonal)
+//     out   = Πᵀ · softmax(score)·(Πv) = softmax(score)·v
+//
+// Raw / affine caches store K/V un-rotated, so both calls are no-ops for
+// them — the helpers below branch on the cache type so every family can
+// call them unconditionally around its `Ops.sdpaDecode`.
+
+/// Rotate the query into the cache's Π space (AURA only). `q` is
+/// `[nHeads, headDim]`; returns the same shape, ready for SDPA. Raw /
+/// affine return `q` unchanged.
+func auraRotatedQuery(
+    _ q: Tensor, cache: any KVCacheProtocol,
+    nHeads: Int, headDim: Int, on cmd: MTLCommandBuffer
+) -> Tensor {
+    guard let aura = cache as? AURAQuantizedKVCache else { return q }
+    return Ops.auraRotatePerHead(
+        q.reshaped(to: [nHeads * headDim]),
+        rotation: aura.rotationDtype, nHeads: nHeads, headDim: headDim, on: cmd
+    ).reshaped(to: [nHeads, headDim])
+}
+
+/// Un-rotate the SDPA output back to the original activation space before
+/// o_proj (AURA only). Returns flat `[nHeads * headDim]`.
+func auraUnrotatedOutput(
+    _ attnOut: Tensor, cache: any KVCacheProtocol,
+    nHeads: Int, headDim: Int, on cmd: MTLCommandBuffer
+) -> Tensor {
+    let flat = attnOut.reshaped(to: [nHeads * headDim])
+    guard let aura = cache as? AURAQuantizedKVCache else { return flat }
+    return Ops.auraRotatePerHead(
+        flat, rotation: aura.rotationDtypeT,
+        nHeads: nHeads, headDim: headDim, on: cmd)
+}
+
 /// `head_dim` supports the requested scheme (affine: divisible by group
 /// size; AURA: power of two). Exposed for callers that gate inline.
 func attentionCacheGeometrySupports(kind: KVCacheKind, headDim: Int) -> Bool {
