@@ -504,26 +504,29 @@ public enum ModelRegistry {
                 options: options, device: device)
         }
         // Llama-compatible families: SmolLM 1/2/3, OLMo 1/2, Granite 3,
-        // Yi, InternLM 2, Starcoder 2. Same weight layout + forward
-        // shape as Llama 3; optional QKV biases auto-detected by
-        // loadLinear. Each has its own family root under `Models/`
-        // (per the universal "one file per family root" rule) but
-        // they all dispatch through `loadLlama` until / unless they
-        // diverge from the Llama-3 shape.
+        // Yi, InternLM 2. Same weight layout + forward shape as Llama 3;
+        // optional QKV biases auto-detected by loadLinear. Each has its
+        // own family root under `Models/` (per the universal "one file
+        // per family root" rule) but they all dispatch through
+        // `loadLlama` until / unless they diverge from the Llama-3 shape.
+        //
+        // NOTE: Starcoder 2 was previously in this set but is
+        // structurally distinct (LayerNorm with bias, GELU-tanh
+        // single-projection MLP with c_fc/c_proj names, `norm_epsilon`
+        // config field). It now routes through its own loader; see
+        // below.
         let llamaCompatibleArchs: Set<String> =
             SmolLM.architectures
             .union(OLMo.architectures)
             .union(Granite3.architectures)
             .union(Yi.architectures)
             .union(InternLM2.architectures)
-            .union(Starcoder2.architectures)
         let llamaCompatibleTypes: Set<String> =
             SmolLM.modelTypes
             .union(OLMo.modelTypes)
             .union(Granite3.modelTypes)
             .union(Yi.modelTypes)
             .union(InternLM2.modelTypes)
-            .union(Starcoder2.modelTypes)
         if let arch = config.architecture, llamaCompatibleArchs.contains(arch) {
             return try loadLlama(
                 config: config, weights: weights,
@@ -531,6 +534,22 @@ public enum ModelRegistry {
         }
         if let mt = config.modelType, llamaCompatibleTypes.contains(mt) {
             return try loadLlama(
+                config: config, weights: weights,
+                options: options, device: device)
+        }
+        // Starcoder 2 — dedicated loader because the layout differs
+        // from Llama in three places that the Llama loader can't
+        // accommodate: LayerNorm-with-bias (not RMSNorm), single-
+        // projection GELU MLP with `c_fc`/`c_proj` names (not the
+        // SwiGLU triad), and `norm_epsilon` instead of
+        // `rms_norm_eps`. See `Models/Text/Starcoder2Text.swift`.
+        if let arch = config.architecture, Starcoder2.architectures.contains(arch) {
+            return try loadStarcoder2(
+                config: config, weights: weights,
+                options: options, device: device)
+        }
+        if let mt = config.modelType, Starcoder2.modelTypes.contains(mt) {
+            return try loadStarcoder2(
                 config: config, weights: weights,
                 options: options, device: device)
         }
@@ -744,6 +763,21 @@ public enum ModelRegistry {
         return Loaded(
             engine: engine,
             defaultGenerationParameters: variant.defaultGenerationParameters)
+    }
+
+    public static func loadStarcoder2(
+        config: ModelConfig, weights: SafeTensorsBundle,
+        options: LoadOptions, device: Device
+    ) throws -> Loaded {
+        let variant = try Starcoder2.variant(for: config)
+        let engine = try variant.loadModel(
+            config: config, weights: weights,
+            options: options, device: device
+        )
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: variant.defaultGenerationParameters,
+            availableCapabilities: variant.availableCapabilities)
     }
 
     public static func loadQwen3(
@@ -1019,6 +1053,13 @@ public final class Model: @unchecked Sendable {
     public var nemotronLabsDiffusion: NemotronDiffusionModel? {
         engine as? NemotronDiffusionModel
     }
+
+    /// Convenience accessor for the Starcoder 2 engine. Returns nil if
+    /// the loaded engine isn't Starcoder 2. Note: Starcoder 2 was
+    /// previously misrouted through the Llama loader and `m.llama`
+    /// returned a (broken) Llama wrapper — `m.starcoder2` is the
+    /// correct accessor for Starcoder2ForCausalLM checkpoints.
+    public var starcoder2: Starcoder2Model? { engine as? Starcoder2Model }
 
     private let stateLock = NSLock()
     private var _currentState: ModelLifecycleState = .ready

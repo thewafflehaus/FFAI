@@ -12,14 +12,68 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// Starcoder 2 family — BigCode's Llama-shaped code dense decoder.
-// Same weight layout + forward shape as Llama 3; optional QKV biases
-// auto-detected by `loadLinear`. Family root just declares dispatch
-// metadata and routes through `LlamaDense`.
+// Starcoder 2 family root — BigCode's code dense decoder. Structurally
+// distinct from the Llama dense family:
+//
+//   - LayerNorm with `.bias` (NOT RMSNorm)
+//   - Single-projection GELU-tanh MLP with `c_fc` + `c_proj` names
+//     (NOT the SwiGLU `gate_proj` + `up_proj` + `down_proj` triad)
+//   - Attention biases on all four q/k/v/o projections
+//     (`use_bias: true`; loadLinear's auto-detection handles them)
+//   - Config field is `norm_epsilon` (NOT `rms_norm_eps`)
+//
+// Routes through its own `Starcoder2Dense` variant — earlier revisions
+// misrouted this family through `llamaCompatibleArchs` in
+// `Loader/Model.swift`, which threw `Llama: required config field
+// missing` because Starcoder2 has `norm_epsilon` instead of
+// `rms_norm_eps`. The dedicated loader lives in
+// `Models/Text/Starcoder2Text.swift`.
 
 import Foundation
+
+// ─── Family entry point ──────────────────────────────────────────────
 
 public enum Starcoder2 {
     public static let modelTypes: Set<String> = ["starcoder2"]
     public static let architectures: Set<String> = ["Starcoder2ForCausalLM"]
+
+    /// Variant dispatch — Starcoder2 ships only the dense backbone
+    /// today. Future MoE / instruction-tuned variants would branch here.
+    public static func variant(
+        for _: ModelConfig
+    ) throws -> any Starcoder2Variant.Type {
+        return Starcoder2Dense.self
+    }
+}
+
+// ─── Variant protocol ────────────────────────────────────────────────
+
+/// Concrete Starcoder2 backbones conform to this. `Starcoder2Dense` is
+/// the only conformer today. Mirrors the per-family variant protocol
+/// every other family root declares.
+public protocol Starcoder2Variant {
+    static var availableCapabilities: Set<Capability> { get }
+    static var defaultGenerationParameters: GenerationParameters { get }
+    static func loadModel(
+        config: ModelConfig,
+        weights: SafeTensorsBundle,
+        options: LoadOptions,
+        device: Device
+    ) throws -> Starcoder2Model
+}
+
+// ─── Errors ──────────────────────────────────────────────────────────
+
+public enum Starcoder2Error: Error, CustomStringConvertible {
+    case missingConfig(String)
+    case unsupportedConfig(String)
+
+    public var description: String {
+        switch self {
+        case .missingConfig(let f):
+            return "Starcoder2: required config field missing: \(f)"
+        case .unsupportedConfig(let f):
+            return "Starcoder2: unsupported config: \(f)"
+        }
+    }
 }

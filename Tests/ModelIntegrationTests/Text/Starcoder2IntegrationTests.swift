@@ -13,23 +13,21 @@
 // limitations under the License.
 //
 // Starcoder 2 family integration coverage — BigCode's code dense
-// decoder. The header below was originally drafted thinking
-// Starcoder2 was a Llama-shaped clone with attention biases, but on
-// closer inspection it is structurally different:
-//   - Uses LayerNorm (with `.bias`) instead of RMSNorm
-//   - Single-projection GELU-tanh MLP with `c_fc` + `c_proj` names
-//     (not the SwiGLU `gate_proj` + `up_proj` + `down_proj`)
-//   - Config field is `norm_epsilon` (not `rms_norm_eps`)
-//   - Attention biases (also present, but those alone aren't enough
-//     for the Llama loader to handle Starcoder2 correctly)
+// decoder. Structurally distinct from the Llama dense family in three
+// ways that the Llama loader can't accommodate:
+//   - LayerNorm with `.bias` (NOT RMSNorm) for input_layernorm /
+//     post_attention_layernorm / model.norm
+//   - Single-projection GELU-tanh MLP with `c_fc` (up) + `c_proj`
+//     (down) names — NOT the SwiGLU triad
+//   - `norm_epsilon` config field (NOT `rms_norm_eps`)
 //
-// Today Starcoder2 is misrouted through the Llama-compatible
-// dispatch list in Loader/Model.swift, which throws
-// `Llama: required config field missing` because the config has
-// `norm_epsilon` instead of `rms_norm_eps`. The test is gated on
-// `enableStarcoder2Suite` (defaults to `false`) until a dedicated
-// Starcoder2 loader lands — the gate flips back automatically
-// once that loader exists.
+// Routes through the dedicated `Starcoder2.variant(for:)` →
+// `Starcoder2Dense.loadModel` path; the loader landed in
+// `Sources/FFAI/Models/Text/Starcoder2Text.swift`. Prior to that
+// dedicated loader, the test surfaced a misleading
+// `Llama: required config field missing` error because Starcoder2
+// was misrouted through `llamaCompatibleArchs` in
+// `Loader/Model.swift`.
 
 import Foundation
 import TestHelpers
@@ -46,21 +44,66 @@ import Testing
 )
 struct Starcoder2IntegrationTests {
 
-    @Test("Starcoder2-3B (Starcoder2ForCausalLM, attention biases) decodes coherently")
+    @Test("Starcoder2-3B (Starcoder2ForCausalLM, LayerNorm + GELU MLP) decodes coherently")
     func starcoder2() async throws {
+        let modelId = "mlx-community/starcoder2-3b-4bit"
+        let prompt = "def fibonacci(n):\n"
+
+        // ── 1. Load ──────────────────────────────────────────────────────
         let m = try await ModelLoadLock.shared.loadSerially {
-            try await Model.load("mlx-community/starcoder2-3b-4bit")
+            try await Model.load(modelId)
         }
-        // Starcoder2 3B canonical: hidden=3072, nLayers=30, nHeads=24,
-        // nKVHeads=2, headDim=128. The attention biases pass through
-        // loadLinear's auto-detection — same path as Qwen 2.
+
+        // ── 2. Interfaces we expect ──────────────────────────────────────
+        // Engine should be Starcoder2 (NOT Llama — Starcoder2 was
+        // previously misrouted through the Llama loader and this
+        // accessor would have returned nil, with `m.llama` returning
+        // a broken wrapper that threw at first config read).
+        #expect(m.starcoder2 != nil, "Starcoder2-3B should load through the Starcoder2 engine")
+        #expect(m.llama == nil)
+        #expect(m.qwen3 == nil)
+        #expect(m.jamba == nil)
+
+        // Starcoder2 3B canonical shapes (from the published config):
+        //   hidden = 3072, nLayers = 30, nHeads = 24, nKVHeads = 2
+        //   (12:1 GQA), head_dim = 128 (derived: 3072/24), vocab =
+        //   49_152, intermediate = 12_288 (= 4 · hidden), tied embed.
         #expect(m.engine.hidden == 3072)
         #expect(m.engine.nLayers == 30)
+        #expect(m.engine.nHeads == 24)
+        #expect(m.engine.nKVHeads == 2)
         #expect(m.engine.headDim == 128)
+        #expect(m.engine.vocab == 49_152)
+
+        // ── 3. Errors we expect ─────────────────────────────────────────
+        let caches = m.engine.makeLayerCaches()
+        #expect(caches.count == 30)
+        for (i, c) in caches.enumerated() {
+            if !(c is KVCache) {
+                Issue.record("Starcoder2: layer \(i) cache is \(type(of: c)), expected KVCache")
+            }
+        }
+
+        // ── 4. Forward pass produces expected output ────────────────────
+        let logits = m.engine.forward(tokenId: 1, position: 0, caches: caches)
+        #expect(logits.elementCount == 49_152)
+        let top = Sampling.topN(logits, n: 5)
+        #expect(top.count == 5)
+        #expect(top[0].1.isFinite)
+        // Strict ordering — all-equal logits would indicate a forward
+        // bug (e.g. mis-loaded LayerNorm bias, wrong GELU formula,
+        // c_fc/c_proj swap).
+        #expect(top[0].1 > top[4].1)
+
         let result = try await m.generate(
-            prompt: "def fibonacci(n):\n",
+            prompt: prompt,
             parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
+        #expect(result.tokensPerSecond > 0)
+
+        let decoded = m.tokenizer.decode(tokens: result.generatedTokens)
+        print("Starcoder2-3B decoded output: \(decoded)")
+
         expectCoherentOutput(
             result.generatedTokens,
             minTokens: 32,
