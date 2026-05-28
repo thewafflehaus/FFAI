@@ -186,6 +186,16 @@ Test stays **enabled** so the failure is visible in every bisect run rather than
 
 **Open follow-up (metaltile).** Per dim ∈ {32, 64, 80, 96} that the audit flags as untested at production shape, ship a paired GPU correctness test in `crates/metaltile-std/tests/sdpa_bidirectional_d{N}_gpu_correctness.rs` that dispatches the kernel at the actual VLM-tower (nQHeads, nQuery, kvStride) shape against a naive CPU oracle. Fix whatever in the kernel's inner-loop / bounds-select / reduction-collapse arithmetic pegs the GPU at that shape. Then drop the per-family CPU gate in the corresponding `*Vision.swift` (and revert `useGPUSdpaBidirectional = headDim == 72` to the full `sdpaBidirectionalSupportedHeadDims.contains(headDim)` form in `Vision/VisionEncoder.swift`).
 
+### 2026-05-28 Qwen3-1.7B-3bit degenerate output — metaltile int3 codegen regression
+
+**Symptom.** `Quantized3bitIntegrationTests` (mlx-community/Qwen3-1.7B-3bit) loads, passes every shape/config assertion, and the single-token forward smoke test returns finite top-5 logits — but greedy temp=0 decode of "Once upon a time, in a quiet village" collapses to low-diversity loop: 19 unique tokens of 200 (10 %, `expectCoherentOutput` floor is 20 %). First 16 token ids `[11, 1052, 525, 2326, 4780, 11, 6941, 1283, 279, 11931, 304, 279, 829, 315, 279, 14126]` — real words, then repeats. **Deterministic**: identical output when the suite runs alone, so it is NOT the memory-pressure window it happened to share in the full bisect.
+
+**Baseline.** All five bit-widths (3/4/5/6/8) PASSED in the 2026-05-24 bisect (see § Quantization). On 2026-05-28 only 3-bit fails; 4/5/6/8-bit still PASS through the identical FFAI decode path. int3 has the least precision headroom, so it is the first bit-width to tip into degenerate decode under any numeric drift in the dequant→GEMV arithmetic.
+
+**Root cause — metaltile codegen, not FFAI.** FFAI's int3 weight path (`QuantizedLinear` → `dequant_gemv_int3_*` / dequant-gather) is unchanged. The `.metal` kernels are gitignored and regenerated from the sibling metaltile checkout on every build. During the head_dim=96 work the metaltile checkout moved to branch `feat/sdpa-decode-d96` (HEAD `4242cfe`), which is purely additive (3 new files: the d96 kernel + its registration + GPU test). Its **parent**, `1522fbd` "fix(codegen): six structural DSL/IR follow-ups (#211)", is the regressor: it reworked `emit_block.rs`, `const_fold.rs`, `mlx/quantized.rs`, and added a new `fma_fusion.rs` pass (343 lines). Regenerating FFAI's kernels from this base changed int3 dequant numerics enough to break the borderline 3-bit model. The new FMA-fusion / const-fold passes over the per-group `(scale, bias)` dequant are the prime suspects.
+
+**Next steps (metaltile).** Before adopting the post-`1522fbd` codegen on FFAI's main kernel pin: add a `dequant_gemv_int3` GPU correctness test in metaltile-std at the Qwen3-1.7B group shape (group_size=64, bits=3) against a CPU oracle, bisect across the `1522fbd` passes (try disabling `fma_fusion` / the new `const_fold` rewrites on the int3 dequant block), and confirm the d96 branch's eventual PR to metaltile `dev` doesn't ship the int3 regression. FFAI side needs no change once metaltile int3 is corrected and re-regenerated.
+
 ## Audio model CPU bottlenecks — Whisper + QwenOmni timeout
 
 **Symptom.** `WhisperIntegrationTests` and `QwenOmniIntegrationTests` both hit the 900 s `gtimeout` cap during the integration bisect; the log captures only the build banner — the test process was SIGKILL'd before any test boundary was reported.
@@ -202,7 +212,7 @@ Test stays **enabled** so the failure is visible in every bisect run rather than
 
 ## Quantization — missing 2-bit support + mixed-precision schemes
 
-**Gap.** FFAI's quantized weight surface (`QuantizedLinear` / `QuantizedEmbedding` + the `int4` / `int8` MetalTile kernels) covers the symmetric per-group `affineQuantized` cases we ship today: `bits ∈ {3, 4, 5, 6, 8}`. The integration matrix (`Tests/ModelTests/Quantized{3,4,5,6,8}bitIntegrationTests.swift`) exercises each, and all five passed in the 2026-05-24 bisect.
+**Gap.** FFAI's quantized weight surface (`QuantizedLinear` / `QuantizedEmbedding` + the `int4` / `int8` MetalTile kernels) covers the symmetric per-group `affineQuantized` cases we ship today: `bits ∈ {3, 4, 5, 6, 8}`. The integration matrix (`Tests/ModelTests/Quantized{3,4,5,6,8}bitIntegrationTests.swift`) exercises each; all five passed in the 2026-05-24 bisect, but as of 2026-05-28 the 3-bit case regressed to degenerate output via a metaltile codegen change (see § 2026-05-28 Qwen3-1.7B-3bit degenerate output). 4/5/6/8-bit still PASS.
 
 What's NOT covered yet:
 
