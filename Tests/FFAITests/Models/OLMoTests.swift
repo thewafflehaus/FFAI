@@ -14,9 +14,9 @@
 //
 // OLMoTests — root-file unit tests for `Sources/FFAI/Models/OLMo.swift`.
 //
-// Offline. OLMo 1 / OLMo 2 are Llama-shaped pass-throughs; the root
-// file just declares dispatch metadata. These tests guard the
-// model_type / architecture constants for both generations.
+// Offline. OLMo 1 is a pre-norm Llama-shaped pass-through; OLMo 2 is a
+// post-norm + q/k-norm decoder with its own loader. These tests guard
+// the dispatch metadata and the olmo1/olmo2 split the loader relies on.
 
 import Foundation
 import Testing
@@ -36,5 +36,21 @@ struct OLMoRootTests {
     func architectures() {
         #expect(OLMo.architectures.contains("OlmoForCausalLM"))
         #expect(OLMo.architectures.contains("Olmo2ForCausalLM"))
+    }
+
+    @Test("olmo1 / olmo2 dispatch sets are disjoint and correct")
+    func generationSplit() {
+        // OLMo 1 (pre-norm) → Llama path; OLMo 2 (post-norm) → dedicated.
+        #expect(OLMo.olmo1Architectures == ["OlmoForCausalLM"])
+        #expect(OLMo.olmo1ModelTypes == ["olmo"])
+        #expect(OLMo.olmo2Architectures == ["Olmo2ForCausalLM"])
+        #expect(OLMo.olmo2ModelTypes == ["olmo2"])
+        // No architecture is claimed by both paths.
+        #expect(OLMo.olmo1Architectures.isDisjoint(with: OLMo.olmo2Architectures))
+        #expect(OLMo.olmo1ModelTypes.isDisjoint(with: OLMo.olmo2ModelTypes))
+        // Together they reconstruct the full advertised set.
+        #expect(
+            OLMo.olmo1Architectures.union(OLMo.olmo2Architectures) == OLMo.architectures)
+        #expect(OLMo.olmo1ModelTypes.union(OLMo.olmo2ModelTypes) == OLMo.modelTypes)
     }
 }

@@ -26,4 +26,14 @@ public enum OLMo {
         "OlmoForCausalLM",
         "Olmo2ForCausalLM",
     ]
+
+    // OLMo 1 (`olmo`) is genuinely pre-norm Llama-shaped and routes
+    // through `loadLlama`. OLMo 2 (`olmo2`) is post-norm with q/k-norm —
+    // it diverges from the Llama layer and gets its own loader
+    // (`Models/Text/OLMo2Text.swift`). Split the dispatch sets so each
+    // path only claims its own architecture.
+    public static let olmo1ModelTypes: Set<String> = ["olmo"]
+    public static let olmo1Architectures: Set<String> = ["OlmoForCausalLM"]
+    public static let olmo2ModelTypes: Set<String> = ["olmo2"]
+    public static let olmo2Architectures: Set<String> = ["Olmo2ForCausalLM"]
 }

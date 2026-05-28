@@ -533,11 +533,11 @@ public enum ModelRegistry {
         // below.
         let llamaCompatibleArchs: Set<String> =
             SmolLM.architectures
-            .union(OLMo.architectures)
+            .union(OLMo.olmo1Architectures)
             .union(Yi.architectures)
         let llamaCompatibleTypes: Set<String> =
             SmolLM.modelTypes
-            .union(OLMo.modelTypes)
+            .union(OLMo.olmo1ModelTypes)
             .union(Yi.modelTypes)
         if let arch = config.architecture, llamaCompatibleArchs.contains(arch) {
             return try loadLlama(
@@ -575,6 +575,19 @@ public enum ModelRegistry {
         }
         if let mt = config.modelType, InternLM2.modelTypes.contains(mt) {
             return try loadInternLM2(
+                config: config, weights: weights,
+                options: options, device: device)
+        }
+        // OLMo 2 — post-norm + q/k-norm, distinct from OLMo 1's pre-norm
+        // Llama shape. `loadOLMo2` runs the dedicated decoder. See
+        // `Models/Text/OLMo2Text.swift`.
+        if let arch = config.architecture, OLMo.olmo2Architectures.contains(arch) {
+            return try loadOLMo2(
+                config: config, weights: weights,
+                options: options, device: device)
+        }
+        if let mt = config.modelType, OLMo.olmo2ModelTypes.contains(mt) {
+            return try loadOLMo2(
                 config: config, weights: weights,
                 options: options, device: device)
         }
@@ -835,6 +848,20 @@ public enum ModelRegistry {
         return Loaded(
             engine: engine,
             defaultGenerationParameters: InternLM2Dense.defaultGenerationParameters)
+    }
+
+    /// OLMo 2 (`Olmo2ForCausalLM`). Post-norm + q/k-norm decoder; the
+    /// dedicated engine lives in `Models/Text/OLMo2Text.swift`. OLMo 1
+    /// stays on `loadLlama`.
+    public static func loadOLMo2(
+        config: ModelConfig, weights: SafeTensorsBundle,
+        options: LoadOptions, device: Device
+    ) throws -> Loaded {
+        let engine = try OLMo2Dense.loadModel(
+            config: config, weights: weights, options: options, device: device)
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: OLMo2Dense.defaultGenerationParameters)
     }
 
     public static func loadStarcoder2(
