@@ -50,6 +50,25 @@ public struct LlamaDense: LlamaVariant {
         options: LoadOptions,
         device: Device
     ) throws -> LlamaModel {
+        try loadModel(
+            config: config, weights: weights, options: options,
+            device: device, muP: .identity)
+    }
+
+    /// µP-aware variant. Folds Granite-style multipliers into the
+    /// weights at load time (`embedding_multiplier` → embedding,
+    /// `residual_multiplier` → o_proj/down_proj, `attention_multiplier`
+    /// → attention scale, `logits_scaling` → final logits). The
+    /// protocol `loadModel` above passes `.identity`, so every vanilla
+    /// Llama-shaped checkpoint takes a byte-identical path. Granite 3
+    /// dispatches here with real multipliers (see `loadGranite3`).
+    public static func loadModel(
+        config: ModelConfig,
+        weights: SafeTensorsBundle,
+        options: LoadOptions,
+        device: Device,
+        muP: MuPMultipliers
+    ) throws -> LlamaModel {
         guard let hidden = config.hiddenSize,
             let nLayers = config.numLayers,
             let nHeads = config.numAttentionHeads,
@@ -85,10 +104,43 @@ public struct LlamaDense: LlamaVariant {
 
         // Embedding — quantized if the bundle has matching scales/biases
         // (mlx-community 4-bit checkpoints typically quantize this).
-        let embedTokens = try loadEmbedding(
-            base: "model.embed_tokens", in: weights,
-            hidden: hidden, quantization: quant
-        )
+        // When `embedding_multiplier != 1` (Granite µP) the multiplier is
+        // folded into the embedding weight (raw) or scales/biases
+        // (quantized); the tied LM-head must use the UNSCALED embedding,
+        // so the raw weight / triplet is stashed for the lm_head branch.
+        let embedTokens: AnyEmbedding
+        var unscaledEmbedWeight: Tensor? = nil
+        var unscaledEmbedTriplet: SafeTensorsBundle.QuantizedTriplet? = nil
+        if muP.embedding != 1.0 {
+            if let q = quant, weights.isQuantized("model.embed_tokens") {
+                let t = try weights.quantizedTriplet("model.embed_tokens")
+                let bits = deriveAffineQuantBits(
+                    weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
+                    scaleCols: t.scales.shape[t.scales.shape.count - 1],
+                    groupSize: q.groupSize)
+                embedTokens = AnyEmbedding(
+                    QuantizedEmbedding(
+                        weight: t.weight,
+                        scales: scaleTensorElements(
+                            t.scales, by: muP.embedding, device: device),
+                        biases: scaleTensorElements(
+                            t.biases, by: muP.embedding, device: device),
+                        hidden: hidden, bits: bits, groupSize: q.groupSize))
+                unscaledEmbedTriplet = t
+            } else {
+                let raw = try weights.tensor(named: "model.embed_tokens.weight")
+                embedTokens = AnyEmbedding(
+                    Embedding(
+                        weight: scaleTensorElements(
+                            raw, by: muP.embedding, device: device)))
+                unscaledEmbedWeight = raw
+            }
+        } else {
+            embedTokens = try loadEmbedding(
+                base: "model.embed_tokens", in: weights,
+                hidden: hidden, quantization: quant
+            )
+        }
 
         // Layers
         var layers: [LlamaLayer] = []
@@ -102,14 +154,24 @@ public struct LlamaDense: LlamaVariant {
                 base: "\(p).self_attn.k_proj", in: weights, quantization: quant)
             let vProj = try loadLinear(
                 base: "\(p).self_attn.v_proj", in: weights, quantization: quant)
-            let oProj = try loadLinear(
-                base: "\(p).self_attn.o_proj", in: weights, quantization: quant)
+            // residual_multiplier folds into o_proj / down_proj so the
+            // residual adds stay plain (no-op fold at multiplier 1).
+            let oProj =
+                muP.residual == 1.0
+                ? try loadLinear(base: "\(p).self_attn.o_proj", in: weights, quantization: quant)
+                : try loadLinearScaled(
+                    base: "\(p).self_attn.o_proj", in: weights,
+                    quantization: quant, by: muP.residual, device: device)
 
             let gateProj = try loadLinear(
                 base: "\(p).mlp.gate_proj", in: weights, quantization: quant)
             let upProj = try loadLinear(base: "\(p).mlp.up_proj", in: weights, quantization: quant)
-            let downProj = try loadLinear(
-                base: "\(p).mlp.down_proj", in: weights, quantization: quant)
+            let downProj =
+                muP.residual == 1.0
+                ? try loadLinear(base: "\(p).mlp.down_proj", in: weights, quantization: quant)
+                : try loadLinearScaled(
+                    base: "\(p).mlp.down_proj", in: weights,
+                    quantization: quant, by: muP.residual, device: device)
 
             let inputNorm = RMSNorm(
                 weight: try weights.tensor(named: "\(p).input_layernorm.weight"),
@@ -125,7 +187,8 @@ public struct LlamaDense: LlamaVariant {
                     inputNorm: inputNorm, postAttnNorm: postAttnNorm,
                     hidden: hidden, nHeads: nHeads, nKVHeads: nKVHeads,
                     headDim: headDim, intermediate: intermediate,
-                    ropeTheta: theta, ropeScaling: ropeScaling
+                    ropeTheta: theta, ropeScaling: ropeScaling,
+                    attnScale: muP.attention
                 ))
         }
 
@@ -140,11 +203,14 @@ public struct LlamaDense: LlamaVariant {
         //   2. tieEmbed AND embedding is quantized: reuse the embedding's
         //      QuantizedLinear-shaped triplet for the lm_head gemv.
         //   3. tieEmbed AND embedding is full precision: tie weights.
+        // Tied LM-head reuses the UNSCALED embedding (the
+        // `embedding_multiplier` fold must not reach the head); the
+        // unscaled raw weight / triplet was stashed above.
         let lmHead: AnyLinear
         if !tieEmbed, weights.has("lm_head.weight") {
             lmHead = try loadLinear(base: "lm_head", in: weights, quantization: quant)
         } else if let q = quant, weights.isQuantized("model.embed_tokens") {
-            let t = try weights.quantizedTriplet("model.embed_tokens")
+            let t = try unscaledEmbedTriplet ?? weights.quantizedTriplet("model.embed_tokens")
             let bits = deriveAffineQuantBits(
                 weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
                 scaleCols: t.scales.shape[t.scales.shape.count - 1],
@@ -155,7 +221,7 @@ public struct LlamaDense: LlamaVariant {
                     bits: bits, groupSize: q.groupSize
                 ))
         } else {
-            lmHead = AnyLinear(Linear(weight: embedTokens.weight))
+            lmHead = AnyLinear(Linear(weight: unscaledEmbedWeight ?? embedTokens.weight))
         }
 
         // Activation/inference dtype: prefer the scales dtype for
@@ -178,7 +244,8 @@ public struct LlamaDense: LlamaVariant {
             maxContextWindow: maxSeq, ropeTheta: theta, dtype: activationDtype,
             kvCacheKind: options.kvCache,
             kvEviction: options.kvEviction,
-            auraDecodePath: options.auraDecodePath
+            auraDecodePath: options.auraDecodePath,
+            logitsScaling: muP.logits
         )
     }
 }
@@ -200,7 +267,8 @@ public final class LlamaLayer: Module {
         inputNorm: RMSNorm, postAttnNorm: RMSNorm,
         hidden: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
         intermediate: Int, ropeTheta: Float,
-        ropeScaling: Ops.RoPEScaling
+        ropeScaling: Ops.RoPEScaling,
+        attnScale: Float? = nil
     ) {
         self.qProj = qProj
         self.kProj = kProj
@@ -218,7 +286,9 @@ public final class LlamaLayer: Module {
         self.intermediate = intermediate
         self.ropeTheta = ropeTheta
         self.ropeScaling = ropeScaling
-        self.scale = 1.0 / Float(Double(headDim).squareRoot())
+        // Granite-style `attention_multiplier` overrides the usual
+        // 1/sqrt(head_dim) softmax temperature when supplied.
+        self.scale = attnScale ?? (1.0 / Float(Double(headDim).squareRoot()))
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -479,6 +549,9 @@ public final class LlamaModel: LanguageModel {
     /// `AURAQuantizedKVCache` instantiated by `makeLayerCaches`.
     /// Ignored when `kvCacheKind != .auraQuantized(...)`.
     public let auraDecodePath: AURADecodePath
+    /// Final logits are divided by this (Granite's `logits_scaling`).
+    /// `1.0` for vanilla Llama-shaped models.
+    public let logitsScaling: Float
 
     init(
         embedTokens: AnyEmbedding, layers: [LlamaLayer],
@@ -487,7 +560,8 @@ public final class LlamaModel: LanguageModel {
         vocab: Int, maxContextWindow: Int, ropeTheta: Float, dtype: DType,
         kvCacheKind: KVCacheKind = .raw,
         kvEviction: KVEviction = .unbounded,
-        auraDecodePath: AURADecodePath = .compressed
+        auraDecodePath: AURADecodePath = .compressed,
+        logitsScaling: Float = 1.0
     ) {
         self.embedTokens = embedTokens
         self.layers = layers
@@ -505,6 +579,20 @@ public final class LlamaModel: LanguageModel {
         self.kvCacheKind = kvCacheKind
         self.kvEviction = kvEviction
         self.auraDecodePath = auraDecodePath
+        self.logitsScaling = logitsScaling
+    }
+
+    /// Divide logits by `logitsScaling` (Granite µP). No-op at 1.0. The
+    /// scale queues onto the caller's `cmd` so a single commit produces
+    /// the final logits.
+    private func applyLogitsScaling(
+        _ logits: Tensor, on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor {
+        guard logitsScaling != 1.0 else { return logits }
+        let invScale = Tensor.filled(
+            1.0 / logitsScaling, shape: logits.shape,
+            dtype: logits.dtype, device: device)
+        return Ops.mul(logits, invScale, on: cmd)
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -650,7 +738,8 @@ public final class LlamaModel: LanguageModel {
         workCmd = tap.dumpLayerBoundary(
             normed, label: "final_norm", layer: -1,
             cmd: workCmd, device: device)
-        let logits = lmHead(normed, on: workCmd)
+        let logits = applyLogitsScaling(
+            lmHead(normed, on: workCmd), on: workCmd, device: device)
         workCmd = tap.dumpLayerBoundary(
             logits, label: "logits", layer: -1,
             cmd: workCmd, device: device)
@@ -736,7 +825,7 @@ public final class LlamaModel: LanguageModel {
         // tail logits (only the final position is sampled).
         let tail = h.slicedRows(start: n - 1, count: 1).reshaped(to: [hidden])
         let normed = finalNorm(tail, on: cmd)
-        return lmHead(normed, on: cmd)
+        return applyLogitsScaling(lmHead(normed, on: cmd), on: cmd, device: device)
     }
 
     /// Embedding-input forward — the VLM splice path. Identical to
@@ -764,7 +853,7 @@ public final class LlamaModel: LanguageModel {
                 cmd: cmd, device: device)
         }
         let normed = finalNorm(h, on: cmd)
-        return lmHead(normed, on: cmd)
+        return applyLogitsScaling(lmHead(normed, on: cmd), on: cmd, device: device)
     }
 
     /// Raw embedding-table lookup for one text token — the text-token

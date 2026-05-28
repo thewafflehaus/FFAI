@@ -38,4 +38,37 @@ struct Granite3RootTests {
         #expect(Granite3.architectures.contains("GraniteForCausalLM"))
         #expect(!Granite3.architectures.isEmpty)
     }
+
+    @Test("muP(from:) parses the four µP multipliers from config")
+    func muPParsing() {
+        // Values in the ballpark of the published granite-3.x configs
+        // (embedding_multiplier 12, attention_multiplier 0.0078125,
+        // residual_multiplier 0.22, logits_scaling 8).
+        let cfg = ModelConfig(
+            architecture: "GraniteForCausalLM", modelType: "granite",
+            raw: [
+                "embedding_multiplier": 12.0,
+                "attention_multiplier": 0.0078125,
+                "residual_multiplier": 0.22,
+                "logits_scaling": 8.0,
+            ])
+        let muP = Granite3.muP(from: cfg)
+        #expect(muP.embedding == 12.0)
+        #expect(muP.attention == Float(0.0078125))
+        #expect(muP.residual == Float(0.22))
+        #expect(muP.logits == 8.0)
+        #expect(!muP.isIdentity)
+    }
+
+    @Test("muP(from:) is identity when the multipliers are absent")
+    func muPDefaults() {
+        let cfg = ModelConfig(
+            architecture: "GraniteForCausalLM", modelType: "granite", raw: [:])
+        let muP = Granite3.muP(from: cfg)
+        #expect(muP.embedding == 1.0)
+        #expect(muP.attention == nil)
+        #expect(muP.residual == 1.0)
+        #expect(muP.logits == 1.0)
+        #expect(muP.isIdentity)
+    }
 }

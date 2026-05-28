@@ -27,4 +27,18 @@ import Foundation
 public enum Granite3 {
     public static let modelTypes: Set<String> = ["granite"]
     public static let architectures: Set<String> = ["GraniteForCausalLM"]
+
+    /// µP multipliers declared in a Granite 3.x `config.json`. Granite
+    /// trains with maximal-update-parametrization, so these scale the
+    /// embeddings, attention scores, residual branches, and final
+    /// logits — all default to identity for checkpoints that omit them.
+    /// `LlamaDense.loadModel(muP:)` folds them into the weights so the
+    /// shared Llama forward needs no Granite-specific code.
+    public static func muP(from config: ModelConfig) -> MuPMultipliers {
+        MuPMultipliers(
+            embedding: Float(config.float("embedding_multiplier") ?? 1.0),
+            attention: config.float("attention_multiplier").map { Float($0) },
+            residual: Float(config.float("residual_multiplier") ?? 1.0),
+            logits: Float(config.float("logits_scaling") ?? 1.0))
+    }
 }

@@ -534,13 +534,11 @@ public enum ModelRegistry {
         let llamaCompatibleArchs: Set<String> =
             SmolLM.architectures
             .union(OLMo.architectures)
-            .union(Granite3.architectures)
             .union(Yi.architectures)
             .union(InternLM2.architectures)
         let llamaCompatibleTypes: Set<String> =
             SmolLM.modelTypes
             .union(OLMo.modelTypes)
-            .union(Granite3.modelTypes)
             .union(Yi.modelTypes)
             .union(InternLM2.modelTypes)
         if let arch = config.architecture, llamaCompatibleArchs.contains(arch) {
@@ -550,6 +548,21 @@ public enum ModelRegistry {
         }
         if let mt = config.modelType, llamaCompatibleTypes.contains(mt) {
             return try loadLlama(
+                config: config, weights: weights,
+                options: options, device: device)
+        }
+        // Granite 3.x — Llama-shaped, but trained with µP multipliers
+        // (embedding / attention / residual / logits scaling) that the
+        // plain Llama path silently drops, giving degenerate output.
+        // `loadGranite3` folds them into the weights via
+        // `LlamaDense.loadModel(muP:)`. See `Models/Granite3.swift`.
+        if let arch = config.architecture, Granite3.architectures.contains(arch) {
+            return try loadGranite3(
+                config: config, weights: weights,
+                options: options, device: device)
+        }
+        if let mt = config.modelType, Granite3.modelTypes.contains(mt) {
+            return try loadGranite3(
                 config: config, weights: weights,
                 options: options, device: device)
         }
@@ -779,6 +792,23 @@ public enum ModelRegistry {
         return Loaded(
             engine: engine,
             defaultGenerationParameters: variant.defaultGenerationParameters)
+    }
+
+    /// Granite 3.x dense (`GraniteForCausalLM`). Same shape as Llama 3
+    /// dense, so it reuses `LlamaDense` — but with the four µP
+    /// multipliers folded in via `loadModel(muP:)`. Granite 3 MoE
+    /// (`GraniteMoeForCausalLM`) is a distinct arch and does not route
+    /// here.
+    public static func loadGranite3(
+        config: ModelConfig, weights: SafeTensorsBundle,
+        options: LoadOptions, device: Device
+    ) throws -> Loaded {
+        let engine = try LlamaDense.loadModel(
+            config: config, weights: weights, options: options,
+            device: device, muP: Granite3.muP(from: config))
+        return Loaded(
+            engine: engine,
+            defaultGenerationParameters: LlamaDense.defaultGenerationParameters)
     }
 
     public static func loadStarcoder2(
