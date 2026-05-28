@@ -38,35 +38,67 @@ import Foundation
 import Metal
 
 public enum MemoryBudget {
-    /// Fraction of total physical unified memory a manual
-    /// `wiredLimitBytes` override may not exceed. Even when the caller
-    /// asks to "raise the ticket," the guard never lets the working set
-    /// request more than this share of the machine — the remainder is
-    /// left for the OS, other processes, and non-GPU allocations.
-    public static let hardMachineFraction = 0.92
+    /// Bytes of physical RAM always left for the OS (and other
+    /// processes) — the GPU working set may never claim memory that
+    /// would push the free pool below this. A *fixed* reserve, not a
+    /// fraction: a percentage starves small machines (92% of 16 GB
+    /// leaves the OS only 1.3 GB) while over-reserving on large ones.
+    /// 8 GB keeps WindowServer, the file cache, and background daemons
+    /// healthy across the Apple-Silicon range. Tunable for future
+    /// per-hardware refinement.
+    public static let osReserveBytes = 8 * 1_073_741_824  // 8 GiB
 
     /// Working-memory margin reserved on top of weights + KV for
     /// per-token scratch tensors, activations, and command-buffer
     /// overhead. Taken as a fraction of the budget.
     public static let workingMemoryFraction = 0.05
 
+    /// The largest wired-memory budget that still leaves `osReserveBytes`
+    /// free for the OS. On machines smaller than the reserve (≤ 8 GB,
+    /// where a full reserve would leave nothing) it degrades to half of
+    /// physical RAM so the box can still attempt to run something.
+    public static func safeMaxBudget(device _: Device = .shared) -> Int {
+        let physical = Int(ProcessInfo.processInfo.physicalMemory)
+        return physical > osReserveBytes ? physical - osReserveBytes : physical / 2
+    }
+
     /// The wired-memory budget (bytes) the guard works against. Uses the
-    /// caller's `wiredLimitBytes` override when set (clamped to
-    /// `hardMachineFraction` of physical RAM), otherwise the device's
-    /// `recommendedMaxWorkingSetSize` (Apple's ~75% ticket).
+    /// caller's `wiredLimitBytes` override when set, otherwise the
+    /// device's `recommendedMaxWorkingSetSize` (Apple's ~75% ticket).
+    /// Either way the result is clamped to `safeMaxBudget` so the OS
+    /// reserve is never violated. (An *explicit* over-request is also
+    /// rejected up front by `validateWiredLimit` at load, so a user who
+    /// sets too high a value is told rather than silently clamped.)
     public static func budgetBytes(
         options: LoadOptions, device: Device = .shared
     ) -> Int {
-        let physical = Int(ProcessInfo.processInfo.physicalMemory)
-        let hardCeiling = Int(Double(physical) * hardMachineFraction)
+        let safeMax = safeMaxBudget(device: device)
         if let override = options.wiredLimitBytes {
-            return Swift.max(1, Swift.min(override, hardCeiling))
+            return Swift.max(1, Swift.min(override, safeMax))
         }
         let recommended = Int(device.mtlDevice.recommendedMaxWorkingSetSize)
         // `recommendedMaxWorkingSetSize` can read as 0 on some
-        // configurations; fall back to the hard machine ceiling so the
-        // guard still has a sane budget to work against.
-        return recommended > 0 ? recommended : hardCeiling
+        // configurations; fall back to safeMax so the guard still has a
+        // sane budget. Clamp the recommendation too — on small machines
+        // Apple's ~75% ticket can exceed the OS reserve.
+        let base = recommended > 0 ? recommended : safeMax
+        return Swift.min(base, safeMax)
+    }
+
+    /// Reject an explicit `wiredLimitBytes` that would starve the OS.
+    /// Called at load so a caller who deliberately raised the ticket
+    /// past the safe maximum gets an actionable error instead of a
+    /// silent clamp. No-op when no override is set.
+    public static func validateWiredLimit(
+        options: LoadOptions, device: Device = .shared
+    ) throws {
+        guard let override = options.wiredLimitBytes else { return }
+        let safeMax = safeMaxBudget(device: device)
+        if override > safeMax {
+            throw ModelError.wiredLimitTooHigh(
+                requestedBytes: override, safeMaxBytes: safeMax,
+                osReserveBytes: osReserveBytes)
+        }
     }
 
     /// Total bytes of the model's resident weights (sum of every

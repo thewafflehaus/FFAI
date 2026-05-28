@@ -95,35 +95,68 @@ struct MemoryBudgetTests {
         #expect(n == 950)
     }
 
-    // ─── Budget resolution — wiredLimitBytes override + hard clamp ───
+    // ─── Budget resolution — OS reserve + wiredLimitBytes override ───
 
-    @Test("wiredLimitBytes override is honored when below the machine ceiling")
+    @Test("safeMaxBudget leaves the OS reserve free on a normal machine")
+    func safeMaxLeavesOSReserve() {
+        let physical = Int(ProcessInfo.processInfo.physicalMemory)
+        let safeMax = MemoryBudget.safeMaxBudget()
+        // FFAI targets Apple Silicon ≥ 16 GB; the reserve applies.
+        if physical > MemoryBudget.osReserveBytes {
+            #expect(safeMax == physical - MemoryBudget.osReserveBytes)
+            // At least 8 GB stays free for the OS.
+            #expect(physical - safeMax == MemoryBudget.osReserveBytes)
+        } else {
+            #expect(safeMax == physical / 2)
+        }
+    }
+
+    @Test("wiredLimitBytes override is honored when within the safe maximum")
     func budgetOverrideHonored() {
-        // A 1 GB override is well under 92% of any real machine's RAM.
+        // 1 GB is well under (physical − 8 GB) on any supported machine.
         let oneGB = 1_073_741_824
         var opts = LoadOptions()
         opts.wiredLimitBytes = oneGB
         #expect(MemoryBudget.budgetBytes(options: opts) == oneGB)
     }
 
-    @Test("wiredLimitBytes override is clamped to the hard machine fraction")
-    func budgetOverrideClampedToMachine() {
-        let physical = Int(ProcessInfo.processInfo.physicalMemory)
-        let hardCeiling = Int(Double(physical) * MemoryBudget.hardMachineFraction)
+    @Test("budgetBytes clamps an over-high override to the safe maximum")
+    func budgetOverrideClampedToSafeMax() {
+        let safeMax = MemoryBudget.safeMaxBudget()
         var opts = LoadOptions()
-        // Ask for 10× physical RAM — must clamp to the hard ceiling so a
-        // load can never request more than the box can back.
-        opts.wiredLimitBytes = physical * 10
-        #expect(MemoryBudget.budgetBytes(options: opts) == hardCeiling)
+        opts.wiredLimitBytes = Int(ProcessInfo.processInfo.physicalMemory) * 10
+        #expect(MemoryBudget.budgetBytes(options: opts) == safeMax)
     }
 
-    @Test("default budget (no override) is positive and ≤ the hard ceiling")
+    @Test("default budget (no override) is positive and leaves the OS reserve")
     func budgetDefaultSane() {
-        let physical = Int(ProcessInfo.processInfo.physicalMemory)
-        let hardCeiling = Int(Double(physical) * MemoryBudget.hardMachineFraction)
+        let safeMax = MemoryBudget.safeMaxBudget()
         let budget = MemoryBudget.budgetBytes(options: LoadOptions())
         #expect(budget > 0)
-        #expect(budget <= hardCeiling)
+        #expect(budget <= safeMax)
+    }
+
+    // ─── validateWiredLimit — explicit over-request throws ───────────
+
+    @Test("validateWiredLimit throws when an explicit override starves the OS")
+    func validateWiredLimitThrows() {
+        var opts = LoadOptions()
+        opts.wiredLimitBytes = Int(ProcessInfo.processInfo.physicalMemory) * 2
+        #expect(throws: ModelError.self) {
+            try MemoryBudget.validateWiredLimit(options: opts)
+        }
+    }
+
+    @Test("validateWiredLimit accepts an override within the safe maximum")
+    func validateWiredLimitAccepts() throws {
+        var opts = LoadOptions()
+        opts.wiredLimitBytes = 1_073_741_824  // 1 GB — safe everywhere
+        try MemoryBudget.validateWiredLimit(options: opts)  // must not throw
+    }
+
+    @Test("validateWiredLimit is a no-op when no override is set")
+    func validateWiredLimitNoOp() throws {
+        try MemoryBudget.validateWiredLimit(options: LoadOptions())  // must not throw
     }
 
     // ─── End-to-end clamp scenarios via the budget number ────────────

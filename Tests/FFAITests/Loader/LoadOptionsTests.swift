@@ -70,4 +70,55 @@ struct LoadOptionsTests {
         // calls — just construct).
         _ = (dlNil, dlSet)
     }
+
+    // ─── Memory-management fields ────────────────────────────────────
+
+    @Test("memory fields default to nil / false (no behaviour change)")
+    func memoryFieldDefaults() {
+        let o = LoadOptions()
+        #expect(o.maxContextLength == nil)
+        #expect(o.preallocateKVCache == false)
+        #expect(o.initialKVCacheCapacity == nil)
+        #expect(o.wiredLimitBytes == nil)
+    }
+
+    @Test("maxContextLength is settable")
+    func maxContextLengthSettable() {
+        let o = LoadOptions(maxContextLength: 8192)
+        #expect(o.maxContextLength == 8192)
+    }
+
+    @Test("preallocateKVCache + initialKVCacheCapacity are settable")
+    func preallocateAndInitialCapacitySettable() {
+        let o = LoadOptions(
+            preallocateKVCache: true, initialKVCacheCapacity: 4096)
+        #expect(o.preallocateKVCache == true)
+        #expect(o.initialKVCacheCapacity == 4096)
+    }
+
+    @Test("wiredLimitBytes is settable")
+    func wiredLimitSettable() {
+        let o = LoadOptions(wiredLimitBytes: 48 * 1_073_741_824)
+        #expect(o.wiredLimitBytes == 48 * 1_073_741_824)
+    }
+
+    @Test("all memory fields compose in one initializer")
+    func memoryFieldsCompose() {
+        let o = LoadOptions(
+            maxContextLength: 16384,
+            preallocateKVCache: false,
+            initialKVCacheCapacity: 2048,
+            wiredLimitBytes: 32 * 1_073_741_824)
+        #expect(o.maxContextLength == 16384)
+        #expect(o.preallocateKVCache == false)
+        #expect(o.initialKVCacheCapacity == 2048)
+        #expect(o.wiredLimitBytes == 32 * 1_073_741_824)
+        // Setting memory fields doesn't disturb the other defaults.
+        #expect(o.prewarm == true)
+        #expect(o.capabilities == Capability.textOnly)
+        if case .raw = o.kvCache { /* ok */
+        } else {
+            Issue.record("expected .raw KVCacheKind to remain the default")
+        }
+    }
 }

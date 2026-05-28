@@ -30,6 +30,10 @@ public enum ModelError: Error, CustomStringConvertible {
     /// budget — it can't run at any usable context on this machine /
     /// budget. Raised by the over-allocation guard (`MemoryBudget`).
     case insufficientMemory(weightBytes: Int, budgetBytes: Int, detail: String)
+    /// An explicit `LoadOptions.wiredLimitBytes` exceeds the safe maximum
+    /// (physical RAM − the OS reserve). Raised at load so a deliberate
+    /// over-request is reported rather than silently clamped.
+    case wiredLimitTooHigh(requestedBytes: Int, safeMaxBytes: Int, osReserveBytes: Int)
 
     public var description: String {
         switch self {
@@ -46,6 +50,12 @@ public enum ModelError: Error, CustomStringConvertible {
                 + "engine."
         case .insufficientMemory(_, _, let detail):
             return "Insufficient memory: \(detail)"
+        case .wiredLimitTooHigh(let requested, let safeMax, let reserve):
+            let gb = { (b: Int) in String(format: "%.2f GB", Double(b) / 1_073_741_824.0) }
+            return "LoadOptions.wiredLimitBytes (\(gb(requested))) exceeds the safe "
+                + "maximum \(gb(safeMax)) (physical RAM minus a \(gb(reserve)) OS "
+                + "reserve). Lower wiredLimitBytes to \(gb(safeMax)) or less, or free "
+                + "memory / use a machine with more RAM."
         }
     }
 }
@@ -1200,6 +1210,10 @@ public final class Model: @unchecked Sendable {
         device: Device = .shared
     ) async throws -> Model {
         Debug.log(.load, "Model.load id-or-path=\(idOrPath)")
+        // Fail fast on an explicit wired-memory ticket that would starve
+        // the OS (physical RAM minus the 8 GB reserve), before any heavy
+        // load work. No-op when wiredLimitBytes isn't set.
+        try MemoryBudget.validateWiredLimit(options: options, device: device)
         let model = try await Profile.timeAsync("model_load") {
             try await Profile.signpostAsync("model_load") {
                 let locator = ModelLocator(

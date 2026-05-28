@@ -85,10 +85,12 @@ Apple Silicon defaults the GPU's wired-memory "ticket" (`MTLDevice.recommendedMa
 
 | `LoadOptions.wiredLimitBytes` | Budget the guard uses |
 |---|---|
-| `nil` (default) | `recommendedMaxWorkingSetSize` — Apple's ~75% ticket. |
-| set | Your value, **clamped to 92% of physical RAM** — a load can never request more than the box can physically back. |
+| `nil` (default) | `recommendedMaxWorkingSetSize` (Apple's ~75% ticket), then clamped to the safe maximum below. |
+| set | Your value, clamped to the safe maximum. An explicit value *above* the safe maximum is **rejected at load** (`ModelError.wiredLimitTooHigh`) rather than silently clamped, so a deliberate over-request is reported. |
 
-Raising `wiredLimitBytes` is how you "raise the ticket": it lets the guard permit a larger context, and the extra KV is pinned into the same persistent `MTLResidencySet` that already holds the model weights (every `KVCache` pins its buffers on allocation **and on each growth**, so the working set the OS keeps resident scales with the budget you allow). The residency set is the wired-memory mechanism on macOS 15+ — there is no separate "set wired limit" call; the budget governs how much is allocated, and residency keeps it from being paged.
+**Safe maximum = physical RAM − an 8 GB OS reserve.** The guard never lets the GPU working set claim memory that would push the free pool below 8 GB, so the OS, WindowServer, the file cache, and other processes stay healthy. A *fixed* reserve, not a fraction: 92% of a 16 GB machine would leave the OS only ~1.3 GB. On machines ≤ 8 GB (where a full reserve would leave nothing) the safe maximum degrades to half of physical RAM. So on a 64 GB box the ceiling is 56 GB; on 16 GB it's 8 GB; the default `recommendedMaxWorkingSetSize` is additionally clamped to this on smaller machines.
+
+Raising `wiredLimitBytes` (up to the safe maximum) is how you "raise the ticket": it lets the guard permit a larger context, and the extra KV is pinned into the same persistent `MTLResidencySet` that already holds the model weights (every `KVCache` pins its buffers on allocation **and on each growth**, so the working set the OS keeps resident scales with the budget you allow). The residency set is the wired-memory mechanism on macOS 15+ — there is no separate "set wired limit" call; the budget governs how much is allocated, and residency keeps it from being paged.
 
 ```swift
 // Bound a 256K-context model to 8K of usable context AND cap KV memory.
