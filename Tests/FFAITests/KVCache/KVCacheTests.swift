@@ -620,11 +620,187 @@ struct KVCacheTests {
 
     @Test("totalBytes accessors — bytesAllocated, bytesInUse, totalBytesAllocated")
     func totalBytesAccessors() {
+        // maxSeq 1024 ≤ defaultInitialCapacity (2048) → starts fully
+        // allocated at 1024, so the byte accounting is the full depth.
         let c = KVCache(nKVHeads: 8, headDim: 64, maxSeq: 1024, dtype: .f16)
         let elems = 2 * 8 * 1024 * 64
         #expect(c.bytesAllocated == elems * 2)  // fp16 = 2 bytes
         #expect(c.bytesInUse == 0)
         let arr = [c, c, c]
         #expect(arr.totalBytesAllocated == c.bytesAllocated * 3)
+    }
+
+    // ─── Incremental growth ──────────────────────────────────────────
+
+    @Test("unbounded cache starts at initialCapacity, not the ceiling")
+    func growthStartsSmall() {
+        autoreleasepool {
+            let c = KVCache(
+                nKVHeads: 2, headDim: 4, maxSeq: 64, dtype: .f32,
+                eviction: .unbounded, initialCapacity: 4)
+            #expect(c.capacity == 4)
+            #expect(c.contextCeiling == 64)
+            #expect(c.maxSeq == 4, "maxSeq must report current capacity, not the ceiling")
+            #expect(c.effectiveMaxSize == 64, "effectiveMaxSize reports the growth ceiling")
+            #expect(c.kBuffer.shape == [2, 4, 4])
+        }
+    }
+
+    @Test("preallocate allocates the full ceiling up front")
+    func growthPreallocate() {
+        autoreleasepool {
+            let c = KVCache(
+                nKVHeads: 2, headDim: 4, maxSeq: 64, dtype: .f32,
+                eviction: .unbounded, preallocate: true)
+            #expect(c.capacity == 64)
+            #expect(c.contextCeiling == 64)
+            #expect(c.maxSeq == 64)
+            #expect(c.kBuffer.shape == [2, 64, 4])
+        }
+    }
+
+    @Test("CPU append grows the buffer and preserves all live data across boundaries")
+    func growthPreservesDataCPU() {
+        autoreleasepool {
+            // Start at 4, ceiling 64. Appending 10 rows forces two
+            // doublings: 4 → 8 (at the 5th append) → 16 (at the 9th).
+            let c = KVCache(
+                nKVHeads: 2, headDim: 4, maxSeq: 64, dtype: .f32,
+                eviction: .unbounded, initialCapacity: 4)
+            for p in 0 ..< 10 {
+                let kFlat = Tensor.empty(shape: [2, 4], dtype: .f32)
+                let vFlat = Tensor.empty(shape: [2, 4], dtype: .f32)
+                kFlat.copyIn(from: [
+                    Float(p), Float(p), Float(p), Float(p),
+                    Float(100 + p), Float(100 + p), Float(100 + p), Float(100 + p),
+                ])
+                vFlat.copyIn(from: [
+                    Float(1000 + p), Float(1000 + p), Float(1000 + p), Float(1000 + p),
+                    Float(2000 + p), Float(2000 + p), Float(2000 + p), Float(2000 + p),
+                ])
+                c.append(kFlat: kFlat, vFlat: vFlat)
+            }
+            #expect(c.length == 10)
+            #expect(c.capacity == 16, "4 → 8 → 16 after 10 appends")
+            #expect(c.maxSeq == 16)
+
+            // Verify every live row survived the two re-layout copies, at
+            // the FINAL stride (capacity=16): head h row p lives at flat
+            // offset (h*16 + p) * 4.
+            let k = c.kBuffer.toArray(as: Float.self)
+            let v = c.vBuffer.toArray(as: Float.self)
+            let stride = 16
+            for p in 0 ..< 10 {
+                let h0 = p * 4
+                let h1 = (stride + p) * 4
+                #expect(Array(k[h0 ..< h0 + 4]) == [Float(p), Float(p), Float(p), Float(p)])
+                #expect(
+                    Array(k[h1 ..< h1 + 4])
+                        == [Float(100 + p), Float(100 + p), Float(100 + p), Float(100 + p)])
+                #expect(
+                    Array(v[h0 ..< h0 + 4])
+                        == [Float(1000 + p), Float(1000 + p), Float(1000 + p), Float(1000 + p)])
+                #expect(
+                    Array(v[h1 ..< h1 + 4])
+                        == [Float(2000 + p), Float(2000 + p), Float(2000 + p), Float(2000 + p)])
+            }
+        }
+    }
+
+    @Test("GPU append grows the buffer and preserves live data")
+    func growthPreservesDataGPU() {
+        autoreleasepool {
+            let c = KVCache(
+                nKVHeads: 1, headDim: 2, maxSeq: 64, dtype: .f32,
+                eviction: .unbounded, initialCapacity: 2)
+            // One append per cmd (matches decode: prior cmd complete
+            // before the next forward).
+            for p in 0 ..< 7 {
+                let kFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
+                let vFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
+                kFlat.copyIn(from: [Float(p), Float(p) + 0.5])
+                vFlat.copyIn(from: [Float(10 + p), Float(10 + p) + 0.5])
+                let cmd = Device.shared.makeCommandBuffer()
+                c.appendOnGPU(kFlat: kFlat, vFlat: vFlat, on: cmd)
+                cmd.commit()
+                cmd.waitUntilCompleted()
+            }
+            #expect(c.length == 7)
+            #expect(c.capacity == 8, "2 → 4 → 8 after 7 appends")
+            let k = c.kBuffer.toArray(as: Float.self)
+            let v = c.vBuffer.toArray(as: Float.self)
+            for p in 0 ..< 7 {
+                #expect(Array(k[p * 2 ..< p * 2 + 2]) == [Float(p), Float(p) + 0.5])
+                #expect(Array(v[p * 2 ..< p * 2 + 2]) == [Float(10 + p), Float(10 + p) + 0.5])
+            }
+        }
+    }
+
+    @Test("growth never exceeds the context ceiling")
+    func growthClampsToCeiling() {
+        autoreleasepool {
+            // Ceiling 6, start 4. Appending 6 rows grows 4 → min(8, 6) = 6.
+            let c = KVCache(
+                nKVHeads: 1, headDim: 2, maxSeq: 6, dtype: .f32,
+                eviction: .unbounded, initialCapacity: 4)
+            for p in 0 ..< 6 {
+                let kFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
+                let vFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
+                kFlat.copyIn(from: [Float(p), Float(p)])
+                vFlat.copyIn(from: [Float(p), Float(p)])
+                c.append(kFlat: kFlat, vFlat: vFlat)
+            }
+            #expect(c.length == 6)
+            #expect(c.capacity == 6, "clamped to the ceiling, not 8")
+            #expect(c.capacity == c.contextCeiling)
+        }
+    }
+
+    @Test("range append grows once for the whole chunk")
+    func growthRangeAppend() {
+        autoreleasepool {
+            let c = KVCache(
+                nKVHeads: 1, headDim: 2, maxSeq: 64, dtype: .f32,
+                eviction: .unbounded, initialCapacity: 2)
+            var kRows: [Tensor] = []
+            var vRows: [Tensor] = []
+            for p in 0 ..< 5 {
+                let kFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
+                let vFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
+                kFlat.copyIn(from: [Float(p), Float(p)])
+                vFlat.copyIn(from: [Float(20 + p), Float(20 + p)])
+                kRows.append(kFlat)
+                vRows.append(vFlat)
+            }
+            let cmd = Device.shared.makeCommandBuffer()
+            c.appendRangeOnGPU(kRows: kRows, vRows: vRows, on: cmd)
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            #expect(c.length == 5)
+            #expect(c.capacity >= 5)
+            let k = c.kBuffer.toArray(as: Float.self)
+            for p in 0 ..< 5 {
+                #expect(Array(k[p * 2 ..< p * 2 + 2]) == [Float(p), Float(p)])
+            }
+        }
+    }
+
+    @Test("window eviction allocates its full ring and does not grow")
+    func windowNoGrowth() {
+        autoreleasepool {
+            let c = KVCache(
+                nKVHeads: 1, headDim: 2, maxSeq: 64, dtype: .f32,
+                eviction: .window(maxSize: 4, keep: 0))
+            #expect(c.capacity == 4, "window sizes to maxSize up front")
+            for p in 0 ..< 7 {
+                let kFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
+                let vFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
+                kFlat.copyIn(from: [Float(p), Float(p)])
+                vFlat.copyIn(from: [Float(p), Float(p)])
+                c.append(kFlat: kFlat, vFlat: vFlat)
+            }
+            #expect(c.capacity == 4, "window never grows")
+            #expect(c.length == 4, "length saturates at the window size")
+        }
     }
 }

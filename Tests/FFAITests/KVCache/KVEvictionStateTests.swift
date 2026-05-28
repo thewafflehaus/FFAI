@@ -171,7 +171,14 @@ struct KVCacheSlidingWindowTests {
         #expect(cache.length == 0)
         #expect(cache.eviction == .window(maxSize: 4, keep: 0))
         #expect(cache.effectiveMaxSize == 4)
-        #expect(cache.maxSeq == 8)
+        // A window cache now allocates exactly its `maxSize`-deep ring
+        // (4) rather than over-allocating to the `maxSeq` ceiling (8) —
+        // `maxSeq` reports the physical buffer stride (= capacity = the
+        // window size). The old behaviour wasted the [maxSize, maxSeq)
+        // tail; `effectiveMaxSize` is the value callers should use for
+        // the retained-window size.
+        #expect(cache.maxSeq == 4)
+        #expect(cache.capacity == 4)
     }
 
     @Test("raw KVCache append rotates physical positions in ring order")

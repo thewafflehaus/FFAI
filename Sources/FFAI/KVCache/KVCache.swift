@@ -138,13 +138,71 @@ extension KVCacheProtocol {
 // MARK: - KVCache (raw fp16 / bf16)
 
 public final class KVCache: KVCacheProtocol, @unchecked Sendable {
+    /// Default starting capacity for an incrementally-grown unbounded
+    /// cache. The buffer is allocated to this depth (or the context
+    /// ceiling, whichever is smaller) at init, and `ensureCapacity`
+    /// doubles it on demand as `length` approaches the current
+    /// capacity.
+    ///
+    /// 2048 is chosen so the entire common operating range incurs ZERO
+    /// reallocations: decode throughput peaks between ~2K–4K context on
+    /// Apple Silicon before the quadratic attention term and KV-bandwidth
+    /// pressure start to dominate (past that, sparse-decode + KV
+    /// retention/eviction strategies are the lever — a later phase). A
+    /// session that never exceeds 2048 tokens therefore allocates once
+    /// and never copies; longer sessions double from here. The footprint
+    /// is modest even on big models (e.g. Qwen3.6-27B at 16 attention
+    /// layers × 4 KV heads × 2048 × 256 × 2(K+V) × 2 bytes ≈ 128 MB vs
+    /// the ~16 GB a full 256K-context pre-allocation would cost).
+    ///
+    /// `public static var` so it's a global tuning knob —
+    /// `KVCache.defaultInitialCapacity = 1024` lowers the baseline
+    /// allocation; a per-cache override is also available via the
+    /// `initialCapacity:` init parameter.
+    ///
+    /// `nonisolated(unsafe)`: this is a process-global startup tuning
+    /// knob, expected to be set once before any model load (model loads
+    /// serialise behind `ModelLoadLock`, and cache construction is
+    /// single-threaded per decode). It is not mutated during concurrent
+    /// inference, so no synchronisation is warranted.
+    nonisolated(unsafe) public static var defaultInitialCapacity = 2048
+
     public let nKVHeads: Int
     public let headDim: Int
-    public let maxSeq: Int
     public let dtype: DType
 
-    public let kBuffer: Tensor  // [nKVHeads, maxSeq, headDim]
-    public let vBuffer: Tensor  // [nKVHeads, maxSeq, headDim]
+    /// The maximum depth this cache may grow to — the chosen context
+    /// window (`maxContextLength`, or the model's
+    /// `max_position_embeddings`). NOT the physical allocation; see
+    /// `capacity` for that. Exposed as the growth ceiling so callers
+    /// can reason about the worst-case footprint.
+    public let contextCeiling: Int
+
+    /// Physical depth currently allocated for `kBuffer` / `vBuffer`
+    /// (the middle dim of `[nKVHeads, capacity, headDim]`). This is the
+    /// `kvStride` every SDPA + append dispatch must use. Grows (via
+    /// `ensureCapacity`) up to `contextCeiling`; never shrinks. For a
+    /// pre-allocated cache it equals `contextCeiling` from the start.
+    public private(set) var capacity: Int
+
+    /// `maxSeq` is the SDPA / append buffer stride — i.e. the CURRENT
+    /// physical `capacity`, not the growth ceiling. Returning capacity
+    /// here keeps every existing `kvStride: cache.maxSeq` call site
+    /// correct as the buffer grows (the buffer's middle-dim stride IS
+    /// the current capacity). Use `contextCeiling` for the max-growth
+    /// bound and `effectiveMaxSize` for the sliding-window / reporting
+    /// size.
+    public var maxSeq: Int { capacity }
+
+    public private(set) var kBuffer: Tensor  // [nKVHeads, capacity, headDim]
+    public private(set) var vBuffer: Tensor  // [nKVHeads, capacity, headDim]
+
+    /// Retained device handle for reallocating the backing buffers on
+    /// growth (and re-pinning them into the residency set).
+    private let device: Device
+    /// Old backing buffers kept alive until at least one growth-copy
+    /// command buffer has completed. Cleared lazily on the next grow.
+    private var retiredBuffers: [Tensor] = []
 
     /// Lock-protected fill state. Safe today even without the lock —
     /// single-threaded decode — but planned's batched / speculative
@@ -165,7 +223,12 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
     public var eviction: KVEviction { _evictionState.policy }
     public var effectiveMaxSize: Int {
         switch _evictionState.policy {
-        case .unbounded: return maxSeq
+        // Unbounded reports the growth ceiling (the chosen context),
+        // NOT the current physical capacity — `effectiveMaxSize` is the
+        // "how long can this conversation get" number used for
+        // reporting + mask construction, independent of how much has
+        // been allocated so far.
+        case .unbounded: return contextCeiling
         case .window(let m, _): return m
         }
     }
@@ -179,26 +242,150 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
             dtype: dtype, eviction: .unbounded, device: device)
     }
 
+    /// - Parameters:
+    ///   - maxSeq: the context ceiling — the maximum depth the cache may
+    ///     grow to. With `preallocate == false` (the default for
+    ///     `.unbounded`) the physical buffer starts at
+    ///     `min(maxSeq, defaultInitialCapacity)` and doubles on demand;
+    ///     with `preallocate == true` it is allocated to `maxSeq` up
+    ///     front (the legacy behaviour, and the path callers that stage
+    ///     into the free tail — e.g. diffusion-block forwards — must
+    ///     use).
+    ///   - preallocate: force full-`maxSeq` allocation at init. Defaults
+    ///     to `false` for `.unbounded` (incremental growth) and is
+    ///     forced `true` for `.window` (the ring buffer is sized to its
+    ///     `maxSize` window and never grows).
+    ///   - initialCapacity: starting physical depth for an unbounded,
+    ///     non-preallocated cache. `nil` (default) uses the global
+    ///     `KVCache.defaultInitialCapacity`. Clamped to `maxSeq` (never
+    ///     start larger than the ceiling). Ignored when `preallocate`
+    ///     is true or the policy is `.window`.
     public init(
         nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
         eviction: KVEviction,
+        preallocate: Bool = false,
+        initialCapacity: Int? = nil,
         device: Device = .shared
     ) {
         self.nKVHeads = nKVHeads
         self.headDim = headDim
-        self.maxSeq = maxSeq
+        self.contextCeiling = maxSeq
         self.dtype = dtype
+        self.device = device
+
+        // Initial physical capacity. Windows allocate their full ring
+        // (maxSize ≤ maxSeq) up front; unbounded caches start small and
+        // grow unless `preallocate` forces the full ceiling.
+        let startCapacity: Int
+        switch eviction {
+        case .window(let maxSize, _):
+            startCapacity = maxSize
+        case .unbounded:
+            if preallocate {
+                startCapacity = maxSeq
+            } else {
+                let requested = initialCapacity ?? KVCache.defaultInitialCapacity
+                startCapacity = Swift.min(maxSeq, Swift.max(1, requested))
+            }
+        }
+        self.capacity = startCapacity
+
         self.kBuffer = Tensor.empty(
-            shape: [nKVHeads, maxSeq, headDim], dtype: dtype, device: device)
+            shape: [nKVHeads, startCapacity, headDim], dtype: dtype, device: device)
         self.vBuffer = Tensor.empty(
-            shape: [nKVHeads, maxSeq, headDim], dtype: dtype, device: device)
+            shape: [nKVHeads, startCapacity, headDim], dtype: dtype, device: device)
         self.kBuffer.zero()
         self.vBuffer.zero()
-        self._evictionState = KVEvictionState(policy: eviction, bufferCapacity: maxSeq)
+        self._evictionState = KVEvictionState(policy: eviction, bufferCapacity: startCapacity)
         // KV buffers live for the entire generation — pin them in the
         // device's residency set so per-dispatch residency tracking
         // doesn't fire on the thousands of decode-step appends + reads.
         device.markWeightsResident([self.kBuffer.buffer, self.vBuffer.buffer])
+    }
+
+    /// Ensure the backing buffers can hold `needed` total live rows,
+    /// growing (realloc + GPU blit-copy of the live region) if the
+    /// current `capacity` is short and the ceiling allows. Called at the
+    /// top of every append path, BEFORE any work for the current token
+    /// is queued on the caller's command buffer.
+    ///
+    /// GPU-timeline safety: the cache's live K/V (rows `[0, length)`) is
+    /// always the product of PRIOR, already-committed forwards — the
+    /// token being appended now still lives in the caller's scratch
+    /// tensor, not the cache. So the growth copy (old buffer → new
+    /// buffer) reads only quiesced data and runs on its own command
+    /// buffer that is committed + waited here, with no dependency on the
+    /// caller's in-flight `cmd`. The new (larger) buffer is then the
+    /// target of the caller's append + the source of its SDPA read,
+    /// both correctly ordered on the caller's `cmd`.
+    ///
+    /// No-op for `.window` caches (sized to maxSize up front) and once
+    /// `capacity == contextCeiling`.
+    private func ensureCapacityLocked(_ needed: Int) {
+        guard case .unbounded = _evictionState.policy else { return }
+        guard needed > capacity, capacity < contextCeiling else { return }
+
+        // Geometric growth (double) gives O(log N) reallocs + O(N) total
+        // copy while keeping reads contiguous; clamp to the ceiling and
+        // never below `needed`.
+        var newCapacity = capacity
+        while newCapacity < needed { newCapacity *= 2 }
+        newCapacity = Swift.min(newCapacity, contextCeiling)
+        if newCapacity < needed {
+            // `needed` exceeds the ceiling — let reserveNextSlot's own
+            // precondition fire with its actionable message rather than
+            // silently truncating here.
+            newCapacity = contextCeiling
+        }
+        guard newCapacity > capacity else { return }
+
+        let liveRows = _evictionState.length
+        let newK = Tensor.empty(
+            shape: [nKVHeads, newCapacity, headDim], dtype: dtype, device: device)
+        let newV = Tensor.empty(
+            shape: [nKVHeads, newCapacity, headDim], dtype: dtype, device: device)
+        newK.zero()
+        newV.zero()
+
+        // Copy the live region per head: head h's rows [0, liveRows) move
+        // from old stride `capacity` to new stride `newCapacity`. Both
+        // buffers are contiguous per head, so this is `nKVHeads` linear
+        // blits. Runs on a dedicated command buffer committed + waited
+        // here (old data is quiesced — see the doc comment).
+        if liveRows > 0 {
+            let cmd = device.makeCommandBuffer()
+            guard let blit = cmd.makeBlitCommandEncoder() else {
+                fatalError("KVCache.ensureCapacity: makeBlitCommandEncoder returned nil")
+            }
+            let rowBytes = headDim * dtype.byteSize
+            let copyBytes = liveRows * rowBytes
+            for h in 0 ..< nKVHeads {
+                let oldHeadOffset = h * capacity * rowBytes
+                let newHeadOffset = h * newCapacity * rowBytes
+                blit.copy(
+                    from: kBuffer.buffer, sourceOffset: kBuffer.offset + oldHeadOffset,
+                    to: newK.buffer, destinationOffset: newK.offset + newHeadOffset,
+                    size: copyBytes)
+                blit.copy(
+                    from: vBuffer.buffer, sourceOffset: vBuffer.offset + oldHeadOffset,
+                    to: newV.buffer, destinationOffset: newV.offset + newHeadOffset,
+                    size: copyBytes)
+            }
+            blit.endEncoding()
+            cmd.commit()
+            cmd.waitUntilCompleted()
+        }
+
+        // Retire old buffers (kept until the next grow so nothing
+        // dangles), swap in the new ones, bump capacity + eviction
+        // bookkeeping, and pin the new buffers resident.
+        retiredBuffers.append(contentsOf: [kBuffer, vBuffer])
+        if retiredBuffers.count > 4 { retiredBuffers.removeFirst(retiredBuffers.count - 4) }
+        kBuffer = newK
+        vBuffer = newV
+        capacity = newCapacity
+        _evictionState.grow(to: newCapacity)
+        device.markWeightsResident([newK.buffer, newV.buffer])
     }
 
     /// CPU-side legacy append. Caller must have already sync'd the
@@ -208,6 +395,7 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
     public func append(kFlat: Tensor, vFlat: Tensor) {
         precondition(kFlat.dtype == dtype && vFlat.dtype == dtype, "KVCache: dtype mismatch")
         lengthLock.withLock {
+            ensureCapacityLocked(_evictionState.length + 1)
             let pos = _evictionState.reserveNextSlot()
             let bytesPerHead = headDim * dtype.byteSize
             let kSrc = kFlat.buffer.contents().advanced(by: kFlat.offset)
@@ -235,6 +423,7 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
     ) {
         precondition(kFlat.dtype == dtype && vFlat.dtype == dtype, "KVCache: dtype mismatch")
         lengthLock.withLock {
+            ensureCapacityLocked(_evictionState.length + 1)
             let pos = _evictionState.reserveNextSlot()
             Ops.kvCacheUpdate(
                 src: kFlat, into: kBuffer,
@@ -267,6 +456,10 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
             "KVCache.appendRangeOnGPU: kRows (\(kRows.count)) / vRows "
                 + "(\(vRows.count)) count mismatch")
         lengthLock.withLock {
+            // Grow once for the whole range before queuing any writes —
+            // mid-range growth would orphan the writes already queued on
+            // `cmd` against the old buffer.
+            ensureCapacityLocked(_evictionState.length + kRows.count)
             for (kFlat, vFlat) in zip(kRows, vRows) {
                 precondition(
                     kFlat.dtype == dtype && vFlat.dtype == dtype,
@@ -323,6 +516,10 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
         let ptr = positionsOut.buffer.contents().advanced(by: positionsOut.offset)
             .bindMemory(to: UInt32.self, capacity: t)
         lengthLock.withLock {
+            // Grow before reserving so the subsequent
+            // `appendRangeOnGPUMany` (which reads `kBuffer`/`maxSeq` at
+            // call time) targets the grown buffer at the correct stride.
+            ensureCapacityLocked(_evictionState.length + t)
             for r in 0 ..< t { ptr[r] = UInt32(_evictionState.reserveNextSlot()) }
         }
     }

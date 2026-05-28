@@ -68,7 +68,13 @@ public struct KVEvictionState {
     /// mode the buffer may be sized larger than `maxSize` (e.g. when
     /// the model file declared `maxSeq=4096` but the caller passes
     /// `maxSize=512`) — the unused tail is just wasted memory.
-    public let bufferCapacity: Int
+    ///
+    /// Mutable to support an incrementally-grown `.unbounded` cache:
+    /// the backing buffer starts small (KVCache's initial capacity) and
+    /// `KVCache.ensureCapacity` reallocs + bumps this via `grow(to:)`
+    /// when the live length approaches the current capacity. Windows
+    /// never grow (their buffer is sized to `maxSize` up front).
+    public private(set) var bufferCapacity: Int
 
     /// Monotonic count of tokens appended (never resets except via
     /// the parent cache's `reset()`). Used to derive the rotation
@@ -138,6 +144,21 @@ public struct KVEvictionState {
 
     public mutating func reset() {
         absoluteCount = 0
+    }
+
+    /// Raise the recorded buffer capacity after the parent cache
+    /// reallocates its backing buffers to a larger size. Only valid
+    /// for `.unbounded` policies (windows are sized to `maxSize` at
+    /// construction and never grow). `newCapacity` must be strictly
+    /// larger than the current capacity.
+    public mutating func grow(to newCapacity: Int) {
+        precondition(
+            { if case .unbounded = policy { return true } else { return false } }(),
+            "KVEvictionState.grow: only .unbounded caches grow (window is sized to maxSize)")
+        precondition(
+            newCapacity > bufferCapacity,
+            "KVEvictionState.grow: newCapacity \(newCapacity) must exceed current \(bufferCapacity)")
+        bufferCapacity = newCapacity
     }
 
     /// Roll the cache state back to `length` appended tokens, discarding
