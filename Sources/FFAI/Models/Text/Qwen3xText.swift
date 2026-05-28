@@ -2028,9 +2028,23 @@ public final class Qwen35AttentionMixer: Module {
             let qDim = qQL.weight.shape[0]
             let kDim = kQL.weight.shape[0]
             let vDim = vQL.weight.shape[0]
+            // Verified-shape gate. `Ops.batchedQkvQmmFast` was tuned
+            // against Qwen3.5-0.8B (inDim=1024, qDim=4096) +
+            // Qwen3.6-A3B (inDim=2048, qDim=4096); at Qwen3.6-27B's
+            // `inDim=5120, qDim=12288` it silently produces degenerate
+            // output (`Qwen36TextIntegrationTests` caught it as a
+            // 32-token loop of token 0 / "!" on greedy decode against
+            // `mlx-community/Qwen3.6-27B-4bit`). Cap on `inDim ≤ 2048`
+            // keeps the fast path live for the two verified shapes and
+            // routes 27B / future wider models to the unfused
+            // per-projection gemv until a paired GPU correctness test
+            // at the wider inDim/qDim shape ships in metaltile-std and
+            // the kernel's per-column tile arithmetic is verified
+            // there.
             if inDim % 512 == 0
                 && qDim % 8 == 0 && kDim % 8 == 0 && vDim % 8 == 0
                 && qQL.groupSize == 64
+                && inDim <= 2048
                 && ProcessInfo.processInfo.environment["FFAI_NO_FUSED_QKV"] == nil
             {
                 self.fusedQKVEligible = true
@@ -2734,10 +2748,20 @@ private func qwen35FinalNormLmHead(
         qLm.groupSize == 64,
         h.elementCount % 512 == 0,
         qLm.weight.shape[0] % 8 == 0,
-        // Bypass for diagnostics — if degenerate output reproduces only
-        // with this fused path enabled, the `rmsNormQgemvInt4Fast`
-        // kernel mis-computes at this shape and we want to fall back to
-        // the unfused finalNorm + lmHead chain.
+        // Verified-shape gate. The `rmsNormQgemvInt4Fast` kernel was
+        // tuned against Qwen3.5-0.8B (hidden=1024) + Qwen3.6-A3B
+        // (hidden=2048); at the dense Qwen3.6-27B's `hidden=5120` it
+        // silently produces degenerate output (`Qwen36TextIntegrationTests`
+        // caught it as a 32-token loop of token 0 / "!" on greedy
+        // decode against `mlx-community/Qwen3.6-27B-4bit`). Cap on
+        // `h.elementCount ≤ 2048` keeps the fast path live for the two
+        // verified shapes and routes 27B / future wider models to the
+        // unfused fallback until a paired GPU correctness test at the
+        // wider in_dim ships in metaltile-std and the kernel inner-
+        // loop / reduction-collapse arithmetic is verified there.
+        h.elementCount <= 2048,
+        // Bypass for diagnostics — also flip this off when reproducing
+        // a fused-path regression at a verified shape.
         ProcessInfo.processInfo.environment["FFAI_NO_FUSED_LM_HEAD"] == nil
     {
         let outDim = qLm.weight.shape[0]
