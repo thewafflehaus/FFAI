@@ -231,21 +231,22 @@ extension Model {
         profile: Profile,
         continuation: AsyncThrowingStream<GenerationChunk, Error>.Continuation
     ) async throws {
-        // Cap the KV-cache depth at the actual generation budget
-        // (prompt + maxTokens) rather than the model's full context
-        // window. Long-context models pre-allocate `[nKVHeads, maxSeq,
-        // headDim]` K + V per attention layer, so a model published with
-        // a 256K context (e.g. Qwen3.6-27B, max_position_embeddings =
-        // 262144) would otherwise eat ~17 GB of KV cache — 16 attention
-        // layers × 4 KV heads × 262144 × 256 × 2 (K+V) × 2 bytes — on
-        // top of the ~14 GB of 4-bit weights, before a single token is
-        // generated. A short prompt + 200-token decode only needs a few
-        // hundred cache slots. The `+ 1` is decode-step headroom; clamp
-        // to `engine.maxSeq` so we never over-promise context. Mirrors
-        // the `cacheDepth` the diffusion path already computes
-        // (GenerateDiffusion.swift).
-        let cacheDepth = min(engine.maxSeq, promptTokens.count + params.maxTokens + 1)
-        let caches = engine.makeLayerCaches(maxSeq: cacheDepth)
+        // Build the per-layer caches through the managed path, which
+        // applies all memory management uniformly across every family:
+        //   - caps the context ceiling at the generation budget
+        //     (prompt + maxTokens + 1 decode-step headroom),
+        //   - narrows by LoadOptions.maxContextLength,
+        //   - clamps via the over-allocation guard so weights + max-KV +
+        //     a working margin fit the wired-memory budget (throws
+        //     ModelError.insufficientMemory if the model can't run at
+        //     any usable context here),
+        //   - honors preallocateKVCache / initialKVCacheCapacity.
+        // The cache itself then grows incrementally from its initial
+        // capacity up to this ceiling. Without this, a 256K-context
+        // model (e.g. Qwen3.6-27B) would otherwise pre-allocate ~17 GB
+        // of KV before generating a token.
+        let generationBudget = promptTokens.count + params.maxTokens + 1
+        let caches = try makeManagedCaches(generationBudget: generationBudget)
         // Gemma 3+, several Qwen variants, and a few llama-tuned models
         // publish `eos_token_id` as a *list* (model EOS plus end-of-turn
         // tokens like `<|im_end|>`). Stop on any of them.

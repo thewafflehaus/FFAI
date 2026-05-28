@@ -26,6 +26,10 @@ public enum ModelError: Error, CustomStringConvertible {
     case unsupportedModelType(String)
     case capabilityNotAvailable(Capability)
     case visionModelNotIntegrated(String)
+    /// The model's weights + a minimal KV cache exceed the wired-memory
+    /// budget — it can't run at any usable context on this machine /
+    /// budget. Raised by the over-allocation guard (`MemoryBudget`).
+    case insufficientMemory(weightBytes: Int, budgetBytes: Int, detail: String)
 
     public var description: String {
         switch self {
@@ -40,6 +44,8 @@ public enum ModelError: Error, CustomStringConvertible {
                 + "a checkpoint loader. Load the text-only checkpoint, or "
                 + "compose a VisionModel directly from VisionEncoder + the text "
                 + "engine."
+        case .insufficientMemory(_, _, let detail):
+            return "Insufficient memory: \(detail)"
         }
     }
 }
@@ -989,6 +995,13 @@ public final class Model: @unchecked Sendable {
     public let modelDirectory: URL
     public let availableCapabilities: Set<Capability>
 
+    /// The `LoadOptions` this model was loaded with. Retained so the
+    /// memory-management path (`makeManagedCaches`) can honor
+    /// `maxContextLength` / `preallocateKVCache` / `initialKVCacheCapacity`
+    /// / `wiredLimitBytes` at cache-creation time, uniformly across
+    /// every family.
+    public let loadOptions: LoadOptions
+
     /// The composed vision-language model — `nil` unless the checkpoint
     /// is a VLM. Use `vlModel.generate(...)` for an image+text prompt;
     /// available only when `availableCapabilities` contains `.imageIn`.
@@ -1089,6 +1102,7 @@ public final class Model: @unchecked Sendable {
         availableCapabilities: Set<Capability>,
         enabledCapabilities: Set<Capability>,
         defaultGenerationParameters: GenerationParameters,
+        loadOptions: LoadOptions = LoadOptions(),
         vlModel: VisionModel? = nil
     ) {
         self.engine = engine
@@ -1096,6 +1110,7 @@ public final class Model: @unchecked Sendable {
         self.config = config
         self.modelDirectory = modelDirectory
         self.availableCapabilities = availableCapabilities
+        self.loadOptions = loadOptions
         self.vlModel = vlModel
         // textIn / textOut are universal — always enabled. Other
         // requested capabilities are honored only if the model declares
@@ -1226,6 +1241,7 @@ public final class Model: @unchecked Sendable {
                     availableCapabilities: loaded.availableCapabilities,
                     enabledCapabilities: options.capabilities,
                     defaultGenerationParameters: loaded.defaultGenerationParameters,
+                    loadOptions: options,
                     vlModel: loaded.vlModel
                 )
             }
@@ -1268,6 +1284,57 @@ public final class Model: @unchecked Sendable {
     /// needs only one slot; the small margin is defensive headroom for
     /// any family whose forward touches position+1 internally.
     private static let prewarmCacheDepth = 8
+
+    // ─── Managed KV-cache creation (the memory-management chokepoint) ──
+
+    /// Resolve the KV-cache context ceiling for a session: the model's
+    /// `max_position_embeddings`, narrowed by `LoadOptions.maxContextLength`,
+    /// then by the optional `generationBudget` (prompt + maxTokens), then
+    /// clamped by the over-allocation guard so weights + max-KV + a
+    /// working-memory margin fit the wired-memory budget. Throws
+    /// `ModelError.insufficientMemory` if the model can't run at any
+    /// usable context on this machine / budget.
+    ///
+    /// Every cache-creation path (generation, CLI inspect/generate)
+    /// routes through here, so the cap + guard apply uniformly across
+    /// every model family without per-family wiring.
+    public func resolvedKVContextCeiling(
+        generationBudget: Int? = nil, device: Device = .shared
+    ) throws -> Int {
+        var ceiling = engine.maxSeq
+        if let mc = loadOptions.maxContextLength { ceiling = Swift.min(ceiling, mc) }
+        if let gb = generationBudget { ceiling = Swift.min(ceiling, gb) }
+        ceiling = try MemoryBudget.clampContext(
+            requestedCeiling: ceiling, engine: engine,
+            options: loadOptions, device: device)
+        return Swift.max(1, ceiling)
+    }
+
+    /// Build the per-layer caches for a session with memory management
+    /// applied: the context ceiling is resolved + guarded (see
+    /// `resolvedKVContextCeiling`), and `LoadOptions.preallocateKVCache`
+    /// / `initialKVCacheCapacity` are honored by setting the KVCache
+    /// initial-capacity knob around the (synchronous) construction.
+    ///
+    /// `preallocateKVCache` collapses to "start at the full ceiling"
+    /// (no growth). The knob is saved + restored around the build so it
+    /// doesn't leak into other models' cache creation.
+    public func makeManagedCaches(
+        generationBudget: Int? = nil, device: Device = .shared
+    ) throws -> [any LayerCacheProtocol] {
+        let ceiling = try resolvedKVContextCeiling(
+            generationBudget: generationBudget, device: device)
+
+        let savedInitial = KVCache.defaultInitialCapacity
+        if loadOptions.preallocateKVCache {
+            KVCache.defaultInitialCapacity = ceiling
+        } else if let ic = loadOptions.initialKVCacheCapacity {
+            KVCache.defaultInitialCapacity = Swift.max(1, ic)
+        }
+        defer { KVCache.defaultInitialCapacity = savedInitial }
+
+        return engine.makeLayerCaches(maxSeq: ceiling, device: device)
+    }
 }
 
 // ─── Hot LoRA adapter management ─────────────────────────────────────

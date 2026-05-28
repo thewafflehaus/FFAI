@@ -104,14 +104,43 @@ public struct LoadOptions: Sendable {
     /// Has no effect when `idOrPath` resolves to a local directory.
     public var cacheDirectory: URL?
 
-    /// Maximum context length the KV cache is sized for. `nil` (the
-    /// default) lets the model family pick a sane default — useful for
-    /// checkpoints that advertise an extreme context (e.g. a YaRN
-    /// 262144 window), where allocating the full depth would need tens
-    /// of GB. Set this to size the cache for a specific context: pass
-    /// the checkpoint's full `max_position_embeddings` to use the
-    /// entire advertised window, or a smaller value to bound memory.
+    /// Maximum context length the KV cache may grow to (the growth
+    /// *ceiling*, not the up-front allocation). `nil` (the default)
+    /// uses the model's `max_position_embeddings`. The cache still
+    /// grows incrementally from `KVCache.defaultInitialCapacity` up to
+    /// this ceiling (unless `preallocateKVCache` is set), and the
+    /// memory-budget guard clamps the effective ceiling so weights +
+    /// max-KV + a working-memory margin never exceed the device's
+    /// wired-memory budget. Set this to bound a model that advertises
+    /// an extreme context (e.g. a 262144 window) to a context you'll
+    /// actually use.
     public var maxContextLength: Int?
+
+    /// Pre-allocate the KV cache to its full context ceiling at load
+    /// instead of growing incrementally. `false` (default) starts the
+    /// cache small (`KVCache.defaultInitialCapacity`, or
+    /// `initialKVCacheCapacity`) and doubles on demand — lower peak
+    /// memory for short sessions. Set `true` to reserve the entire
+    /// context's memory up front (no realloc/copy during decode, at the
+    /// cost of allocating the worst-case footprint immediately). Still
+    /// subject to the over-allocation guard.
+    public var preallocateKVCache: Bool
+
+    /// Override the starting physical depth of an incrementally-grown
+    /// KV cache. `nil` (default) uses `KVCache.defaultInitialCapacity`
+    /// (2048). Ignored when `preallocateKVCache` is true. Clamped to
+    /// the resolved context ceiling.
+    public var initialKVCacheCapacity: Int?
+
+    /// Override the wired-memory budget (in bytes) used by the
+    /// over-allocation guard. `nil` (default) uses the device's
+    /// `recommendedMaxWorkingSetSize` (Apple's ~75%-of-unified-memory
+    /// ticket). Set a higher value to let large models keep more
+    /// resident before the guard clamps the context — bounded by a hard
+    /// machine ceiling so a load can never request more than the box
+    /// can physically back. Set a lower value to leave more headroom
+    /// for other processes.
+    public var wiredLimitBytes: Int?
 
     /// Selects the AURA decode path. Defaults to `.compressed` (Stage
     /// 1b: attend on packed K/V codes directly via the `aura_flash_*`
@@ -132,6 +161,9 @@ public struct LoadOptions: Sendable {
         revision: String = "main",
         cacheDirectory: URL? = nil,
         maxContextLength: Int? = nil,
+        preallocateKVCache: Bool = false,
+        initialKVCacheCapacity: Int? = nil,
+        wiredLimitBytes: Int? = nil,
         auraDecodePath: AURADecodePath = .compressed
     ) {
         self.capabilities = capabilities.union(Capability.textOnly)
@@ -143,6 +175,9 @@ public struct LoadOptions: Sendable {
         self.revision = revision
         self.cacheDirectory = cacheDirectory
         self.maxContextLength = maxContextLength
+        self.preallocateKVCache = preallocateKVCache
+        self.initialKVCacheCapacity = initialKVCacheCapacity
+        self.wiredLimitBytes = wiredLimitBytes
         self.auraDecodePath = auraDecodePath
     }
 }
