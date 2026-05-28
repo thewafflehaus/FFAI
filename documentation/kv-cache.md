@@ -16,6 +16,8 @@ The KV cache holds per-layer K and V tensors so subsequent decode steps don't re
 
 Every attention-cache scheme (raw, `affine8`, `affine4`, AURA — and any of them under sliding-window eviction) is exercised by the `ModelKVCacheMatrixIntegrationTests` cross-product; the recurrent SSM/GDN caches ride the hybrid families' integration tests.
 
+**Family coverage.** `LoadOptions.kvCache` is honoured by **every** attention family — dense (Llama / Mistral / Phi / Qwen 2/3, Gemma 2/3/4, GPT-OSS, Granite 3, OLMo 2, Starcoder 2, InternLM 2) and the hybrids' attention layers (Jamba, NemotronH, Granite 4, LFM 2, Qwen 3.5, FalconH1) — all routed through one factory (`makeAttentionCaches` / `makeAttentionScratch`). `affine4` / `affine8` work on all of them. **AURA** works on the Llama-shaped families (Llama / Qwen 3 / Granite 3 / InternLM 2 / OLMo 2 / Starcoder 2); on the bespoke-layer families (Gemma, GPT-OSS, the hybrids) requesting AURA currently falls back to raw — those layers need the per-layer SRHT-rotation wiring AURA requires (tracked in [`planning/known-issues.md`](../planning/known-issues.md)). The factory's shape guard falls back to raw (with a stderr warning) when a model's `head_dim` can't satisfy a scheme — affine needs `head_dim % group_size == 0`, AURA needs a power-of-two `head_dim`.
+
 ## How the cache works
 
 Each layer holds its own `KVCache` instance. During the forward pass:
