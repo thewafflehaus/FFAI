@@ -141,8 +141,13 @@ extension Model {
         let maskId = m.maskTokenId
         let eos = params.stopOnEOS ? m.eosTokenId : nil
         // Cache depth = prompt + all generated tokens + one block of
-        // scratch headroom for the denoise forward.
-        let cacheDepth = promptTokens.count + params.maxNewTokens + blockLength
+        // scratch headroom for the denoise forward, clamped to the
+        // model's context ceiling (which already folds in
+        // LoadOptions.maxContextLength). The diffusion cache is
+        // preallocated to this depth (it stages into the free tail), so
+        // bounding it here also bounds the up-front footprint.
+        let cacheDepth = min(
+            m.maxSeq, promptTokens.count + params.maxNewTokens + blockLength)
         let caches = m.makeLayerCaches(maxSeq: cacheDepth)
         var nfe = 0
 
@@ -221,7 +226,11 @@ extension Model {
         let eos = params.stopOnEOS ? m.eosTokenId : nil
         // Self-speculation may overshoot maxNewTokens by up to one block
         // (a fully-accepted draft) and stages a block of scratch K/V.
-        let cacheDepth = promptTokens.count + params.maxNewTokens + 2 * blockLength
+        // Clamped to the model's context ceiling (folds in
+        // LoadOptions.maxContextLength); the preallocated cache's
+        // up-front footprint is bounded by this depth.
+        let cacheDepth = min(
+            m.maxSeq, promptTokens.count + params.maxNewTokens + 2 * blockLength)
         let caches = m.makeLayerCaches(maxSeq: cacheDepth)
         let rawCaches: [KVCache] = caches.map { $0 as! KVCache }
         var nfe = 0

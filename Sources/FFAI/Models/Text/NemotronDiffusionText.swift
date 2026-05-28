@@ -626,10 +626,17 @@ public final class NemotronDiffusionModel: LanguageModel {
         let eviction = kvEviction
         switch kvCacheKind {
         case .raw:
+            // Diffusion / self-speculation stage scratch K/V into the
+            // buffer's free tail `[length, cap)` via `writeTimestepOnGPU`
+            // across denoise iterations before committing a block, so the
+            // cache MUST have all `cap` slots allocated up front —
+            // incremental growth (which starts below `cap`) would put
+            // those staging slots out of range. Force full preallocation.
             return (0 ..< nLayers).map { _ in
                 KVCache(
                     nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
-                    dtype: dtype, eviction: eviction, device: device)
+                    dtype: dtype, eviction: eviction,
+                    preallocate: true, device: device)
             }
         case .affineQuantized(let bits, let groupSize):
             let sharedK = Tensor.empty(
@@ -649,11 +656,13 @@ public final class NemotronDiffusionModel: LanguageModel {
             // Diffusion / self-speculation require the raw KVCache (their
             // multi-token forward stages scratch K/V in the buffer).
             // AURA caches support AR mode only; fall back to raw so the
-            // tri-mode paths keep working.
+            // tri-mode paths keep working. Preallocated for the same
+            // free-tail-staging reason as the `.raw` case above.
             return (0 ..< nLayers).map { _ in
                 KVCache(
                     nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
-                    dtype: dtype, eviction: eviction, device: device)
+                    dtype: dtype, eviction: eviction,
+                    preallocate: true, device: device)
             }
         }
     }
