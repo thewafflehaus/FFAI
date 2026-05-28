@@ -412,32 +412,28 @@ public final class Gemma2Model: LanguageModel {
     /// uniformly and overrides the per-layer heuristic — matches Gemma 3.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxContextWindow
-        var caches: [any LayerCacheProtocol] = []
-        caches.reserveCapacity(nLayers)
-        for i in 0 ..< nLayers {
-            let layerEviction: KVEviction
+        // Gemma 2 has no AURA Π-rotation wiring in its layer yet — map
+        // AURA to raw; raw + affine run through the shared factory.
+        let kind: KVCacheKind = {
+            if case .auraQuantized = kvCacheKind { return .raw }
+            return kvCacheKind
+        }()
+        let specs = (0 ..< nLayers).map { i -> AttentionCacheSpec in
+            let eviction: KVEviction
             switch kvEviction {
             case .window:
-                layerEviction = kvEviction
+                eviction = kvEviction
             case .unbounded:
-                layerEviction =
+                eviction =
                     layers[i].isSliding
                     ? .window(maxSize: min(slidingWindow, cap), keep: 0)
                     : .unbounded
             }
-            switch kvCacheKind {
-            case .raw:
-                caches.append(
-                    KVCache(
-                        nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                        dtype: dtype, eviction: layerEviction, device: device
-                    ))
-            default:
-                preconditionFailure(
-                    "Gemma2: only .raw KV cache supported today; got \(kvCacheKind)")
-            }
+            return AttentionCacheSpec(
+                nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
+                eviction: eviction)
         }
-        return caches
+        return makeAttentionCaches(kind: kind, specs: specs, dtype: dtype, device: device)
     }
 
     public func forward(

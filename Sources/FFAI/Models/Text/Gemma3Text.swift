@@ -664,38 +664,28 @@ public final class Gemma3Model: LanguageModel {
     /// applies uniformly and overrides the heuristic.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxContextWindow
-        var caches: [any LayerCacheProtocol] = []
-        caches.reserveCapacity(nLayers)
-        for i in 0 ..< nLayers {
-            let layerEviction: KVEviction
+        // Gemma 3 has no AURA Π-rotation wiring in its layer yet — map
+        // AURA to raw; raw + affine run through the shared factory.
+        let kind: KVCacheKind = {
+            if case .auraQuantized = kvCacheKind { return .raw }
+            return kvCacheKind
+        }()
+        let specs = (0 ..< nLayers).map { i -> AttentionCacheSpec in
+            let eviction: KVEviction
             switch kvEviction {
             case .window:
-                // User override — apply uniformly.
-                layerEviction = kvEviction
+                eviction = kvEviction
             case .unbounded:
-                // Heuristic: sliding layers cap at slidingWindow.
-                layerEviction =
+                eviction =
                     layers[i].isSliding
                     ? .window(maxSize: min(slidingWindow, cap), keep: 0)
                     : .unbounded
             }
-            switch kvCacheKind {
-            case .raw:
-                caches.append(
-                    KVCache(
-                        nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                        dtype: dtype, eviction: layerEviction, device: device
-                    ))
-            default:
-                // First-light: only raw KV supported on Gemma 3. The
-                // affine + AURA paths require a per-layer working
-                // buffer wired through Gemma3Model's storage, which
-                // we haven't built yet.
-                preconditionFailure(
-                    "Gemma3: only .raw KV cache supported today; got \(kvCacheKind)")
-            }
+            return AttentionCacheSpec(
+                nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
+                eviction: eviction)
         }
-        return caches
+        return makeAttentionCaches(kind: kind, specs: specs, dtype: dtype, device: device)
     }
 
     public func forward(

@@ -95,7 +95,7 @@ public struct GPTOSSMoEVariant: GPTOSSVariant, ReasoningCapable {
     public static func loadModel(
         config: ModelConfig,
         weights: SafeTensorsBundle,
-        options _: LoadOptions,
+        options: LoadOptions,
         device: Device
     ) throws -> GPTOSSModel {
         guard let hidden = config.hiddenSize,
@@ -286,7 +286,8 @@ public struct GPTOSSMoEVariant: GPTOSSVariant, ReasoningCapable {
             hidden: hidden, nLayers: nLayers, nHeads: nHeads,
             nKVHeads: nKVHeads, headDim: headDim, vocab: vocab,
             maxContextWindow: maxSeq, slidingWindow: slidingWindow,
-            dtype: activationDtype)
+            dtype: activationDtype,
+            kvCacheKind: options.kvCache, kvEviction: options.kvEviction)
     }
 }
 
@@ -468,7 +469,7 @@ public final class GPTOSSAttention: Module {
     /// so the result is fully resident (the residual add is the
     /// caller's job).
     func forward(
-        _ xNorm: Tensor, position: Int, cache: KVCache,
+        _ xNorm: Tensor, position: Int, cache: any KVCacheProtocol,
         cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
         // ── GPU phase: project, RoPE, append, plain SDPA ──────────────
@@ -523,7 +524,7 @@ public final class GPTOSSAttention: Module {
             for kvHead in 0 ..< nKVHeads {
                 // kBuffer is [nKVHeads, maxSeq, headDim]; slice head
                 // kvHead, then its first nKV timesteps.
-                let headSlab = cache.kBuffer
+                let headSlab = cacheK
                     .slicedRows(start: kvHead, count: 1)
                     .reshaped(to: [cache.capacity, headDim])
                     .slicedRows(start: 0, count: nKV)
@@ -680,7 +681,7 @@ public final class GPTOSSLayer: Module {
     /// because it is now fused into `mt_add_rms_norm`, whose row-
     /// width invariants (multiple of 4, ≤ 4096) GPT-OSS satisfies.
     func decode(
-        _ h: Tensor, position: Int, cache: KVCache,
+        _ h: Tensor, position: Int, cache: any KVCacheProtocol,
         cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
         // ── Attention half ────────────────────────────────────────────
@@ -774,13 +775,17 @@ public final class GPTOSSModel: LanguageModel {
     /// Attention kind per layer index — drives `makeLayerCaches`
     /// (sliding layers get a `.window` eviction cache).
     public let attnKinds: [GPTOSSAttentionKind]
+    public let kvCacheKind: KVCacheKind
+    public let kvEviction: KVEviction
 
     init(
         embedTokens: AnyEmbedding, layers: [GPTOSSLayer],
         finalNorm: RMSNorm, lmHead: AnyLinear,
         attnKinds: [GPTOSSAttentionKind],
         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-        vocab: Int, maxContextWindow: Int, slidingWindow: Int, dtype: DType
+        vocab: Int, maxContextWindow: Int, slidingWindow: Int, dtype: DType,
+        kvCacheKind: KVCacheKind = .raw,
+        kvEviction: KVEviction = .unbounded
     ) {
         self.embedTokens = embedTokens
         self.layers = layers
@@ -796,6 +801,8 @@ public final class GPTOSSModel: LanguageModel {
         self.maxContextWindow = maxContextWindow
         self.slidingWindow = slidingWindow
         self.dtype = dtype
+        self.kvCacheKind = kvCacheKind
+        self.kvEviction = kvEviction
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -821,20 +828,25 @@ public final class GPTOSSModel: LanguageModel {
     /// fast-path needed). Full-attention layers stay unbounded.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxContextWindow
-        return attnKinds.map { kind in
-            switch kind {
-            case .sliding:
-                return KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                    dtype: dtype,
-                    eviction: .window(maxSize: min(slidingWindow, cap), keep: 0),
-                    device: device)
-            case .full:
-                return KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                    dtype: dtype, eviction: .unbounded, device: device)
+        // GPT-OSS's host-side sink correction reads the live K slice from
+        // the dequant mirror, which works for raw + affine — but AURA
+        // stores K Π-rotated, so the sink dot-products would be wrong.
+        // Map AURA to raw; raw + affine run through the shared factory.
+        let kind: KVCacheKind = {
+            if case .auraQuantized = kvCacheKind { return .raw }
+            return kvCacheKind
+        }()
+        let specs = attnKinds.map { attnKind -> AttentionCacheSpec in
+            let eviction: KVEviction
+            switch attnKind {
+            case .sliding: eviction = .window(maxSize: min(slidingWindow, cap), keep: 0)
+            case .full: eviction = .unbounded
             }
+            return AttentionCacheSpec(
+                nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
+                eviction: eviction)
         }
+        return makeAttentionCaches(kind: kind, specs: specs, dtype: dtype, device: device)
     }
 
     /// Queue a single-token forward pass. **Does not commit `cmd`** —
@@ -870,7 +882,7 @@ public final class GPTOSSModel: LanguageModel {
         embedCmd.waitUntilCompleted()
 
         for (i, layer) in layers.enumerated() {
-            guard let kv = caches[i] as? KVCache else {
+            guard let kv = caches[i] as? any KVCacheProtocol else {
                 fatalError(
                     "GPTOSSModel: expected KVCache at layer \(i), "
                         + "got \(type(of: caches[i]))")

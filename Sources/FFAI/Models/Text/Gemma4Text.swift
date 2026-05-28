@@ -1621,28 +1621,28 @@ public final class Gemma4Model: LanguageModel {
     /// the donor's cache (`params.previousKVs`).
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxContextWindow
-        guard kvCacheKind == .raw else {
-            preconditionFailure(
-                "Gemma4: only .raw KV cache supported today; got \(kvCacheKind)")
-        }
-        var caches: [any LayerCacheProtocol] = []
-        caches.reserveCapacity(nLayers)
-        for (i, layer) in layers.enumerated() {
-            // A KV-shared layer never appends to its own cache — give it
-            // a 1-slot placeholder so the array stays index-aligned
-            // without allocating a full unused slab.
+        // Gemma 4 has no AURA Π-rotation wiring (sliding / global / KV-shared
+        // donor attention paths) — map AURA to raw; raw + affine run through
+        // the shared factory, which groups the per-layer geometries
+        // (sliding vs global head dims) into one dequant scratch each.
+        let kind: KVCacheKind = {
+            if case .auraQuantized = kvCacheKind { return .raw }
+            return kvCacheKind
+        }()
+        let specs = layers.map { layer -> AttentionCacheSpec in
+            // A KV-shared layer never appends to its own cache — a 1-slot
+            // raw placeholder keeps the array index-aligned without a slab.
             let layerCap = layer.isKvShared ? 1 : cap
             let eviction: KVEviction =
                 layer.isGlobal
                 ? .unbounded
                 : .window(maxSize: min(params.slidingWindow, layerCap), keep: 0)
-            caches.append(
-                KVCache(
-                    nKVHeads: layer.nKVHeads, headDim: layer.headDim, contextLength: layerCap,
-                    dtype: dtype, eviction: eviction, device: device))
-            _ = i
+            return AttentionCacheSpec(
+                nKVHeads: layer.nKVHeads, headDim: layer.headDim,
+                contextLength: layerCap, eviction: eviction,
+                placeholder: layer.isKvShared)
         }
-        return caches
+        return makeAttentionCaches(kind: kind, specs: specs, dtype: dtype, device: device)
     }
 
     public func forward(
