@@ -232,13 +232,4 @@ Sketch: extend the config decoder to recognise per-key bit-widths (probably a `q
 
 **Context.** Surfaced 2026-05-28 while adding the dedicated InternLM2 loader (name remap + fused-`wqkv` split). Independent of the loader fix.
 
-## AURA KV cache — not yet wired for the bespoke-layer families
-
-**Symptom.** Requesting `--kv-cache aura*` on Gemma 2 / 3 / 4, GPT-OSS, or any hybrid (Jamba, NemotronH, Granite4, LFM2, Qwen3.5, FalconH1) silently falls back to the raw cache (the `makeLayerCaches` for those families maps `.auraQuantized → .raw`). Affine (`affine4` / `affine8`) IS supported on all of them.
-
-**Status.** Intentional, low priority. AURA stores K/V in a per-layer SRHT-rotated space, so every attention layer must rotate Q before SDPA (`Ops.auraRotatePerHead(rotationDtype)`) and un-rotate the SDPA output before `o_proj` (`rotationDtypeT`) — see `LlamaLayer.forward`. The Llama-family / OLMo2 / Starcoder2 / Granite3 / InternLM2 paths have this wiring (full AURA support); the families above have bespoke attention paths (Gemma's sliding-window + softcap, GPT-OSS's host-side sink correction, Gemma 4's donor / KV-shared paths, the hybrid mixers) that don't, plus interactions to verify (AURA + sliding window, AURA + GPT-OSS sink correction reading the dequant mirror Π-rotated, etc.).
-
-**Next steps when this lands as a priority.** Add the two `Ops.auraRotatePerHead` calls around each family's `sdpaDecode` (gated on `cache as? AURAQuantizedKVCache`), drop the `.auraQuantized → .raw` map in that family's `makeLayerCaches`, and verify `aura4` decodes coherently per family. GPT-OSS additionally needs Π applied to the host-side sink-correction Q (the dot products run against Π-rotated K). The factory (`makeAttentionScratch` / `makeAttentionCache`) already builds AURA caches correctly; only the per-layer rotation is missing.
-
-**Context.** Surfaced 2026-05-28 generalizing affine/AURA compression across all attention families. Affine landed universally; AURA stayed on the families whose layers already had the Π wiring.
 
