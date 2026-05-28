@@ -76,7 +76,7 @@ public final class GDNStateCache: LayerCacheProtocol, @unchecked Sendable {
 
     /// GDN state is not length-bound; report `.max` so capacity gates
     /// treat GDN layers as unlimited (mirrors `SSMStateCache`).
-    public let maxSeq: Int = .max
+    public let capacity: Int = .max
 
     public init(
         numValueHeads: Int, valueHeadDim: Int, keyHeadDim: Int,

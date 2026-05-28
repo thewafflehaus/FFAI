@@ -134,7 +134,7 @@ public final class GlmOcrTextLayer: Module {
         let attnOut = Ops.sdpaDecode(
             q: qRot, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: cache.length, kvStride: cache.maxSeq,
+            nKV: cache.length, kvStride: cache.capacity,
             scale: scale, on: cmd)
         // Sandwich norm: o_proj first to bring back to the residual-stream
         // dim (hidden), then `post_self_attn_layernorm` over that, then
@@ -175,7 +175,7 @@ public final class GlmOcrModel: LanguageModel {
     /// Vision tower: patch-embed + transformer blocks + merger.
     public let visionTower: GlmOcrVisionTower
 
-    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxSeq: Int
+    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxContextWindow: Int
     public let ropeTheta: Float
     public let dtype: DType
     public let kvCacheKind: KVCacheKind
@@ -187,7 +187,7 @@ public final class GlmOcrModel: LanguageModel {
         finalNorm: RMSNorm, lmHead: AnyLinear,
         visionTower: GlmOcrVisionTower,
         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-        vocab: Int, maxSeq: Int, ropeTheta: Float, dtype: DType,
+        vocab: Int, maxContextWindow: Int, ropeTheta: Float, dtype: DType,
         imageTokenId: Int, eosTokenId: Int,
         kvCacheKind: KVCacheKind = .raw
     ) {
@@ -202,7 +202,7 @@ public final class GlmOcrModel: LanguageModel {
         self.nKVHeads = nKVHeads
         self.headDim = headDim
         self.vocab = vocab
-        self.maxSeq = maxSeq
+        self.maxContextWindow = maxContextWindow
         self.ropeTheta = ropeTheta
         self.dtype = dtype
         self.kvCacheKind = kvCacheKind
@@ -230,12 +230,12 @@ public final class GlmOcrModel: LanguageModel {
     }
 
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        let cap = maxSeq ?? self.maxSeq
+        let cap = maxSeq ?? self.maxContextWindow
         switch kvCacheKind {
         case .raw:
             return (0 ..< nLayers).map { _ in
                 KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                     dtype: dtype, device: device)
             }
         case .affineQuantized(let bits, let groupSize):
@@ -247,7 +247,7 @@ public final class GlmOcrModel: LanguageModel {
                 dtype: dtype, device: device)
             return (0 ..< nLayers).map { _ in
                 AffineQuantizedKVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                     dtype: dtype, bits: bits, groupSize: groupSize,
                     sharedWorkingK: sharedK, sharedWorkingV: sharedV,
                     device: device)
@@ -256,7 +256,7 @@ public final class GlmOcrModel: LanguageModel {
             // GLM-OCR doesn't ship AURA conversions yet; fall back to raw.
             return (0 ..< nLayers).map { _ in
                 KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                     dtype: dtype, device: device)
             }
         }

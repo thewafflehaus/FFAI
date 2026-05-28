@@ -175,7 +175,7 @@ public struct LlamaDense: LlamaVariant {
             finalNorm: finalNorm, lmHead: lmHead,
             hidden: hidden, nLayers: nLayers, nHeads: nHeads,
             nKVHeads: nKVHeads, headDim: headDim, vocab: vocab,
-            maxSeq: maxSeq, ropeTheta: theta, dtype: activationDtype,
+            maxContextWindow: maxSeq, ropeTheta: theta, dtype: activationDtype,
             kvCacheKind: options.kvCache,
             kvEviction: options.kvEviction,
             auraDecodePath: options.auraDecodePath
@@ -292,7 +292,7 @@ public final class LlamaLayer: Module {
         let attnOut = Ops.sdpaDecode(
             q: qForSdpa, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: cache.length, kvStride: cache.maxSeq,
+            nKV: cache.length, kvStride: cache.capacity,
             scale: scale, on: cmd)
 
         let attnReadyForOProj: Tensor
@@ -412,7 +412,7 @@ public final class LlamaLayer: Module {
         let attnOut = Ops.sdpaMulti(
             q: qForSdpa, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            baseKV: position, nQuery: nRows, kvStride: cache.maxSeq,
+            baseKV: position, nQuery: nRows, kvStride: cache.capacity,
             causal: true, scale: scale, on: cmd
         )
 
@@ -467,7 +467,7 @@ public final class LlamaModel: LanguageModel {
     public let finalNorm: RMSNorm
     public let lmHead: AnyLinear
 
-    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxSeq: Int
+    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxContextWindow: Int
     public let ropeTheta: Float
     public let dtype: DType
     /// Cache scheme to use when `makeLayerCaches(...)` is called. Set at
@@ -484,7 +484,7 @@ public final class LlamaModel: LanguageModel {
         embedTokens: AnyEmbedding, layers: [LlamaLayer],
         finalNorm: RMSNorm, lmHead: AnyLinear,
         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-        vocab: Int, maxSeq: Int, ropeTheta: Float, dtype: DType,
+        vocab: Int, maxContextWindow: Int, ropeTheta: Float, dtype: DType,
         kvCacheKind: KVCacheKind = .raw,
         kvEviction: KVEviction = .unbounded,
         auraDecodePath: AURADecodePath = .compressed
@@ -499,7 +499,7 @@ public final class LlamaModel: LanguageModel {
         self.nKVHeads = nKVHeads
         self.headDim = headDim
         self.vocab = vocab
-        self.maxSeq = maxSeq
+        self.maxContextWindow = maxContextWindow
         self.ropeTheta = ropeTheta
         self.dtype = dtype
         self.kvCacheKind = kvCacheKind
@@ -525,13 +525,13 @@ public final class LlamaModel: LanguageModel {
     /// time): raw `KVCache` for `.raw`, `AffineQuantizedKVCache` (with
     /// a shared working buffer pair) for `.affineQuantized`.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        let cap = maxSeq ?? self.maxSeq
+        let cap = maxSeq ?? self.maxContextWindow
         let eviction = kvEviction
         switch kvCacheKind {
         case .raw:
             return (0 ..< nLayers).map { _ in
                 KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                     dtype: dtype, eviction: eviction, device: device)
             }
         case .affineQuantized(let bits, let groupSize):
@@ -546,7 +546,7 @@ public final class LlamaModel: LanguageModel {
                 dtype: dtype, device: device)
             return (0 ..< nLayers).map { _ in
                 AffineQuantizedKVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                     dtype: dtype, bits: bits, groupSize: groupSize,
                     sharedWorkingK: sharedK, sharedWorkingV: sharedV,
                     eviction: eviction,
@@ -584,7 +584,7 @@ public final class LlamaModel: LanguageModel {
                     headDim: headDim, layerIndex: i,
                     activationDtype: dtype, device: device)
                 return AURAQuantizedKVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                     dtype: dtype, scheme: scheme,
                     rotation: rot.rotation, rotationT: rot.rotationT,
                     rotationDtype: rot.rotationDtype, rotationDtypeT: rot.rotationDtypeT,

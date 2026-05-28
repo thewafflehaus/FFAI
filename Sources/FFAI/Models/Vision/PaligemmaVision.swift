@@ -655,7 +655,7 @@ public final class PaligemmaModel: LanguageModel, @unchecked Sendable {
     public var nKVHeads: Int { textEngine.nKVHeads }
     public var headDim: Int { textEngine.headDim }
     public var vocab: Int { textEngine.vocab }
-    public var maxSeq: Int { textEngine.maxSeq }
+    public var maxContextWindow: Int { textEngine.maxContextWindow }
     public var dtype: DType { textEngine.dtype }
 
     init(

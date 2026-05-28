@@ -189,7 +189,7 @@ public struct Starcoder2Dense: Starcoder2Variant {
             finalNorm: finalNorm, lmHead: lmHead,
             hidden: hidden, nLayers: nLayers, nHeads: nHeads,
             nKVHeads: nKVHeads, headDim: headDim, vocab: vocab,
-            maxSeq: maxSeq, ropeTheta: theta, dtype: activationDtype)
+            maxContextWindow: maxSeq, ropeTheta: theta, dtype: activationDtype)
     }
 }
 
@@ -276,7 +276,7 @@ public final class Starcoder2Layer: Module {
         let attnOut = Ops.sdpaDecode(
             q: qRotated, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: cache.length, kvStride: cache.maxSeq,
+            nKV: cache.length, kvStride: cache.capacity,
             scale: scale, on: cmd)
         let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
 
@@ -305,7 +305,7 @@ public final class Starcoder2Model: LanguageModel {
     public let finalNorm: LayerNorm
     public let lmHead: AnyLinear
 
-    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxSeq: Int
+    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxContextWindow: Int
     public let ropeTheta: Float
     public let dtype: DType
 
@@ -313,7 +313,7 @@ public final class Starcoder2Model: LanguageModel {
         embedTokens: AnyEmbedding, layers: [Starcoder2Layer],
         finalNorm: LayerNorm, lmHead: AnyLinear,
         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-        vocab: Int, maxSeq: Int, ropeTheta: Float, dtype: DType
+        vocab: Int, maxContextWindow: Int, ropeTheta: Float, dtype: DType
     ) {
         self.embedTokens = embedTokens
         self.layers = layers
@@ -325,7 +325,7 @@ public final class Starcoder2Model: LanguageModel {
         self.nKVHeads = nKVHeads
         self.headDim = headDim
         self.vocab = vocab
-        self.maxSeq = maxSeq
+        self.maxContextWindow = maxContextWindow
         self.ropeTheta = ropeTheta
         self.dtype = dtype
     }
@@ -351,10 +351,10 @@ public final class Starcoder2Model: LanguageModel {
     /// the prompt level rather than the cache level (truncation is the
     /// caller's job).
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        let cap = maxSeq ?? self.maxSeq
+        let cap = maxSeq ?? self.maxContextWindow
         return (0 ..< nLayers).map { _ in
             KVCache(
-                nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                 dtype: dtype, device: device)
         }
     }

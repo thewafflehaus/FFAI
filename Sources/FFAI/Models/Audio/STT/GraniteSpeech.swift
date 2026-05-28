@@ -1366,7 +1366,7 @@ public final class GraniteSpeechLMLayer: Module {
         let attnOut = Ops.sdpaDecode(
             q: qRotated, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: cache.length, kvStride: cache.maxSeq,
+            nKV: cache.length, kvStride: cache.capacity,
             scale: attentionMultiplier, on: cmd
         )
         let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
@@ -1722,7 +1722,7 @@ public final class GraniteSpeechModel: Module {
         let headDim = config.textConfig.hiddenSize / config.textConfig.numAttentionHeads
         return (0 ..< config.textConfig.numHiddenLayers).map { _ in
             KVCache(
-                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                nKVHeads: nKVHeads, headDim: headDim, contextLength: maxSeq,
                 dtype: dtype, device: device)
         }
     }

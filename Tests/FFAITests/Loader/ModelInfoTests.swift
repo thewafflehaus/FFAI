@@ -73,7 +73,7 @@ struct ModelInfoTests {
             family: "TestModel",
             dtype: .bf16,
             hidden: 2048, nLayers: 24, nHeads: 16, nKVHeads: 4,
-            headDim: 128, vocab: 32000, maxSeq: 8192,
+            headDim: 128, vocab: 32000, maxContextWindow: 8192,
             quantization: ModelConfig.QuantizationConfig(bits: 4, groupSize: 64),
             defaultGenerationParameters: params,
             availableCapabilities: [.textIn, .textOut],
@@ -98,7 +98,7 @@ struct ModelInfoTests {
         #expect(info.nKVHeads == 4)
         #expect(info.headDim == 128)
         #expect(info.vocab == 32000)
-        #expect(info.maxSeq == 8192)
+        #expect(info.maxContextWindow == 8192)
         #expect(info.quantization?.bits == 4)
         #expect(info.quantization?.groupSize == 64)
         #expect(info.defaultGenerationParameters.maxTokens == 200)
@@ -153,7 +153,7 @@ struct ModelInfoTests {
             family: "TestModel",
             dtype: .bf16,
             hidden: 2048, nLayers: 16, nHeads: nHeads, nKVHeads: nKVHeads,
-            headDim: 128, vocab: 32000, maxSeq: 4096,
+            headDim: 128, vocab: 32000, maxContextWindow: 4096,
             quantization: quantization,
             defaultGenerationParameters: GenerationParameters(),
             availableCapabilities: [.textIn, .textOut],

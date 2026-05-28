@@ -228,7 +228,7 @@ public struct Phi3Dense: PhiVariant {
             finalNorm: finalNorm, lmHead: lmHead,
             hidden: hidden, nLayers: nLayers, nHeads: nHeads,
             nKVHeads: nKVHeads, headDim: headDim, vocab: vocab,
-            maxSeq: maxSeq, ropeTheta: theta, dtype: activationDtype,
+            maxContextWindow: maxSeq, ropeTheta: theta, dtype: activationDtype,
             kvCacheKind: options.kvCache,
             kvEviction: options.kvEviction
         )

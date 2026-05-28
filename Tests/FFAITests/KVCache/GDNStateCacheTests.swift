@@ -42,7 +42,7 @@ struct GDNStateCacheTests {
             #expect(cache.current.toArray(as: Float.self).allSatisfy { $0 == 0 })
             #expect(cache.next.toArray(as: Float.self).allSatisfy { $0 == 0 })
             #expect(cache.length == 0)
-            #expect(cache.maxSeq == .max)
+            #expect(cache.capacity == .max)
             // Two buffers: 2 * Hv * Dv * Dk * 4 bytes.
             #expect(cache.bytesAllocated == 2 * 8 * 64 * 64 * 4)
             #expect(cache.bytesInUse == 0)
@@ -116,7 +116,7 @@ struct GDNStateCacheTests {
             let cache: LayerCacheProtocol = GDNStateCache(
                 numValueHeads: 1, valueHeadDim: 1, keyHeadDim: 32)
             #expect(cache.length == 0)
-            #expect(cache.maxSeq == .max)
+            #expect(cache.capacity == .max)
             cache.reset()
             #expect(cache.length == 0)
         }

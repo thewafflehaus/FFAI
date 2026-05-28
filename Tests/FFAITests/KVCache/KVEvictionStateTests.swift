@@ -164,7 +164,7 @@ struct KVCacheSlidingWindowTests {
     @Test("raw KVCache with window policy reports length = min(appended, maxSize)")
     func rawCacheLengthSaturates() throws {
         let cache = KVCache(
-            nKVHeads: 2, headDim: 4, maxSeq: 8, dtype: .f32,
+            nKVHeads: 2, headDim: 4, contextLength: 8, dtype: .f32,
             eviction: .window(maxSize: 4, keep: 0)
         )
         // No appends yet.
@@ -177,14 +177,14 @@ struct KVCacheSlidingWindowTests {
         // window size). The old behaviour wasted the [maxSize, maxSeq)
         // tail; `effectiveMaxSize` is the value callers should use for
         // the retained-window size.
-        #expect(cache.maxSeq == 4)
+        #expect(cache.capacity == 4)
         #expect(cache.capacity == 4)
     }
 
     @Test("raw KVCache append rotates physical positions in ring order")
     func rawCacheAppendRotates() throws {
         let cache = KVCache(
-            nKVHeads: 1, headDim: 2, maxSeq: 8, dtype: .f32,
+            nKVHeads: 1, headDim: 2, contextLength: 8, dtype: .f32,
             eviction: .window(maxSize: 3, keep: 0)
         )
         let device = Device.shared
@@ -219,7 +219,7 @@ struct KVCacheSlidingWindowTests {
     @Test("raw KVCache.reset returns to a fresh empty state")
     func rawCacheReset() throws {
         let cache = KVCache(
-            nKVHeads: 1, headDim: 1, maxSeq: 4, dtype: .f32,
+            nKVHeads: 1, headDim: 1, contextLength: 4, dtype: .f32,
             eviction: .window(maxSize: 2)
         )
         let device = Device.shared
@@ -238,7 +238,7 @@ struct KVCacheSlidingWindowTests {
 
     @Test("legacy KVCache init defaults to unbounded eviction")
     func rawCacheDefaultIsUnbounded() throws {
-        let cache = KVCache(nKVHeads: 1, headDim: 4, maxSeq: 8, dtype: .f32)
+        let cache = KVCache(nKVHeads: 1, headDim: 4, contextLength: 8, dtype: .f32)
         #expect(cache.eviction == .unbounded)
         #expect(cache.effectiveMaxSize == 8)
     }

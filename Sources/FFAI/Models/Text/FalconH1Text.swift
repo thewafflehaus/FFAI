@@ -426,7 +426,7 @@ public struct FalconH1Hybrid: FalconH1Variant {
             nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
             mambaNHeads: mambaNHeads, mambaHeadDim: mambaHeadDim,
             stateDim: stateDim, convDim: convDim, convKernel: convKernel,
-            dSSM: dSSM, vocab: vocab, maxSeq: maxSeq,
+            dSSM: dSSM, vocab: vocab, maxContextWindow: maxSeq,
             dtype: activationDtype)
     }
 }
@@ -671,7 +671,7 @@ public final class FalconH1DecoderLayer: Module, DecoderLayer {
         let attnOut = Ops.sdpaDecode(
             q: qRotated, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: cache.length, kvStride: cache.maxSeq,
+            nKV: cache.length, kvStride: cache.capacity,
             scale: scale, on: cmd)
 
         return oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
@@ -697,7 +697,7 @@ public final class FalconH1LayerCache: LayerCacheProtocol, @unchecked Sendable {
     /// Attention KV cache drives the user-visible length (it grows with
     /// the sequence; the SSM state is constant-size).
     public var length: Int { kv.length }
-    public var maxSeq: Int { kv.maxSeq }
+    public var capacity: Int { kv.capacity }
     public var bytesAllocated: Int { mamba.bytesAllocated + kv.bytesAllocated }
     public var bytesInUse: Int { mamba.bytesInUse + kv.bytesInUse }
 
@@ -718,7 +718,7 @@ public final class FalconH1Model: LanguageModel {
     public let finalNorm: RMSNorm
     public let lmHead: AnyLinear
 
-    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxSeq: Int
+    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxContextWindow: Int
     public let mambaNHeads, mambaHeadDim, stateDim, convDim, convKernel, dSSM: Int
     public let dtype: DType
 
@@ -728,7 +728,7 @@ public final class FalconH1Model: LanguageModel {
         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
         mambaNHeads: Int, mambaHeadDim: Int, stateDim: Int,
         convDim: Int, convKernel: Int, dSSM: Int,
-        vocab: Int, maxSeq: Int, dtype: DType
+        vocab: Int, maxContextWindow: Int, dtype: DType
     ) {
         self.embedTokens = embedTokens
         self.layers = layers
@@ -746,7 +746,7 @@ public final class FalconH1Model: LanguageModel {
         self.convKernel = convKernel
         self.dSSM = dSSM
         self.vocab = vocab
-        self.maxSeq = maxSeq
+        self.maxContextWindow = maxContextWindow
         self.dtype = dtype
     }
 
@@ -770,14 +770,14 @@ public final class FalconH1Model: LanguageModel {
     /// One `FalconH1LayerCache` per layer — Mamba state + KV cache. The
     /// SSM half is constant-size; the KV half is sized to `maxSeq`.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        let cap = maxSeq ?? self.maxSeq
+        let cap = maxSeq ?? self.maxContextWindow
         return (0 ..< nLayers).map { _ in
             let mamba = Mamba2LayerCache(
                 nHeads: mambaNHeads, stateDim: stateDim, headDim: mambaHeadDim,
                 convChannels: convDim, convKernelSize: convKernel,
                 dtype: dtype, device: device)
             let kv = KVCache(
-                nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                 dtype: dtype, device: device)
             return FalconH1LayerCache(mamba: mamba, kv: kv)
         }

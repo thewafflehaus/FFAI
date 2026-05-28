@@ -222,7 +222,7 @@ public struct Gemma3Dense: Gemma3Variant {
             embedScale: embedScale,
             hidden: hidden, nLayers: nLayers, nHeads: nHeads,
             nKVHeads: nKVHeads, headDim: headDim, vocab: vocab,
-            maxSeq: maxSeq, dtype: activationDtype,
+            maxContextWindow: maxSeq, dtype: activationDtype,
             slidingWindow: slidingWindow,
             slidingWindowPattern: slidingWindowPattern,
             kvCacheKind: options.kvCache,
@@ -548,7 +548,7 @@ public final class Gemma3Layer: Module {
         let attnOut = Ops.sdpaDecode(
             q: qRotated, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: cache.length, kvStride: cache.maxSeq,
+            nKV: cache.length, kvStride: cache.capacity,
             scale: scale, on: cmd,
             sinkEnd: sinkEnd, windowStart: windowStart)
 
@@ -602,7 +602,7 @@ public final class Gemma3Model: LanguageModel {
     /// (the original Gemma "embed_scale" normalization).
     public let embedScale: Tensor
 
-    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxSeq: Int
+    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxContextWindow: Int
     public let dtype: DType
 
     /// Window size for sliding-attention layers (every layer that
@@ -622,7 +622,7 @@ public final class Gemma3Model: LanguageModel {
         finalNorm: RMSNorm, lmHead: AnyLinear,
         embedScale: Tensor,
         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-        vocab: Int, maxSeq: Int, dtype: DType,
+        vocab: Int, maxContextWindow: Int, dtype: DType,
         slidingWindow: Int, slidingWindowPattern: Int,
         kvCacheKind: KVCacheKind, kvEviction: KVEviction
     ) {
@@ -637,7 +637,7 @@ public final class Gemma3Model: LanguageModel {
         self.nKVHeads = nKVHeads
         self.headDim = headDim
         self.vocab = vocab
-        self.maxSeq = maxSeq
+        self.maxContextWindow = maxContextWindow
         self.dtype = dtype
         self.slidingWindow = slidingWindow
         self.slidingWindowPattern = slidingWindowPattern
@@ -663,7 +663,7 @@ public final class Gemma3Model: LanguageModel {
     /// If the user explicitly passed `.window` via LoadOptions, that
     /// applies uniformly and overrides the heuristic.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        let cap = maxSeq ?? self.maxSeq
+        let cap = maxSeq ?? self.maxContextWindow
         var caches: [any LayerCacheProtocol] = []
         caches.reserveCapacity(nLayers)
         for i in 0 ..< nLayers {
@@ -683,7 +683,7 @@ public final class Gemma3Model: LanguageModel {
             case .raw:
                 caches.append(
                     KVCache(
-                        nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                        nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                         dtype: dtype, eviction: layerEviction, device: device
                     ))
             default:

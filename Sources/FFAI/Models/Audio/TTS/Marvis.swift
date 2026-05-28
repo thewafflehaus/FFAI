@@ -226,7 +226,7 @@ public final class CSMTransformer: @unchecked Sendable {
         (0 ..< config.nLayers).map { _ in
             KVCache(
                 nKVHeads: config.nKVHeads, headDim: config.headDim,
-                maxSeq: maxSeq, dtype: dtype, device: device)
+                contextLength: maxSeq, dtype: dtype, device: device)
         }
     }
 

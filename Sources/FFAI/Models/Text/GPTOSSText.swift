@@ -285,7 +285,7 @@ public struct GPTOSSMoEVariant: GPTOSSVariant, ReasoningCapable {
             attnKinds: attnKinds,
             hidden: hidden, nLayers: nLayers, nHeads: nHeads,
             nKVHeads: nKVHeads, headDim: headDim, vocab: vocab,
-            maxSeq: maxSeq, slidingWindow: slidingWindow,
+            maxContextWindow: maxSeq, slidingWindow: slidingWindow,
             dtype: activationDtype)
     }
 }
@@ -494,7 +494,7 @@ public final class GPTOSSAttention: Module {
         let attnOut = Ops.sdpaDecode(
             q: qRot.reshaped(to: [nHeads, headDim]), k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: nKV, kvStride: cache.maxSeq,
+            nKV: nKV, kvStride: cache.capacity,
             scale: scale, on: cmd)
 
         // Commit so the host can read the rotated Q + the K cache for
@@ -525,7 +525,7 @@ public final class GPTOSSAttention: Module {
                 // kvHead, then its first nKV timesteps.
                 let headSlab = cache.kBuffer
                     .slicedRows(start: kvHead, count: 1)
-                    .reshaped(to: [cache.maxSeq, headDim])
+                    .reshaped(to: [cache.capacity, headDim])
                     .slicedRows(start: 0, count: nKV)
                 kLive[kvHead] = readGPTOSSFloats(headSlab)
             }
@@ -767,7 +767,7 @@ public final class GPTOSSModel: LanguageModel {
     /// well across more rows.
     public var defaultPrefillStepSize: Int { 2048 }
 
-    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxSeq: Int
+    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxContextWindow: Int
     /// Sliding-window size for sliding-attention layers.
     public let slidingWindow: Int
     public let dtype: DType
@@ -780,7 +780,7 @@ public final class GPTOSSModel: LanguageModel {
         finalNorm: RMSNorm, lmHead: AnyLinear,
         attnKinds: [GPTOSSAttentionKind],
         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-        vocab: Int, maxSeq: Int, slidingWindow: Int, dtype: DType
+        vocab: Int, maxContextWindow: Int, slidingWindow: Int, dtype: DType
     ) {
         self.embedTokens = embedTokens
         self.layers = layers
@@ -793,7 +793,7 @@ public final class GPTOSSModel: LanguageModel {
         self.nKVHeads = nKVHeads
         self.headDim = headDim
         self.vocab = vocab
-        self.maxSeq = maxSeq
+        self.maxContextWindow = maxContextWindow
         self.slidingWindow = slidingWindow
         self.dtype = dtype
     }
@@ -820,18 +820,18 @@ public final class GPTOSSModel: LanguageModel {
     /// correct sliding-window attention — no kernel-level window
     /// fast-path needed). Full-attention layers stay unbounded.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        let cap = maxSeq ?? self.maxSeq
+        let cap = maxSeq ?? self.maxContextWindow
         return attnKinds.map { kind in
             switch kind {
             case .sliding:
                 return KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                     dtype: dtype,
                     eviction: .window(maxSize: min(slidingWindow, cap), keep: 0),
                     device: device)
             case .full:
                 return KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                     dtype: dtype, eviction: .unbounded, device: device)
             }
         }

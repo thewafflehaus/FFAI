@@ -368,7 +368,7 @@ extension Model {
         if promptTokens.isEmpty {
             let stats = makeStats(
                 promptTokens: promptTokens, generatedCount: 0,
-                contextSize: engine.maxSeq, prefillTime: 0, decodeTime: 0,
+                contextSize: engine.maxContextWindow, prefillTime: 0, decodeTime: 0,
                 ttftMs: 0, perTokenWallclock: [],
                 memTracker: memTracker, caches: caches,
                 weightsBytes: weightsBytes, splitTokens: nil
@@ -426,7 +426,7 @@ extension Model {
         let split = ThinkingSplit.split(tokens: generated, model: self)
         let stats = makeStats(
             promptTokens: promptTokens, generatedCount: generated.count,
-            contextSize: engine.maxSeq, prefillTime: prefillTime,
+            contextSize: engine.maxContextWindow, prefillTime: prefillTime,
             decodeTime: decodeTime, ttftMs: ttftMs,
             perTokenWallclock: perTokenWallclock,
             memTracker: memTracker, caches: caches,

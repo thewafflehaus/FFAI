@@ -35,7 +35,7 @@ struct StateReplayCacheTests {
             asReplay.canStateReplay == false,
             "SSMStateCache should declare no replay support until ssm_replay kernel lands")
         #expect(asReplay.length == 0)
-        #expect(asReplay.maxSeq == .max)
+        #expect(asReplay.capacity == .max)
         #expect(asReplay.bytesInUse == asReplay.bytesAllocated)
     }
 

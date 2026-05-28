@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// KVCache — one cache per attention layer. Pre-allocated to maxSeq
-// capacity; `length` tracks how many positions are currently filled.
+// KVCache — one cache per attention layer. Grows incrementally up to
+// `contextCeiling` (see Memory growth); `length` tracks how many
+// positions are currently filled, `capacity` the current allocation.
 //
 // Two implementations conform to `KVCacheProtocol`:
 //   - `KVCache`                  : raw fp16/bf16 K/V (default)
@@ -24,8 +25,8 @@
 // The forward path calls `cache.prepareForAttention(on: cmd)` before
 // SDPA, which is a no-op for raw caches and runs the bulk-dequant
 // kernel for quantized caches. The returned (k, v) tensors have
-// shape [nKVHeads, maxSeq, headDim] — the kvStride passed to SDPA
-// is `maxSeq`, n_kv is the live `length`.
+// shape [nKVHeads, capacity, headDim] — the kvStride passed to SDPA
+// is `capacity`, n_kv is the live `length`.
 
 import Foundation
 import Metal
@@ -44,9 +45,12 @@ public protocol LayerCacheProtocol: AnyObject, Sendable {
     /// caches count steps for accounting purposes but the state size
     /// itself is constant.
     var length: Int { get }
-    /// Maximum number of timesteps the cache was sized for. SSM caches
-    /// report `.max` since their state is not length-bound.
-    var maxSeq: Int { get }
+    /// Current physical depth the cache is allocated for — the middle
+    /// dim of its `[nKVHeads, capacity, headDim]` buffers, i.e. the
+    /// `kvStride` SDPA must use. Grows as the cache grows (see
+    /// `KVCache.contextCeiling` for the max it may reach). SSM caches
+    /// report `.max` since their recurrent state is not length-bound.
+    var capacity: Int { get }
     /// Bytes physically allocated for this cache's persistent storage.
     var bytesAllocated: Int { get }
     /// Bytes used by the live slice (`length` rows).
@@ -64,13 +68,13 @@ public protocol KVCacheProtocol: LayerCacheProtocol {
     var dtype: DType { get }
 
     /// Eviction policy. `.unbounded` means classic monotonic growth
-    /// up to `maxSeq` and a panic on overflow. `.window(maxSize:keep:)`
+    /// up to `capacity` and a panic on overflow. `.window(maxSize:keep:)`
     /// enables FIFO ring-buffer rotation past `maxSize` positions,
     /// optionally pinning `keep` attention-sink slots at the front.
     var eviction: KVEviction { get }
 
     /// Maximum positions the cache retains — `maxSize` from
-    /// `.window(...)` or `maxSeq` for `.unbounded`. Returned to the
+    /// `.window(...)` or `capacity` for `.unbounded`. Returned to the
     /// engine for cache-size reporting + sliding-window attention
     /// mask construction.
     var effectiveMaxSize: Int { get }
@@ -88,7 +92,7 @@ public protocol KVCacheProtocol: LayerCacheProtocol {
     /// queued. For quantized caches this queues a bulk-dequant kernel
     /// onto `cmd` writing into the shared working buffer pair, and
     /// returns that pair. Both returned tensors have shape
-    /// `[nKVHeads, maxSeq, headDim]` — SDPA's `kvStride = maxSeq`,
+    /// `[nKVHeads, capacity, headDim]` — SDPA's `kvStride = capacity`,
     /// `nKV = length`.
     func prepareForAttention(on cmd: MTLCommandBuffer) -> (k: Tensor, v: Tensor)
 
@@ -107,7 +111,7 @@ extension KVCacheProtocol {
     /// behaves like a non-rotating cache. Concrete classes override
     /// when they wire `KVEvictionState` in.
     public var eviction: KVEviction { .unbounded }
-    public var effectiveMaxSize: Int { maxSeq }
+    public var effectiveMaxSize: Int { capacity }
     public var absolutePosition: Int { length }
 
     /// Sink + window bounds for `Ops.sdpaDecode`'s sliding-window fast
@@ -179,20 +183,14 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
     public let contextCeiling: Int
 
     /// Physical depth currently allocated for `kBuffer` / `vBuffer`
-    /// (the middle dim of `[nKVHeads, capacity, headDim]`). This is the
-    /// `kvStride` every SDPA + append dispatch must use. Grows (via
+    /// (the middle dim of `[nKVHeads, capacity, headDim]`) — the
+    /// `kvStride` every SDPA + append dispatch must use, and the
+    /// `LayerCacheProtocol.capacity` requirement. Grows (via
     /// `ensureCapacity`) up to `contextCeiling`; never shrinks. For a
     /// pre-allocated cache it equals `contextCeiling` from the start.
+    /// Use `contextCeiling` for the max-growth bound and
+    /// `effectiveMaxSize` for the sliding-window / reporting size.
     public private(set) var capacity: Int
-
-    /// `maxSeq` is the SDPA / append buffer stride — i.e. the CURRENT
-    /// physical `capacity`, not the growth ceiling. Returning capacity
-    /// here keeps every existing `kvStride: cache.maxSeq` call site
-    /// correct as the buffer grows (the buffer's middle-dim stride IS
-    /// the current capacity). Use `contextCeiling` for the max-growth
-    /// bound and `effectiveMaxSize` for the sliding-window / reporting
-    /// size.
-    public var maxSeq: Int { capacity }
 
     public private(set) var kBuffer: Tensor  // [nKVHeads, capacity, headDim]
     public private(set) var vBuffer: Tensor  // [nKVHeads, capacity, headDim]
@@ -234,34 +232,32 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
     }
 
     public convenience init(
-        nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
+        nKVHeads: Int, headDim: Int, contextLength: Int, dtype: DType,
         device: Device = .shared
     ) {
         self.init(
-            nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+            nKVHeads: nKVHeads, headDim: headDim, contextLength: contextLength,
             dtype: dtype, eviction: .unbounded, device: device)
     }
 
     /// - Parameters:
-    ///   - maxSeq: the context ceiling — the maximum depth the cache may
-    ///     grow to. With `preallocate == false` (the default for
-    ///     `.unbounded`) the physical buffer starts at
-    ///     `min(maxSeq, defaultInitialCapacity)` and doubles on demand;
-    ///     with `preallocate == true` it is allocated to `maxSeq` up
-    ///     front (the legacy behaviour, and the path callers that stage
-    ///     into the free tail — e.g. diffusion-block forwards — must
-    ///     use).
-    ///   - preallocate: force full-`maxSeq` allocation at init. Defaults
-    ///     to `false` for `.unbounded` (incremental growth) and is
-    ///     forced `true` for `.window` (the ring buffer is sized to its
-    ///     `maxSize` window and never grows).
-    ///   - initialCapacity: starting physical depth for an unbounded,
-    ///     non-preallocated cache. `nil` (default) uses the global
-    ///     `KVCache.defaultInitialCapacity`. Clamped to `maxSeq` (never
-    ///     start larger than the ceiling). Ignored when `preallocate`
-    ///     is true or the policy is `.window`.
+    ///   - contextLength: the context ceiling — the maximum depth the
+    ///     cache may grow to. With `preallocate == false` (the default
+    ///     for `.unbounded`) the physical buffer starts at
+    ///     `min(contextLength, defaultInitialCapacity)` and doubles on
+    ///     demand; with `preallocate == true` it is allocated to
+    ///     `contextLength` up front (the legacy behaviour, and the path
+    ///     callers that stage into the free tail — e.g. diffusion-block
+    ///     forwards — must use).
+    ///   - preallocate: force full-`contextLength` allocation at init.
+    ///     Defaults to `false` for `.unbounded` (incremental growth) and
+    ///     forced `true` for callers that need the full ring up front.
+    ///   - initialCapacity: starting physical depth for a non-
+    ///     preallocated cache. `nil` (default) uses the global
+    ///     `KVCache.defaultInitialCapacity`. Clamped to the ceiling
+    ///     (never start larger). Ignored when `preallocate` is true.
     public init(
-        nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
+        nKVHeads: Int, headDim: Int, contextLength: Int, dtype: DType,
         eviction: KVEviction,
         preallocate: Bool = false,
         initialCapacity: Int? = nil,
@@ -269,7 +265,7 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
     ) {
         self.nKVHeads = nKVHeads
         self.headDim = headDim
-        self.contextCeiling = maxSeq
+        self.contextCeiling = contextLength
         self.dtype = dtype
         self.device = device
 
@@ -290,10 +286,10 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
             }
         case .unbounded:
             if preallocate {
-                startCapacity = maxSeq
+                startCapacity = contextLength
             } else {
                 let requested = initialCapacity ?? KVCache.defaultInitialCapacity
-                startCapacity = Swift.min(maxSeq, Swift.max(1, requested))
+                startCapacity = Swift.min(contextLength, Swift.max(1, requested))
             }
         }
         self.capacity = startCapacity
@@ -417,7 +413,7 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
             let kSrc = kFlat.buffer.contents().advanced(by: kFlat.offset)
             let vSrc = vFlat.buffer.contents().advanced(by: vFlat.offset)
             for h in 0 ..< nKVHeads {
-                let dstHeadOffset = (h * maxSeq + pos) * headDim * dtype.byteSize
+                let dstHeadOffset = (h * capacity + pos) * headDim * dtype.byteSize
                 let kDst = kBuffer.buffer.contents().advanced(by: kBuffer.offset + dstHeadOffset)
                 let vDst = vBuffer.buffer.contents().advanced(by: vBuffer.offset + dstHeadOffset)
                 let srcOffset = h * bytesPerHead
@@ -444,11 +440,11 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
             Ops.kvCacheUpdate(
                 src: kFlat, into: kBuffer,
                 nKVHeads: nKVHeads, headDim: headDim,
-                maxSeq: maxSeq, position: pos, on: cmd)
+                maxSeq: capacity, position: pos, on: cmd)
             Ops.kvCacheUpdate(
                 src: vFlat, into: vBuffer,
                 nKVHeads: nKVHeads, headDim: headDim,
-                maxSeq: maxSeq, position: pos, on: cmd)
+                maxSeq: capacity, position: pos, on: cmd)
         }
     }
 
@@ -484,11 +480,11 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
                 Ops.kvCacheUpdate(
                     src: kFlat, into: kBuffer,
                     nKVHeads: nKVHeads, headDim: headDim,
-                    maxSeq: maxSeq, position: pos, on: cmd)
+                    maxSeq: capacity, position: pos, on: cmd)
                 Ops.kvCacheUpdate(
                     src: vFlat, into: vBuffer,
                     nKVHeads: nKVHeads, headDim: headDim,
-                    maxSeq: maxSeq, position: pos, on: cmd)
+                    maxSeq: capacity, position: pos, on: cmd)
             }
         }
     }
@@ -514,7 +510,7 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
             kSrc: kFlat, kCache: kBuffer,
             vSrc: vFlat, vCache: vBuffer,
             positions: positions, t: t,
-            nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+            nKVHeads: nKVHeads, headDim: headDim, maxSeq: capacity,
             on: cmd)
     }
 
@@ -533,7 +529,7 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
             .bindMemory(to: UInt32.self, capacity: t)
         lengthLock.withLock {
             // Grow before reserving so the subsequent
-            // `appendRangeOnGPUMany` (which reads `kBuffer`/`maxSeq` at
+            // `appendRangeOnGPUMany` (which reads `kBuffer`/`capacity` at
             // call time) targets the grown buffer at the correct stride.
             ensureCapacityLocked(_evictionState.length + t)
             for r in 0 ..< t { ptr[r] = UInt32(_evictionState.reserveNextSlot()) }
@@ -542,7 +538,7 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
 
     /// Write one timestep's K/V at an explicit physical slot **without**
     /// touching `length`. Diffusion-block forwards stage their scratch
-    /// K/V in the buffer's free region `[length, maxSeq)` across denoise
+    /// K/V in the buffer's free region `[length, capacity)` across denoise
     /// iterations before a final commit. Caller guarantees the slot is
     /// free. No lock — `length` is unchanged, so no shared state moves.
     public func writeTimestepOnGPU(
@@ -553,16 +549,16 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
             kFlat.dtype == dtype && vFlat.dtype == dtype,
             "KVCache.writeTimestepOnGPU: dtype mismatch")
         precondition(
-            slot >= 0 && slot < maxSeq,
-            "KVCache.writeTimestepOnGPU: slot \(slot) out of range 0..<\(maxSeq)")
+            slot >= 0 && slot < capacity,
+            "KVCache.writeTimestepOnGPU: slot \(slot) out of range 0..<\(capacity)")
         Ops.kvCacheUpdate(
             src: kFlat, into: kBuffer,
             nKVHeads: nKVHeads, headDim: headDim,
-            maxSeq: maxSeq, position: slot, on: cmd)
+            maxSeq: capacity, position: slot, on: cmd)
         Ops.kvCacheUpdate(
             src: vFlat, into: vBuffer,
             nKVHeads: nKVHeads, headDim: headDim,
-            maxSeq: maxSeq, position: slot, on: cmd)
+            maxSeq: capacity, position: slot, on: cmd)
     }
 
     /// Raw cache exposes its storage buffers directly; no per-step
@@ -574,15 +570,15 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
     // ─── Memory accounting (used by --stats / bench harness) ─────────
 
     /// Bytes the K + V buffers physically occupy in device memory. Set
-    /// at construction time to `2 * nKVHeads * maxSeq * headDim *
+    /// at construction time to `2 * nKVHeads * capacity * headDim *
     /// dtype.byteSize` and immutable thereafter — the buffer is
     /// preallocated.
     public var bytesAllocated: Int {
-        2 * nKVHeads * maxSeq * headDim * dtype.byteSize
+        2 * nKVHeads * capacity * headDim * dtype.byteSize
     }
 
     /// Bytes occupied by the in-use K + V slice (`length` rows out of
-    /// `maxSeq`). What you'd report as the "live KV" delta in stats.
+    /// `capacity`). What you'd report as the "live KV" delta in stats.
     public var bytesInUse: Int {
         2 * nKVHeads * length * headDim * dtype.byteSize
     }
@@ -594,11 +590,11 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
 /// form (one byte per element) plus per-group fp16/bf16 scales +
 /// biases. Memory vs the raw cache: ~40% less at int8 for typical
 /// shapes (Qwen3 1.7B 28×head_dim=128 fits in roughly 268MB vs 448MB
-/// raw at maxSeq=4096).
+/// raw at capacity=4096).
 ///
 /// All caches built in a single `makeKVCache(...)` call share **one**
 /// working buffer pair (`sharedWorkingK` + `sharedWorkingV`) — sized
-/// at `[nKVHeads, maxSeq, headDim]` in the model dtype. Per attention
+/// at `[nKVHeads, capacity, headDim]` in the model dtype. Per attention
 /// step the cache writes its dequantized rows into the shared buffer
 /// pair and returns those for SDPA. Metal's default hazard tracking
 /// serializes the buffer reuse across layers within a cmdbuf.
@@ -610,22 +606,26 @@ public final class KVCache: KVCacheProtocol, @unchecked Sendable {
 public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
     public let nKVHeads: Int
     public let headDim: Int
-    public let maxSeq: Int
+    /// Physical depth of the compressed buffers (the `LayerCacheProtocol`
+    /// stride). Fixed today — the affine cache pre-allocates and does not
+    /// yet grow incrementally (tracked in
+    /// `planning/quantized-kv-cache-growth-spec.md`).
+    public let capacity: Int
     public let dtype: DType  // dtype of scales/biases + dequant output
     public let bits: Int  // 8 for now
     public let groupSize: Int
 
     // Compressed storage (int8 packed 4-per-uint32)
-    public let kWeights: Tensor  // [nKVHeads, maxSeq, headDim / 4] u32
+    public let kWeights: Tensor  // [nKVHeads, capacity, headDim / 4] u32
     public let vWeights: Tensor
-    public let kScales: Tensor  // [nKVHeads, maxSeq, headDim / groupSize] T
+    public let kScales: Tensor  // [nKVHeads, capacity, headDim / groupSize] T
     public let vScales: Tensor
     public let kBiases: Tensor
     public let vBiases: Tensor
 
     // Shared working buffers (passed in at construction by the
     // family's makeKVCache; reused across every layer's cache).
-    public let sharedWorkingK: Tensor  // [nKVHeads, maxSeq, headDim] T
+    public let sharedWorkingK: Tensor  // [nKVHeads, capacity, headDim] T
     public let sharedWorkingV: Tensor
 
     /// Lock-protected fill state. See `KVCache.lengthLock` for the
@@ -637,26 +637,26 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
     public var eviction: KVEviction { _evictionState.policy }
     public var effectiveMaxSize: Int {
         switch _evictionState.policy {
-        case .unbounded: return maxSeq
+        case .unbounded: return capacity
         case .window(let m, _): return m
         }
     }
 
     public convenience init(
-        nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
+        nKVHeads: Int, headDim: Int, contextLength: Int, dtype: DType,
         bits: Int, groupSize: Int,
         sharedWorkingK: Tensor, sharedWorkingV: Tensor,
         device: Device = .shared
     ) {
         self.init(
-            nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+            nKVHeads: nKVHeads, headDim: headDim, contextLength: contextLength,
             dtype: dtype, bits: bits, groupSize: groupSize,
             sharedWorkingK: sharedWorkingK, sharedWorkingV: sharedWorkingV,
             eviction: .unbounded, device: device)
     }
 
     public init(
-        nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
+        nKVHeads: Int, headDim: Int, contextLength: Int, dtype: DType,
         bits: Int, groupSize: Int,
         sharedWorkingK: Tensor, sharedWorkingV: Tensor,
         eviction: KVEviction,
@@ -671,10 +671,10 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
             "headDim must be divisible by \(valuesPerWord) for int\(bits) packing")
         precondition(headDim % groupSize == 0, "headDim must be divisible by groupSize")
         precondition(
-            sharedWorkingK.shape == [nKVHeads, maxSeq, headDim],
+            sharedWorkingK.shape == [nKVHeads, contextLength, headDim],
             "sharedWorkingK shape mismatch")
         precondition(
-            sharedWorkingV.shape == [nKVHeads, maxSeq, headDim],
+            sharedWorkingV.shape == [nKVHeads, contextLength, headDim],
             "sharedWorkingV shape mismatch")
         precondition(
             sharedWorkingK.dtype == dtype && sharedWorkingV.dtype == dtype,
@@ -682,7 +682,7 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
 
         self.nKVHeads = nKVHeads
         self.headDim = headDim
-        self.maxSeq = maxSeq
+        self.capacity = contextLength
         self.dtype = dtype
         self.bits = bits
         self.groupSize = groupSize
@@ -690,17 +690,17 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
         let packsPerRow = headDim / valuesPerWord
         let groupsPerRow = headDim / groupSize
         self.kWeights = Tensor.empty(
-            shape: [nKVHeads, maxSeq, packsPerRow], dtype: .u32, device: device)
+            shape: [nKVHeads, contextLength, packsPerRow], dtype: .u32, device: device)
         self.vWeights = Tensor.empty(
-            shape: [nKVHeads, maxSeq, packsPerRow], dtype: .u32, device: device)
+            shape: [nKVHeads, contextLength, packsPerRow], dtype: .u32, device: device)
         self.kScales = Tensor.empty(
-            shape: [nKVHeads, maxSeq, groupsPerRow], dtype: dtype, device: device)
+            shape: [nKVHeads, contextLength, groupsPerRow], dtype: dtype, device: device)
         self.vScales = Tensor.empty(
-            shape: [nKVHeads, maxSeq, groupsPerRow], dtype: dtype, device: device)
+            shape: [nKVHeads, contextLength, groupsPerRow], dtype: dtype, device: device)
         self.kBiases = Tensor.empty(
-            shape: [nKVHeads, maxSeq, groupsPerRow], dtype: dtype, device: device)
+            shape: [nKVHeads, contextLength, groupsPerRow], dtype: dtype, device: device)
         self.vBiases = Tensor.empty(
-            shape: [nKVHeads, maxSeq, groupsPerRow], dtype: dtype, device: device)
+            shape: [nKVHeads, contextLength, groupsPerRow], dtype: dtype, device: device)
 
         self.sharedWorkingK = sharedWorkingK
         self.sharedWorkingV = sharedWorkingV
@@ -712,7 +712,7 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
         kBiases.zero()
         vBiases.zero()
 
-        self._evictionState = KVEvictionState(policy: eviction, bufferCapacity: maxSeq)
+        self._evictionState = KVEvictionState(policy: eviction, bufferCapacity: capacity)
     }
 
     public func reset() { lengthLock.withLock { _evictionState.reset() } }
@@ -733,12 +733,12 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
             Ops.quantizeKVAffine(
                 src: kFlat,
                 weights: kWeights, scales: kScales, biases: kBiases,
-                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                nKVHeads: nKVHeads, headDim: headDim, maxSeq: capacity,
                 groupSize: groupSize, position: pos, bits: bits, on: cmd)
             Ops.quantizeKVAffine(
                 src: vFlat,
                 weights: vWeights, scales: vScales, biases: vBiases,
-                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                nKVHeads: nKVHeads, headDim: headDim, maxSeq: capacity,
                 groupSize: groupSize, position: pos, bits: bits, on: cmd)
         }
     }
@@ -751,12 +751,12 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
         Ops.bulkDequantKVAffine(
             weights: kWeights, scales: kScales, biases: kBiases,
             into: sharedWorkingK,
-            nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+            nKVHeads: nKVHeads, headDim: headDim, maxSeq: capacity,
             groupSize: groupSize, nPositions: length, bits: bits, on: cmd)
         Ops.bulkDequantKVAffine(
             weights: vWeights, scales: vScales, biases: vBiases,
             into: sharedWorkingV,
-            nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+            nKVHeads: nKVHeads, headDim: headDim, maxSeq: capacity,
             groupSize: groupSize, nPositions: length, bits: bits, on: cmd)
         return (sharedWorkingK, sharedWorkingV)
     }
@@ -770,8 +770,8 @@ public final class AffineQuantizedKVCache: KVCacheProtocol, @unchecked Sendable 
         let groups = headDim / groupSize
         // K + V × (weights + scales + biases)
         return 2
-            * (nKVHeads * maxSeq * packs * 4
-                + 2 * nKVHeads * maxSeq * groups * dtype.byteSize)
+            * (nKVHeads * capacity * packs * 4
+                + 2 * nKVHeads * capacity * groups * dtype.byteSize)
     }
 
     public var bytesInUse: Int {

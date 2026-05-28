@@ -1315,7 +1315,7 @@ public final class Model: @unchecked Sendable {
     public func resolvedKVContextCeiling(
         generationBudget: Int? = nil, device: Device = .shared
     ) throws -> Int {
-        var ceiling = engine.maxSeq
+        var ceiling = engine.maxContextWindow
         if let mc = loadOptions.maxContextLength { ceiling = Swift.min(ceiling, mc) }
         if let gb = generationBudget { ceiling = Swift.min(ceiling, gb) }
         ceiling = try MemoryBudget.clampContext(

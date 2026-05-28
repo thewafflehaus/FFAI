@@ -218,7 +218,7 @@ struct GenerateCommand: AsyncParsableCommand {
             // check). The actual streaming generation below goes through
             // Model.generate, which computes its own prompt+maxTokens
             // cache depth.
-            let verifyCacheDepth = max(1, Swift.min(m.engine.maxSeq, promptTokens.count + 1))
+            let verifyCacheDepth = max(1, Swift.min(m.engine.maxContextWindow, promptTokens.count + 1))
             let caches = m.engine.makeLayerCaches(maxSeq: verifyCacheDepth)
             var lastLogits: Tensor?
             for (i, t) in promptTokens.enumerated() {

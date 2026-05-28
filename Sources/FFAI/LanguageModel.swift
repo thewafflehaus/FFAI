@@ -26,7 +26,10 @@ public protocol LanguageModel: Module {
     var nKVHeads: Int { get }
     var headDim: Int { get }
     var vocab: Int { get }
-    var maxSeq: Int { get }
+    /// The model's maximum context window — the largest token position
+    /// the architecture supports (from `max_position_embeddings`). Used
+    /// as the hard ceiling when sizing KV caches.
+    var maxContextWindow: Int { get }
     var dtype: DType { get }
 
     /// Default prefill chunk size — the number of prompt tokens this

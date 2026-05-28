@@ -182,7 +182,7 @@ public struct SmolVLM2Dense {
             hidden: tc.hiddenSize, nLayers: tc.numHiddenLayers,
             nHeads: tc.numAttentionHeads, nKVHeads: tc.numKeyValueHeads,
             headDim: tc.headDim, vocab: tc.vocabSize,
-            maxSeq: tc.maxPositionEmbeddings, ropeTheta: tc.ropeTheta,
+            maxContextWindow: tc.maxPositionEmbeddings, ropeTheta: tc.ropeTheta,
             dtype: activationDtype,
             kvCacheKind: options.kvCache
         )

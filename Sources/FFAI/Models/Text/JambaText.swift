@@ -334,7 +334,7 @@ public struct JambaHybrid: JambaVariant {
             nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
             dInner: dInner, dState: dState, dtRank: dtRank,
             convDim: dInner, convKernel: convKernel,
-            vocab: vocab, maxSeq: maxSeq, dtype: activationDtype)
+            vocab: vocab, maxContextWindow: maxSeq, dtype: activationDtype)
     }
 
     /// Build one Mamba 1 mixer. Reads the projections, transposes the
@@ -723,7 +723,7 @@ public final class JambaAttentionMixer: Module {
         let attnOut = Ops.sdpaDecode(
             q: q.reshaped(to: [nHeads, headDim]), k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: kv.length, kvStride: kv.maxSeq,
+            nKV: kv.length, kvStride: kv.capacity,
             scale: scale, on: cmd)
 
         return oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
@@ -802,7 +802,7 @@ public final class JambaMambaLayerCache: LayerCacheProtocol, @unchecked Sendable
     public let scan: SSMScanState
 
     public private(set) var length: Int = 0
-    public let maxSeq: Int = .max
+    public let capacity: Int = .max
 
     public init(
         dInner: Int, dState: Int,
@@ -1061,7 +1061,7 @@ public final class JambaModel: LanguageModel {
     public let finalNorm: RMSNorm
     public let lmHead: AnyLinear
 
-    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxSeq: Int
+    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxContextWindow: Int
     /// Mamba 1 mixer geometry.
     public let dInner, dState, dtRank, convDim, convKernel: Int
     public let dtype: DType
@@ -1077,7 +1077,7 @@ public final class JambaModel: LanguageModel {
         finalNorm: RMSNorm, lmHead: AnyLinear,
         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
         dInner: Int, dState: Int, dtRank: Int, convDim: Int, convKernel: Int,
-        vocab: Int, maxSeq: Int, dtype: DType
+        vocab: Int, maxContextWindow: Int, dtype: DType
     ) {
         self.embedTokens = embedTokens
         self.layers = layers
@@ -1094,7 +1094,7 @@ public final class JambaModel: LanguageModel {
         self.convDim = convDim
         self.convKernel = convKernel
         self.vocab = vocab
-        self.maxSeq = maxSeq
+        self.maxContextWindow = maxContextWindow
         self.dtype = dtype
         self.layerKinds = layers.map { layer in
             switch layer {
@@ -1132,7 +1132,7 @@ public final class JambaModel: LanguageModel {
     /// One cache per layer index, matching the layer kind:
     ///   mamba → JambaMambaLayerCache, attention → KVCache.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        let cap = maxSeq ?? self.maxSeq
+        let cap = maxSeq ?? self.maxContextWindow
         return layerKinds.map { kind in
             switch kind {
             case .mamba:
@@ -1141,7 +1141,7 @@ public final class JambaModel: LanguageModel {
                     convKernelSize: convKernel, dtype: dtype, device: device)
             case .attention:
                 return KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                     dtype: dtype, device: device)
             }
         }

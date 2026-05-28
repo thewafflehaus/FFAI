@@ -44,8 +44,8 @@ ffai --model mlx-community/Qwen3.5-0.8B-MLX-4bit --prompt "Once upon a time" --s
 | `post-prefill GPU`, `post-decode GPU` | same source | Includes a `+ delta` column attributing the growth to the corresponding phase — answers *"where did the GB come from?"*. |
 | `prefill peak`, `decode peak` | per-token sample max | The actual high-water mark inside each phase, separately reported. |
 | `weights` | sum of `Tensor.byteCount` over `engine.parameters()` | Resident model weights only. |
-| `KV cache (alloc)` | sum of `KVCache.bytesAllocated` | Capacity allocated up-front at the model's `maxSeq`. |
-| `KV cache (used)` | sum of `KVCache.bytesInUse` | The live `length / maxSeq` slice — the part you're actually paying for in attention math. |
+| `KV cache (alloc)` | sum of `KVCache.bytesAllocated` | Capacity allocated up-front at the cache's current `capacity`. |
+| `KV cache (used)` | sum of `KVCache.bytesInUse` | The live `length / capacity` slice — the part you're actually paying for in attention math. |
 | `wired ticket` | `MTLDevice.recommendedMaxWorkingSetSize` | The OS's wired-memory budget for this device. |
 
 ### Programmatic access

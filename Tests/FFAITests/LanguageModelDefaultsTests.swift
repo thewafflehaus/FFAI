@@ -47,7 +47,7 @@ final class LanguageModelDefaultsTests {
         let nKVHeads = 1
         let headDim = 4
         let vocab = 8
-        let maxSeq = 1
+        let maxContextWindow = 1
         let dtype: DType = .f32
 
         /// Tracks every cmdbuf passed into `forward(on cmd:)`.

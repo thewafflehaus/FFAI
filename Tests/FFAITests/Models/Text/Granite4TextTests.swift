@@ -191,7 +191,7 @@ struct Granite4TextVariantTests {
             // Mamba geometry is unused (no mamba layer) — pass valid placeholders.
             mambaNHeads: 1, mambaHeadDim: 128, stateDim: 128,
             convDim: 128, convKernel: 4, nGroups: 1, dInner: 128,
-            vocab: Self.vocab, maxSeq: Self.maxSeq,
+            vocab: Self.vocab, maxContextWindow: Self.maxSeq,
             logitsScaling: 1.0, dtype: .f32)
     }
 

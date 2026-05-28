@@ -860,7 +860,7 @@ public final class Qwen3ASRModel: @unchecked Sendable {
 
         let caches = (0 ..< nLayers).map { _ in
             KVCache(
-                nKVHeads: nKVHeads, headDim: hd, maxSeq: maxSeq,
+                nKVHeads: nKVHeads, headDim: hd, contextLength: maxSeq,
                 dtype: dtype, device: device)
         }
 
@@ -1018,7 +1018,7 @@ public final class Qwen3ASRModel: @unchecked Sendable {
             q: qRot.reshaped(to: [nHeads, hd]),
             k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: hd,
-            nKV: cache.length, kvStride: cache.maxSeq,
+            nKV: cache.length, kvStride: cache.capacity,
             scale: scale, on: cmd4)
         // attnOut: [nHeads, hd] → flatten to [nHeads * hd] for o_proj input.
         // Note: nHeads * hd may differ from hidden (e.g. 16*128=2048 vs 1024).

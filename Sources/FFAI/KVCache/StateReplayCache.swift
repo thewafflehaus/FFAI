@@ -79,7 +79,7 @@ extension SSMStateCache: StateReplayCache {
     public var canStateReplay: Bool { false }
 
     public var length: Int { 0 }  // Recurrent state, no notion of length.
-    public var maxSeq: Int { .max }
+    public var capacity: Int { .max }
     public var bytesInUse: Int { bytesAllocated }
 
     public func beginRecord(on cmd: MTLCommandBuffer) {

@@ -270,7 +270,7 @@ final class SopranoLayer: Module {
         let attnOut = Ops.sdpaDecode(
             q: qRot, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: cache.length, kvStride: cache.maxSeq,
+            nKV: cache.length, kvStride: cache.capacity,
             scale: scale, on: cmd)
 
         let oOut = oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
@@ -338,7 +338,7 @@ final class SopranoLLM: Module {
     func makeLayerCaches(device: Device) -> [KVCache] {
         (0 ..< nLayers).map { _ in
             KVCache(
-                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                nKVHeads: nKVHeads, headDim: headDim, contextLength: maxSeq,
                 dtype: dtype, eviction: .unbounded, device: device)
         }
     }

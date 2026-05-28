@@ -16,9 +16,9 @@
 // as AURA-codec packed indices + per-position norm corrections.
 //
 // Storage layout (per layer, both K and V):
-//   packed  [nKVHeads, maxSeq, packedWidth] u32   — bit-packed codebook indices
-//   norms   [nKVHeads, maxSeq]              f32   — per-position norm correction
-//   working [nKVHeads, maxSeq, headDim]     dtype — shared across layers; bulk-dequant target
+//   packed  [nKVHeads, capacity, packedWidth] u32   — bit-packed codebook indices
+//   norms   [nKVHeads, capacity]              f32   — per-position norm correction
+//   working [nKVHeads, contextLength, headDim]     dtype — shared across layers; bulk-dequant target
 //
 // `packedWidth = ceil(headDim * bits / 32)`. K and V use independent bit
 // widths (the production aura4v2 recipe is K=4-bit, V=2-bit per
@@ -67,7 +67,7 @@
 // real perf cost vs raw bf16 KV. Production speedup paths:
 //
 //   1. Strided-output encode kernel (one dispatch writes all heads).
-//   2. Layout change to `[maxSeq, nKVHeads, packedWidth]` + matching
+//   2. Layout change to `[capacity, nKVHeads, packedWidth]` + matching
 //      dequant kernel rewrite.
 //
 // Both queued for the perf pass.
@@ -78,7 +78,10 @@ import Metal
 public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
     public let nKVHeads: Int
     public let headDim: Int
-    public let maxSeq: Int
+    /// Physical depth of the packed buffers (the `LayerCacheProtocol`
+    /// stride). Fixed today — AURA pre-allocates and does not yet grow
+    /// incrementally (`planning/quantized-kv-cache-growth-spec.md`).
+    public let capacity: Int
     public let dtype: DType
     public let scheme: AURAScheme
     /// Which decode-time attention path this cache uses. Set at load
@@ -113,13 +116,13 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
     public let vBoundaries: Tensor  // [2^valueBits-1] f32
 
     // Per-cache compressed storage.
-    public let kPacked: Tensor  // [nKVHeads, maxSeq, kPackedWidth] u32
-    public let vPacked: Tensor  // [nKVHeads, maxSeq, vPackedWidth] u32
-    public let kNorms: Tensor  // [nKVHeads, maxSeq] f32
-    public let vNorms: Tensor  // [nKVHeads, maxSeq] f32
+    public let kPacked: Tensor  // [nKVHeads, capacity, kPackedWidth] u32
+    public let vPacked: Tensor  // [nKVHeads, capacity, vPackedWidth] u32
+    public let kNorms: Tensor  // [nKVHeads, capacity] f32
+    public let vNorms: Tensor  // [nKVHeads, capacity] f32
 
     // Shared working buffers — bulk-dequant target; reused across layers.
-    public let sharedWorkingK: Tensor  // [nKVHeads, maxSeq, headDim] dtype
+    public let sharedWorkingK: Tensor  // [nKVHeads, contextLength, headDim] dtype
     public let sharedWorkingV: Tensor
 
     /// Lock-protected fill state. Same Phase-8 concurrent-decode prep
@@ -131,13 +134,13 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
     public var eviction: KVEviction { _evictionState.policy }
     public var effectiveMaxSize: Int {
         switch _evictionState.policy {
-        case .unbounded: return maxSeq
+        case .unbounded: return capacity
         case .window(let m, _): return m
         }
     }
 
     public convenience init(
-        nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
+        nKVHeads: Int, headDim: Int, contextLength: Int, dtype: DType,
         scheme: AURAScheme,
         rotation: Tensor, rotationT: Tensor,
         rotationDtype: Tensor, rotationDtypeT: Tensor,
@@ -148,7 +151,7 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         device: Device = .shared
     ) {
         self.init(
-            nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+            nKVHeads: nKVHeads, headDim: headDim, contextLength: contextLength,
             dtype: dtype, scheme: scheme,
             rotation: rotation, rotationT: rotationT,
             rotationDtype: rotationDtype, rotationDtypeT: rotationDtypeT,
@@ -160,7 +163,7 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
     }
 
     public init(
-        nKVHeads: Int, headDim: Int, maxSeq: Int, dtype: DType,
+        nKVHeads: Int, headDim: Int, contextLength: Int, dtype: DType,
         scheme: AURAScheme,
         rotation: Tensor, rotationT: Tensor,
         rotationDtype: Tensor, rotationDtypeT: Tensor,
@@ -198,10 +201,10 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
             vCodebook.dtype == .f32 && vBoundaries.dtype == .f32,
             "AURAQuantizedKVCache: V codebook/boundaries must be f32")
         precondition(
-            sharedWorkingK.shape == [nKVHeads, maxSeq, headDim],
+            sharedWorkingK.shape == [nKVHeads, contextLength, headDim],
             "AURAQuantizedKVCache: sharedWorkingK shape mismatch")
         precondition(
-            sharedWorkingV.shape == [nKVHeads, maxSeq, headDim],
+            sharedWorkingV.shape == [nKVHeads, contextLength, headDim],
             "AURAQuantizedKVCache: sharedWorkingV shape mismatch")
         precondition(
             sharedWorkingK.dtype == dtype && sharedWorkingV.dtype == dtype,
@@ -209,7 +212,7 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
 
         self.nKVHeads = nKVHeads
         self.headDim = headDim
-        self.maxSeq = maxSeq
+        self.capacity = contextLength
         self.dtype = dtype
         self.scheme = scheme
         self.decodePath = decodePath
@@ -228,13 +231,13 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         self.vPackedWidth = AURACodebook.packedWidth(dim: headDim, bits: scheme.valueBits)
 
         self.kPacked = Tensor.empty(
-            shape: [nKVHeads, maxSeq, kPackedWidth], dtype: .u32, device: device)
+            shape: [nKVHeads, contextLength, kPackedWidth], dtype: .u32, device: device)
         self.vPacked = Tensor.empty(
-            shape: [nKVHeads, maxSeq, vPackedWidth], dtype: .u32, device: device)
+            shape: [nKVHeads, contextLength, vPackedWidth], dtype: .u32, device: device)
         self.kNorms = Tensor.empty(
-            shape: [nKVHeads, maxSeq], dtype: .f32, device: device)
+            shape: [nKVHeads, contextLength], dtype: .f32, device: device)
         self.vNorms = Tensor.empty(
-            shape: [nKVHeads, maxSeq], dtype: .f32, device: device)
+            shape: [nKVHeads, contextLength], dtype: .f32, device: device)
 
         // Codec is purely additive in atomic_or terms, so packed slots
         // MUST start zeroed. Norms slots get overwritten per encode but
@@ -244,7 +247,7 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         kNorms.zero()
         vNorms.zero()
 
-        self._evictionState = KVEvictionState(policy: eviction, bufferCapacity: maxSeq)
+        self._evictionState = KVEvictionState(policy: eviction, bufferCapacity: contextLength)
     }
 
     public func reset() { lengthLock.withLock { _evictionState.reset() } }
@@ -304,7 +307,7 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         on cmd: MTLCommandBuffer
     ) {
         let packedBytesPerSlot = packedWidth * 4
-        let packedBytesPerHead = maxSeq * packedBytesPerSlot
+        let packedBytesPerHead = capacity * packedBytesPerSlot
         guard let blit = cmd.makeBlitCommandEncoder() else { return }
         for h in 0 ..< nKVHeads {
             let off = packed.offset + h * packedBytesPerHead + pos * packedBytesPerSlot
@@ -325,7 +328,7 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
     public func prepareForAttention(on cmd: MTLCommandBuffer) -> (k: Tensor, v: Tensor) {
         guard length > 0 else { return (sharedWorkingK, sharedWorkingV) }
         // kPacked / kNorms / sharedWorkingK are all laid out
-        // [nKVHeads, maxSeq, …], so the dequant kernel must use `maxSeq`
+        // [nKVHeads, capacity, …], so the dequant kernel must use `capacity`
         // as the per-head row stride — `length` (the fill count) only
         // sets how many rows to process. Passing `length` as the stride
         // mis-offsets every head past head 0, with error growing as the
@@ -334,12 +337,12 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
             packed: kPacked, norms: kNorms, codebook: kCodebook,
             into: sharedWorkingK,
             nKVHeads: nKVHeads, dim: headDim, packedWidth: kPackedWidth,
-            tokens: length, bits: scheme.keyBits, cacheStride: maxSeq, on: cmd)
+            tokens: length, bits: scheme.keyBits, cacheStride: capacity, on: cmd)
         Ops.auraDequantRotated(
             packed: vPacked, norms: vNorms, codebook: vCodebook,
             into: sharedWorkingV,
             nKVHeads: nKVHeads, dim: headDim, packedWidth: vPackedWidth,
-            tokens: length, bits: scheme.valueBits, cacheStride: maxSeq, on: cmd)
+            tokens: length, bits: scheme.valueBits, cacheStride: capacity, on: cmd)
         return (sharedWorkingK, sharedWorkingV)
     }
 
@@ -349,8 +352,8 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         // packed buffers + norms buffers (per cache, not counting the
         // shared working buffer or the shared codec tensors — those are
         // accounted once at the caller).
-        let packedBytes = nKVHeads * maxSeq * (kPackedWidth + vPackedWidth) * 4
-        let normBytes = nKVHeads * maxSeq * 2 * 4  // f32
+        let packedBytes = nKVHeads * capacity * (kPackedWidth + vPackedWidth) * 4
+        let normBytes = nKVHeads * capacity * 2 * 4  // f32
         return packedBytes + normBytes
     }
 
@@ -365,7 +368,7 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
 
     /// Issue one `Ops.auraEncode` dispatch per head, with per-head
     /// buffer views, so each head's encoded output lands at its
-    /// non-contiguous slot in the [nKVHeads, maxSeq, packedWidth]
+    /// non-contiguous slot in the [nKVHeads, capacity, packedWidth]
     /// storage layout. See class header for the perf-followup note.
     private func encodePerHead(
         inputFlat: Tensor, packed: Tensor, norms: Tensor,
@@ -376,8 +379,8 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
     ) {
         let inputBytesPerHead = headDim * dtype.byteSize
         let packedBytesPerSlot = packedWidth * 4  // u32
-        let packedBytesPerHead = maxSeq * packedBytesPerSlot
-        let normBytesPerHead = maxSeq * 4  // f32
+        let packedBytesPerHead = capacity * packedBytesPerSlot
+        let normBytesPerHead = capacity * 4  // f32
 
         for h in 0 ..< nKVHeads {
             let inputView = Tensor(

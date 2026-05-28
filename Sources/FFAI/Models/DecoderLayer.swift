@@ -123,7 +123,7 @@ public final class StatelessLayerCache: LayerCacheProtocol {
     /// Stateless: never consumes a timestep.
     public var length: Int { 0 }
     /// Not length-bound — mirrors the SSM caches' `.max` convention.
-    public var maxSeq: Int { .max }
+    public var capacity: Int { .max }
     public var bytesAllocated: Int { 0 }
     public var bytesInUse: Int { 0 }
 

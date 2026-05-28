@@ -37,7 +37,7 @@ public final class Mamba2LayerCache: LayerCacheProtocol, @unchecked Sendable {
     public let conv: ConvStateCache
 
     public private(set) var length: Int = 0
-    public let maxSeq: Int = .max
+    public let capacity: Int = .max
 
     public init(
         nHeads: Int, stateDim: Int, headDim: Int,

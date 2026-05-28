@@ -1187,7 +1187,7 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
 
         var caches = (0 ..< nLayers).map { _ in
             KVCache(
-                nKVHeads: nKVHeads, headDim: hd, maxSeq: maxSeq,
+                nKVHeads: nKVHeads, headDim: hd, contextLength: maxSeq,
                 dtype: dtype, device: device)
         }
 
@@ -1337,7 +1337,7 @@ public final class VoxtralRealtimeModel: @unchecked Sendable {
         let attnOut = Ops.sdpaDecode(
             q: qT, k: cacheK, v: cacheV,
             nQHeads: nH, nKVHeads: nKVH, headDim: hd,
-            nKV: cache.length, kvStride: cache.maxSeq,
+            nKV: cache.length, kvStride: cache.capacity,
             scale: scale, on: cmd2)
         let attnFlat = attnOut.reshaped(to: [nH * hd])
 

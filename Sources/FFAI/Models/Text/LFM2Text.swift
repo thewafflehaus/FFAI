@@ -77,7 +77,7 @@ func lfm2LayerKinds(
 public final class LFM2ConvCache: LayerCacheProtocol, @unchecked Sendable {
     public let conv: ConvStateCache
     public private(set) var length: Int = 0
-    public let maxSeq: Int = .max
+    public let capacity: Int = .max
 
     public init(
         channels: Int, kernelSize: Int, dtype: DType,
@@ -429,7 +429,7 @@ func lfm2LoadModel(
         hidden: hidden, nLayers: nLayers,
         nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
         convDim: hidden, convKernel: convKernel,
-        vocab: vocab, maxSeq: maxSeq, dtype: activationDtype)
+        vocab: vocab, maxContextWindow: maxSeq, dtype: activationDtype)
 }
 
 /// Build one LFM2-MoE feed-forward block: a router + `num_experts`
@@ -749,7 +749,7 @@ public final class LFM2AttentionMixer: Module {
         let attnOut = Ops.sdpaDecode(
             q: qRot, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: kv.length, kvStride: kv.maxSeq, scale: scale, on: c2)
+            nKV: kv.length, kvStride: kv.capacity, scale: scale, on: c2)
         let result = outProj(attnOut.reshaped(to: [nHeads * headDim]), on: c2)
         c2.commit()
         c2.waitUntilCompleted()
@@ -952,7 +952,7 @@ public final class LFM2Model: LanguageModel {
     public let finalNorm: RMSNorm
     public let lmHead: AnyLinear
 
-    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxSeq: Int
+    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxContextWindow: Int
     public let convDim, convKernel: Int
     public let dtype: DType
 
@@ -966,7 +966,7 @@ public final class LFM2Model: LanguageModel {
         finalNorm: RMSNorm, lmHead: AnyLinear,
         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
         convDim: Int, convKernel: Int,
-        vocab: Int, maxSeq: Int, dtype: DType
+        vocab: Int, maxContextWindow: Int, dtype: DType
     ) {
         self.embedTokens = embedTokens
         self.layers = layers
@@ -980,7 +980,7 @@ public final class LFM2Model: LanguageModel {
         self.convDim = convDim
         self.convKernel = convKernel
         self.vocab = vocab
-        self.maxSeq = maxSeq
+        self.maxContextWindow = maxContextWindow
         self.dtype = dtype
         self.layerKinds = layers.map { ($0 as? LFM2Layer)?.kind ?? .conv }
         self.hasMoE = layers.contains { ($0 as? LFM2Layer)?.isMoELayer == true }
@@ -1007,7 +1007,7 @@ public final class LFM2Model: LanguageModel {
     /// One cache per layer index, matching the layer kind: conv →
     /// `LFM2ConvCache`, attention → `KVCache`.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        let cap = maxSeq ?? self.maxSeq
+        let cap = maxSeq ?? self.maxContextWindow
         return layerKinds.map { kind in
             switch kind {
             case .conv:
@@ -1017,7 +1017,7 @@ public final class LFM2Model: LanguageModel {
             case .attention:
                 return KVCache(
                     nKVHeads: nKVHeads, headDim: headDim,
-                    maxSeq: cap, dtype: dtype, device: device)
+                    contextLength: cap, dtype: dtype, device: device)
             }
         }
     }

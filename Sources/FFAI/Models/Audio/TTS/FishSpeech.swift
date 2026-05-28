@@ -307,7 +307,7 @@ public final class FishSpeechModel: Module, AudioModel {
             KVCache(
                 nKVHeads: config.nKVHeads,
                 headDim: config.headDim,
-                maxSeq: config.maxSeqLen,
+                contextLength: config.maxSeqLen,
                 dtype: .f32,
                 device: device
             )

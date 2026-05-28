@@ -678,7 +678,7 @@ func lfm2LoadModelQuantized(
         hidden: hidden, nLayers: nLayers,
         nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
         convDim: hidden, convKernel: convKernel,
-        vocab: vocab, maxSeq: maxSeq, dtype: activationDtype)
+        vocab: vocab, maxContextWindow: maxSeq, dtype: activationDtype)
 }
 
 // ─── Quantized-path helpers ──────────────────────────────────────────

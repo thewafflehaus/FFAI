@@ -328,7 +328,7 @@ public final class Mamba2Model: LanguageModel {
     public let hidden, nLayers, nHeads, nKVHeads, headDim: Int
     public let stateDim, convDim, convKernel, dInner: Int
     public let vocab: Int
-    public let maxSeq: Int = .max  // SSM has no length-bound state
+    public let maxContextWindow: Int = .max  // SSM has no length-bound state
     public let dtype: DType
 
     init(

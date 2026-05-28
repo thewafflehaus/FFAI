@@ -372,7 +372,7 @@ public struct Granite4Hybrid: Granite4Variant {
             mambaNHeads: mambaNHeads, mambaHeadDim: mambaHeadDim,
             stateDim: stateDim, convDim: convDim, convKernel: convKernel,
             nGroups: nGroups, dInner: dInner,
-            vocab: vocab, maxSeq: maxSeq,
+            vocab: vocab, maxContextWindow: maxSeq,
             logitsScaling: logitsScaling, dtype: activationDtype)
     }
 
@@ -893,7 +893,7 @@ public final class Granite4AttentionMixer: Module {
         let attnOut = Ops.sdpaDecode(
             q: q.reshaped(to: [nHeads, headDim]), k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: kv.length, kvStride: kv.maxSeq,
+            nKV: kv.length, kvStride: kv.capacity,
             scale: scale, on: cmd)
 
         return oProj(attnOut.reshaped(to: [nHeads * headDim]), on: cmd)
@@ -1110,7 +1110,7 @@ public final class Granite4Model: LanguageModel {
     public let finalNorm: RMSNorm
     public let lmHead: AnyLinear
 
-    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxSeq: Int
+    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxContextWindow: Int
     public let mambaNHeads, mambaHeadDim, stateDim, convDim, convKernel, nGroups, dInner: Int
     /// Final logits are divided by this (Granite's `logits_scaling`).
     public let logitsScaling: Float
@@ -1129,7 +1129,7 @@ public final class Granite4Model: LanguageModel {
         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
         mambaNHeads: Int, mambaHeadDim: Int, stateDim: Int,
         convDim: Int, convKernel: Int, nGroups: Int, dInner: Int,
-        vocab: Int, maxSeq: Int, logitsScaling: Float, dtype: DType
+        vocab: Int, maxContextWindow: Int, logitsScaling: Float, dtype: DType
     ) {
         self.embedTokens = embedTokens
         self.layers = layers
@@ -1148,7 +1148,7 @@ public final class Granite4Model: LanguageModel {
         self.nGroups = nGroups
         self.dInner = dInner
         self.vocab = vocab
-        self.maxSeq = maxSeq
+        self.maxContextWindow = maxContextWindow
         self.logitsScaling = logitsScaling
         self.dtype = dtype
         self.layerKinds = layers.map { layer in
@@ -1179,7 +1179,7 @@ public final class Granite4Model: LanguageModel {
     /// One cache per layer index, matching the layer kind:
     ///   mamba → Mamba2LayerCache, attention → KVCache.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        let cap = maxSeq ?? self.maxSeq
+        let cap = maxSeq ?? self.maxContextWindow
         return layerKinds.map { kind in
             switch kind {
             case .mamba:
@@ -1189,7 +1189,7 @@ public final class Granite4Model: LanguageModel {
                     dtype: dtype, device: device)
             case .attention:
                 return KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                     dtype: dtype, device: device)
             }
         }

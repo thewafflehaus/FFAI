@@ -182,7 +182,7 @@ final class FishSpeechAttentionLayer: Module {
         let attnOut = Ops.sdpaDecode(
             q: q, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: cache.length, kvStride: cache.maxSeq,
+            nKV: cache.length, kvStride: cache.capacity,
             scale: scale, on: sdpaCmd
         )
         sdpaCmd.commit()

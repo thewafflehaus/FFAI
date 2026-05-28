@@ -246,7 +246,7 @@ public enum GlmOcr {
             visionTower: visionTower,
             hidden: hidden, nLayers: nLayers, nHeads: nHeads,
             nKVHeads: nKVHeads, headDim: headDim, vocab: vocab,
-            maxSeq: maxSeq, ropeTheta: ropeTheta, dtype: activationDtype,
+            maxContextWindow: maxSeq, ropeTheta: ropeTheta, dtype: activationDtype,
             imageTokenId: imageTokenId, eosTokenId: eosTokenId,
             kvCacheKind: options.kvCache)
     }

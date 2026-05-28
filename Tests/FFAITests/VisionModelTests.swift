@@ -35,7 +35,7 @@ struct VisionModelTests {
     final class StubEngine: LanguageModel {
         let hidden: Int
         let nLayers = 1, nHeads = 1, nKVHeads = 1, headDim = 8
-        let vocab = 1000, maxSeq = 4096
+        let vocab = 1000, maxContextWindow = 4096
         let dtype: DType = .f32
 
         init(hidden: Int) { self.hidden = hidden }
@@ -46,7 +46,7 @@ struct VisionModelTests {
             [
                 KVCache(
                     nKVHeads: nKVHeads, headDim: headDim,
-                    maxSeq: maxSeq ?? self.maxSeq, dtype: dtype, device: device)
+                    contextLength: maxSeq ?? self.maxContextWindow, dtype: dtype, device: device)
             ]
         }
 
@@ -119,7 +119,7 @@ struct VisionModelTests {
         // A text-only engine (supportsEmbeddingInput == false) can't VLM.
         final class TextOnly: LanguageModel {
             let hidden = 8, nLayers = 1, nHeads = 1, nKVHeads = 1
-            let headDim = 8, vocab = 100, maxSeq = 64
+            let headDim = 8, vocab = 100, maxContextWindow = 64
             let dtype: DType = .f32
             func parameters() -> [(String, Tensor)] { [] }
             func makeLayerCaches(maxSeq: Int?, device: Device)

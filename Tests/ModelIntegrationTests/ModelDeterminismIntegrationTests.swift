@@ -142,7 +142,7 @@ struct ModelDeterminismIntegrationTests {
                 }
                 let len = kv.length
                 let bytesPerRow = kv.headDim * kv.dtype.byteSize
-                let bytesPerHeadCapacity = kv.maxSeq * bytesPerRow
+                let bytesPerHeadCapacity = kv.capacity * bytesPerRow
                 let raw = kv.kBuffer.buffer.contents()
                     .advanced(by: kv.kBuffer.offset)
                     .bindMemory(to: UInt8.self, capacity: kv.kBuffer.byteCount)

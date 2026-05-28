@@ -122,7 +122,7 @@ struct DecoderLayerTests {
     func statelessLayerCacheIsInert() {
         let cache = StatelessLayerCache()
         #expect(cache.length == 0)
-        #expect(cache.maxSeq == Int.max)
+        #expect(cache.capacity == Int.max)
         #expect(cache.bytesAllocated == 0)
         #expect(cache.bytesInUse == 0)
         cache.reset()  // no-op, must not crash

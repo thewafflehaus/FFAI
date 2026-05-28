@@ -147,7 +147,7 @@ extension Model {
         // preallocated to this depth (it stages into the free tail), so
         // bounding it here also bounds the up-front footprint.
         let cacheDepth = min(
-            m.maxSeq, promptTokens.count + params.maxNewTokens + blockLength)
+            m.maxContextWindow, promptTokens.count + params.maxNewTokens + blockLength)
         let caches = m.makeLayerCaches(maxSeq: cacheDepth)
         var nfe = 0
 
@@ -230,7 +230,7 @@ extension Model {
         // LoadOptions.maxContextLength); the preallocated cache's
         // up-front footprint is bounded by this depth.
         let cacheDepth = min(
-            m.maxSeq, promptTokens.count + params.maxNewTokens + 2 * blockLength)
+            m.maxContextWindow, promptTokens.count + params.maxNewTokens + 2 * blockLength)
         let caches = m.makeLayerCaches(maxSeq: cacheDepth)
         let rawCaches: [KVCache] = caches.map { $0 as! KVCache }
         var nfe = 0

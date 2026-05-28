@@ -57,7 +57,7 @@ public struct ModelInfo: Sendable {
     public let vocab: Int
     /// `max_position_embeddings` — the longest context the model was
     /// trained on (not the runtime KV-cache cap).
-    public let maxSeq: Int
+    public let maxContextWindow: Int
 
     /// GQA fan-out: how many query heads share each KV head. `1` for
     /// vanilla MHA, `2/4/6` typical for Llama / Qwen / Gemma GQA.
@@ -157,7 +157,7 @@ extension Model {
             nKVHeads: engine.nKVHeads,
             headDim: engine.headDim,
             vocab: engine.vocab,
-            maxSeq: engine.maxSeq,
+            maxContextWindow: engine.maxContextWindow,
             quantization: config.quantization,
             defaultGenerationParameters: defaultGenerationParameters,
             availableCapabilities: availableCapabilities,

@@ -513,7 +513,7 @@ public struct Qwen35Hybrid: Qwen35Variant {
             numKeyHeads: linearNumKeyHeads, numValueHeads: linearNumValueHeads,
             keyHeadDim: linearKeyHeadDim, valueHeadDim: linearValueHeadDim,
             convDim: convDim, convKernel: convKernel,
-            vocab: vocab, maxSeq: maxSeq, dtype: activationDtype)
+            vocab: vocab, maxContextWindow: maxSeq, dtype: activationDtype)
     }
 
     /// Build one GDN mixer. Reads the split QKV / Z / B / A projections,
@@ -1074,7 +1074,7 @@ public final class Qwen35GDNLayerCache: LayerCacheProtocol, @unchecked Sendable 
     public let gdn: GDNStateCache
 
     public private(set) var length: Int = 0
-    public let maxSeq: Int = .max
+    public let capacity: Int = .max
 
     public init(
         numKeyHeads: Int, numValueHeads: Int,
@@ -2235,7 +2235,7 @@ public final class Qwen35AttentionMixer: Module {
             Ops.sdpaDecode2Pass(
                 q: qNormed.reshaped(to: [nHeads, headDim]), k: cacheK, v: cacheV,
                 nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-                nKV: kv.length, kvStride: kv.maxSeq, blocks: sdpa2PassBlocks,
+                nKV: kv.length, kvStride: kv.capacity, blocks: sdpa2PassBlocks,
                 scale: scale,
                 partialO: partialOScratch!,
                 partialM: partialMScratch!,
@@ -2246,7 +2246,7 @@ public final class Qwen35AttentionMixer: Module {
             attnOut = Ops.sdpaDecode(
                 q: qNormed.reshaped(to: [nHeads, headDim]), k: cacheK, v: cacheV,
                 nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-                nKV: kv.length, kvStride: kv.maxSeq,
+                nKV: kv.length, kvStride: kv.capacity,
                 scale: scale, on: cmd, into: attnOutScratch)
         }
 
@@ -2403,7 +2403,7 @@ public final class Qwen35AttentionMixer: Module {
             attnAll = Ops.sdpaMulti(
                 q: qBlock, k: cacheK, v: cacheV,
                 nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-                baseKV: startPosition, nQuery: t, kvStride: kv.maxSeq,
+                baseKV: startPosition, nQuery: t, kvStride: kv.capacity,
                 causal: true, scale: scale, on: cmd
             ).reshaped(to: [t * qDim])
         } else {
@@ -2421,7 +2421,7 @@ public final class Qwen35AttentionMixer: Module {
                 _ = Ops.sdpaDecode(
                     q: qRow, k: cacheK, v: cacheV,
                     nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-                    nKV: startPosition + r + 1, kvStride: kv.maxSeq,
+                    nKV: startPosition + r + 1, kvStride: kv.capacity,
                     scale: scale, on: cmd, into: outRow)
             }
             attnAll = attnAllScratch
@@ -2885,7 +2885,7 @@ public final class Qwen35Model: LanguageModel {
     public let finalNorm: RMSNorm
     public let lmHead: AnyLinear
 
-    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxSeq: Int
+    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxContextWindow: Int
     /// GDN mixer geometry.
     public let numKeyHeads, numValueHeads, keyHeadDim, valueHeadDim: Int
     public let convDim, convKernel: Int
@@ -2913,7 +2913,7 @@ public final class Qwen35Model: LanguageModel {
         numKeyHeads: Int, numValueHeads: Int,
         keyHeadDim: Int, valueHeadDim: Int,
         convDim: Int, convKernel: Int,
-        vocab: Int, maxSeq: Int, dtype: DType
+        vocab: Int, maxContextWindow: Int, dtype: DType
     ) {
         self.embedTokens = embedTokens
         self.layers = layers
@@ -2931,7 +2931,7 @@ public final class Qwen35Model: LanguageModel {
         self.convDim = convDim
         self.convKernel = convKernel
         self.vocab = vocab
-        self.maxSeq = maxSeq
+        self.maxContextWindow = maxContextWindow
         self.dtype = dtype
         self.layerKinds = layers.map { layer in
             switch layer {
@@ -2969,7 +2969,7 @@ public final class Qwen35Model: LanguageModel {
     /// One cache per layer index, matching the layer kind:
     ///   GDN → GDNStateCache, attention → KVCache.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        let cap = maxSeq ?? self.maxSeq
+        let cap = maxSeq ?? self.maxContextWindow
         return layerKinds.map { kind in
             switch kind {
             case .gdn:
@@ -2982,7 +2982,7 @@ public final class Qwen35Model: LanguageModel {
                     dtype: dtype, device: device)
             case .attention:
                 return KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                     dtype: dtype, device: device)
             }
         }

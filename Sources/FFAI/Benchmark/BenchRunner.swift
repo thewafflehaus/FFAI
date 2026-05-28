@@ -188,7 +188,7 @@ public struct BenchRunner {
         let weightsBytes = model.engine.parameters().reduce(0) { $0 + $1.1.byteCount }
         let stats = GenerationStats(
             promptTokens: tokens.count, generatedTokens: 0,
-            contextSize: model.engine.maxSeq,
+            contextSize: model.engine.maxContextWindow,
             prefillTimeS: 0, decodeTimeS: 0, timeToFirstTokenMs: 0,
             steadyTokensPerSecond: nil,
             baselineGPUBytes: memTracker.baseline.gpuBytes,

@@ -952,7 +952,7 @@ public final class Idefics3Model: LanguageModel {
     public var nKVHeads: Int { llamaModel.nKVHeads }
     public var headDim: Int { llamaModel.headDim }
     public var vocab: Int { llamaModel.vocab }
-    public var maxSeq: Int { llamaModel.maxSeq }
+    public var maxContextWindow: Int { llamaModel.maxContextWindow }
     public var dtype: DType { llamaModel.dtype }
 
     public init(

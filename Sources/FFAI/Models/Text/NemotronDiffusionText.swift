@@ -178,7 +178,7 @@ public struct NemotronDiffusionDense: NemotronDiffusionVariant {
             finalNorm: finalNorm, lmHead: lmHead,
             hidden: hidden, nLayers: nLayers, nHeads: nHeads,
             nKVHeads: nKVHeads, headDim: headDim, vocab: vocab,
-            maxSeq: maxSeq, ropeTheta: theta, dtype: activationDtype,
+            maxContextWindow: maxSeq, ropeTheta: theta, dtype: activationDtype,
             maskTokenId: maskTokenId, blockSize: blockSize,
             eosTokenId: config.eosTokenId,
             kvCacheKind: options.kvCache,
@@ -289,7 +289,7 @@ public final class NemotronDiffusionLayer: Module {
         let attnOut = Ops.sdpaDecode(
             q: qForSdpa, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: cache.length, kvStride: cache.maxSeq,
+            nKV: cache.length, kvStride: cache.capacity,
             scale: scale, on: cmd)
 
         let attnReady: Tensor
@@ -406,7 +406,7 @@ public final class NemotronDiffusionLayer: Module {
         let attnAll = Ops.sdpaMulti(
             q: qAll, k: cache.kBuffer, v: cache.vBuffer,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            baseKV: baseLength, nQuery: n, kvStride: cache.maxSeq,
+            baseKV: baseLength, nQuery: n, kvStride: cache.capacity,
             causal: causal, scale: scale, on: cmd)
 
         // o_proj (GEMM), optional LoRA delta, residual — all batched.
@@ -472,7 +472,7 @@ public final class NemotronDiffusionModel: LanguageModel {
     public let finalNorm: RMSNorm
     public let lmHead: AnyLinear
 
-    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxSeq: Int
+    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxContextWindow: Int
     public let ropeTheta: Float
     public let dtype: DType
     public let kvCacheKind: KVCacheKind
@@ -491,7 +491,7 @@ public final class NemotronDiffusionModel: LanguageModel {
         embedTokens: AnyEmbedding, layers: [NemotronDiffusionLayer],
         finalNorm: RMSNorm, lmHead: AnyLinear,
         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
-        vocab: Int, maxSeq: Int, ropeTheta: Float, dtype: DType,
+        vocab: Int, maxContextWindow: Int, ropeTheta: Float, dtype: DType,
         maskTokenId: Int, blockSize: Int, eosTokenId: Int?,
         kvCacheKind: KVCacheKind = .raw,
         kvEviction: KVEviction = .unbounded
@@ -506,7 +506,7 @@ public final class NemotronDiffusionModel: LanguageModel {
         self.nKVHeads = nKVHeads
         self.headDim = headDim
         self.vocab = vocab
-        self.maxSeq = maxSeq
+        self.maxContextWindow = maxContextWindow
         self.ropeTheta = ropeTheta
         self.dtype = dtype
         self.maskTokenId = maskTokenId
@@ -622,7 +622,7 @@ public final class NemotronDiffusionModel: LanguageModel {
     }
 
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        let cap = maxSeq ?? self.maxSeq
+        let cap = maxSeq ?? self.maxContextWindow
         let eviction = kvEviction
         switch kvCacheKind {
         case .raw:
@@ -634,7 +634,7 @@ public final class NemotronDiffusionModel: LanguageModel {
             // those staging slots out of range. Force full preallocation.
             return (0 ..< nLayers).map { _ in
                 KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                     dtype: dtype, eviction: eviction,
                     preallocate: true, device: device)
             }
@@ -647,7 +647,7 @@ public final class NemotronDiffusionModel: LanguageModel {
                 dtype: dtype, device: device)
             return (0 ..< nLayers).map { _ in
                 AffineQuantizedKVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                     dtype: dtype, bits: bits, groupSize: groupSize,
                     sharedWorkingK: sharedK, sharedWorkingV: sharedV,
                     eviction: eviction, device: device)
@@ -660,7 +660,7 @@ public final class NemotronDiffusionModel: LanguageModel {
             // free-tail-staging reason as the `.raw` case above.
             return (0 ..< nLayers).map { _ in
                 KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: cap,
+                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
                     dtype: dtype, eviction: eviction,
                     preallocate: true, device: device)
             }

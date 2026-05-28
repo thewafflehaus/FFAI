@@ -1354,7 +1354,7 @@ public final class Gemma4Layer: Module {
             return Ops.sdpaDecode(
                 q: qRotated, k: cacheK, v: cacheV,
                 nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-                nKV: donorCache.length, kvStride: donorCache.maxSeq,
+                nKV: donorCache.length, kvStride: donorCache.capacity,
                 scale: 1.0, on: cmd)
         }
         let (q, k, v) = projectAndNorm(xNorm, on: cmd)
@@ -1370,7 +1370,7 @@ public final class Gemma4Layer: Module {
         return Ops.sdpaDecode(
             q: qRotated, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: cache.length, kvStride: cache.maxSeq,
+            nKV: cache.length, kvStride: cache.capacity,
             scale: 1.0, on: cmd)
     }
 
@@ -1440,7 +1440,7 @@ public final class Gemma4Layer: Module {
         return Ops.sdpaDecode(
             q: q, k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: attnCache.length, kvStride: attnCache.maxSeq,
+            nKV: attnCache.length, kvStride: attnCache.capacity,
             scale: 1.0, on: cmd)
     }
 
@@ -1543,7 +1543,7 @@ public final class Gemma4Model: LanguageModel {
 
     let params: Gemma4Params
 
-    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxSeq: Int
+    public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxContextWindow: Int
     public let dtype: DType
 
     /// Gemma 4 prefills 4096 tokens per chunk — the value tuned in
@@ -1585,7 +1585,7 @@ public final class Gemma4Model: LanguageModel {
         self.nKVHeads = params.kvHeads
         self.headDim = params.headDim
         self.vocab = params.vocab
-        self.maxSeq = params.maxSeq
+        self.maxContextWindow = params.maxSeq
         self.dtype = dtype
         self.kvCacheKind = kvCacheKind
         self.finalLogitSoftcapping = params.finalLogitSoftcapping
@@ -1620,7 +1620,7 @@ public final class Gemma4Model: LanguageModel {
     /// keep the per-layer array index aligned. The real K/V lives in
     /// the donor's cache (`params.previousKVs`).
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        let cap = maxSeq ?? self.maxSeq
+        let cap = maxSeq ?? self.maxContextWindow
         guard kvCacheKind == .raw else {
             preconditionFailure(
                 "Gemma4: only .raw KV cache supported today; got \(kvCacheKind)")
@@ -1638,7 +1638,7 @@ public final class Gemma4Model: LanguageModel {
                 : .window(maxSize: min(params.slidingWindow, layerCap), keep: 0)
             caches.append(
                 KVCache(
-                    nKVHeads: layer.nKVHeads, headDim: layer.headDim, maxSeq: layerCap,
+                    nKVHeads: layer.nKVHeads, headDim: layer.headDim, contextLength: layerCap,
                     dtype: dtype, eviction: eviction, device: device))
             _ = i
         }

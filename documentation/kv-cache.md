@@ -48,7 +48,6 @@ Why 2048: decode throughput on Apple Silicon peaks in the ~2K–4K context band 
 | Property | Meaning |
 |---|---|
 | `capacity` | Current physical depth of the K/V buffers — the SDPA / append stride. Grows; never shrinks. |
-| `maxSeq` | Returns the current `capacity` (the buffer stride every SDPA dispatch uses). |
 | `contextCeiling` | The maximum depth growth may reach — the chosen context window. |
 | `effectiveMaxSize` | The retained-window size for reporting + sliding-window masks: `contextCeiling` for unbounded, `maxSize` for `.window`. |
 
@@ -60,7 +59,7 @@ KVCache.defaultInitialCapacity = 1024   // lower the baseline allocation
 
 // Per-cache overrides (on the KVCache initializer):
 KVCache(
-    nKVHeads: …, headDim: …, maxSeq: ceiling, dtype: …,
+    nKVHeads: …, headDim: …, contextLength: ceiling, dtype: …,
     eviction: .unbounded,
     preallocate: false,        // true → allocate the full ceiling up front (no growth)
     initialCapacity: 4096      // nil → use defaultInitialCapacity
@@ -104,7 +103,7 @@ let model = try await Model.load(
 )
 ```
 
-`ffai inspect` reports the worst-case `full-ctx footprint` for a model at its full `maxSeq` (computed, not allocated) alongside what it actually allocated for the probe — the fastest way to see whether a context will fit before you run it.
+`ffai inspect` reports the worst-case `full-ctx footprint` for a model at its full `maxContextWindow` (computed, not allocated) alongside what it actually allocated for the probe — the fastest way to see whether a context will fit before you run it.
 
 ## Choosing a configuration
 
@@ -135,9 +134,9 @@ ffai --model mlx-community/Qwen3-1.7B-4bit --prompt "..." --kv-cache affine8
 
 ### How `AffineQuantizedKVCache` works
 
-Per attention layer the cache holds three packed buffers per K (and V): `kWeights` (u32, 4 int8 values per word), `kScales` (fp16/bf16, per-group), `kBiases` (fp16/bf16, per-group). All layers in one `makeLayerCaches(...)` call share **one** pair of working buffers sized `[nKVHeads, maxSeq, headDim]` in the model dtype. On `appendOnGPU(...)` the `quantize_kv_int8` kernel writes the new row into the layer's compressed storage. On `prepareForAttention(...)` (called before SDPA) the `bulk_dequant_kv_int8` kernel materialises the live slice into the shared working buffer, which SDPA then reads. Metal's default hazard tracking serializes the working-buffer reuse across layers within a single command buffer.
+Per attention layer the cache holds three packed buffers per K (and V): `kWeights` (u32, 4 int8 values per word), `kScales` (fp16/bf16, per-group), `kBiases` (fp16/bf16, per-group). All layers in one `makeLayerCaches(...)` call share **one** pair of working buffers sized `[nKVHeads, capacity, headDim]` in the model dtype. On `appendOnGPU(...)` the `quantize_kv_int8` kernel writes the new row into the layer's compressed storage. On `prepareForAttention(...)` (called before SDPA) the `bulk_dequant_kv_int8` kernel materialises the live slice into the shared working buffer, which SDPA then reads. Metal's default hazard tracking serializes the working-buffer reuse across layers within a single command buffer.
 
-### Measured on Qwen3 1.7B 4-bit at maxSeq=40960
+### Measured on Qwen3 1.7B 4-bit at context length 40960
 
 |  | Raw | affine8 | affine4 | Δ vs raw |
 |---|---|---|---|---|
@@ -187,7 +186,7 @@ What that does:
 - The cache buffer is allocated for exactly `maxSize` positions (the ring is bounded, so there's no reason to reserve the model's full `max_position_embeddings`); `maxSize` is both the physical depth and how many *positions* the cache reports as live to SDPA. Window caches do not grow — the ring rotates in place.
 - The first `keep` positions are pinned — they're written linearly and never evicted. These map to the **attention-sink** tokens of Xiao et al. (2023): inputs the model relies on as anchor points, typically the first 4 tokens (BOS + tokenizer-special).
 - After the cache fills, the next `maxSize - keep` slots act as a FIFO ring: slot `keep + ((absolute - keep) % (maxSize - keep))` is overwritten by the new token's K/V.
-- Each K row was RoPE'd at its absolute insertion position, so softmax stays correct regardless of buffer order — the kernels see the same `[nKVHeads, maxSeq, headDim]` shape with `nKV = length`.
+- Each K row was RoPE'd at its absolute insertion position, so softmax stays correct regardless of buffer order — the kernels see the same `[nKVHeads, capacity, headDim]` shape with `nKV = length`.
 
 The AURA cache also zeroes the packed-u32 row before re-encoding, since the encode kernel `atomic_or`s into shared memory and stale bits from a prior token would OR through into the new codebook indices.
 

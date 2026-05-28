@@ -18,7 +18,7 @@
 // wired up correctly":
 //
 //   1. **Architecture** — family, dtype, hidden/nLayers/nHeads/
-//      nKVHeads/headDim/vocab/maxSeq, tied vs untied lm_head,
+//      nKVHeads/headDim/vocab/maxContextWindow, tied vs untied lm_head,
 //      quantization scheme if any.
 //   2. **Capabilities** — text-only / vision / audio / etc., which
 //      are available vs currently enabled.
@@ -167,7 +167,7 @@ struct InspectCommand: AsyncParsableCommand {
         print("│ num_kv_heads       \(info.nKVHeads) (GQA fan-out \(info.gqaFanOut))")
         print("│ head_dim           \(info.headDim)")
         print("│ vocab_size         \(info.vocab)")
-        print("│ max_position_emb   \(info.maxSeq)")
+        print("│ max_position_emb   \(info.maxContextWindow)")
         print(
             "│ parameters         \(formatCount(info.parameterCount)) (\(formatBytes(info.parameterBytes)))"
         )
@@ -286,21 +286,22 @@ struct InspectCommand: AsyncParsableCommand {
         // estimate so the "how much would a real session cost" signal —
         // exactly the number that flags a runaway long-context cache —
         // survives without being allocated.
-        let inspectCacheDepth = max(1, Swift.min(m.engine.maxSeq, promptTokens.count + 1))
+        let inspectCacheDepth = max(1, Swift.min(m.engine.maxContextWindow, promptTokens.count + 1))
         let caches = m.engine.makeLayerCaches(maxSeq: inspectCacheDepth)
         let bytesAllocated = caches.reduce(0) { $0 + $1.bytesAllocated }
 
         // Full-context footprint estimate — what a session at the
-        // model's full `maxSeq` would allocate. Seq-scaling attention
-        // caches grow with maxSeq; fixed-size state caches (GDN / conv /
-        // Mamba) don't, so they contribute their already-allocated bytes.
+        // model's full `maxContextWindow` would allocate. Seq-scaling
+        // attention caches grow with the context window; fixed-size state
+        // caches (GDN / conv / Mamba) don't, so they contribute their
+        // already-allocated bytes.
         var fullContextBytes = 0
         var attnLayerCount = 0
         for cache in caches {
             if let kv = cache as? any KVCacheProtocol {
                 attnLayerCount += 1
                 fullContextBytes +=
-                    kv.nKVHeads * m.engine.maxSeq * kv.headDim
+                    kv.nKVHeads * m.engine.maxContextWindow * kv.headDim
                     * 2 /* K + V */ * kv.dtype.byteSize
             } else {
                 fullContextBytes += cache.bytesAllocated
@@ -312,15 +313,15 @@ struct InspectCommand: AsyncParsableCommand {
         print("│ scheme             \(opts.kvCache)")
         print("│ eviction policy    \(opts.kvEviction)")
         print("│ per-layer caches   \(caches.count) (\(attnLayerCount) seq-scaling attention)")
-        print("│ model maxSeq       \(m.engine.maxSeq)")
+        print("│ max context window \(m.engine.maxContextWindow)")
         print(
-            "│ full-ctx footprint \(formatBytes(fullContextBytes))  ← a session at maxSeq")
+            "│ full-ctx footprint \(formatBytes(fullContextBytes))  ← a session at full window")
         print(
             "│ inspect alloc      \(formatBytes(bytesAllocated))  (probe depth \(inspectCacheDepth))"
         )
         if let kv = caches.first(where: { $0 is any KVCacheProtocol }) as? any KVCacheProtocol {
             print(
-                "│ attn stride        [nKVHeads=\(kv.nKVHeads), headDim=\(kv.headDim)] × maxSeq"
+                "│ attn stride        [nKVHeads=\(kv.nKVHeads), headDim=\(kv.headDim)] × capacity"
             )
             print("│ attn dtype         \(kv.dtype)")
             print("│ attn maxSize       \(kv.effectiveMaxSize)")

@@ -781,7 +781,7 @@ public final class GLMASRModel: @unchecked Sendable {
 
         let caches = (0 ..< nLayers).map { _ in
             KVCache(
-                nKVHeads: nKVHeads, headDim: hd, maxSeq: maxSeq,
+                nKVHeads: nKVHeads, headDim: hd, contextLength: maxSeq,
                 dtype: dtype, device: device)
         }
 
@@ -909,7 +909,7 @@ public final class GLMASRModel: @unchecked Sendable {
             q: qRot.reshaped(to: [nHeads, hd]),
             k: cacheK, v: cacheV,
             nQHeads: nHeads, nKVHeads: nKVH, headDim: hd,
-            nKV: cache.length, kvStride: cache.maxSeq,
+            nKV: cache.length, kvStride: cache.capacity,
             scale: scale, on: cmd3)
         let attnFlat = attnOut.reshaped(to: [nHeads * hd])
         let oOut = layer.oProj(attnFlat, on: cmd3)

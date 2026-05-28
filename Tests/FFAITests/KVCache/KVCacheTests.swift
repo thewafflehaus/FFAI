@@ -24,7 +24,7 @@ struct KVCacheTests {
     @Test("init creates zeroed K/V buffers of the right shape")
     func initShape() {
         autoreleasepool {
-            let c = KVCache(nKVHeads: 2, headDim: 4, maxSeq: 8, dtype: .f32)
+            let c = KVCache(nKVHeads: 2, headDim: 4, contextLength: 8, dtype: .f32)
             #expect(c.kBuffer.shape == [2, 8, 4])
             #expect(c.vBuffer.shape == [2, 8, 4])
             #expect(c.length == 0)
@@ -38,7 +38,7 @@ struct KVCacheTests {
     @Test("append writes per-head slabs at current position")
     func appendOnePosition() {
         autoreleasepool {
-            let c = KVCache(nKVHeads: 2, headDim: 4, maxSeq: 8, dtype: .f32)
+            let c = KVCache(nKVHeads: 2, headDim: 4, contextLength: 8, dtype: .f32)
             let kFlat = Tensor.empty(shape: [2, 4], dtype: .f32)
             let vFlat = Tensor.empty(shape: [2, 4], dtype: .f32)
             kFlat.copyIn(from: [Float(1), 2, 3, 4, 5, 6, 7, 8])  // head0=[1..4], head1=[5..8]
@@ -62,7 +62,7 @@ struct KVCacheTests {
     @Test("multiple appends advance length and use the right offsets")
     func appendMultiple() {
         autoreleasepool {
-            let c = KVCache(nKVHeads: 1, headDim: 2, maxSeq: 4, dtype: .f32)
+            let c = KVCache(nKVHeads: 1, headDim: 2, contextLength: 4, dtype: .f32)
             for p in 0 ..< 3 {
                 let kFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
                 let vFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
@@ -81,7 +81,7 @@ struct KVCacheTests {
     @Test("reset zeros length but keeps allocation")
     func reset() {
         autoreleasepool {
-            let c = KVCache(nKVHeads: 1, headDim: 2, maxSeq: 4, dtype: .f32)
+            let c = KVCache(nKVHeads: 1, headDim: 2, contextLength: 4, dtype: .f32)
             let kFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
             let vFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
             kFlat.copyIn(from: [Float(1), 2])
@@ -119,7 +119,7 @@ struct KVCacheTests {
                 nKVHeads: nKVHeads, maxSeq: maxSeq,
                 headDim: headDim, dtype: .f32)
             let cache = AffineQuantizedKVCache(
-                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                nKVHeads: nKVHeads, headDim: headDim, contextLength: maxSeq,
                 dtype: .f32, bits: 8, groupSize: groupSize,
                 sharedWorkingK: sk, sharedWorkingV: sv
             )
@@ -184,7 +184,7 @@ struct KVCacheTests {
                 nKVHeads: nKVHeads, maxSeq: maxSeq,
                 headDim: headDim, dtype: .f32)
             let cache = AffineQuantizedKVCache(
-                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                nKVHeads: nKVHeads, headDim: headDim, contextLength: maxSeq,
                 dtype: .f32, bits: 8, groupSize: groupSize,
                 sharedWorkingK: sk, sharedWorkingV: sv
             )
@@ -234,7 +234,7 @@ struct KVCacheTests {
                 nKVHeads: nKVHeads, maxSeq: maxSeq,
                 headDim: headDim, dtype: .f32)
             let cache = AffineQuantizedKVCache(
-                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                nKVHeads: nKVHeads, headDim: headDim, contextLength: maxSeq,
                 dtype: .f32, bits: 4, groupSize: groupSize,
                 sharedWorkingK: sk, sharedWorkingV: sv
             )
@@ -291,7 +291,7 @@ struct KVCacheTests {
                 nKVHeads: nKVHeads, maxSeq: maxSeq,
                 headDim: headDim, dtype: .f32)
             let cache = AffineQuantizedKVCache(
-                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                nKVHeads: nKVHeads, headDim: headDim, contextLength: maxSeq,
                 dtype: .f32, bits: 4, groupSize: groupSize,
                 sharedWorkingK: sk, sharedWorkingV: sv
             )
@@ -413,7 +413,7 @@ struct KVCacheTests {
                     nKVHeads: nKVHeads, maxSeq: maxSeq,
                     headDim: headDim, dtype: .f32)
                 let cache = AffineQuantizedKVCache(
-                    nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                    nKVHeads: nKVHeads, headDim: headDim, contextLength: maxSeq,
                     dtype: .f32, bits: bits, groupSize: groupSize,
                     sharedWorkingK: sk, sharedWorkingV: sv
                 )
@@ -461,12 +461,12 @@ struct KVCacheTests {
                 nKVHeads: nKVHeads, maxSeq: maxSeq,
                 headDim: headDim, dtype: .f16)
             let int4 = AffineQuantizedKVCache(
-                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                nKVHeads: nKVHeads, headDim: headDim, contextLength: maxSeq,
                 dtype: .f16, bits: 4, groupSize: groupSize,
                 sharedWorkingK: sk, sharedWorkingV: sv
             )
             let int8 = AffineQuantizedKVCache(
-                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                nKVHeads: nKVHeads, headDim: headDim, contextLength: maxSeq,
                 dtype: .f16, bits: 8, groupSize: groupSize,
                 sharedWorkingK: sk, sharedWorkingV: sv
             )
@@ -494,7 +494,7 @@ struct KVCacheTests {
                 nKVHeads: nKVHeads, maxSeq: maxSeq,
                 headDim: headDim, dtype: .f16)
             let cache = AffineQuantizedKVCache(
-                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq,
+                nKVHeads: nKVHeads, headDim: headDim, contextLength: maxSeq,
                 dtype: .f16, bits: 8, groupSize: groupSize,
                 sharedWorkingK: sk, sharedWorkingV: sv
             )
@@ -539,7 +539,7 @@ struct KVCacheTests {
 
             let c = KVCache(
                 nKVHeads: nKVHeads, headDim: headDim,
-                maxSeq: maxSeq, dtype: .f32)
+                contextLength: maxSeq, dtype: .f32)
             let kSrc = Tensor.empty(shape: [nKVHeads, headDim], dtype: .f32)
             let vSrc = Tensor.empty(shape: [nKVHeads, headDim], dtype: .f32)
             kSrc.copyIn(from: [Float](repeating: 1, count: nKVHeads * headDim))
@@ -565,7 +565,7 @@ struct KVCacheTests {
     @Test("truncate rolls KVCache length back; re-append overwrites the tail")
     func truncateRollsBackAndReappends() {
         autoreleasepool {
-            let c = KVCache(nKVHeads: 1, headDim: 2, maxSeq: 16, dtype: .f32)
+            let c = KVCache(nKVHeads: 1, headDim: 2, contextLength: 16, dtype: .f32)
             let device = Device.shared
             let buf = device.makeBuffer(length: 8)
             func appendStamp(_ value: Float) {
@@ -602,7 +602,7 @@ struct KVCacheTests {
             let wk = Tensor.empty(shape: [nKVHeads, maxSeq, headDim], dtype: .f32)
             let wv = Tensor.empty(shape: [nKVHeads, maxSeq, headDim], dtype: .f32)
             let c = AffineQuantizedKVCache(
-                nKVHeads: nKVHeads, headDim: headDim, maxSeq: maxSeq, dtype: .f32,
+                nKVHeads: nKVHeads, headDim: headDim, contextLength: maxSeq, dtype: .f32,
                 bits: 8, groupSize: 8, sharedWorkingK: wk, sharedWorkingV: wv)
             let cmd = Device.shared.makeCommandBuffer()
             let kFlat = Tensor.empty(shape: [nKVHeads, headDim], dtype: .f32)
@@ -625,7 +625,7 @@ struct KVCacheTests {
         // `defaultInitialCapacity` knob (which another suite may have
         // mutated under parallel test execution).
         let c = KVCache(
-            nKVHeads: 8, headDim: 64, maxSeq: 1024, dtype: .f16,
+            nKVHeads: 8, headDim: 64, contextLength: 1024, dtype: .f16,
             eviction: .unbounded, preallocate: true)
         let elems = 2 * 8 * 1024 * 64
         #expect(c.bytesAllocated == elems * 2)  // fp16 = 2 bytes
@@ -640,11 +640,10 @@ struct KVCacheTests {
     func growthStartsSmall() {
         autoreleasepool {
             let c = KVCache(
-                nKVHeads: 2, headDim: 4, maxSeq: 64, dtype: .f32,
+                nKVHeads: 2, headDim: 4, contextLength: 64, dtype: .f32,
                 eviction: .unbounded, initialCapacity: 4)
             #expect(c.capacity == 4)
             #expect(c.contextCeiling == 64)
-            #expect(c.maxSeq == 4, "maxSeq must report current capacity, not the ceiling")
             #expect(c.effectiveMaxSize == 64, "effectiveMaxSize reports the growth ceiling")
             #expect(c.kBuffer.shape == [2, 4, 4])
         }
@@ -654,11 +653,10 @@ struct KVCacheTests {
     func growthPreallocate() {
         autoreleasepool {
             let c = KVCache(
-                nKVHeads: 2, headDim: 4, maxSeq: 64, dtype: .f32,
+                nKVHeads: 2, headDim: 4, contextLength: 64, dtype: .f32,
                 eviction: .unbounded, preallocate: true)
             #expect(c.capacity == 64)
             #expect(c.contextCeiling == 64)
-            #expect(c.maxSeq == 64)
             #expect(c.kBuffer.shape == [2, 64, 4])
         }
     }
@@ -669,7 +667,7 @@ struct KVCacheTests {
             // Start at 4, ceiling 64. Appending 10 rows forces two
             // doublings: 4 → 8 (at the 5th append) → 16 (at the 9th).
             let c = KVCache(
-                nKVHeads: 2, headDim: 4, maxSeq: 64, dtype: .f32,
+                nKVHeads: 2, headDim: 4, contextLength: 64, dtype: .f32,
                 eviction: .unbounded, initialCapacity: 4)
             for p in 0 ..< 10 {
                 let kFlat = Tensor.empty(shape: [2, 4], dtype: .f32)
@@ -686,7 +684,6 @@ struct KVCacheTests {
             }
             #expect(c.length == 10)
             #expect(c.capacity == 16, "4 → 8 → 16 after 10 appends")
-            #expect(c.maxSeq == 16)
 
             // Verify every live row survived the two re-layout copies, at
             // the FINAL stride (capacity=16): head h row p lives at flat
@@ -715,7 +712,7 @@ struct KVCacheTests {
     func growthPreservesDataGPU() {
         autoreleasepool {
             let c = KVCache(
-                nKVHeads: 1, headDim: 2, maxSeq: 64, dtype: .f32,
+                nKVHeads: 1, headDim: 2, contextLength: 64, dtype: .f32,
                 eviction: .unbounded, initialCapacity: 2)
             // One append per cmd (matches decode: prior cmd complete
             // before the next forward).
@@ -745,7 +742,7 @@ struct KVCacheTests {
         autoreleasepool {
             // Ceiling 6, start 4. Appending 6 rows grows 4 → min(8, 6) = 6.
             let c = KVCache(
-                nKVHeads: 1, headDim: 2, maxSeq: 6, dtype: .f32,
+                nKVHeads: 1, headDim: 2, contextLength: 6, dtype: .f32,
                 eviction: .unbounded, initialCapacity: 4)
             for p in 0 ..< 6 {
                 let kFlat = Tensor.empty(shape: [1, 2], dtype: .f32)
@@ -764,7 +761,7 @@ struct KVCacheTests {
     func growthRangeAppend() {
         autoreleasepool {
             let c = KVCache(
-                nKVHeads: 1, headDim: 2, maxSeq: 64, dtype: .f32,
+                nKVHeads: 1, headDim: 2, contextLength: 64, dtype: .f32,
                 eviction: .unbounded, initialCapacity: 2)
             var kRows: [Tensor] = []
             var vRows: [Tensor] = []
@@ -795,7 +792,7 @@ struct KVCacheTests {
             // maxSize 4 ≤ defaultInitialCapacity (2048) → starts at 4, so
             // there's nothing to grow; rotation begins once full.
             let c = KVCache(
-                nKVHeads: 1, headDim: 2, maxSeq: 64, dtype: .f32,
+                nKVHeads: 1, headDim: 2, contextLength: 64, dtype: .f32,
                 eviction: .window(maxSize: 4, keep: 0))
             #expect(c.capacity == 4, "small window sizes to maxSize up front")
             for p in 0 ..< 7 {
@@ -816,7 +813,7 @@ struct KVCacheTests {
             // maxSize 8, explicit initialCapacity 2 → grows 2 → 4 → 8
             // during the linear pre-fill, then rotates the 8-slot ring.
             let c = KVCache(
-                nKVHeads: 1, headDim: 2, maxSeq: 64, dtype: .f32,
+                nKVHeads: 1, headDim: 2, contextLength: 64, dtype: .f32,
                 eviction: .window(maxSize: 8, keep: 0), initialCapacity: 2)
             #expect(c.capacity == 2, "starts below maxSize")
             #expect(c.effectiveMaxSize == 8, "retained window is still maxSize")
