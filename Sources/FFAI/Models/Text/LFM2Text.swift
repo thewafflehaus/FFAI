@@ -121,11 +121,11 @@ public struct LFM2Dense: LFM2Variant {
 
     public static func loadModel(
         config: ModelConfig, weights: SafeTensorsBundle,
-        options _: LoadOptions, device: Device
+        options: LoadOptions, device: Device
     ) throws -> LFM2Model {
         try lfm2LoadModel(
             config: config, weights: weights,
-            moe: false, device: device)
+            moe: false, options: options, device: device)
     }
 }
 
@@ -137,11 +137,11 @@ public struct LFM2MoE: LFM2Variant {
 
     public static func loadModel(
         config: ModelConfig, weights: SafeTensorsBundle,
-        options _: LoadOptions, device: Device
+        options: LoadOptions, device: Device
     ) throws -> LFM2Model {
         try lfm2LoadModel(
             config: config, weights: weights,
-            moe: true, device: device)
+            moe: true, options: options, device: device)
     }
 }
 
@@ -153,7 +153,7 @@ public struct LFM2MoE: LFM2Variant {
 /// `num_dense_layers`, dense before that (`lfm2_moe`).
 func lfm2LoadModel(
     config: ModelConfig, weights: SafeTensorsBundle,
-    moe: Bool, device: Device
+    moe: Bool, options: LoadOptions, device: Device
 ) throws -> LFM2Model {
     guard let hidden = config.hiddenSize,
         let nLayers = config.numLayers,
@@ -429,7 +429,8 @@ func lfm2LoadModel(
         hidden: hidden, nLayers: nLayers,
         nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
         convDim: hidden, convKernel: convKernel,
-        vocab: vocab, maxContextWindow: maxSeq, dtype: activationDtype)
+        vocab: vocab, maxContextWindow: maxSeq, dtype: activationDtype,
+        kvCacheKind: options.kvCache, kvEviction: options.kvEviction)
 }
 
 /// Build one LFM2-MoE feed-forward block: a router + `num_experts`
@@ -714,7 +715,7 @@ public final class LFM2AttentionMixer: Module {
     /// reduction kernel cannot run it). Returns the post-`out_proj`
     /// contribution on a fresh, locally-committed buffer.
     func forward(
-        _ xNorm: Tensor, position: Int, cache kv: KVCache,
+        _ xNorm: Tensor, position: Int, cache kv: any KVCacheProtocol,
         cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
         let q = qProj(xNorm, on: cmd)
@@ -887,7 +888,7 @@ public final class LFM2Layer: Module, DecoderLayer {
             cc.advance()
             postMix = Ops.add(h, mixerOut, on: workCmd)
         case .attention(let a):
-            guard let kv = cache as? KVCache else {
+            guard let kv = cache as? any KVCacheProtocol else {
                 fatalError(
                     "LFM2Layer: attention layer expected KVCache, "
                         + "got \(type(of: cache))")
@@ -955,6 +956,8 @@ public final class LFM2Model: LanguageModel {
     public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxContextWindow: Int
     public let convDim, convKernel: Int
     public let dtype: DType
+    public let kvCacheKind: KVCacheKind
+    public let kvEviction: KVEviction
 
     /// Layer kinds, index-aligned with `layers` — drives `makeLayerCaches`.
     let layerKinds: [LFM2LayerKind]
@@ -966,7 +969,9 @@ public final class LFM2Model: LanguageModel {
         finalNorm: RMSNorm, lmHead: AnyLinear,
         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
         convDim: Int, convKernel: Int,
-        vocab: Int, maxContextWindow: Int, dtype: DType
+        vocab: Int, maxContextWindow: Int, dtype: DType,
+        kvCacheKind: KVCacheKind = .raw,
+        kvEviction: KVEviction = .unbounded
     ) {
         self.embedTokens = embedTokens
         self.layers = layers
@@ -982,6 +987,8 @@ public final class LFM2Model: LanguageModel {
         self.vocab = vocab
         self.maxContextWindow = maxContextWindow
         self.dtype = dtype
+        self.kvCacheKind = kvCacheKind
+        self.kvEviction = kvEviction
         self.layerKinds = layers.map { ($0 as? LFM2Layer)?.kind ?? .conv }
         self.hasMoE = layers.contains { ($0 as? LFM2Layer)?.isMoELayer == true }
     }
@@ -1008,16 +1015,27 @@ public final class LFM2Model: LanguageModel {
     /// `LFM2ConvCache`, attention → `KVCache`.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxContextWindow
-        return layerKinds.map { kind in
-            switch kind {
+        // AURA needs per-layer Π wiring in the attention mixer (follow-up)
+        // — map it to raw; raw + affine run through the shared factory.
+        // One dequant scratch is shared across every attention layer.
+        let kind: KVCacheKind = {
+            if case .auraQuantized = kvCacheKind { return .raw }
+            return kvCacheKind
+        }()
+        let scratch = makeAttentionScratch(
+            kind: kind, nKVHeads: nKVHeads, headDim: headDim,
+            contextLength: cap, dtype: dtype, device: device)
+        return layerKinds.enumerated().map { (i, layerKind) in
+            switch layerKind {
             case .conv:
                 return LFM2ConvCache(
                     channels: convDim, kernelSize: convKernel,
                     dtype: dtype, device: device)
             case .attention:
-                return KVCache(
-                    nKVHeads: nKVHeads, headDim: headDim,
-                    contextLength: cap, dtype: dtype, device: device)
+                return makeAttentionCache(
+                    kind: kind, scratch: scratch,
+                    nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
+                    dtype: dtype, eviction: kvEviction, layerIndex: i, device: device)
             }
         }
     }

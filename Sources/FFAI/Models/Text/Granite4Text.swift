@@ -67,7 +67,7 @@ public struct Granite4Hybrid: Granite4Variant {
     public static func loadModel(
         config: ModelConfig,
         weights: SafeTensorsBundle,
-        options _: LoadOptions,
+        options: LoadOptions,
         device: Device
     ) throws -> Granite4Model {
         guard let hidden = config.hiddenSize,
@@ -373,7 +373,8 @@ public struct Granite4Hybrid: Granite4Variant {
             stateDim: stateDim, convDim: convDim, convKernel: convKernel,
             nGroups: nGroups, dInner: dInner,
             vocab: vocab, maxContextWindow: maxSeq,
-            logitsScaling: logitsScaling, dtype: activationDtype)
+            logitsScaling: logitsScaling, dtype: activationDtype,
+            kvCacheKind: options.kvCache, kvEviction: options.kvEviction)
     }
 
     /// Build one Mamba 2 mixer. Reads + derives the per-head SSM
@@ -876,7 +877,7 @@ public final class Granite4AttentionMixer: Module {
     /// Single-token attention forward. Returns the post-o_proj
     /// contribution (residual add done by the enclosing layer).
     func forward(
-        _ xNorm: Tensor, cache kv: KVCache,
+        _ xNorm: Tensor, cache kv: any KVCacheProtocol,
         cmd: MTLCommandBuffer, device _: Device
     ) -> Tensor {
         let q = qProj(xNorm, on: cmd)
@@ -1031,7 +1032,7 @@ public final class Granite4Layer: Module, DecoderLayer {
             mixerOut = m.forward(xNorm, cache: mc, cmd: cmd, device: device)
             mc.advance()
         case .attention(let a):
-            guard let kv = cache as? KVCache else {
+            guard let kv = cache as? any KVCacheProtocol else {
                 fatalError(
                     "Granite4Layer: attention layer expected "
                         + "KVCache, got \(type(of: cache))")
@@ -1115,6 +1116,8 @@ public final class Granite4Model: LanguageModel {
     /// Final logits are divided by this (Granite's `logits_scaling`).
     public let logitsScaling: Float
     public let dtype: DType
+    public let kvCacheKind: KVCacheKind
+    public let kvEviction: KVEviction
 
     /// Layer kinds, index-aligned with `layers` — drives `makeLayerCaches`.
     let layerKinds: [Granite4LayerKind]
@@ -1129,7 +1132,9 @@ public final class Granite4Model: LanguageModel {
         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
         mambaNHeads: Int, mambaHeadDim: Int, stateDim: Int,
         convDim: Int, convKernel: Int, nGroups: Int, dInner: Int,
-        vocab: Int, maxContextWindow: Int, logitsScaling: Float, dtype: DType
+        vocab: Int, maxContextWindow: Int, logitsScaling: Float, dtype: DType,
+        kvCacheKind: KVCacheKind = .raw,
+        kvEviction: KVEviction = .unbounded
     ) {
         self.embedTokens = embedTokens
         self.layers = layers
@@ -1151,6 +1156,8 @@ public final class Granite4Model: LanguageModel {
         self.maxContextWindow = maxContextWindow
         self.logitsScaling = logitsScaling
         self.dtype = dtype
+        self.kvCacheKind = kvCacheKind
+        self.kvEviction = kvEviction
         self.layerKinds = layers.map { layer in
             (layer as? Granite4Layer)?.kind ?? .mamba
         }
@@ -1180,17 +1187,28 @@ public final class Granite4Model: LanguageModel {
     ///   mamba → Mamba2LayerCache, attention → KVCache.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxContextWindow
-        return layerKinds.map { kind in
-            switch kind {
+        // AURA needs per-layer Π wiring in the attention mixer (follow-up)
+        // — map it to raw; raw + affine run through the shared factory.
+        // One dequant scratch is shared across every attention layer.
+        let kind: KVCacheKind = {
+            if case .auraQuantized = kvCacheKind { return .raw }
+            return kvCacheKind
+        }()
+        let scratch = makeAttentionScratch(
+            kind: kind, nKVHeads: nKVHeads, headDim: headDim,
+            contextLength: cap, dtype: dtype, device: device)
+        return layerKinds.enumerated().map { (i, layerKind) in
+            switch layerKind {
             case .mamba:
                 return Mamba2LayerCache(
                     nHeads: mambaNHeads, stateDim: stateDim, headDim: mambaHeadDim,
                     convChannels: convDim, convKernelSize: convKernel,
                     dtype: dtype, device: device)
             case .attention:
-                return KVCache(
+                return makeAttentionCache(
+                    kind: kind, scratch: scratch,
                     nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                    dtype: dtype, device: device)
+                    dtype: dtype, eviction: kvEviction, layerIndex: i, device: device)
             }
         }
     }

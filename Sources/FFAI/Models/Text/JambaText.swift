@@ -67,7 +67,7 @@ public struct JambaHybrid: JambaVariant {
     public static func loadModel(
         config: ModelConfig,
         weights: SafeTensorsBundle,
-        options _: LoadOptions,
+        options: LoadOptions,
         device: Device
     ) throws -> JambaModel {
         guard let hidden = config.hiddenSize,
@@ -334,7 +334,8 @@ public struct JambaHybrid: JambaVariant {
             nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
             dInner: dInner, dState: dState, dtRank: dtRank,
             convDim: dInner, convKernel: convKernel,
-            vocab: vocab, maxContextWindow: maxSeq, dtype: activationDtype)
+            vocab: vocab, maxContextWindow: maxSeq, dtype: activationDtype,
+            kvCacheKind: options.kvCache, kvEviction: options.kvEviction)
     }
 
     /// Build one Mamba 1 mixer. Reads the projections, transposes the
@@ -707,7 +708,7 @@ public final class JambaAttentionMixer: Module {
     /// Single-token attention forward. Returns the post-o_proj
     /// contribution (residual add done by the enclosing layer).
     func forward(
-        _ xNorm: Tensor, cache kv: KVCache,
+        _ xNorm: Tensor, cache kv: any KVCacheProtocol,
         cmd: MTLCommandBuffer, device _: Device
     ) -> Tensor {
         let q = qProj(xNorm, on: cmd)
@@ -951,7 +952,7 @@ public final class JambaAttentionLayer: Module, DecoderLayer {
         cache: any LayerCacheProtocol,
         cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
-        guard let kv = cache as? KVCache else {
+        guard let kv = cache as? any KVCacheProtocol else {
             fatalError("JambaAttentionLayer: expected KVCache, got \(type(of: cache))")
         }
         // ── Mixer half — pre-norm + attention + residual add ──────────
@@ -1065,6 +1066,8 @@ public final class JambaModel: LanguageModel {
     /// Mamba 1 mixer geometry.
     public let dInner, dState, dtRank, convDim, convKernel: Int
     public let dtype: DType
+    public let kvCacheKind: KVCacheKind
+    public let kvEviction: KVEviction
 
     /// Layer kinds, index-aligned with `layers` — drives `makeLayerCaches`.
     let layerKinds: [JambaLayerKind]
@@ -1077,7 +1080,9 @@ public final class JambaModel: LanguageModel {
         finalNorm: RMSNorm, lmHead: AnyLinear,
         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
         dInner: Int, dState: Int, dtRank: Int, convDim: Int, convKernel: Int,
-        vocab: Int, maxContextWindow: Int, dtype: DType
+        vocab: Int, maxContextWindow: Int, dtype: DType,
+        kvCacheKind: KVCacheKind = .raw,
+        kvEviction: KVEviction = .unbounded
     ) {
         self.embedTokens = embedTokens
         self.layers = layers
@@ -1096,6 +1101,8 @@ public final class JambaModel: LanguageModel {
         self.vocab = vocab
         self.maxContextWindow = maxContextWindow
         self.dtype = dtype
+        self.kvCacheKind = kvCacheKind
+        self.kvEviction = kvEviction
         self.layerKinds = layers.map { layer in
             switch layer {
             case is JambaMambaLayer: return .mamba
@@ -1133,16 +1140,27 @@ public final class JambaModel: LanguageModel {
     ///   mamba → JambaMambaLayerCache, attention → KVCache.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxContextWindow
-        return layerKinds.map { kind in
-            switch kind {
+        // AURA needs per-layer Π wiring in the attention mixer (follow-up)
+        // — map it to raw; raw + affine run through the shared factory.
+        // One dequant scratch is shared across every attention layer.
+        let kind: KVCacheKind = {
+            if case .auraQuantized = kvCacheKind { return .raw }
+            return kvCacheKind
+        }()
+        let scratch = makeAttentionScratch(
+            kind: kind, nKVHeads: nKVHeads, headDim: headDim,
+            contextLength: cap, dtype: dtype, device: device)
+        return layerKinds.enumerated().map { (i, layerKind) in
+            switch layerKind {
             case .mamba:
                 return JambaMambaLayerCache(
                     dInner: dInner, dState: dState,
                     convKernelSize: convKernel, dtype: dtype, device: device)
             case .attention:
-                return KVCache(
+                return makeAttentionCache(
+                    kind: kind, scratch: scratch,
                     nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                    dtype: dtype, device: device)
+                    dtype: dtype, eviction: kvEviction, layerIndex: i, device: device)
             }
         }
     }

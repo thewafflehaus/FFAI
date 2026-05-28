@@ -162,7 +162,7 @@ public struct Qwen35Hybrid: Qwen35Variant {
     public static func loadModel(
         config: ModelConfig,
         weights: SafeTensorsBundle,
-        options _: LoadOptions,
+        options: LoadOptions,
         device: Device
     ) throws -> Qwen35Model {
         // ── text_config — every text field lives under `text_config`
@@ -513,7 +513,8 @@ public struct Qwen35Hybrid: Qwen35Variant {
             numKeyHeads: linearNumKeyHeads, numValueHeads: linearNumValueHeads,
             keyHeadDim: linearKeyHeadDim, valueHeadDim: linearValueHeadDim,
             convDim: convDim, convKernel: convKernel,
-            vocab: vocab, maxContextWindow: maxSeq, dtype: activationDtype)
+            vocab: vocab, maxContextWindow: maxSeq, dtype: activationDtype,
+            kvCacheKind: options.kvCache, kvEviction: options.kvEviction)
     }
 
     /// Build one GDN mixer. Reads the split QKV / Z / B / A projections,
@@ -2067,7 +2068,7 @@ public final class Qwen35AttentionMixer: Module {
     /// contribution (residual add done by the enclosing layer). All work
     /// queued on `cmd`; no commit inside.
     func forward(
-        _ xNorm: Tensor, position: Int, cache kv: KVCache,
+        _ xNorm: Tensor, position: Int, cache kv: any KVCacheProtocol,
         cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
         // q_proj projects 2× heads when attn_output_gate is set: the
@@ -2614,7 +2615,7 @@ public final class Qwen35AttentionLayer: Module, DecoderLayer {
         cache: any LayerCacheProtocol,
         cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
-        guard let kv = cache as? KVCache else {
+        guard let kv = cache as? any KVCacheProtocol else {
             fatalError(
                 "Qwen35AttentionLayer: expected KVCache, "
                     + "got \(type(of: cache))")
@@ -2890,6 +2891,8 @@ public final class Qwen35Model: LanguageModel {
     public let numKeyHeads, numValueHeads, keyHeadDim, valueHeadDim: Int
     public let convDim, convKernel: Int
     public let dtype: DType
+    public let kvCacheKind: KVCacheKind
+    public let kvEviction: KVEviction
 
     /// Layer kinds, index-aligned with `layers` — drives `makeLayerCaches`.
     let layerKinds: [Qwen35LayerKind]
@@ -2913,7 +2916,9 @@ public final class Qwen35Model: LanguageModel {
         numKeyHeads: Int, numValueHeads: Int,
         keyHeadDim: Int, valueHeadDim: Int,
         convDim: Int, convKernel: Int,
-        vocab: Int, maxContextWindow: Int, dtype: DType
+        vocab: Int, maxContextWindow: Int, dtype: DType,
+        kvCacheKind: KVCacheKind = .raw,
+        kvEviction: KVEviction = .unbounded
     ) {
         self.embedTokens = embedTokens
         self.layers = layers
@@ -2933,6 +2938,8 @@ public final class Qwen35Model: LanguageModel {
         self.vocab = vocab
         self.maxContextWindow = maxContextWindow
         self.dtype = dtype
+        self.kvCacheKind = kvCacheKind
+        self.kvEviction = kvEviction
         self.layerKinds = layers.map { layer in
             switch layer {
             case is Qwen35GDNLayer: return .gdn
@@ -2970,8 +2977,18 @@ public final class Qwen35Model: LanguageModel {
     ///   GDN → GDNStateCache, attention → KVCache.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxContextWindow
-        return layerKinds.map { kind in
-            switch kind {
+        // AURA needs per-layer Π wiring in the attention mixer (follow-up)
+        // — map it to raw; raw + affine run through the shared factory.
+        // One dequant scratch is shared across every attention layer.
+        let kind: KVCacheKind = {
+            if case .auraQuantized = kvCacheKind { return .raw }
+            return kvCacheKind
+        }()
+        let scratch = makeAttentionScratch(
+            kind: kind, nKVHeads: nKVHeads, headDim: headDim,
+            contextLength: cap, dtype: dtype, device: device)
+        return layerKinds.enumerated().map { (i, layerKind) in
+            switch layerKind {
             case .gdn:
                 return Qwen35GDNLayerCache(
                     numKeyHeads: numKeyHeads,
@@ -2981,9 +2998,10 @@ public final class Qwen35Model: LanguageModel {
                     convDim: convDim, convKernelSize: convKernel,
                     dtype: dtype, device: device)
             case .attention:
-                return KVCache(
+                return makeAttentionCache(
+                    kind: kind, scratch: scratch,
                     nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                    dtype: dtype, device: device)
+                    dtype: dtype, eviction: kvEviction, layerIndex: i, device: device)
             }
         }
     }
@@ -3122,7 +3140,16 @@ public final class Qwen35Model: LanguageModel {
         // fan from T·gemv to 1·gemm, SDPA from T·sdpaDecode to 1·
         // sdpaMulti, gate-split gather from T to 1. Compounds across
         // every attention layer in the stack.
-        if ProcessInfo.processInfo.environment["FFAI_LEGACY_FORWARDMANY"] != nil {
+        // The batched attention path (decodeMany) uses KVCache's
+        // host-batched append fast path, which the quantized caches don't
+        // implement — fall back to the per-token loop (single-token
+        // decode handles affine transparently).
+        let hasQuantizedKV = caches.contains {
+            $0 is AffineQuantizedKVCache || $0 is AURAQuantizedKVCache
+        }
+        if hasQuantizedKV
+            || ProcessInfo.processInfo.environment["FFAI_LEGACY_FORWARDMANY"] != nil
+        {
             return _forwardManyPerTokenLegacy(
                 tokenIds: tokenIds,
                 startPosition: startPosition,

@@ -427,7 +427,8 @@ public struct FalconH1Hybrid: FalconH1Variant {
             mambaNHeads: mambaNHeads, mambaHeadDim: mambaHeadDim,
             stateDim: stateDim, convDim: convDim, convKernel: convKernel,
             dSSM: dSSM, vocab: vocab, maxContextWindow: maxSeq,
-            dtype: activationDtype)
+            dtype: activationDtype,
+            kvCacheKind: options.kvCache, kvEviction: options.kvEviction)
     }
 }
 
@@ -647,7 +648,7 @@ public final class FalconH1DecoderLayer: Module, DecoderLayer {
     /// pre-residual-add attention contribution, shape [hidden].
     private func attention(
         _ xNorm: Tensor, position: Int,
-        cache: KVCache,
+        cache: any KVCacheProtocol,
         cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
         let q = qProj(xNorm, on: cmd)
@@ -687,9 +688,9 @@ public final class FalconH1DecoderLayer: Module, DecoderLayer {
 
 public final class FalconH1LayerCache: LayerCacheProtocol, @unchecked Sendable {
     public let mamba: Mamba2LayerCache
-    public let kv: KVCache
+    public let kv: any KVCacheProtocol
 
-    public init(mamba: Mamba2LayerCache, kv: KVCache) {
+    public init(mamba: Mamba2LayerCache, kv: any KVCacheProtocol) {
         self.mamba = mamba
         self.kv = kv
     }
@@ -721,6 +722,8 @@ public final class FalconH1Model: LanguageModel {
     public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxContextWindow: Int
     public let mambaNHeads, mambaHeadDim, stateDim, convDim, convKernel, dSSM: Int
     public let dtype: DType
+    public let kvCacheKind: KVCacheKind
+    public let kvEviction: KVEviction
 
     init(
         embedTokens: AnyEmbedding, layers: [any DecoderLayer],
@@ -728,7 +731,9 @@ public final class FalconH1Model: LanguageModel {
         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
         mambaNHeads: Int, mambaHeadDim: Int, stateDim: Int,
         convDim: Int, convKernel: Int, dSSM: Int,
-        vocab: Int, maxContextWindow: Int, dtype: DType
+        vocab: Int, maxContextWindow: Int, dtype: DType,
+        kvCacheKind: KVCacheKind = .raw,
+        kvEviction: KVEviction = .unbounded
     ) {
         self.embedTokens = embedTokens
         self.layers = layers
@@ -748,6 +753,8 @@ public final class FalconH1Model: LanguageModel {
         self.vocab = vocab
         self.maxContextWindow = maxContextWindow
         self.dtype = dtype
+        self.kvCacheKind = kvCacheKind
+        self.kvEviction = kvEviction
     }
 
     public func parameters() -> [(String, Tensor)] {
@@ -771,15 +778,28 @@ public final class FalconH1Model: LanguageModel {
     /// SSM half is constant-size; the KV half is sized to `maxSeq`.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxContextWindow
-        return (0 ..< nLayers).map { _ in
+        // FalconH1 is parallel-hybrid: EVERY layer has both a Mamba state
+        // cache and an attention KV cache. AURA needs per-layer Π wiring
+        // in the attention path (follow-up) — map it to raw; raw + affine
+        // run through the shared factory. One dequant scratch is shared
+        // across every layer's attention cache.
+        let kind: KVCacheKind = {
+            if case .auraQuantized = kvCacheKind { return .raw }
+            return kvCacheKind
+        }()
+        let scratch = makeAttentionScratch(
+            kind: kind, nKVHeads: nKVHeads, headDim: headDim,
+            contextLength: cap, dtype: dtype, device: device)
+        return (0 ..< nLayers).map { i in
             let mamba = Mamba2LayerCache(
                 nHeads: mambaNHeads, stateDim: stateDim, headDim: mambaHeadDim,
                 convChannels: convDim, convKernelSize: convKernel,
                 dtype: dtype, device: device)
-            let kv = KVCache(
+            let kv = makeAttentionCache(
+                kind: kind, scratch: scratch,
                 nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                dtype: dtype, device: device)
-            return FalconH1LayerCache(mamba: mamba, kv: kv)
+                dtype: dtype, eviction: kvEviction, layerIndex: i, device: device)
+            return FalconH1LayerCache(mamba: mamba, kv: kv as! any KVCacheProtocol)
         }
     }
 

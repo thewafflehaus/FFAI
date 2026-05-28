@@ -139,7 +139,7 @@ public struct NemotronHHybrid: NemotronHVariant {
     public static func loadModel(
         config: ModelConfig,
         weights: SafeTensorsBundle,
-        options _: LoadOptions,
+        options: LoadOptions,
         device: Device
     ) throws -> NemotronHModel {
         guard let hidden = config.hiddenSize,
@@ -391,7 +391,8 @@ public struct NemotronHHybrid: NemotronHVariant {
             mambaNHeads: mambaNHeads, mambaHeadDim: mambaHeadDim,
             stateDim: stateDim, convDim: convDim, convKernel: convKernel,
             nGroups: nGroups, dInner: dInner,
-            vocab: vocab, maxContextWindow: maxSeq, dtype: activationDtype)
+            vocab: vocab, maxContextWindow: maxSeq, dtype: activationDtype,
+            kvCacheKind: options.kvCache, kvEviction: options.kvEviction)
     }
 
     /// Build one Mamba 2 mixer layer (`"M"`). Reads + derives the
@@ -671,7 +672,7 @@ public final class NemotronHAttentionLayer: Module, DecoderLayer {
         cache: any LayerCacheProtocol,
         cmd: MTLCommandBuffer, device _: Device
     ) -> Tensor {
-        guard let kv = cache as? KVCache else {
+        guard let kv = cache as? any KVCacheProtocol else {
             fatalError("NemotronHAttentionLayer: expected KVCache, got \(type(of: cache))")
         }
         let xNorm = norm(h, on: cmd)
@@ -1044,6 +1045,8 @@ public final class NemotronHModel: LanguageModel {
     public let hidden, nLayers, nHeads, nKVHeads, headDim, vocab, maxContextWindow: Int
     public let mambaNHeads, mambaHeadDim, stateDim, convDim, convKernel, nGroups, dInner: Int
     public let dtype: DType
+    public let kvCacheKind: KVCacheKind
+    public let kvEviction: KVEviction
 
     /// Layer kinds, index-aligned with `layers` — drives `makeLayerCaches`.
     let layerKinds: [NemotronHLayerKind]
@@ -1054,7 +1057,9 @@ public final class NemotronHModel: LanguageModel {
         hidden: Int, nLayers: Int, nHeads: Int, nKVHeads: Int, headDim: Int,
         mambaNHeads: Int, mambaHeadDim: Int, stateDim: Int,
         convDim: Int, convKernel: Int, nGroups: Int, dInner: Int,
-        vocab: Int, maxContextWindow: Int, dtype: DType
+        vocab: Int, maxContextWindow: Int, dtype: DType,
+        kvCacheKind: KVCacheKind = .raw,
+        kvEviction: KVEviction = .unbounded
     ) {
         self.embedTokens = embedTokens
         self.layers = layers
@@ -1075,6 +1080,8 @@ public final class NemotronHModel: LanguageModel {
         self.vocab = vocab
         self.maxContextWindow = maxContextWindow
         self.dtype = dtype
+        self.kvCacheKind = kvCacheKind
+        self.kvEviction = kvEviction
         self.layerKinds = layers.map { layer in
             switch layer {
             case is NemotronHMambaLayer: return .mamba
@@ -1114,17 +1121,28 @@ public final class NemotronHModel: LanguageModel {
     ///   M → Mamba2LayerCache, * → KVCache, - → StatelessLayerCache.
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
         let cap = maxSeq ?? self.maxContextWindow
-        return layerKinds.map { kind in
-            switch kind {
+        // AURA needs per-layer Π wiring in the attention path (follow-up)
+        // — map it to raw; raw + affine run through the shared factory.
+        // One dequant scratch is shared across every attention layer.
+        let kind: KVCacheKind = {
+            if case .auraQuantized = kvCacheKind { return .raw }
+            return kvCacheKind
+        }()
+        let scratch = makeAttentionScratch(
+            kind: kind, nKVHeads: nKVHeads, headDim: headDim,
+            contextLength: cap, dtype: dtype, device: device)
+        return layerKinds.enumerated().map { (i, layerKind) in
+            switch layerKind {
             case .mamba:
                 return Mamba2LayerCache(
                     nHeads: mambaNHeads, stateDim: stateDim, headDim: mambaHeadDim,
                     convChannels: convDim, convKernelSize: convKernel,
                     dtype: dtype, device: device)
             case .attention:
-                return KVCache(
+                return makeAttentionCache(
+                    kind: kind, scratch: scratch,
                     nKVHeads: nKVHeads, headDim: headDim, contextLength: cap,
-                    dtype: dtype, device: device)
+                    dtype: dtype, eviction: kvEviction, layerIndex: i, device: device)
             case .mlp, .moe:
                 return StatelessLayerCache()
             }
