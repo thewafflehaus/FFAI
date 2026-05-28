@@ -124,6 +124,56 @@ Fresh bisect over a priority subset (Llama, GlmOcr, Paligemma, DeepSeekR1Distill
 
 Still pending (from earlier triage queue, not touched this pass): DeepSeekR1Distill (greedy-loop at temp=0 on R1-Distill-Qwen-1.5B — likely a model property, not a kernel bug; needs `mlx-lm` baseline comparison), FastVLM (likely 4-bit vision-tower not supported in `loadPW2D`; needs the checkpoint downloaded to confirm), FireRedASR2 (depthwise weight axis pick at `loadDepthwiseWeight`), GLMASR (audio adapter forward feeds quantized weights into `Ops.gemm` without dequant — verify the adapter load path). See agent diagnoses in the conversation transcript for line-level recommendations.
 
+### 2026-05-27 Qwen3.6-27B-4bit degenerate output — likely a kernel-shape issue at hidden=5120
+
+**Symptom.** `Qwen36TextIntegrationTests` (the new dense integration suite added 2026-05-27) loads `mlx-community/Qwen3.6-27B-4bit` successfully, the engine selection + shape assertions + cache-kind alignment all pass, the single-token forward smoke test produces top-5 ordered logits (`top[0] > top[4]`) — but greedy decode emits token 0 (`"!"`) every step. 32-token sample output: `"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"` — pure degenerate.
+
+**Same engine, smaller model, works.** `mlx-community/Qwen3.5-0.8B-4bit` runs on the identical Qwen3.5 dense GDN-hybrid engine and produces coherent English. The regression is 27B-scale-specific.
+
+**Hypothesis stack.** The 27B-4bit checkpoint differs from the 0.8B-4bit only at config-level dimensions; the engine code path is the same except for fast-path-eligibility predicates:
+
+| Field                       | 0.8B (works)            | 27B (broken)              |
+| --------------------------- | ----------------------- | ------------------------- |
+| `hidden_size`               | 1024                    | 5120                      |
+| `num_hidden_layers`         | 24                      | 64                        |
+| `num_attention_heads`       | 8                       | 24                        |
+| `num_key_value_heads`       | 2 (4:1 GQA)             | 4 (6:1 GQA)               |
+| `head_dim`                  | 256                     | 256                       |
+| `intermediate_size`         | 3072                    | 17408                     |
+| `linear_num_value_heads`    | 16                      | 48                        |
+| `linear_num_key_heads`      | 16                      | 16                        |
+| `tie_word_embeddings`       | true (tied lm_head)     | false (untied quantized lm_head) |
+| `vocab_size`                | 248_320                 | 248_320                   |
+
+The `numValueHeads % 32 == 0` gate (added during the 2026-05-27 Qwen3.5 GDN-prep regression) excludes both 16 and 48 from the fused-prep fast path, so the suspect is NOT `mt_gated_delta_prep_step_*`. The remaining fast paths that DO fire at the 27B shape:
+
+1. **`Ops.batchedQkvQmmFast`** — eligible when all 3 of q/k/v are int4 group_size=64 and `inDim % 512 == 0 && outDim % 8 == 0`. At 27B: inDim=5120 ✓, qDim=12288 ✓, kDim=vDim=1024 ✓. Was tuned against Qwen3.6-A3B's (hidden=2048, qDim=2048, kDim=vDim=512). The qDim difference (2048 vs 12288) is the largest delta; if the kernel has a fixed-tile assumption tied to `outDim ≤ N`, this is where it'd break.
+
+2. **`Ops.rmsNormQgemvInt4Fast`** (the fused finalNorm + lm_head path in `qwen35FinalNormLmHead`) — eligible when lmHead is int4 group_size=64 and `inDim % 512 == 0 && outDim % 8 == 0`. At 27B: inDim=5120 ✓, outDim=248_320 ✓. Was tuned against Qwen3.6-A3B's (hidden=2048, vocab=248_320). Same in_dim delta (2048 → 5120) as #1.
+
+3. **`Qwen35GDNMixer.fused4Eligible`** — already gated at `numValueHeads % 32 == 0`. 48 % 32 = 16 ≠ 0 → gate excludes 27B → fused4 path NOT fired. Safe.
+
+4. **Per-token GDN host-loop** (the fallback when `fused == false`) — same code as 0.8B, but iterating across `numValueHeads = 48` instead of 16. Bug here would need a fixed-buffer-size assumption or a numerical accumulation issue.
+
+**Recommended next-session investigation.** The 27B test cycle is 5–15 min per run (14 GB load + multi-token decode), so a one-at-a-time env-var A/B is the right shape:
+
+1. `FFAI_NO_FUSED_LM_HEAD=1 swift test --filter Qwen36TextIntegrationTests` — if this restores coherent output, the bug is in `Ops.rmsNormQgemvInt4Fast` at the (in=5120, out=248_320) shape. Fix: gate the fused path on a verified `inDim ∈ {1024, 2048}` allowlist (or whatever the post-investigation safe list ends up being).
+2. `FFAI_NO_FUSED_QKV=1 swift test --filter Qwen36TextIntegrationTests` — if this restores coherent output, the bug is in `Ops.batchedQkvQmmFast` at the (qDim=12288, kDim=vDim=1024, inDim=5120) shape. Fix: same gate pattern.
+3. If neither flag alone fixes it, try them combined.
+4. If still broken, the bug is in the legacy (non-fast) path — most likely `numValueHeads = 48` in the GDN host loop. Add a test-side print of `top[0]` token-id from the single-token smoke test to confirm whether even position 0 is degenerate. If yes, the per-token path itself is broken at this shape (not just the prefill).
+
+Test stays **enabled** so the failure is visible in every bisect run rather than disappearing behind a skip-reason. Tracked in the task list as a follow-up.
+
+### 2026-05-27 LFM2-MoE router shape mismatch — `gate.weight [E, 512]` vs hidden=2048
+
+**Symptom.** `LFM2TextIntegrationTests` dense-350M case PASSES; the 8B-A1B MoE case crashes at load-time prewarm with `Ops.swift:406: Precondition failed: gemv: in_dim mismatch 512 vs 2048`.
+
+**Root cause.** LFM2-8B-A1B-4bit ships the MoE router as `feed_forward.gate.weight` shape `[numExperts=32, 512]` — NOT the `[numExperts, hidden=2048]` shape `MoELayer.decode` expects. `MoELayer.decode` feeds the post-norm hidden state (`[hidden=2048]`) into the router, which fails the gemv precondition. LFM2-MoE likely uses a low-rank router projection (hidden → 512 → numExperts) or some other reduced-input routing scheme that the current `MoELayer` doesn't model.
+
+**Status.** Pre-existing bug surfaced when the quantized stacked-switch_mlp expert slicing landed (`683f002`) and unblocked the MoE load path past the prior `unsupportedConfig` throw. Tracked as a separate task.
+
+**Next steps.** Read the LFM2-MoE reference impl (`mlx-lm/models/lfm2_moe.py` or equivalent) to identify the actual routing pipeline. Likely needs either a router-input projection layer or a router-input-dim override on `MoELayer.decode`. Once the routing fires correctly, the rest of the MoE forward path (which uses standard expert dispatch on top of the quantized stacked triplets) should follow.
+
 ### 2026-05-27 GPU pin — `mt_sdpa_bidirectional_d64_*` at vision-tower production shape
 
 **Symptom.** During the 2026-05-27 post-fix-wave bisect, `GlmOcrIntegrationTests` produced zero test-side output for 600 s, then `MiniCPMVIntegrationTests` did the same, then the OS pinned (full WindowServer freeze, hard reboot required). Diagnostic via `ffai inspect` confirmed both checkpoints load + text-decode cleanly — pin is isolated to the **vision-tower forward**.
