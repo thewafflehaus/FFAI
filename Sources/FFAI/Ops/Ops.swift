@@ -7651,6 +7651,15 @@ final class AuraFlashScratchCache: @unchecked Sendable {
     private var scaleBufByKey: [ScaleKey: Tensor] = [:]
     private var partialsByKey: [PartialsKey: PartialsScratch] = [:]
 
+    /// Optional override for the FA-2 block size used by
+    /// `Ops.auraFlashSdpa2Pass` via `Qwen3Layer.forward`. Set to a value
+    /// in {32, 64, 128, 256} (or any multiple of 32) to override the
+    /// default 64. Bench-only knob — production should leave nil.
+    /// `nonisolated(unsafe)` because the single-inference-per-instance
+    /// threading contract (see `AuraFlashScratchCache` header) makes
+    /// races a non-issue and the bench surface needs simple writes.
+    nonisolated(unsafe) public static var blockSizeOverride: Int?
+
     private struct ScratchKey: Hashable {
         let count: Int
         let dtype: DType

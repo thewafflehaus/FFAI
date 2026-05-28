@@ -185,6 +185,50 @@ struct AuraDecodeBenchIntegrationTests {
         try await runComparison(kvLength: 1024)
     }
 
+    /// 2-pass `blockSize` sweep. Varies
+    /// `AuraFlashScratchCache.blockSizeOverride` across {32, 64, 128,
+    /// 256} at KV=256 / 1024 / 4096 to see which tile size best
+    /// saturates the M5 Max for the 2-pass FA-2 dispatch. The default
+    /// is 64 (matches `Ops.sdpaDecode2Pass`); this prints a per-cell
+    /// tps table so we can tune without re-running the full bench.
+    ///
+    /// At KV=64 only `bs=32` would give >1 block, so we skip it — the
+    /// sweep matters most where token-parallelism actually has work to
+    /// distribute.
+    @Test("decode tps — blockSize sweep at KV=256 / 1024 / 4096 (2-pass only)")
+    func blockSizeSweep() async throws {
+        guard FileManager.default.fileExists(atPath: qwen3LocalPath) else {
+            print("blockSizeSweep skipped: \(qwen3LocalPath) not found")
+            return
+        }
+        let blockSizes = [32, 64, 128, 256]
+        let kvLengths = [256, 1024]
+        var results: [(kv: Int, bs: Int, tps: Double)] = []
+        for kv in kvLengths {
+            for bs in blockSizes {
+                AuraFlashScratchCache.blockSizeOverride = bs
+                let tps = try await runDecodeTpsBench(
+                    decodePath: .compressed, kvLength: kv,
+                    nRuns: 3, nSteps: 24)
+                results.append((kv, bs, tps))
+                print(
+                    "[blockSize sweep] KV=\(kv)  bs=\(bs)  "
+                        + "compressed=\(String(format: "%.2f", tps)) tps")
+            }
+        }
+        AuraFlashScratchCache.blockSizeOverride = nil
+        // Print a compact summary table at the end.
+        print("\n=== blockSize sweep summary ===")
+        print("KV \\ bs    32       64      128      256")
+        for kv in kvLengths {
+            let row =
+                results.filter { $0.kv == kv }
+                .map { String(format: "%7.2f", $0.tps) }
+                .joined(separator: " ")
+            print("KV=\(String(format: "%-5d", kv))  \(row)")
+        }
+    }
+
     /// Cache-memory bench: the dequant-mirror path allocates a
     /// `[nKVHeads, maxSeq, headDim]` shared working buffer per layer.
     /// The compressed path doesn't touch that buffer at all — assert

@@ -339,11 +339,16 @@ public final class Qwen3Layer: Module {
                 valueBits: auraCache.scheme.valueBits,
                 headDim: headDim, dtype: h.dtype)
         {
-            // FA-2 block tile. 64 is the canonical choice — matches
-            // the dense `sdpaDecode2Pass` per-block work size and gives
-            // ~16 q-heads × ceil(maxSeq/64) blocks of token-parallelism
-            // (saturates the M5 Max class around liveLength ≈ 4K).
-            let blockSize = 64
+            // FA-2 block tile. Default 32 — `blockSizeSweep` bench at
+            // KV=256/1024 on M5 Max (Qwen3-0.6B-4bit aura4v4) shows
+            // bs=32 beats bs=64 by +2.5% to +5.5% and bs=128/256 are
+            // strictly worse. Smaller blocks distribute the
+            // single-simdgroup-per-(q_head, block) workload across more
+            // simdgroups, which matters more on Apple GPUs than the
+            // per-block work coalescing FA-2's bs=64 assumed for CUDA.
+            // `AuraFlashScratchCache.blockSizeOverride` is the bench
+            // knob for re-sweeping; production leaves it nil.
+            let blockSize = AuraFlashScratchCache.blockSizeOverride ?? 32
             let maxBlocks = (auraCache.maxSeq + blockSize - 1) / blockSize
             let partials = AuraFlashScratchCache.partials(
                 nQHeads: nHeads, maxBlocks: maxBlocks,
