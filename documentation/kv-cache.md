@@ -73,6 +73,37 @@ KVCache(
 
 > **Note.** Incremental growth applies to the raw `KVCache` (the default). The quantized `affine8` / `affine4` and AURA caches still pre-allocate their (already-compressed) storage; growing them is a separate follow-up. Sliding-window (`.window`) caches allocate exactly their `maxSize` ring up front and never grow.
 
+## Memory budget & the wired-memory ticket
+
+Apple Silicon defaults the GPU's wired-memory "ticket" (`MTLDevice.recommendedMaxWorkingSetSize`) to ~75% of total unified memory. Allocating past it doesn't hard-fail — the OS starts paging, which tanks decode throughput and, at the extreme (a 256K-context KV cache on a 27B model is ~16 GB), can wedge the machine. FFAI guards against this at the single point where caches are created (`Model.makeManagedCaches`), so the guard applies uniformly to **every** model family:
+
+1. **Resolve the context ceiling.** Start from the model's `max_position_embeddings`, narrow by `LoadOptions.maxContextLength`, then by the generation budget (`prompt + maxTokens`).
+2. **Clamp to the budget.** Compute a conservative worst-case footprint — `weights + KV(ceiling) + a 5% working-memory margin` — and clamp the ceiling so it fits the wired-memory budget. The KV estimate treats every layer as a raw fp16/bf16 attention layer (hybrid + quantized caches are smaller, so the guard errs toward clamping early rather than paging). If the model's weights + a minimal KV cache already exceed the budget, the load throws `ModelError.insufficientMemory` with an actionable message instead of silently thrashing.
+3. **Honor the overrides** (`preallocateKVCache`, `initialKVCacheCapacity`) and build the caches.
+
+### The budget, and raising the ticket
+
+| `LoadOptions.wiredLimitBytes` | Budget the guard uses |
+|---|---|
+| `nil` (default) | `recommendedMaxWorkingSetSize` — Apple's ~75% ticket. |
+| set | Your value, **clamped to 92% of physical RAM** — a load can never request more than the box can physically back. |
+
+Raising `wiredLimitBytes` is how you "raise the ticket": it lets the guard permit a larger context, and the extra KV is pinned into the same persistent `MTLResidencySet` that already holds the model weights (every `KVCache` pins its buffers on allocation **and on each growth**, so the working set the OS keeps resident scales with the budget you allow). The residency set is the wired-memory mechanism on macOS 15+ — there is no separate "set wired limit" call; the budget governs how much is allocated, and residency keeps it from being paged.
+
+```swift
+// Bound a 256K-context model to 8K of usable context AND cap KV memory.
+let model = try await Model.load(
+    "mlx-community/Qwen3.6-27B-4bit",
+    options: LoadOptions(
+        maxContextLength: 8192,           // growth ceiling
+        preallocateKVCache: false,        // grow incrementally (default)
+        wiredLimitBytes: 48 * 1024 * 1024 * 1024  // allow up to 48 GB resident
+    )
+)
+```
+
+`ffai inspect` reports the worst-case `full-ctx footprint` for a model at its full `maxSeq` (computed, not allocated) alongside what it actually allocated for the probe — the fastest way to see whether a context will fit before you run it.
+
 ## Choosing a configuration
 
 Three schemes ship today, selectable via `LoadOptions.kvCache`:

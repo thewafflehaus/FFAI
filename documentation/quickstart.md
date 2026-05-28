@@ -158,6 +158,10 @@ let model = try await Model.load(
 | `lazyCapabilities` | `true` | Allow runtime `enable(_:)` / `disable(_:)` after load. |
 | `revision` | `"main"` | HF branch / tag / commit. |
 | `cacheDirectory` | `nil` | Override the HF cache root for this load. `nil` honors `HF_HOME` then `~/.cache/huggingface/hub/`. See [§ Custom model cache path](#custom-model-cache-path). |
+| `maxContextLength` | `nil` | KV-cache growth ceiling. `nil` uses the model's `max_position_embeddings`. The cache grows incrementally up to this; the over-allocation guard clamps it further so weights + max-KV + margin fit the wired-memory budget. See [kv-cache.md § Memory budget](kv-cache.md#memory-budget--the-wired-memory-ticket). |
+| `preallocateKVCache` | `false` | Reserve the full context's KV memory up front instead of growing on demand. |
+| `initialKVCacheCapacity` | `nil` | Override the incremental cache's starting depth (default `KVCache.defaultInitialCapacity` = 2048). |
+| `wiredLimitBytes` | `nil` | Override the wired-memory budget the over-allocation guard works against. `nil` uses `recommendedMaxWorkingSetSize` (~75% of unified memory); a set value is clamped to 92% of physical RAM. |
 
 ## Custom model cache path
 
