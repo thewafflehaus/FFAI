@@ -11,6 +11,7 @@ We should add support for the following model families:
 - Falcon OCR - use https://huggingface.co/tiiuae/Falcon-OCR as a reference (image OCR model)
 - LightOn OCR - use https://huggingface.co/lightonai/LightOnOCR-2-1B as reference (image OCR model)
 - LightOn OCR BBOX - use https://huggingface.co/lightonai/LightOnOCR-2-1B-bbox as reference (image OCR model with bounding box support)
+- Surya OCR 2 - use https://huggingface.co/datalab-to/surya-ocr-2 as reference (image OCR model with bounding box support, SOTA)
 - SAM 3.1 - use https://huggingface.co/facebook/sam3.1 as a reference (vision/video segmentation model)
 - Kimi K2 - use https://huggingface.co/moonshotai/Kimi-K2-Thinking as a reference
 - Kimi K2.5 - use https://huggingface.co/moonshotai/Kimi-K2.5 as a reference (multi-modal, vision + text)
@@ -48,6 +49,7 @@ We should add support for the following model families:
 - Nvidia Nemotron Nano VL - https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16 (vision model)
 - Nvidia Llama Nemotron Nano VL - https://huggingface.co/nvidia/Llama-3.1-Nemotron-Nano-VL-8B-V1 (vision/ocr model with llama backbone)
 - Nvidia Nemotron Labs Diffusion VL - https://huggingface.co/nvidia/Nemotron-Labs-Diffusion-VLM-8B (vision diffusion model)
+- NVidia Locate Anything VL - https://huggingface.co/nvidia/LocateAnything-3B (vision language model)
 - EPIC SHARC MOHTE - https://github.com/DjDevilCloud/EPIC-SHARC-MOHTE (unclear on architecture, needs analysis first to see if even relevant/novel)
 
 Yes I know that some of the models are too big to run on my machine. Code them up anyway. We can check out the model format and config files and still build out reference implementations and add unit tests. We can create integration tests but we'll just mark them as skipped with a reason of "requires hardware with {{amount_of_ram_needed}} unified memory". Follow the same patterns for implementation as we have with other models.
