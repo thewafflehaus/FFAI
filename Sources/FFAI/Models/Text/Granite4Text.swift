@@ -150,21 +150,65 @@ public struct Granite4Hybrid: Granite4Variant {
         let sharedIntermediate = config.int("shared_intermediate_size") ?? intermediate
 
         // ── Activation dtype — taken from the embedding table ─────────
-        let embedWRaw = try weights.tensor(named: "model.embed_tokens.weight")
-        let activationDtype = embedWRaw.dtype
+        // Granite4 4-bit conversions (e.g. mlx-community/granite-4.0-h-350m-4bit)
+        // do NOT pre-bake `embedding_multiplier` or `residual_multiplier`
+        // into the packed weights — verified by dequantizing the embed
+        // triplet and comparing against the raw bf16 checkpoint. The
+        // loader instead folds the multipliers into the quantized
+        // triplet's `scales` and `biases` tensors at load time:
+        //
+        //     dequant = nibble * scale + bias
+        //     dequant * m = nibble * (m·scale) + (m·bias)
+        //
+        // Multiplying both `scales` and `biases` by the multiplier is
+        // mathematically identical to scaling every dequantized output,
+        // and costs one vector-scale per triplet at load. The packed
+        // u32 `weight` is untouched. Same arithmetic as the raw path's
+        // `scaleTensorGMH`; the FalconH1 / Jamba / LFM2 / NemotronH
+        // siblings either ship pre-baked multipliers (FalconH1) or
+        // have no µP-style multipliers (the rest) and can skip this
+        // step entirely. Granite4 is the first family where the
+        // multipliers must be folded into the quantized triplet.
+        let quant = config.quantization
+        let isQuantized = quant != nil
+        let activationDtype: DType
+        let embedTokens: AnyEmbedding
+        // For tied lm_head: raw path keeps the *unscaled* embed table
+        // (see file header). Quantized path keeps the *unscaled*
+        // triplet (multiplier-scaled version goes to the embedding
+        // lookup only).
+        let embedWRawForTiedLmHead: Tensor?
+        let embedTripletForTiedLmHead: SafeTensorsBundle.QuantizedTriplet?
+        if isQuantized, weights.isQuantized("model.embed_tokens"),
+            let scales = try? weights.tensor(named: "model.embed_tokens.scales")
+        {
+            activationDtype = scales.dtype
+            let triplet = try weights.quantizedTriplet("model.embed_tokens")
+            let scaledScales = scaleTensorGMH(
+                triplet.scales, by: embeddingMultiplier, device: device)
+            let scaledBiases = scaleTensorGMH(
+                triplet.biases, by: embeddingMultiplier, device: device)
+            let bits = deriveAffineQuantBits(
+                weightPackedCols: triplet.weight.shape[triplet.weight.shape.count - 1],
+                scaleCols: triplet.scales.shape[triplet.scales.shape.count - 1],
+                groupSize: quant!.groupSize)
+            embedTokens = AnyEmbedding(
+                QuantizedEmbedding(
+                    weight: triplet.weight, scales: scaledScales, biases: scaledBiases,
+                    hidden: hidden, bits: bits, groupSize: quant!.groupSize))
+            embedWRawForTiedLmHead = nil
+            embedTripletForTiedLmHead = triplet
+        } else {
+            let embedWRaw = try weights.tensor(named: "model.embed_tokens.weight")
+            activationDtype = embedWRaw.dtype
+            let embedW = scaleTensorGMH(embedWRaw, by: embeddingMultiplier, device: device)
+            embedTokens = AnyEmbedding(Embedding(weight: embedW))
+            embedWRawForTiedLmHead = embedWRaw
+            embedTripletForTiedLmHead = nil
+        }
         precondition(
             activationDtype == .f32 || activationDtype == .bf16 || activationDtype == .f16,
             "Granite4: unexpected activation dtype \(activationDtype)")
-        guard config.quantization == nil else {
-            throw Granite4Error.unsupportedConfig(
-                "quantized Granite4 checkpoints not yet supported — "
-                    + "load a raw bf16/f16 variant")
-        }
-
-        // Embedding table folds embedding_multiplier (the tied lm_head
-        // keeps the unscaled table — see file header).
-        let embedW = scaleTensorGMH(embedWRaw, by: embeddingMultiplier, device: device)
-        let embedTokens = AnyEmbedding(Embedding(weight: embedW))
 
         // ── Per-layer construction ────────────────────────────────────
         var layers: [any DecoderLayer] = []
@@ -191,26 +235,47 @@ public struct Granite4Hybrid: Granite4Variant {
                         useConvBias: useConvBias, eps: eps,
                         tsMin: tsMin, tsMax: tsMax,
                         residualMultiplier: residualMultiplier,
-                        dtype: activationDtype, device: device))
+                        dtype: activationDtype, device: device,
+                        quantization: quant))
             case .attention:
                 // o_proj folds residual_multiplier so the residual add
-                // stays a plain Ops.add.
-                let qProj = AnyLinear(
-                    Linear(
-                        weight: try weights.tensor(named: "\(p).self_attn.q_proj.weight")))
-                let kProj = AnyLinear(
-                    Linear(
-                        weight: try weights.tensor(named: "\(p).self_attn.k_proj.weight")))
-                let vProj = AnyLinear(
-                    Linear(
-                        weight: try weights.tensor(named: "\(p).self_attn.v_proj.weight")))
-                let oW = scaleTensorGMH(
-                    try weights.tensor(named: "\(p).self_attn.o_proj.weight"),
-                    by: residualMultiplier, device: device)
+                // stays a plain Ops.add. On the quantized path the
+                // fold goes into the scales/biases of the o_proj
+                // triplet (loadLinearScaled); the packed u32 weight
+                // stays untouched.
+                let qProj: AnyLinear
+                let kProj: AnyLinear
+                let vProj: AnyLinear
+                let oProj: AnyLinear
+                if isQuantized {
+                    qProj = try loadLinear(
+                        base: "\(p).self_attn.q_proj", in: weights, quantization: quant)
+                    kProj = try loadLinear(
+                        base: "\(p).self_attn.k_proj", in: weights, quantization: quant)
+                    vProj = try loadLinear(
+                        base: "\(p).self_attn.v_proj", in: weights, quantization: quant)
+                    oProj = try loadLinearScaledGMH(
+                        base: "\(p).self_attn.o_proj", in: weights,
+                        quantization: quant!, by: residualMultiplier, device: device)
+                } else {
+                    qProj = AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(named: "\(p).self_attn.q_proj.weight")))
+                    kProj = AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(named: "\(p).self_attn.k_proj.weight")))
+                    vProj = AnyLinear(
+                        Linear(
+                            weight: try weights.tensor(named: "\(p).self_attn.v_proj.weight")))
+                    let oW = scaleTensorGMH(
+                        try weights.tensor(named: "\(p).self_attn.o_proj.weight"),
+                        by: residualMultiplier, device: device)
+                    oProj = AnyLinear(Linear(weight: oW))
+                }
                 mixer = .attention(
                     Granite4AttentionMixer(
                         qProj: qProj, kProj: kProj, vProj: vProj,
-                        oProj: AnyLinear(Linear(weight: oW)),
+                        oProj: oProj,
                         nHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
                         scale: attentionScale))
             }
@@ -224,19 +289,37 @@ public struct Granite4Hybrid: Granite4Variant {
                         hidden: hidden, moeIntermediate: intermediate,
                         sharedIntermediate: sharedIntermediate,
                         numExperts: numLocalExperts, topK: numExpertsPerToken,
-                        residualMultiplier: residualMultiplier, device: device))
+                        residualMultiplier: residualMultiplier, device: device,
+                        quantization: quant))
             } else {
-                // Dense SwiGLU MLP. down_proj folds residual_multiplier.
-                let gateW = try weights.tensor(named: "\(p).mlp.gate_proj.weight")
-                let upW = try weights.tensor(named: "\(p).mlp.up_proj.weight")
-                let downW = scaleTensorGMH(
-                    try weights.tensor(named: "\(p).mlp.down_proj.weight"),
-                    by: residualMultiplier, device: device)
+                // Dense SwiGLU MLP. down_proj folds residual_multiplier
+                // on the raw path; quantized bakes it in.
+                let gateProj: AnyLinear
+                let upProj: AnyLinear
+                let downProj: AnyLinear
+                if isQuantized {
+                    gateProj = try loadLinear(
+                        base: "\(p).mlp.gate_proj", in: weights, quantization: quant)
+                    upProj = try loadLinear(
+                        base: "\(p).mlp.up_proj", in: weights, quantization: quant)
+                    downProj = try loadLinearScaledGMH(
+                        base: "\(p).mlp.down_proj", in: weights,
+                        quantization: quant!, by: residualMultiplier, device: device)
+                } else {
+                    let gateW = try weights.tensor(named: "\(p).mlp.gate_proj.weight")
+                    let upW = try weights.tensor(named: "\(p).mlp.up_proj.weight")
+                    let downW = scaleTensorGMH(
+                        try weights.tensor(named: "\(p).mlp.down_proj.weight"),
+                        by: residualMultiplier, device: device)
+                    gateProj = AnyLinear(Linear(weight: gateW))
+                    upProj = AnyLinear(Linear(weight: upW))
+                    downProj = AnyLinear(Linear(weight: downW))
+                }
                 ffn = .dense(
                     Granite4DenseMLP(
-                        gateProj: AnyLinear(Linear(weight: gateW)),
-                        upProj: AnyLinear(Linear(weight: upW)),
-                        downProj: AnyLinear(Linear(weight: downW))))
+                        gateProj: gateProj,
+                        upProj: upProj,
+                        downProj: downProj))
             }
 
             layers.append(
@@ -248,12 +331,36 @@ public struct Granite4Hybrid: Granite4Variant {
         let finalNorm = RMSNorm(
             weight: try weights.tensor(named: "model.norm.weight"), eps: eps)
 
+        // lm_head — tied + raw uses the *unscaled* embed table; tied +
+        // quantized wraps the *unscaled* embed triplet as a
+        // QuantizedLinear (the embedding lookup above used a copy with
+        // embedding_multiplier folded into scales/biases; the tied
+        // lm_head must use the original unscaled triplet).
         let lmHead: AnyLinear
         if !tieEmbed, weights.has("lm_head.weight") {
-            lmHead = AnyLinear(Linear(weight: try weights.tensor(named: "lm_head.weight")))
-        } else {
-            // Tied: the head shares the *unscaled* embedding table.
+            if isQuantized, weights.isQuantized("lm_head") {
+                lmHead = try loadLinear(
+                    base: "lm_head", in: weights, quantization: quant)
+            } else {
+                lmHead = AnyLinear(
+                    Linear(weight: try weights.tensor(named: "lm_head.weight")))
+            }
+        } else if let q = quant, let t = embedTripletForTiedLmHead {
+            let bits = deriveAffineQuantBits(
+                weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
+                scaleCols: t.scales.shape[t.scales.shape.count - 1],
+                groupSize: q.groupSize)
+            lmHead = AnyLinear(
+                QuantizedLinear(
+                    weight: t.weight, scales: t.scales, biases: t.biases,
+                    bits: bits, groupSize: q.groupSize))
+        } else if let embedWRaw = embedWRawForTiedLmHead {
+            // Tied + raw: the head shares the *unscaled* embedding table.
             lmHead = AnyLinear(Linear(weight: embedWRaw))
+        } else {
+            throw Granite4Error.unsupportedConfig(
+                "quantized Granite4 checkpoint missing both an explicit "
+                    + "lm_head.weight and a quantized embed_tokens triplet")
         }
 
         let maxSeq = config.int("max_position_embeddings") ?? 8192
@@ -277,17 +384,31 @@ public struct Granite4Hybrid: Granite4Variant {
         nHeads: Int, headDim: Int, stateDim: Int, nGroups: Int,
         convKernel: Int, useConvBias: Bool, eps: Float,
         tsMin: Float, tsMax: Float, residualMultiplier: Float,
-        dtype: DType, device: Device
+        dtype: DType, device: Device,
+        quantization: ModelConfig.QuantizationConfig?
     ) throws -> Granite4MambaMixer {
-        let inProj = AnyLinear(
-            Linear(
-                weight: try weights.tensor(named: "\(p).in_proj.weight")))
-        // out_proj folds residual_multiplier — the layer-level residual
-        // add stays a plain Ops.add.
-        let outW = scaleTensorGMH(
-            try weights.tensor(named: "\(p).out_proj.weight"),
-            by: residualMultiplier, device: device)
-        let outProj = AnyLinear(Linear(weight: outW))
+        // in_proj / out_proj quantized on 4-bit checkpoints. out_proj's
+        // residual_multiplier folds into the scales/biases on the
+        // quantized path (see loader header for the dequant arithmetic);
+        // raw path folds into the weight directly. Conv1d, A_log, D,
+        // dt_bias, and the gated mixer RMSNorm weight stay raw on both
+        // paths.
+        let inProj: AnyLinear
+        let outProj: AnyLinear
+        if let q = quantization, weights.isQuantized("\(p).in_proj") {
+            inProj = try loadLinear(
+                base: "\(p).in_proj", in: weights, quantization: q)
+            outProj = try loadLinearScaledGMH(
+                base: "\(p).out_proj", in: weights, quantization: q,
+                by: residualMultiplier, device: device)
+        } else {
+            inProj = AnyLinear(
+                Linear(weight: try weights.tensor(named: "\(p).in_proj.weight")))
+            let outW = scaleTensorGMH(
+                try weights.tensor(named: "\(p).out_proj.weight"),
+                by: residualMultiplier, device: device)
+            outProj = AnyLinear(Linear(weight: outW))
+        }
 
         // conv1d.weight ships [conv_dim, 1, kernel]; the metaltile kernel
         // wants [kernel, conv_dim].
@@ -340,8 +461,25 @@ public struct Granite4Hybrid: Granite4Variant {
         prefix p: String, weights: SafeTensorsBundle,
         hidden: Int, moeIntermediate: Int, sharedIntermediate: Int,
         numExperts: Int, topK: Int, residualMultiplier: Float,
-        device: Device
+        device: Device,
+        quantization: ModelConfig.QuantizationConfig?
     ) throws -> MoELayer {
+        // Quantized Granite4 MoE: per-expert sliceRows on packed u32
+        // input_linear / output_linear isn't wired up yet — same
+        // follow-up as Jamba / LFM2 / NemotronH. The 350m-h test
+        // target is dense (no MoE), so this gate fires only for the
+        // larger Granite4 MoE checkpoints — surface a clear error
+        // rather than silently failing on a missing per-expert key.
+        if quantization != nil,
+            weights.isQuantized("\(p).block_sparse_moe.input_linear")
+        {
+            throw Granite4Error.unsupportedConfig(
+                "quantized Granite4 MoE expert slicing not yet "
+                    + "implemented (stacked input_linear/output_linear "
+                    + "quantized triplets need per-expert u32 sliceRows) "
+                    + "— load a raw bf16/f16 Granite4 MoE variant")
+        }
+        _ = quantization  // suppress unused-parameter warning on raw path
         // Router: hidden → numExperts logits.
         let gate = AnyLinear(
             Linear(
@@ -1089,6 +1227,46 @@ private func scaleTensorGMH(_ t: Tensor, by m: Float, device: Device) -> Tensor 
     if m == 1.0 { return t }
     let floats = readFloatsGMH(t).map { $0 * m }
     return writeFloatsGMH(floats, shape: t.shape, dtype: t.dtype, device: device)
+}
+
+/// Load a quantized Linear with a scalar fold-in into its
+/// `scales`/`biases` — mathematically equivalent to multiplying every
+/// dequantized output by `m`:
+///
+///     dequant      = nibble * scale + bias
+///     dequant * m  = nibble * (m·scale) + (m·bias)
+///
+/// Used to fold Granite4's `residual_multiplier` into the out_proj /
+/// o_proj / down_proj triplets on the quantized path (the raw path
+/// folds the multiplier directly into the weight via scaleTensorGMH).
+/// The packed u32 `weight` is untouched.
+///
+/// Falls back to the regular raw `Linear` path when the bundle isn't
+/// quantized at this base (defensive — every Granite4 4-bit
+/// checkpoint we ship the o_proj / out_proj / mlp.down_proj as
+/// quantized triplets).
+private func loadLinearScaledGMH(
+    base: String, in weights: SafeTensorsBundle,
+    quantization q: ModelConfig.QuantizationConfig,
+    by m: Float, device: Device
+) throws -> AnyLinear {
+    guard weights.isQuantized(base) else {
+        let w = scaleTensorGMH(
+            try weights.tensor(named: "\(base).weight"),
+            by: m, device: device)
+        return AnyLinear(Linear(weight: w))
+    }
+    let t = try weights.quantizedTriplet(base)
+    let scaledScales = scaleTensorGMH(t.scales, by: m, device: device)
+    let scaledBiases = scaleTensorGMH(t.biases, by: m, device: device)
+    let bits = deriveAffineQuantBits(
+        weightPackedCols: t.weight.shape[t.weight.shape.count - 1],
+        scaleCols: t.scales.shape[t.scales.shape.count - 1],
+        groupSize: q.groupSize)
+    return AnyLinear(
+        QuantizedLinear(
+            weight: t.weight, scales: scaledScales, biases: scaledBiases,
+            bits: bits, groupSize: q.groupSize))
 }
 
 /// A_eff = -exp(A_log), per head, in the activation dtype.
