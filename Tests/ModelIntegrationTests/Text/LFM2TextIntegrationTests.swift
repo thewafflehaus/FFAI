@@ -116,7 +116,7 @@ struct LFM2TextIntegrationTests {
         expectCoherentOutput(
             result.generatedTokens,
             minTokens: 32,
-            label: "LFM2-350M bf16"
+            label: "LFM2-350M 4bit"
         )
     }
 
@@ -163,7 +163,7 @@ struct LFM2TextIntegrationTests {
         expectCoherentOutput(
             result.generatedTokens,
             minTokens: 32,
-            label: "LFM2-8B-A1B MoE bf16"
+            label: "LFM2-8B-A1B MoE 4bit"
         )
     }
 }

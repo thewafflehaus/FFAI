@@ -139,7 +139,7 @@ struct JambaIntegrationTests {
             result.generatedTokens,
             minTokens: 32,
             minUniqueRatio: 0.12,
-            label: "AI21-Jamba-Reasoning-3B bf16"
+            label: "AI21-Jamba-Reasoning-3B 4bit"
         )
     }
 }

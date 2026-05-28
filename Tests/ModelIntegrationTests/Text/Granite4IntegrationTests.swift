@@ -142,7 +142,7 @@ struct Granite4IntegrationTests {
             result.generatedTokens,
             minTokens: 32,
             minUniqueRatio: 0.12,
-            label: "Granite4-350M H bf16"
+            label: "Granite4-350M H 4bit"
         )
     }
 }

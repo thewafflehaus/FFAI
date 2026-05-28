@@ -130,5 +130,18 @@ let package = Package(
             ],
             path: "Tests/FFAICLITests"
         ),
+
+        // Benchmark target — micro-benchmarks for prefill/decode steady-state
+        // throughput, batched-vs-per-token equivalence, and other
+        // performance characterisation runs. Disjoint from ModelIntegrationTests
+        // (which is for behavioural correctness only). Each bench suite is
+        // gated off by default behind its own IntegrationGroupGating flag
+        // (or a per-suite local flag) so a `swift test` run doesn't
+        // accidentally fire a 30-minute prefill/decode sweep.
+        .testTarget(
+            name: "BenchmarkTests",
+            dependencies: ["FFAI", "TestHelpers"],
+            path: "Tests/BenchmarkTests"
+        ),
     ]
 )

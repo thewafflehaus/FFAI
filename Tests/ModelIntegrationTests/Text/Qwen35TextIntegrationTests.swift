@@ -145,7 +145,7 @@ struct Qwen35TextIntegrationTests {
             result.generatedTokens,
             minTokens: 32,
             minUniqueRatio: 0.05,
-            label: "Qwen3.5-0.8B bf16 dense GDN hybrid"
+            label: "Qwen3.5-0.8B 4bit dense GDN hybrid"
         )
     }
 }

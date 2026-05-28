@@ -115,7 +115,7 @@ struct Gemma4TextIntegrationTests {
         #expect(result.tokensPerSecond > 0)
         expectCoherentOutput(
             result.generatedTokens, minTokens: maxTokens,
-            label: "Gemma 4 E2B-it bf16")
+            label: "Gemma 4 E2B-it 4bit")
     }
 
     @Test(
@@ -163,7 +163,7 @@ struct Gemma4TextIntegrationTests {
         // uses the uniformly-8-bit checkpoint; the 4-bit checkpoint
         // mixes 4-/8-bit per layer, now handled by the per-tensor
         // `deriveAffineQuantBits` bit-width derivation. Build-machine
-        // only: the 8-bit checkpoint is ~28 GB and slow to greedy-decode.
+        // only: the 4-bit checkpoint is ~13 GB and slow to greedy-decode.
         let modelId = "mlx-community/gemma-4-26b-a4b-it-4bit"
         let prompt = "The capital of France is"
 
@@ -180,6 +180,6 @@ struct Gemma4TextIntegrationTests {
         #expect(result.tokensPerSecond > 0)
         expectCoherentOutput(
             result.generatedTokens, minTokens: 24,
-            label: "Gemma 4 26B-A4B-it 8bit")
+            label: "Gemma 4 26B-A4B-it 4bit")
     }
 }

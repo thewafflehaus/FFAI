@@ -48,7 +48,7 @@ struct SmolLMIntegrationTests {
             prompt: "Once upon a time, in a quiet village",
             parameters: GenerationParameters(maxTokens: 200, temperature: 0)
         )
-        expectCoherentOutput(result.generatedTokens, label: "SmolLM 360M fp16")
+        expectCoherentOutput(result.generatedTokens, label: "SmolLM 360M 4bit")
     }
 
     @Test("SmolLM2-360M-Instruct (no biases) decodes coherently")

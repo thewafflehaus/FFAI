@@ -129,7 +129,7 @@ struct NemotronHTextIntegrationTests {
         expectCoherentOutput(
             result.generatedTokens,
             minTokens: 32,
-            label: "NemotronH-4B Base bf16"
+            label: "NemotronH-4B Base 4bit"
         )
     }
 }

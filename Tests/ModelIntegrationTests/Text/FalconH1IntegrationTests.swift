@@ -105,7 +105,7 @@ struct FalconH1IntegrationTests {
         expectCoherentOutput(
             result.generatedTokens,
             minTokens: 32,
-            label: "FalconH1 Tiny-90M bf16"
+            label: "FalconH1 Tiny-90M 4bit"
         )
     }
 }

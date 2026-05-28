@@ -86,6 +86,6 @@ struct Gemma3TextIntegrationTests {
             parameters: GenerationParameters(maxTokens: maxTokens, temperature: 0)
         )
         #expect(result.tokensPerSecond > 0)
-        expectCoherentOutput(result.generatedTokens, label: "Gemma 3 1B-it bf16")
+        expectCoherentOutput(result.generatedTokens, label: "Gemma 3 1B-it 4bit")
     }
 }
