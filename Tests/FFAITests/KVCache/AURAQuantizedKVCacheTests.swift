@@ -128,22 +128,16 @@ struct AURAQuantizedKVCacheTests {
         let draft: [Float] = [9.0, 9.5, 9.9]  // rejected speculative block
         let real: [Float] = [3.0, 4.0]  // accepted continuation
 
-        // The fix under test is DETERMINISTIC: if it regresses, the
-        // re-decoded slots carry OR'd garbage and `maxErr` is huge on
-        // EVERY attempt. The parallel unit suite, however, has a known
-        // systemic GPU-driver flakiness under heavy concurrent
-        // command-buffer submission (plan.md Phase 9 — the same class
-        // that intermittently hits `ssm_step` / `sdpaDecode`) that can
-        // corrupt an exact GPU-output comparison once in a while. So
-        // retry: pass as soon as any attempt is clean (a real regression
-        // fails all attempts; a transient contention flake clears).
-        var lastErr = Float.greatestFiniteMagnitude
-        for _ in 0 ..< 6 {
-            lastErr = rollbackMaxErr(prefix: prefix, draft: draft, real: real)
-            if lastErr < 1e-3 { break }
-        }
+        // Deterministic: a correct rollback yields ≈0; without the
+        // zero-on-rewrite fix the re-decoded slots carry OR'd draft+real
+        // bits and diverge wildly. Run under the serialized `make
+        // test-unit` gate. (The parallel `test-stress` canary may surface
+        // the systemic concurrent-GPU flakiness this exact-comparison
+        // would otherwise be a victim of — that's the canary's job, not
+        // this test's to paper over.)
+        let maxErr = rollbackMaxErr(prefix: prefix, draft: draft, real: real)
         #expect(
-            lastErr < 1e-3,
-            "re-appended slots diverge from clean reference (maxErr=\(lastErr)) — stale atomic_or bits leaked through truncate + re-append")
+            maxErr < 1e-3,
+            "re-appended slots diverge from clean reference (maxErr=\(maxErr)) — stale atomic_or bits leaked through truncate + re-append")
     }
 }

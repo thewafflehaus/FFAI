@@ -104,23 +104,40 @@ regenerate-kernels: ## run `tile build --emit` to regenerate metallib + Swift wr
 #
 # Targets:
 # - `make test-unit`         — FFAITests + MetalTileSwiftTests at the
-#                              production cap (FFAI_MAX_COMMAND_BUFFERS=16).
+#                              production cap (FFAI_MAX_COMMAND_BUFFERS=16),
+#                              serialized (`--no-parallel`, the Swift Testing
+#                              global serializer) so concurrent GPU
+#                              command-buffer submission can't flake the
+#                              GPU-correctness tests. Reliable gate.
 # - `make test-integration`  — ModelIntegrationTests at production cap + ModelLoadLock
 #                              + `--parallel --num-workers 1` (memory
 #                              pressure, not GPU). Matches release.yml.
 # - `make test`              — both in sequence.
 # - `make test-stress`       — canary; both suites at production cap with
-#                              integration parallelism uncapped. Run after
-#                              touching anything dispatch-related to
+#                              parallelism UNCAPPED (the unit suite runs
+#                              concurrently here, unlike test-unit). Run
+#                              after touching anything dispatch-related to
 #                              confirm production safety holds under
-#                              maximal parallel load.
+#                              maximal parallel load — and to surface the
+#                              concurrent-GPU flakiness test-unit now avoids.
 
 .PHONY: test
 test: regenerate-kernels test-unit test-integration ## run unit then integration test suites
 
 .PHONY: test-unit
-test-unit: regenerate-kernels ## unit + Metal tests at production cap (FFAI_MAX_COMMAND_BUFFERS=16)
-	FFAI_MAX_COMMAND_BUFFERS=16 swift test --filter "FFAITests|MetalTileSwiftTests"
+test-unit: regenerate-kernels ## unit + Metal tests, serialized (--no-parallel) — GPU correctness tests flake under concurrent submission
+	@# --no-parallel is the SWIFT TESTING global serializer — the only thing
+	@# that actually stops cross-suite concurrency here. `--num-workers 1` is
+	@# an XCTest knob and a NO-OP for Swift Testing (@Test/@Suite); a per-suite
+	@# `.serialized` trait only serializes WITHIN a suite. ~25% of unit files
+	@# (45/182) drive the GPU directly, and the shared MTLDevice/queue shows
+	@# driver-level flakiness under heavy CONCURRENT command-buffer submission:
+	@# a bad-contention run corrupts several unrelated GPU-correctness tests at
+	@# once (ssm_step / sdpaDecode / int4 dequant / AURA), all of which pass in
+	@# isolation. --no-parallel makes the gate reliable (verified 6/6 green vs
+	@# ~50% flake parallel; ~8s vs ~3s). The uncapped-parallel canary that
+	@# surfaces the dispatch-race class lives in `make test-stress`.
+	FFAI_MAX_COMMAND_BUFFERS=16 swift test --no-parallel --filter "FFAITests|MetalTileSwiftTests"
 
 .PHONY: test-integration
 test-integration: regenerate-kernels ## end-to-end model tests; production cap + ModelLoadLock; matches release.yml

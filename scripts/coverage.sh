@@ -32,7 +32,11 @@ set -e
 cd "$(dirname "$0")/.."
 
 echo "Running unit tests with coverage enabled..."
-swift test --enable-code-coverage --filter "FFAITests|MetalTileSwiftTests"
+# --no-parallel: same reliability fix as `make test-unit`. The GPU
+# correctness tests flake under concurrent command-buffer submission, so
+# serialize the Swift Testing run (`--num-workers 1` is an XCTest no-op
+# for Swift Testing).
+swift test --no-parallel --enable-code-coverage --filter "FFAITests|MetalTileSwiftTests"
 
 BIN_PATH=$(swift build --show-bin-path)
 PROF_DATA="$BIN_PATH/codecov/default.profdata"
