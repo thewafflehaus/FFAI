@@ -129,6 +129,13 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
     /// reasoning as `KVCache.lengthLock` — see `Sources/FFAI/KVCache.swift`.
     private let lengthLock = NSLock()
     private var _evictionState: KVEvictionState
+    /// Highest physical slot index ever written + 1. The encode kernel
+    /// `atomic_or`-accumulates, so any slot being *re-written* (window
+    /// wrap, or a spec-decode `truncate` + re-append after a rejected
+    /// draft) must be zeroed first or stale bits OR through. A slot is a
+    /// re-write exactly when its index is below this mark. Lock-protected
+    /// alongside `_evictionState`.
+    private var highWaterSlot: Int = 0
     public var length: Int { lengthLock.withLock { _evictionState.length } }
     public var absolutePosition: Int { lengthLock.withLock { _evictionState.absolutePosition } }
     public var eviction: KVEviction { _evictionState.policy }
@@ -250,7 +257,12 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         self._evictionState = KVEvictionState(policy: eviction, bufferCapacity: contextLength)
     }
 
-    public func reset() { lengthLock.withLock { _evictionState.reset() } }
+    public func reset() {
+        lengthLock.withLock {
+            _evictionState.reset()
+            highWaterSlot = 0
+        }
+    }
 
     public func truncate(toLength length: Int) {
         lengthLock.withLock { _evictionState.truncate(toLength: length) }
@@ -276,16 +288,19 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
 
         lengthLock.withLock {
             let pos = _evictionState.reserveNextSlot()
-            // AURA encode atomic_or-accumulates into `packed[pos]`,
-            // so on a rotated slot we MUST zero the prior contents
-            // before the encode runs, or stale bits will OR through.
-            // Cheap (one packed_width × u32 row per head per cache).
-            if case .window = _evictionState.policy,
-                _evictionState.absolutePosition > _evictionState.length
-            {
+            // AURA encode atomic_or-accumulates into `packed[pos]`, so a
+            // slot MUST be zeroed before re-encoding or stale bits OR
+            // through. A slot is "previously written" exactly when `pos`
+            // is below the high-water mark — true both for window
+            // rotation (wrapping back into `[keep, maxSize)`) and for a
+            // spec-decode `truncate` + re-append (rolling back a rejected
+            // draft, then re-decoding those positions). Cheap: one
+            // packed_width × u32 row per head per cache.
+            if pos < highWaterSlot {
                 zeroPackedSlot(packed: kPacked, packedWidth: kPackedWidth, pos: pos, on: cmd)
                 zeroPackedSlot(packed: vPacked, packedWidth: vPackedWidth, pos: pos, on: cmd)
             }
+            highWaterSlot = Swift.max(highWaterSlot, pos + 1)
             encodePerHead(
                 inputFlat: kFlat, packed: kPacked, norms: kNorms,
                 codebook: kCodebook, boundaries: kBoundaries,
