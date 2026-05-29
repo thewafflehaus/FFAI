@@ -97,7 +97,7 @@ struct KVEvictionStateTests {
     @Test("reset zeros both length and absolutePosition")
     func resetClearsState() {
         var s = KVEvictionState(
-            policy: .window(maxSize: 4),
+            policy: .window(maxSize: 4, keep: 0),
             bufferCapacity: 8)
         for _ in 0 ..< 10 { _ = s.reserveNextSlot() }
         #expect(s.length == 4)
@@ -220,7 +220,7 @@ struct KVCacheSlidingWindowTests {
     func rawCacheReset() throws {
         let cache = KVCache(
             nKVHeads: 1, headDim: 1, contextLength: 4, dtype: .f32,
-            eviction: .window(maxSize: 2)
+            eviction: .window(maxSize: 2, keep: 0)
         )
         let device = Device.shared
         let buf = device.makeBuffer(length: 4)
