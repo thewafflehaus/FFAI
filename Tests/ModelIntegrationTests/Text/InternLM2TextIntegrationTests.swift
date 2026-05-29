@@ -23,10 +23,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "InternLM2 Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+    "InternLM2 Integration", .serialized
 )
 struct InternLM2TextIntegrationTests {
 

@@ -35,13 +35,7 @@ import Testing
 
 @testable import FFAI
 
-@Suite(
-    "Starcoder2 Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites
-            && IntegrationGroupGating.enableStarcoder2Suite,
-        IntegrationGroupGating.starcoder2SkipReason)
-)
+@Suite("Starcoder2 Integration", .serialized)
 struct Starcoder2TextIntegrationTests {
 
     @Test("Starcoder2-3B (Starcoder2ForCausalLM, LayerNorm + GELU MLP) decodes coherently")

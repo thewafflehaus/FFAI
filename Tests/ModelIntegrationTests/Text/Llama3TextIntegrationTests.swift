@@ -34,10 +34,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "Llama3 Text Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+    "Llama3 Text Integration", .serialized
 )
 struct Llama3TextIntegrationTests {
 

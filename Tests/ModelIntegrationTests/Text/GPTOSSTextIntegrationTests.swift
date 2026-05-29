@@ -40,11 +40,11 @@
 // our own published checkpoint; one canonical target keeps the
 // suite consistent with the rest of the integration coverage.)
 //
-// Env-gated: GPT-OSS-20B is FFAI's heaviest integration target. A
-// debug-build greedy decode of a ~20B MoE runs for minutes, so this
-// suite runs only when `FFAI_BUILD_MACHINE` is set — keeping it out of
-// the routine `make test-integration` gate and matching the GPT-OSS
-// row of `ModelKVCacheMatrixIntegrationTests`.
+// GPT-OSS-20B is FFAI's heaviest integration target — a debug-build
+// greedy decode of a ~20B MoE runs for minutes. Ungated: like every
+// text model suite it runs unconditionally via the bisect (no
+// `FFAI_BUILD_MACHINE` / group flag). Run it alone if you want to avoid
+// the wall-clock cost: `./scripts/integration-bisect.sh GPTOSS`.
 
 import Foundation
 import TestHelpers
@@ -52,13 +52,7 @@ import Testing
 
 @testable import FFAI
 
-@Suite(
-    "GPTOSS Integration", .serialized,
-    .enabled(
-        if: ProcessInfo.processInfo.environment["FFAI_BUILD_MACHINE"] != nil
-            && IntegrationGroupGating.enableTextSuites,
-        "GPT-OSS-20B is build-machine-only; set FFAI_BUILD_MACHINE AND flip IntegrationGroupGating.enableTextSuites = true")
-)
+@Suite("GPTOSS Integration", .serialized)
 struct GPTOSSTextIntegrationTests {
 
     @Test("load + greedy generate produces coherent MoE output")

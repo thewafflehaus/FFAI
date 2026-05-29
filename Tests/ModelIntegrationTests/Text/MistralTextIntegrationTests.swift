@@ -27,10 +27,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "Mistral Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+    "Mistral Integration", .serialized
 )
 struct MistralTextIntegrationTests {
 

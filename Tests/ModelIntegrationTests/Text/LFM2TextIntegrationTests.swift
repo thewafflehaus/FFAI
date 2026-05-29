@@ -38,10 +38,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "LFM2 Text Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+    "LFM2 Text Integration", .serialized
 )
 struct LFM2TextIntegrationTests {
 

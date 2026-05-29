@@ -28,10 +28,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "Phi Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+    "Phi Integration", .serialized
 )
 struct Phi3TextIntegrationTests {
 

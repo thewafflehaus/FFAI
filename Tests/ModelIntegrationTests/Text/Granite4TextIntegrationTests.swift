@@ -42,10 +42,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "Granite4 Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+    "Granite4 Integration", .serialized
 )
 struct Granite4TextIntegrationTests {
 

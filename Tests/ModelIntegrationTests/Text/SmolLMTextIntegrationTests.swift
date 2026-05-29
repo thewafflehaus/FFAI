@@ -30,10 +30,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "SmolLM Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+    "SmolLM Integration", .serialized
 )
 struct SmolLMTextIntegrationTests {
 

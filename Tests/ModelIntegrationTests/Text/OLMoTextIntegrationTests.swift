@@ -24,10 +24,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "OLMo Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+    "OLMo Integration", .serialized
 )
 struct OLMoTextIntegrationTests {
 

@@ -36,10 +36,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "KV Cache Growth Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+    "KV Cache Growth Integration", .serialized
 )
 struct KVCacheGrowthIntegrationTests {
 

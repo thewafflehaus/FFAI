@@ -35,10 +35,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "FalconH1 Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+    "FalconH1 Integration", .serialized
 )
 struct FalconH1TextIntegrationTests {
 

@@ -29,10 +29,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "Gemma2 Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+    "Gemma2 Integration", .serialized
 )
 struct Gemma2TextIntegrationTests {
 

@@ -27,10 +27,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "NemotronDiffusion Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+    "NemotronDiffusion Integration", .serialized
 )
 struct NemotronDiffusionTextIntegrationTests {
 

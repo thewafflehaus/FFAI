@@ -32,10 +32,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "MiniCPM5 Text Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+    "MiniCPM5 Text Integration", .serialized
 )
 struct MiniCPM5TextIntegrationTests {
 

@@ -28,10 +28,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "Mamba2 Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+    "Mamba2 Integration", .serialized
 )
 struct Mamba2TextIntegrationTests {
 

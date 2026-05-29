@@ -37,10 +37,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "Qwen3.6 Text Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+    "Qwen3.6 Text Integration", .serialized
 )
 struct Qwen36TextIntegrationTests {
 

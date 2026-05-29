@@ -44,10 +44,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "Jamba Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+    "Jamba Integration", .serialized
 )
 struct JambaTextIntegrationTests {
 

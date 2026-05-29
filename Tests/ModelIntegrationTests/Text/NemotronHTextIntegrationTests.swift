@@ -40,10 +40,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "NemotronH Text Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+    "NemotronH Text Integration", .serialized
 )
 struct NemotronHTextIntegrationTests {
 

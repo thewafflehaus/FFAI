@@ -41,10 +41,7 @@ import Testing
 @testable import FFAI
 
 @Suite(
-    "Gemma4 Text Integration", .serialized,
-    .enabled(
-        if: IntegrationGroupGating.enableTextSuites,
-        IntegrationGroupGating.textSkipReason)
+    "Gemma4 Text Integration", .serialized
 )
 struct Gemma4TextIntegrationTests {
 
@@ -120,12 +117,7 @@ struct Gemma4TextIntegrationTests {
         )
     }
 
-    @Test(
-        "Gemma4Dense (31B): load + greedy generate produces coherent output",
-        .enabled(
-            if: ProcessInfo.processInfo.environment["FFAI_BUILD_MACHINE"] != nil,
-            "Gemma 4 31B is build-machine-only; set FFAI_BUILD_MACHINE to run")
-    )
+    @Test("Gemma4Dense (31B): load + greedy generate produces coherent output")
     func loadAndGenerateDense() async throws {
         // The smallest non-PLE dense Gemma 4 is 31B — only available as
         // a 4-/8-bit quantization. Build-machine only: the checkpoint is
@@ -153,12 +145,7 @@ struct Gemma4TextIntegrationTests {
         )
     }
 
-    @Test(
-        "Gemma4MoE (26B-A4B): load + greedy generate produces coherent output",
-        .enabled(
-            if: ProcessInfo.processInfo.environment["FFAI_BUILD_MACHINE"] != nil,
-            "Gemma 4 26B-A4B is build-machine-only; set FFAI_BUILD_MACHINE to run")
-    )
+    @Test("Gemma4MoE (26B-A4B): load + greedy generate produces coherent output")
     func loadAndGenerateMoE() async throws {
         // 26B-A4B is the mixture-of-experts variant: every layer runs a
         // shared dense MLP and an 8-of-128 routed expert mixture in
