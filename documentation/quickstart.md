@@ -1,6 +1,6 @@
 # Quick Start
 
-Generate text in 5 lines:
+Downloading, loading a model and generating text in 5 lines in Swift!
 
 ```swift
 import FFAI
@@ -15,16 +15,6 @@ The first call resolves and downloads the checkpoint on demand (cached under `~/
 ```swift
 print("\(result.promptTokens.count) prompt + \(result.generatedTokens.count) generated tokens")
 print(String(format: "%.2f tok/s", result.tokensPerSecond))
-```
-
-## A quantized model
-
-The same call works for any [mlx-format](quantization.md) checkpoint — 3 / 4 / 5 / 6 / 8-bit:
-
-```swift
-let model = try await Model.load("mlx-community/Qwen3-4B-4bit")
-let result = try await model.generate(prompt: "What is the capital of France?")
-print(result.text)
 ```
 
 ## CLI
@@ -87,7 +77,47 @@ let result = try await model.generate(
 
 See [chat-templates.md](chat-templates.md) for the full options surface and per-family quirks.
 
-## Pre-fetching without loading (`ModelDownloader`)
+## Using Different Model Quantizations
+
+The same call works for any [mlx-format](quantization.md) checkpoint — 3 / 4 / 5 / 6 / 8-bit:
+
+```swift
+let model = try await Model.load("mlx-community/Qwen3-4B-8bit")
+let result = try await model.generate(prompt: "What is the capital of France?")
+print(result.text)
+```
+
+## Customizing the model loading
+
+`Model.load(_:options:)` takes a `LoadOptions`:
+
+```swift
+let model = try await Model.load(
+    "mlx-community/Qwen3.5-0.8B-MLX-4bit",
+    options: LoadOptions(
+        capabilities: [.textIn, .textOut],
+        kvCache: .raw,
+        prewarm: true,
+        revision: "main"
+    )
+)
+```
+
+| Field | Default | Notes |
+|---|---|---|
+| `capabilities` | `[.textIn, .textOut]` | Which capabilities to load. Disabled modalities skip weight allocation entirely (relevant for VLMs in Phase 6). |
+| `kvCache` | `.raw` | KV cache scheme. `.raw` keeps unquantized fp16 / bf16 K/V tensors (the default — zero overhead per step). `.affineQuantized(bits:groupSize:)` compresses K/V to int4 / int8 with a shared per-layer working buffer + a `bulk_dequant_kv` pre-pass before SDPA (~45 % memory savings at 8-bit, ~65 % at 4-bit; CLI: `--kv-cache affine8` / `affine4`). `.auraQuantized(scheme:)` is AURA — rotated + Lloyd-Max scalar-quantized + bit-packed, with compressed-domain attention via the `aura_flash_p1` / `aura_flash_pass2` kernel pair (~4× memory savings at `aura4v2`; CLI: `--kv-cache aura4v2` / `aura4` / `aura3`). See [kv-cache.md](kv-cache.md) for the per-scheme trade-offs. |
+| `dispatchMode` | `.eager` | Standard `MTLComputeCommandEncoder` per kernel. `.argumentBuffers` / `.icb` land in Phase 8+ if profiles justify. |
+| `prewarm` | `true` | Run one no-op forward to compile the PSOs before the first user-visible decode. |
+| `lazyCapabilities` | `true` | Allow runtime `enable(_:)` / `disable(_:)` after load. |
+| `revision` | `"main"` | HF branch / tag / commit. |
+| `cacheDirectory` | `nil` | Override the HF cache root for this load. `nil` honors `HF_HOME` then `~/.cache/huggingface/hub/`. See [§ Custom model cache path](#custom-model-cache-path). |
+| `maxContextLength` | `nil` | KV-cache growth ceiling. `nil` uses the model's `max_position_embeddings`. The cache grows incrementally up to this; the over-allocation guard clamps it further so weights + max-KV + margin fit the wired-memory budget. See [kv-cache.md § Memory budget](kv-cache.md#memory-budget--the-wired-memory-ticket). |
+| `preallocateKVCache` | `false` | Reserve the full context's KV memory up front instead of growing on demand. |
+| `initialKVCacheCapacity` | `nil` | Override the incremental cache's starting depth (default `KVCache.defaultInitialCapacity` = 2048). |
+| `wiredLimitBytes` | `nil` | Override the wired-memory budget the over-allocation guard works against. `nil` uses `recommendedMaxWorkingSetSize` (~75% of unified memory). Any value is bounded by the safe maximum = physical RAM − an 8 GB OS reserve; an explicit value above that is rejected at load (`ModelError.wiredLimitTooHigh`). |
+
+## Downloading a model without automatic loading
 
 `Model.load(_:options:)` lazy-downloads the checkpoint on first use, which is the right behaviour for most apps but the wrong tool when you want to **warm the cache without paying the GPU prewarm cost** — for example, a test-runner setup script that pre-fetches every checkpoint the integration suite touches, or a UI that downloads a model in the background and only mounts it into the inference engine later.
 
@@ -133,44 +163,14 @@ The CLI equivalent is `ffai download <repo-id> [...]` — see [using-the-cli.md 
 
 After a pre-fetch, `Model.load(...)` on the same `id` finds the snapshot already on disk and skips straight to the load + prewarm path.
 
-## Customizing the load
-
-`Model.load(_:options:)` takes a `LoadOptions`:
-
-```swift
-let model = try await Model.load(
-    "mlx-community/Qwen3.5-0.8B-MLX-4bit",
-    options: LoadOptions(
-        capabilities: [.textIn, .textOut],
-        kvCache: .raw,
-        prewarm: true,
-        revision: "main"
-    )
-)
-```
-
-| Field | Default | Notes |
-|---|---|---|
-| `capabilities` | `[.textIn, .textOut]` | Which capabilities to load. Disabled modalities skip weight allocation entirely (relevant for VLMs in Phase 6). |
-| `kvCache` | `.raw` | KV cache scheme. `.raw` keeps unquantized fp16 / bf16 K/V tensors (the default — zero overhead per step). `.affineQuantized(bits:groupSize:)` compresses K/V to int4 / int8 with a shared per-layer working buffer + a `bulk_dequant_kv` pre-pass before SDPA (~45 % memory savings at 8-bit, ~65 % at 4-bit; CLI: `--kv-cache affine8` / `affine4`). `.auraQuantized(scheme:)` is AURA — rotated + Lloyd-Max scalar-quantized + bit-packed, with compressed-domain attention via the `aura_flash_p1` / `aura_flash_pass2` kernel pair (~4× memory savings at `aura4v2`; CLI: `--kv-cache aura4v2` / `aura4` / `aura3`). See [kv-cache.md](kv-cache.md) for the per-scheme trade-offs. |
-| `dispatchMode` | `.eager` | Standard `MTLComputeCommandEncoder` per kernel. `.argumentBuffers` / `.icb` land in Phase 8+ if profiles justify. |
-| `prewarm` | `true` | Run one no-op forward to compile the PSOs before the first user-visible decode. |
-| `lazyCapabilities` | `true` | Allow runtime `enable(_:)` / `disable(_:)` after load. |
-| `revision` | `"main"` | HF branch / tag / commit. |
-| `cacheDirectory` | `nil` | Override the HF cache root for this load. `nil` honors `HF_HOME` then `~/.cache/huggingface/hub/`. See [§ Custom model cache path](#custom-model-cache-path). |
-| `maxContextLength` | `nil` | KV-cache growth ceiling. `nil` uses the model's `max_position_embeddings`. The cache grows incrementally up to this; the over-allocation guard clamps it further so weights + max-KV + margin fit the wired-memory budget. See [kv-cache.md § Memory budget](kv-cache.md#memory-budget--the-wired-memory-ticket). |
-| `preallocateKVCache` | `false` | Reserve the full context's KV memory up front instead of growing on demand. |
-| `initialKVCacheCapacity` | `nil` | Override the incremental cache's starting depth (default `KVCache.defaultInitialCapacity` = 2048). |
-| `wiredLimitBytes` | `nil` | Override the wired-memory budget the over-allocation guard works against. `nil` uses `recommendedMaxWorkingSetSize` (~75% of unified memory). Any value is bounded by the safe maximum = physical RAM − an 8 GB OS reserve; an explicit value above that is rejected at load (`ModelError.wiredLimitTooHigh`). |
-
-## Custom model cache path
+## Using a custom model cache path
 
 By default FFAI shares a snapshot cache with Python's `huggingface_hub`. The standard discovery order is:
 
 1. **`HF_HOME` env var** — if set, the cache lives under `$HF_HOME/hub/` (or `$HF_HOME` if it's already a `hub` dir).
 2. **`~/.cache/huggingface/hub/`** — the default fallback.
 
-Three ways to point FFAI somewhere else, easiest first:
+If you store your models somewhere else there are three ways to point FFAI to your preferred location, easiest first:
 
 ### 1. `HF_HOME` env var (CLI + library)
 
@@ -230,7 +230,7 @@ Task {
 }
 ```
 
-## Lower-level API
+## Lower level API for customizing model usage
 
 `Model.generate(...)` is a thin wrapper. To drive the loop yourself (e.g. custom sampling, streaming hooks, multi-turn cache reuse) drop to the `LanguageModel` protocol:
 
