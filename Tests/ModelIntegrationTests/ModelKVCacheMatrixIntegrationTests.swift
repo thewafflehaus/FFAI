@@ -20,26 +20,22 @@
 // Each cell loads a real checkpoint, greedy-decodes, and asserts the
 // output is coherent (`expectCoherentOutput`).
 //
-// ─── Why almost everything is skipped by default ──────────────────────
+// ─── Scope of a run ───────────────────────────────────────────────────
 //
-// The full matrix is ~100+ cells. Running them all would download
-// hundreds of GB of checkpoints and take hours — and several large
-// variants (35B-A3B MoE, 31B Gemma 4, 120B-class) don't fit on a
-// typical dev box at all. So the matrix is *gated*:
-//
-//   • The smallest checkpoint per family is marked `alwaysRun` — it
-//     runs in the normal `make test-integration` gate, exercised
-//     against EVERY KV-cache scheme that family supports. This is the
-//     "smallest model per family, all KV combos" contract.
-//   • Every other cell (larger checkpoints, the weight-bitwidth ladder)
-//     is env-gated: it runs only when `FFAI_BUILD_MACHINE` is set in
-//     the environment. A dedicated build machine flips the entire
-//     matrix on with one env var; nothing source-side changes.
+// The full matrix is ~100+ cells. Running them all downloads hundreds of
+// GB of checkpoints and takes hours — and several large variants (35B-A3B
+// MoE, 31B Gemma 4, 120B-class) may not fit a given box. The only switch
+// is the `enableKVCacheMatrixSuite` group flag (off by default); when it
+// is on, EVERY cell runs — there is no `FFAI_BUILD_MACHINE` env gate.
+// Scope a partial run with `FFAI_MATRIX_FAMILY=<family>` or the bisect's
+// single-suite mode. `alwaysRun` now only *documents* the smallest
+// checkpoint per family ("smallest model, all KV combos") — it no longer
+// gates anything.
 //
 // A cell whose checkpoint can't be fetched (offline, gated repo, repo
 // renamed) fails the cell — load errors propagate to the test runner.
-// The build-machine gate above already keeps the matrix to checkpoints
-// the running machine is expected to have.
+// So only enable the suite on a machine that has (or can fetch) the
+// checkpoints, or scope it with `FFAI_MATRIX_FAMILY`.
 //
 // Set `FFAI_MATRIX_FAMILY=<family>` to run just one row (e.g.
 // `FFAI_MATRIX_FAMILY=Gemma4`) — useful for targeted re-runs.
@@ -100,9 +96,10 @@ struct MatrixModel: Sendable {
     let id: String
     /// Weight bit-width: 16 = unquantized (bf16/fp16); else 3/4/5/6/8.
     let weightBits: Int
-    /// `true` → the smallest, always-run checkpoint for its family.
-    /// Runs in the normal integration gate against every supported KV
-    /// scheme. `false` → env-gated on `FFAI_BUILD_MACHINE`.
+    /// Descriptive only (no longer a gating switch): `true` marks the
+    /// smallest checkpoint per family — the "smallest model, all KV
+    /// combos" reference cell. When the suite is enabled, every cell runs
+    /// regardless of this flag.
     let alwaysRun: Bool
 }
 
@@ -128,10 +125,6 @@ enum MatrixCatalog {
     /// Tokens to greedy-decode per cell. Kept modest so the matrix
     /// stays tractable; `expectCoherentOutput` needs only a handful.
     static let maxTokens = 200
-
-    /// `true` when the env var is set — flips the env-gated cells on.
-    static let buildMachineEnabled =
-        ProcessInfo.processInfo.environment["FFAI_BUILD_MACHINE"] != nil
 
     /// Optional family filter — when `FFAI_MATRIX_FAMILY` is set, only
     /// cells whose `family` matches (case-insensitive) run; every other
@@ -184,10 +177,10 @@ enum MatrixCatalog {
     // ── The model list ────────────────────────────────────────────────
     //
     // One `alwaysRun` checkpoint per family (the smallest FFAI can
-    // run end-to-end). Larger checkpoints + the weight-bitwidth ladder
-    // are present but env-gated. IDs marked `unverified` should be
-    // confirmed before a `FFAI_BUILD_MACHINE` run — a wrong id simply
-    // logs a skip, never a failure.
+    // run end-to-end) plus larger checkpoints + the weight-bitwidth
+    // ladder. All cells run when the suite is enabled. IDs marked
+    // `unverified` should be confirmed before a full run — a wrong id
+    // simply logs a skip, never a failure.
 
     static let models: [MatrixModel] = [
         // ── Llama engine — dense text, full KV-scheme support ─────────
@@ -352,13 +345,10 @@ struct ModelKVCacheMatrixIntegrationTests {
                 "matrix cell gated by FFAI_MATRIX_FAMILY=\(only): \(cell.label)")
         }
 
-        // Gate: smallest-per-family cells always run; the rest need
-        // FFAI_BUILD_MACHINE. Build-machine-gated cells `#require` the
-        // env so they fail visibly on non-build machines rather than
-        // silently pass.
-        try #require(
-            cell.model.alwaysRun || MatrixCatalog.buildMachineEnabled,
-            "matrix cell is build-machine gated; set FFAI_BUILD_MACHINE: \(cell.label)")
+        // No env-var gate: every matrix cell runs when the suite is
+        // enabled (the `enableKVCacheMatrixSuite` group flag is the only
+        // switch). The full model × KV-scheme matrix is large — scope a
+        // run with `FFAI_MATRIX_FAMILY` or the bisect's single-suite mode.
 
         // Load under the cell's KV-cache scheme. Load failures fail the
         // cell — a missing checkpoint is a real failure, not a silent
