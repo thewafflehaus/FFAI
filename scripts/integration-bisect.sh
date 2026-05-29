@@ -239,7 +239,7 @@ done
   echo "- Total: ${#SUITES[@]}"
   echo "- PASS: $PASS"
   echo "- FAIL: $FAIL"
-  echo "- SKIP (0 tests ran): $SKIP"
+  echo "- SKIP (suite gating-disabled): $SKIP"
   echo "- TIMEOUT: $TIMEOUT"
   echo "- GPU-pinned after exit: $PINNED"
   echo
