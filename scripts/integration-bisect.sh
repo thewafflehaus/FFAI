@@ -192,13 +192,17 @@ for suite in "${SUITES[@]}"; do
     note=$(grep -m1 -E "recorded an issue|Expectation failed|error:" "$log" \
            | sed 's/[|]/\\|/g' | head -c 100 || true)
     FAIL=$((FAIL + 1))
-  elif grep -qE "with 0 tests|Executed 0 tests|No matching test" "$log"; then
-    # Exit 0 but the suite ran NOTHING — disabled by a gating trait
-    # (e.g. enableVisionSuites=false) or the filter matched nothing.
-    # A skipped suite is NOT a pass: it validated zero behaviour, so
-    # flag it distinctly instead of letting it masquerade as green.
+  elif grep -qE 'Suite "[^"]*" skipped:' "$log"; then
+    # Swift Testing's SUITE-level skip marker — the suite was disabled by
+    # a gating trait (e.g. enableVisionSuites=false), so it validated
+    # nothing. Do NOT key off "Executed 0 tests": that's the empty XCTest
+    # harness (always 0 for Swift Testing `@Test` suites) and would flag
+    # EVERY suite as skipped. A gated suite still exits 0 and even prints
+    # "N tests passed" (its skipped tests count as non-failures), so the
+    # `Suite "…" skipped:` line is the only reliable signal.
     status="SKIP"
-    note="0 tests ran (gating-disabled or filter matched nothing)"
+    note=$(grep -m1 -oE 'Suite "[^"]*" skipped:[^"]*"[^"]*"' "$log" \
+           | sed 's/[|]/\\|/g' | head -c 100 || echo "suite gating-disabled")
     SKIP=$((SKIP + 1))
   else
     PASS=$((PASS + 1))
