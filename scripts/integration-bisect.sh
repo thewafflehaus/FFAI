@@ -140,7 +140,7 @@ mkdir -p "$(dirname "$OUTPUT")"
   echo "|---|---|---|---|---|"
 } | tee "$OUTPUT"
 
-PASS=0; FAIL=0; TIMEOUT=0; PINNED=0
+PASS=0; FAIL=0; TIMEOUT=0; PINNED=0; SKIP=0
 
 for suite in "${SUITES[@]}"; do
   printf "  ▶ %-46s" "$suite"
@@ -192,6 +192,14 @@ for suite in "${SUITES[@]}"; do
     note=$(grep -m1 -E "recorded an issue|Expectation failed|error:" "$log" \
            | sed 's/[|]/\\|/g' | head -c 100 || true)
     FAIL=$((FAIL + 1))
+  elif grep -qE "with 0 tests|Executed 0 tests|No matching test" "$log"; then
+    # Exit 0 but the suite ran NOTHING — disabled by a gating trait
+    # (e.g. enableVisionSuites=false) or the filter matched nothing.
+    # A skipped suite is NOT a pass: it validated zero behaviour, so
+    # flag it distinctly instead of letting it masquerade as green.
+    status="SKIP"
+    note="0 tests ran (gating-disabled or filter matched nothing)"
+    SKIP=$((SKIP + 1))
   else
     PASS=$((PASS + 1))
   fi
@@ -227,6 +235,7 @@ done
   echo "- Total: ${#SUITES[@]}"
   echo "- PASS: $PASS"
   echo "- FAIL: $FAIL"
+  echo "- SKIP (0 tests ran): $SKIP"
   echo "- TIMEOUT: $TIMEOUT"
   echo "- GPU-pinned after exit: $PINNED"
   echo
