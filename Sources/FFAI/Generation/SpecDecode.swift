@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// SpecDecode — greedy speculative-decode driver for Qwen3.5/3.6.
+// SpecDecode — greedy speculative-decode driver for any model that
+// conforms to `SpeculativeVerifier` (Qwen3.5 / 3.6 today; the driver is
+// no longer family-specific).
 //
 // One iteration at γ candidates:
 //   1. Drafter proposes up to γ candidate next tokens c_0..c_{γ-1}.
@@ -71,6 +73,33 @@ public struct SpecDecodeStats {
     }
 }
 
+/// A model that can drive speculative decoding. Two forwards are needed:
+/// the single-token decode used for the bit-identical baseline replay,
+/// and a per-position "verify" forward over a batch of candidate tokens.
+/// Any family implementing both can use `SpecDecode.generateGreedy` — it
+/// is no longer Qwen-specific. Qwen3.5 / 3.6 conform today; MTP / EAGLE /
+/// other-family drivers conform as they land.
+public protocol SpeculativeVerifier: AnyObject {
+    /// Single-token decode. Advances `caches` by one token and returns
+    /// the next-token logits `[vocab]`. MUST be the bit-identical
+    /// baseline decode path — the accept loop replays through it so the
+    /// greedy stream matches a non-speculative run exactly.
+    func forward(
+        tokenId: Int, position: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor
+
+    /// Verify forward over `tokenIds` starting at `startPosition`.
+    /// Advances `caches` by `tokenIds.count` tokens and returns logits at
+    /// EACH input position — shape `[tokenIds.count, vocab]`.
+    func forwardManyAllLogits(
+        tokenIds: [Int], startPosition: Int,
+        caches: [any LayerCacheProtocol],
+        on cmd: MTLCommandBuffer, device: Device
+    ) -> Tensor
+}
+
 public enum SpecDecode {
     /// Run a greedy speculative-decode loop. The caller is responsible
     /// for prefill — `caches` must already reflect `prompt`, `lastToken`
@@ -81,7 +110,7 @@ public enum SpecDecode {
     /// Greedy-only — `argmax` everywhere. Stops when `maxNewTokens` is
     /// reached or a token in `stopTokens` is emitted.
     public static func generateGreedy(
-        model: Qwen35Model,
+        model: any SpeculativeVerifier,
         drafter: Drafter,
         gamma: Int,
         lastToken: Int,

@@ -2887,6 +2887,11 @@ private func qwen35ApplyFFN(
 
 // ─── Qwen35Model ─────────────────────────────────────────────────────
 
+// Qwen3.5 / 3.6 drive the generic `SpecDecode.generateGreedy` loop: the
+// class already provides the single-token `forward` + the per-position
+// `forwardManyAllLogits` verify forward, so conformance is declaration-only.
+extension Qwen35Model: SpeculativeVerifier {}
+
 public final class Qwen35Model: LanguageModel {
     public let embedTokens: AnyEmbedding
     /// Heterogeneous layer stack — each entry is a GDN or attention
