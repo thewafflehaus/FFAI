@@ -886,6 +886,26 @@ Each sub-phase = one or more PRs + integration test + doc update. Sub-phases lan
 
 - Renamed from TurboFlash. Per-simdgroup bit-unpack reuse + bf16 V accumulator + headDim-aware tile autotune + bias-aware kernel.
 
+### 8.24 — Advanced KV-cache retention / eviction policies
+
+Builds on `KVEviction.window(maxSize:keep:)` (today `keep:0` everywhere) + the sink/precision work in `session-plan.md` H.7. Increasing complexity:
+
+- **Model-aware `keep` default (StreamingLLM, Xiao 2023).** Default `keep=4` for **user-imposed fixed windows on non-learned-sink models** (capping a full-attention model's KV at a fixed window for long-context memory). MUST stay `keep:0` for (a) GPT-OSS — its learned `self_attn.sinks` substitutes for token sinks — and (b) native sliding-window layers trained without pinned sinks (Gemma 2/3/4), where pinning deviates from training. **Cannot be a global `KVEviction.window` enum-default flip:** the eviction tests use `.window(maxSize: 2/4)` and the `keep < maxSize` precondition would trip; must be applied model-aware at the cache-construction honor point. First bench target: **Qwen3.6 + fixed window + `aura4` over escalating context** (ties to H.4); tweak `keep` and measure PPL/coherence.
+- **First-N + last-M retention on an *unbounded* cache** — pinned prefix (sinks) + recent suffix, drop/compress a middle band. New eviction mode (the current ring does prefix + contiguous recent only).
+- **Content-aware / heavy-hitter retention (H2O; adjacent to 8.10 DuoAttention).** Retain by accumulated attention mass, not recency. Breaks the contiguous `[0,length)` ring the SDPA kernels assume → needs per-token metadata + a non-contiguous retention set (or a gather before SDPA).
+- **Special-token pinning** — never-evict chat-template structural tokens + known high-acceptance speculative-decode anchor tokens, by token-id, independent of position.
+
+Composes with the precision-preservation lever (keep sink/recent tokens full-precision under quant) in H.7.
+
+### 8.25 — Spec-decode × cache reconciliation + Nemotron mode ergonomics
+
+Audit (2026-05-28) surfaced gaps between the spec-decode rollback infra (`CacheSnapshot`, J.2) and the compressed/windowed cache layer:
+
+- **Quantized-cache rollback missing.** `CacheSnapshot` has cases for `KVCache` (length + absolutePosition), `GDNStateCache`, `ConvStateCache`, `Qwen35GDNLayerCache` — but **none for `AffineQuantizedKVCache` / `AURAQuantizedKVCache`** (neither has `snapshot`/`restore`). So **spec-decode and KV compression are mutually exclusive today** — can't get max compression AND spec-decode. Add affine/AURA `snapshot`/`restore` (copy compressed buffers + scales/norms + length) + the matching `CacheSnapshot` cases.
+- **Window-eviction rollback unproven.** The `KVCache` snapshot is `length`-metadata only — correct for `.unbounded`, but under rotating-window eviction a draft that wraps the ring overwrites a pinned/kept slot that a length-rewind can't restore. Add a test that drafts across the window boundary; if it fails, snapshot the wrapped slots.
+- **Diffusion is intentionally raw + fully preallocated** (`NemotronDiffusionText.makeLayerCaches`, AURA→raw downgrade + `preallocate:true`) — incompatible with quant / window / growth by the block-staging + `truncate` length-rewind design. Document as a known constraint; do NOT "fix."
+- **Nemotron `generate()` mode ergonomics.** The three modes (AR / diffusion / self-spec) are separate methods (`generate` / `generateDiffusion` / `generateSelfSpeculative`) with a disjoint `DiffusionParameters`; plain `generate()` defaults to **AR**, not self-spec (diverges from the reference's `linear_spec_generate` default). Add a `DiffusionMode` selector on `generate()` (default self-spec for this family) + unify the params so callers pick the mode at `generate()` / load time.
+
 ---
 
 ## Phase 9 — Performance / dispatch modes / autotuner
