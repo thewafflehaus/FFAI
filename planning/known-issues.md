@@ -103,23 +103,45 @@ verified-shape gates now exclude the 27B shape from both fast paths —
 `Ops.rmsNormQgemvInt4Fast` (`:2759-2773`) — routing to the safe path.
 Env overrides `FFAI_NO_FUSED_QKV` / `FFAI_NO_FUSED_LM_HEAD` retained.
 
-**Open.** `Qwen36TextIntegrationTests` still carries a stale
-`KNOWN FAILURE (2026-05-27)` comment (`:122-129`) and hasn't been re-run
-to confirm. Next: run it (~14 GB load, ~5-15 min); if green, delete the
-comment.
+**Confirmed 2026-05-29.** `Qwen36TextIntegrationTests` PASSED (123 s) in
+the full bisect — the fix holds. Remaining cleanup: delete the stale
+`KNOWN FAILURE (2026-05-27)` comment at `Qwen36TextIntegrationTests.swift:122-129`.
 
-## LFM2-MoE — quantized experts land; router-shape question unconfirmed
+## LFM2-MoE — router-shape mismatch CONFIRMED (MoE crashes; dense is fine)
 
-The original load-time crash (`gemv in_dim 512 vs 2048`) is gone:
-`buildLFM2MoE` now slices quantized stacked experts via
-`sliceStackedExperts` (`LFM2Text.swift:466-486`). The router is still
-loaded as a plain `Linear` from `feed_forward.gate.weight` with no
-visible hidden→512 projection, so whether `LFM2-8B-A1B-4bit` decodes
-coherently end-to-end is **unconfirmed**. (Stale internal comment at
+**Confirmed 2026-05-29 bisect.** `LFM2TextIntegrationTests`: the **dense
+LFM2-350M** case passes coherently (58 % diversity), but the **LFM2-MoE**
+case crashes — `Ops.swift:406: Precondition failed: gemv: in_dim mismatch
+512 vs 2048`. Quantized expert slicing works (`buildLFM2MoE` →
+`sliceStackedExperts`, `LFM2Text.swift:466-486`); the router is loaded as
+a plain `Linear` from `feed_forward.gate.weight` with no hidden(2048)→512
+projection, so the router gemv mismatches at decode. Fix: add the
+router-input projection LFM2-MoE actually uses (or correct the gate-weight
+orientation). Dense LFM2 is unaffected. (Stale comment at
 `LFM2Text.swift:198-200` still claims quantized MoE throws
-`unsupportedConfig` — no longer true.) Next: run `LFM2TextIntegrationTests`
-MoE case; if the router gemv still mismatches, add the router-input
-projection LFM2-MoE actually uses.
+`unsupportedConfig` — no longer true.)
+
+## GPT-OSS-20B-4bit + Gemma4-31B-4bit degenerate output — newly surfaced (2026-05-29)
+
+Surfaced once the `FFAI_BUILD_MACHINE` gate was removed and these heavy
+models ran in the bisect for the first time:
+- **GPT-OSS-20B-4bit** (`loan-star/gpt-oss-20b-mlx-4Bit`) —
+  `GPTOSSTextIntegrationTests` greedy-decodes 200 tokens at **12 %
+  diversity** (24 unique): real tokens, then loops. Default raw KV cache +
+  host-side sink correction.
+- **Gemma4-31B-4bit** (`mlx-community/gemma-4-31b-it-4bit`) — the
+  `Gemma4Dense (31B)` case at **10 % diversity**. Gemma4 **E2B / E4B /
+  26B-A4B pass** — only the 31B dense degenerates.
+
+Same class as the Qwen3.6-27B-4bit case above (large hidden / fused-path
+kernel-shape sensitivity at 4-bit). **NOT a regression** from the
+2026-05-29 cache / spec-decode / ungating work — the default raw-decode
+paths these hit were untouched; the suites had simply never run before
+(build-machine-gated). Investigation: separate a genuine 4-bit
+quant-quality floor from a fast-path kernel-shape bug by A/B-ing the
+fused-path env overrides (`FFAI_NO_FUSED_QKV` / `FFAI_NO_FUSED_LM_HEAD`
+for GPT-OSS; the analogous Gemma4 fast paths), exactly as was done for
+Qwen3.6-27B.
 
 ## Qwen3-1.7B-3bit degenerate output — model quality floor, NOT a kernel bug
 
