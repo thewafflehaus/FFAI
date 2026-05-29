@@ -616,20 +616,41 @@ public final class NemotronDiffusionModel: LanguageModel {
     }
 
     public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        // Diffusion / self-speculation stage scratch K/V into the cache's
-        // free tail across denoise iterations, so the raw cache MUST be
-        // fully preallocated (incremental growth would put staging slots
-        // out of range). AURA can't support that staging → map to raw;
-        // affine is fine (its compressed storage is allocated up front).
-        let kind: KVCacheKind = {
-            if case .auraQuantized = kvCacheKind { return .raw }
-            return kvCacheKind
-        }()
+        // NemotronDiffusion's diffusion / self-speculation paths attend by
+        // reading the RAW K/V buffer directly (`Ops.sdpaMulti(k: cache.kBuffer,
+        // …)`) and stage the in-flight block into FIXED future scratch slots
+        // across denoise iterations (`writeTimestepOnGPU`). That demands a
+        // raw, fully-preallocated, unbounded cache:
+        //   * Quantized KV (affine / AURA) has no raw buffer to read or
+        //     scratch-write into — unsupported.
+        //   * A fixed / rotating window would evict the scratch-staged block
+        //     and the prefix the block attends to — unsupported.
+        // Reject both EXPLICITLY rather than silently downgrading to raw (the
+        // old behaviour hid the misconfiguration and ran a slower / different
+        // cache than the caller asked for). Append-based AR decode *could*
+        // use a quantized cache via a dequant SDPA path in `forwardTokens` —
+        // tracked as an enhancement in session-plan; until it lands, every
+        // mode requires raw + unbounded.
+        guard case .raw = kvCacheKind else {
+            preconditionFailure(
+                "NemotronDiffusion requires LoadOptions.kvCache = .raw — the "
+                    + "diffusion block-staging reads the raw K/V buffer directly "
+                    + "and scratch-writes future slots, so quantized KV "
+                    + "(\(kvCacheKind)) is not supported. Load with .raw, or use "
+                    + "a non-diffusion model for quantized KV.")
+        }
+        guard case .unbounded = kvEviction else {
+            preconditionFailure(
+                "NemotronDiffusion requires an unbounded KV cache — a fixed / "
+                    + "rotating window (\(kvEviction)) would evict the "
+                    + "scratch-staged block and the prefix it attends to. Load "
+                    + "with .unbounded eviction.")
+        }
         return makeAttentionCaches(
-            kind: kind, count: nLayers,
+            kind: .raw, count: nLayers,
             nKVHeads: nKVHeads, headDim: headDim,
             contextLength: maxSeq ?? maxContextWindow,
-            dtype: dtype, eviction: kvEviction,
+            dtype: dtype, eviction: .unbounded,
             preallocate: true, device: device)
     }
 
