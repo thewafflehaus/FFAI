@@ -26,7 +26,7 @@
 // with a sigmoid-gated shared expert.
 //
 // This test exercises the heterogeneous `[any DecoderLayer]` decode
-// loop, the per-index cache array (`Qwen35GDNLayerCache` / `KVCache`),
+// loop, the per-index cache array (`GDNLayerCache` / `KVCache`),
 // the GDN host gate prep (per-head q/k RMSNorm + scale, `g` /  `beta`),
 // the standard (non-fused) `gatedDeltaStep` kernel, gated attention
 // output (`attn_output_gate`), and partial RoPE.
@@ -101,7 +101,7 @@ struct Qwen35TextIntegrationTests {
             for (i, layer) in q.layers.enumerated() {
                 switch layer {
                 case is Qwen35GDNLayer:
-                    #expect(caches[i] is Qwen35GDNLayerCache)
+                    #expect(caches[i] is GDNLayerCache)
                 case is Qwen35AttentionLayer:
                     #expect(caches[i] is KVCache)
                 default:

@@ -1061,16 +1061,18 @@ private func qwen35MoEKey(_ k: String) -> String {
     return "mlp." + k
 }
 
-// ─── Qwen35GDNLayerCache — composite GDN-layer cache ─────────────────
+// ─── GDNLayerCache — composite GDN-layer cache ─────────────────
 //
-// A Qwen3.5 GDN layer needs two pieces of per-token state: the rolling
-// conv1d window over the `q|k|v` projection (`ConvStateCache`, GPU) and
-// the Gated Delta Net recurrent matrix `S[Hv, Dv, Dk]` (`GDNStateCache`,
-// double-buffered GPU). This bundles both behind `LayerCacheProtocol`
-// so the heterogeneous decode loop can index it uniformly. Mirrors
-// Jamba's `JambaMambaLayerCache`.
+// Any Gated Delta Net (GDN) layer needs two pieces of per-token state:
+// the rolling conv1d window over the `q|k|v` projection
+// (`ConvStateCache`, GPU) and the GDN recurrent matrix `S[Hv, Dv, Dk]`
+// (`GDNStateCache`, double-buffered GPU). This bundles both behind
+// `LayerCacheProtocol` so the heterogeneous decode loop can index it
+// uniformly. Mirrors Jamba's `JambaMambaLayerCache`. Used by Qwen3.5 /
+// Qwen3.6 today and shared by any future GDN-bearing family (the name is
+// deliberately family-agnostic).
 
-public final class Qwen35GDNLayerCache: LayerCacheProtocol, @unchecked Sendable {
+public final class GDNLayerCache: LayerCacheProtocol, @unchecked Sendable {
     public let conv: ConvStateCache
     public let gdn: GDNStateCache
 
@@ -1117,7 +1119,7 @@ public final class Qwen35GDNLayerCache: LayerCacheProtocol, @unchecked Sendable 
     public func setLength(_ length: Int) {
         precondition(
             length >= 0,
-            "Qwen35GDNLayerCache.setLength: must be ≥ 0")
+            "GDNLayerCache.setLength: must be ≥ 0")
         self.length = length
     }
 }
@@ -1388,7 +1390,7 @@ public final class Qwen35GDNMixer: Module {
     /// needs the GPU projections on the CPU) and returns a resident
     /// `[hidden]` tensor produced on a fresh command buffer.
     func forward(
-        _ xNorm: Tensor, cache: Qwen35GDNLayerCache,
+        _ xNorm: Tensor, cache: GDNLayerCache,
         cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
         // ── GPU phase 1: projections + conv + SiLU ────────────────────
@@ -1655,7 +1657,7 @@ public final class Qwen35GDNMixer: Module {
     /// single-token path's cmd ownership.
     func forwardMany(
         _ xNormFlat: Tensor, t: Int,
-        cache: Qwen35GDNLayerCache,
+        cache: GDNLayerCache,
         cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
         precondition(
@@ -1775,7 +1777,7 @@ public final class Qwen35GDNMixer: Module {
     /// `forwardMany` dispatcher; opt out via `FFAI_GDN_NO_PREP_CHUNK=1`.
     func forwardManyChunked(
         _ xNormFlat: Tensor, t: Int,
-        cache: Qwen35GDNLayerCache,
+        cache: GDNLayerCache,
         cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
         let dt = xNormFlat.dtype
@@ -2493,9 +2495,9 @@ public final class Qwen35GDNLayer: Module, DecoderLayer {
         cache: any LayerCacheProtocol,
         cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
-        guard let gc = cache as? Qwen35GDNLayerCache else {
+        guard let gc = cache as? GDNLayerCache else {
             fatalError(
-                "Qwen35GDNLayer: expected Qwen35GDNLayerCache, "
+                "Qwen35GDNLayer: expected GDNLayerCache, "
                     + "got \(type(of: cache))")
         }
         // ── Mixer half — pre-norm + GDN mixer + residual add ──────────
@@ -2532,9 +2534,9 @@ public final class Qwen35GDNLayer: Module, DecoderLayer {
         cache: any LayerCacheProtocol,
         cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
-        guard let gc = cache as? Qwen35GDNLayerCache else {
+        guard let gc = cache as? GDNLayerCache else {
             fatalError(
-                "Qwen35GDNLayer.decodeMany: expected Qwen35GDNLayerCache, "
+                "Qwen35GDNLayer.decodeMany: expected GDNLayerCache, "
                     + "got \(type(of: cache))")
         }
         precondition(
@@ -2993,7 +2995,7 @@ public final class Qwen35Model: LanguageModel {
         return layerKinds.enumerated().map { (i, layerKind) in
             switch layerKind {
             case .gdn:
-                return Qwen35GDNLayerCache(
+                return GDNLayerCache(
                     numKeyHeads: numKeyHeads,
                     numValueHeads: numValueHeads,
                     keyHeadDim: keyHeadDim,

@@ -20,13 +20,18 @@
 // call to snapshot every layer + one call to restore.
 //
 // Per-cache-kind snapshot payload:
-//   * KVCache              → `length` integer only (the KV slots
-//                            beyond `length` are unused; appending
-//                            after restore overwrites them).
+//   * Attention caches     → `length` + `absolutePosition` integers
+//     (KVCache /             only (the slots beyond `length` are unused;
+//      Affine- /             appending after restore overwrites them —
+//      AURAQuantizedKVCache) affine overwrites the packed bits, AURA
+//                            zeros a re-written slot's stale atomic_or
+//                            bits via its high-water mark). No buffer
+//                            copy. Window eviction is the exception —
+//                            see plan.md Phase 8.25.
 //   * GDNStateCache        → Tensor snapshot of `current` +
 //                            `length` integer.
 //   * ConvStateCache       → Tensor snapshot of `state`.
-//   * Qwen35GDNLayerCache  → both of the above (conv + GDN +
+//   * GDNLayerCache        → both of the above (conv + GDN +
 //                            shared `length`).
 //
 // Cost on Qwen3.6-A3B: 60 MiB GDN state snapshots + 900 KiB conv
@@ -51,7 +56,7 @@ extension Array where Element == any LayerCacheProtocol {
     /// on Qwen3.6-A3B (60 MiB GDN + 900 KB conv).
     public func snapshotAll(device: Device = .shared) -> [LayerCacheSnapshot] {
         return self.map { cache -> LayerCacheSnapshot in
-            if let composite = cache as? Qwen35GDNLayerCache {
+            if let composite = cache as? GDNLayerCache {
                 return .gdnLayer(
                     conv: composite.conv.snapshot(device: device),
                     gdnState: composite.gdn.snapshot(device: device),
@@ -62,7 +67,16 @@ extension Array where Element == any LayerCacheProtocol {
                     currentState: gdn.snapshot(device: device),
                     length: gdn.length)
             }
-            if let kv = cache as? KVCache {
+            // All attention caches — raw `KVCache`, `AffineQuantizedKVCache`,
+            // `AURAQuantizedKVCache` — roll back with a pure length rewind:
+            // the physical slots beyond `length` are unused and get
+            // overwritten on the next append. Affine quantize overwrites a
+            // slot's packed bits directly; AURA zeros a re-written slot's
+            // stale `atomic_or` bits via its high-water mark. So no buffer
+            // copy is needed — `length` + `absolutePosition` is the whole
+            // snapshot. (Rotating-window eviction is the one case this
+            // length-only rewind can't undo — see plan.md Phase 8.25.)
+            if let kv = cache as? (any KVCacheProtocol) {
                 return .kv(
                     length: kv.length,
                     absolutePosition: kv.absolutePosition)
@@ -86,14 +100,14 @@ extension Array where Element == any LayerCacheProtocol {
         )
         for (cache, snap) in zip(self, snapshots) {
             switch (cache, snap) {
-            case let (composite as Qwen35GDNLayerCache, .gdnLayer(convT, gdnT, length)):
+            case let (composite as GDNLayerCache, .gdnLayer(convT, gdnT, length)):
                 composite.conv.restore(from: convT, device: device)
                 composite.gdn.restore(from: gdnT, device: device)
                 composite.setLength(length)
             case let (gdn as GDNStateCache, .gdn(currentT, length)):
                 gdn.restore(from: currentT, device: device)
                 gdn.setLength(length)
-            case let (kv as KVCache, .kv(length, _)):
+            case let (kv as any KVCacheProtocol, .kv(length, _)):
                 kv.truncate(toLength: length)
             default:
                 preconditionFailure(

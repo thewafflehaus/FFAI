@@ -92,7 +92,7 @@ struct Qwen35MoETextIntegrationTests {
             for (i, layer) in q.layers.enumerated() {
                 switch layer {
                 case is Qwen35GDNLayer:
-                    #expect(caches[i] is Qwen35GDNLayerCache)
+                    #expect(caches[i] is GDNLayerCache)
                 case is Qwen35AttentionLayer:
                     #expect(caches[i] is KVCache)
                 default:
