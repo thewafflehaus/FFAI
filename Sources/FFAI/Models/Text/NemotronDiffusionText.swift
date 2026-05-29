@@ -615,36 +615,45 @@ public final class NemotronDiffusionModel: LanguageModel {
         return out
     }
 
-    public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
-        // NemotronDiffusion's diffusion / self-speculation paths attend by
-        // reading the RAW K/V buffer directly (`Ops.sdpaMulti(k: cache.kBuffer,
-        // …)`) and stage the in-flight block into FIXED future scratch slots
-        // across denoise iterations (`writeTimestepOnGPU`). That demands a
-        // raw, fully-preallocated, unbounded cache:
-        //   * Quantized KV (affine / AURA) has no raw buffer to read or
-        //     scratch-write into — unsupported.
-        //   * A fixed / rotating window would evict the scratch-staged block
-        //     and the prefix the block attends to — unsupported.
-        // Reject both EXPLICITLY rather than silently downgrading to raw (the
-        // old behaviour hid the misconfiguration and ran a slower / different
-        // cache than the caller asked for). Append-based AR decode *could*
-        // use a quantized cache via a dequant SDPA path in `forwardTokens` —
-        // tracked as an enhancement in session-plan; until it lands, every
-        // mode requires raw + unbounded.
-        guard case .raw = kvCacheKind else {
-            preconditionFailure(
-                "NemotronDiffusion requires LoadOptions.kvCache = .raw — the "
-                    + "diffusion block-staging reads the raw K/V buffer directly "
-                    + "and scratch-writes future slots, so quantized KV "
-                    + "(\(kvCacheKind)) is not supported. Load with .raw, or use "
-                    + "a non-diffusion model for quantized KV.")
+    /// Why the given KV-cache config is unsupported for NemotronDiffusion,
+    /// or `nil` if it's fine. The diffusion / self-speculation paths attend
+    /// by reading the RAW K/V buffer directly (`Ops.sdpaMulti(k: cache.kBuffer,
+    /// …)`) and stage the in-flight block into FIXED future scratch slots
+    /// across denoise iterations (`writeTimestepOnGPU`), so they require a
+    /// raw, fully-preallocated, unbounded cache:
+    ///   * Quantized KV (affine / AURA) has no raw buffer to read or
+    ///     scratch-write into — unsupported.
+    ///   * A fixed / rotating window would evict the scratch-staged block
+    ///     and the prefix the block attends to — unsupported.
+    /// `makeLayerCaches` rejects these EXPLICITLY (a clear error) rather than
+    /// silently downgrading to raw — the old behaviour hid the
+    /// misconfiguration and ran a different cache than the caller asked for.
+    /// (Append-based AR decode *could* use a quantized cache via a dequant
+    /// SDPA path in `forwardTokens` — session-plan H.10; until then every
+    /// mode requires raw + unbounded.) Pure + static so it's unit-testable
+    /// without standing up a full model.
+    static func unsupportedCacheReason(
+        kind: KVCacheKind, eviction: KVEviction
+    ) -> String? {
+        guard case .raw = kind else {
+            return "NemotronDiffusion requires LoadOptions.kvCache = .raw — the "
+                + "diffusion block-staging reads the raw K/V buffer directly and "
+                + "scratch-writes future slots, so quantized KV (\(kind)) is not "
+                + "supported. Load with .raw, or use a non-diffusion model for "
+                + "quantized KV."
         }
-        guard case .unbounded = kvEviction else {
-            preconditionFailure(
-                "NemotronDiffusion requires an unbounded KV cache — a fixed / "
-                    + "rotating window (\(kvEviction)) would evict the "
-                    + "scratch-staged block and the prefix it attends to. Load "
-                    + "with .unbounded eviction.")
+        guard case .unbounded = eviction else {
+            return "NemotronDiffusion requires an unbounded KV cache — a fixed / "
+                + "rotating window (\(eviction)) would evict the scratch-staged "
+                + "block and the prefix it attends to. Load with .unbounded "
+                + "eviction."
+        }
+        return nil
+    }
+
+    public func makeLayerCaches(maxSeq: Int?, device: Device) -> [any LayerCacheProtocol] {
+        if let reason = Self.unsupportedCacheReason(kind: kvCacheKind, eviction: kvEviction) {
+            preconditionFailure(reason)
         }
         return makeAttentionCaches(
             kind: .raw, count: nLayers,

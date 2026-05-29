@@ -178,4 +178,49 @@ struct NemotronDiffusionTextTests {
         #expect(LoadOptions(diffusionMode: .diffusion).diffusionMode == .diffusion)
         #expect(LoadOptions(diffusionMode: .autoregressive).diffusionMode == .autoregressive)
     }
+
+    // ─── KV-cache config validation (raw + unbounded only) ────────────────
+    // `makeLayerCaches` precondition-fails on anything else; the decision
+    // lives in the pure `unsupportedCacheReason` so it's testable without
+    // standing up a full model (and without tripping the trap).
+
+    @Test("unsupportedCacheReason: raw + unbounded is the one accepted config")
+    func diffusionCacheRawUnboundedAccepted() {
+        #expect(
+            NemotronDiffusionModel.unsupportedCacheReason(
+                kind: .raw, eviction: .unbounded) == nil)
+    }
+
+    @Test("unsupportedCacheReason: quantized KV is rejected (affine + AURA), with a reason")
+    func diffusionCacheQuantizedRejected() {
+        let affine = NemotronDiffusionModel.unsupportedCacheReason(
+            kind: .affineQuantized(bits: 4, groupSize: 64), eviction: .unbounded)
+        #expect(affine != nil)
+        #expect(affine?.contains("quantized") == true)
+        #expect(affine?.contains(".raw") == true)
+
+        let aura = NemotronDiffusionModel.unsupportedCacheReason(
+            kind: .auraQuantized(scheme: .default), eviction: .unbounded)
+        #expect(aura != nil)
+        #expect(aura?.contains("quantized") == true)
+    }
+
+    @Test("unsupportedCacheReason: a fixed/rotating window is rejected, with a reason")
+    func diffusionCacheWindowedRejected() {
+        let windowed = NemotronDiffusionModel.unsupportedCacheReason(
+            kind: .raw, eviction: .window(maxSize: 128, keep: 0))
+        #expect(windowed != nil)
+        #expect(windowed?.lowercased().contains("window") == true)
+        #expect(windowed?.contains("unbounded") == true)
+    }
+
+    @Test("unsupportedCacheReason: quantized config is rejected even when checked first")
+    func diffusionCacheQuantizedWinsOverWindow() {
+        // Both bad → still rejected (kind is checked before eviction).
+        let both = NemotronDiffusionModel.unsupportedCacheReason(
+            kind: .auraQuantized(scheme: .default),
+            eviction: .window(maxSize: 128, keep: 0))
+        #expect(both != nil)
+        #expect(both?.contains("quantized") == true)
+    }
 }
