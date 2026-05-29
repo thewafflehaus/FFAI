@@ -116,5 +116,19 @@ struct NemotronDiffusionTextIntegrationTests {
             minTokens: 32,
             label: "Nemotron-Labs-Diffusion 3B 4bit self-spec"
         )
+
+        // Unified selector — bare `generate(mode:)` defaults to
+        // self-speculation; exercise the dispatch end-to-end.
+        let unified = m.generate(
+            prompt: prompt,
+            diffusionParameters: DiffusionParameters(
+                maxNewTokens: 64, blockLength: 32,
+                confidenceThreshold: nil))
+        #expect(unified.forwardPasses > 0)
+        expectCoherentOutput(
+            unified.generatedTokens,
+            minTokens: 32,
+            label: "Nemotron-Labs-Diffusion 3B 4bit generate(mode: .selfSpeculative default)"
+        )
     }
 }

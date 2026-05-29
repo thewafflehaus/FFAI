@@ -156,4 +156,17 @@ struct NemotronDiffusionTextTests {
         #expect(NemotronDiffusion.architectures.contains("NemotronDiffusionModel"))
         #expect(NemotronDiffusion.architectures.contains("NemotronDiffusionVLMModel"))
     }
+
+    @Test("DiffusionMode covers all three decode strategies")
+    func diffusionModeCases() {
+        // The unified `generate(prompt:mode:)` selector dispatches on
+        // these; if a strategy is added the switch must be updated too.
+        #expect(
+            Set(DiffusionMode.allCases)
+                == Set([.autoregressive, .diffusion, .selfSpeculative]))
+        // Raw values are stable (callers / CLI may parse them).
+        #expect(DiffusionMode.selfSpeculative.rawValue == "selfSpeculative")
+        #expect(DiffusionMode.diffusion.rawValue == "diffusion")
+        #expect(DiffusionMode.autoregressive.rawValue == "autoregressive")
+    }
 }

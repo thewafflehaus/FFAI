@@ -72,9 +72,49 @@ public struct DiffusionResult: Sendable {
     public let forwardPasses: Int
 }
 
+/// Which decode strategy a NemotronDiffusion model runs. Self-speculation
+/// is the default — it drafts a block with the diffusion head then
+/// AR-verifies it, matching the reference `linear_spec_generate` default
+/// and beating plain AR while staying coherent. Pick `.diffusion` for the
+/// pure block-denoising path, or `.autoregressive` for a standard greedy
+/// token-by-token decode.
+public enum DiffusionMode: String, Sendable, CaseIterable {
+    case autoregressive
+    case diffusion
+    case selfSpeculative
+}
+
 // ─── Diffusion + self-speculation entry points ───────────────────────
 
 extension Model {
+
+    /// Unified NemotronDiffusion decode entry. `mode` selects the
+    /// strategy (default `.selfSpeculative`) so callers pick AR /
+    /// diffusion / self-speculation at the call site instead of reaching
+    /// for three separate methods. Requires a NemotronDiffusion engine;
+    /// all three modes return a `DiffusionResult` (NFE-counted).
+    public func generate(
+        prompt: String,
+        mode: DiffusionMode = .selfSpeculative,
+        diffusionParameters: DiffusionParameters = DiffusionParameters()
+    )
+        -> DiffusionResult
+    {
+        let promptTokens = tokenizer.encode(text: prompt)
+        let generated: (tokens: [Int], nfe: Int)
+        switch mode {
+        case .autoregressive:
+            generated = driveAutoregressive(
+                promptTokens: promptTokens, params: diffusionParameters)
+        case .diffusion:
+            generated = driveDiffusion(
+                promptTokens: promptTokens, params: diffusionParameters)
+        case .selfSpeculative:
+            generated = driveSelfSpeculative(
+                promptTokens: promptTokens, params: diffusionParameters)
+        }
+        return makeResult(promptTokens: promptTokens, generated: generated)
+    }
 
     /// Block-wise diffusion decoding. Requires a NemotronDiffusion
     /// engine loaded with a raw KV cache (`LoadOptions.kvCache = .raw`).
@@ -122,6 +162,49 @@ extension Model {
                     + "NemotronDiffusion model")
         }
         return m
+    }
+
+    /// Standard greedy autoregressive decode over the diffusion backbone:
+    /// causal-prefill the prompt, then emit one token per causal
+    /// `forwardBlock` step. Unlike the diffusion / self-spec paths,
+    /// `maxNewTokens` need not be a multiple of `blockLength` and no
+    /// block-staging headroom is reserved. Returns the generated tokens +
+    /// the NFE count (prefill + one forward per token).
+    private func driveAutoregressive(
+        promptTokens: [Int],
+        params: DiffusionParameters
+    )
+        -> (tokens: [Int], nfe: Int)
+    {
+        let m = diffusionEngine()
+        precondition(!promptTokens.isEmpty, "generate(.autoregressive): prompt is empty")
+        let eos = params.stopOnEOS ? m.eosTokenId : nil
+        let cacheDepth = min(
+            m.maxContextWindow, promptTokens.count + params.maxNewTokens)
+        let caches = m.makeLayerCaches(maxSeq: cacheDepth)
+        var nfe = 0
+
+        // Causal prefill — appends the prompt's K/V, predicts token 0.
+        let prefillLogits = m.forwardBlock(
+            tokenIds: promptTokens,
+            positions: Array(0 ..< promptTokens.count),
+            caches: caches, append: true)
+        nfe += 1
+        var next = argmax(prefillLogits[promptTokens.count - 1])
+
+        var generated: [Int] = []
+        generated.reserveCapacity(params.maxNewTokens)
+        for i in 0 ..< params.maxNewTokens {
+            generated.append(next)
+            if let eos, next == eos { break }
+            let pos = promptTokens.count + i
+            let logits = m.forwardBlock(
+                tokenIds: [next], positions: [pos],
+                caches: caches, append: true)
+            nfe += 1
+            next = argmax(logits[0])
+        }
+        return (generated, nfe)
     }
 
     private func driveDiffusion(
