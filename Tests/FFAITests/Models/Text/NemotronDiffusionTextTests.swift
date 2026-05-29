@@ -169,4 +169,13 @@ struct NemotronDiffusionTextTests {
         #expect(DiffusionMode.diffusion.rawValue == "diffusion")
         #expect(DiffusionMode.autoregressive.rawValue == "autoregressive")
     }
+
+    @Test("LoadOptions.diffusionMode defaults to self-speculation, honors override")
+    func loadOptionsDiffusionModeDefault() {
+        // Bare load → self-speculation (matches generate(mode:nil) fallback).
+        #expect(LoadOptions().diffusionMode == .selfSpeculative)
+        // Explicit init-time selection is preserved on the struct.
+        #expect(LoadOptions(diffusionMode: .diffusion).diffusionMode == .diffusion)
+        #expect(LoadOptions(diffusionMode: .autoregressive).diffusionMode == .autoregressive)
+    }
 }

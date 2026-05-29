@@ -151,6 +151,13 @@ public struct LoadOptions: Sendable {
     /// benching. Has no effect when `kvCache != .auraQuantized(...)`.
     public var auraDecodePath: AURADecodePath
 
+    /// Default decode strategy for a NemotronDiffusion model when
+    /// `generate(prompt:)` is called without an explicit `mode:`. Defaults
+    /// to `.selfSpeculative` (the reference `linear_spec_generate`
+    /// default). An explicit `mode:` at the call site always overrides
+    /// this. Ignored by non-diffusion families.
+    public var diffusionMode: DiffusionMode
+
     public init(
         capabilities: Set<Capability> = Capability.textOnly,
         kvCache: KVCacheKind = .raw,
@@ -164,7 +171,8 @@ public struct LoadOptions: Sendable {
         preallocateKVCache: Bool = false,
         initialKVCacheCapacity: Int? = nil,
         wiredLimitBytes: Int? = nil,
-        auraDecodePath: AURADecodePath = .compressed
+        auraDecodePath: AURADecodePath = .compressed,
+        diffusionMode: DiffusionMode = .selfSpeculative
     ) {
         self.capabilities = capabilities.union(Capability.textOnly)
         self.kvCache = kvCache
@@ -179,5 +187,6 @@ public struct LoadOptions: Sendable {
         self.initialKVCacheCapacity = initialKVCacheCapacity
         self.wiredLimitBytes = wiredLimitBytes
         self.auraDecodePath = auraDecodePath
+        self.diffusionMode = diffusionMode
     }
 }

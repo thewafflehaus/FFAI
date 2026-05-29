@@ -89,20 +89,24 @@ public enum DiffusionMode: String, Sendable, CaseIterable {
 extension Model {
 
     /// Unified NemotronDiffusion decode entry. `mode` selects the
-    /// strategy (default `.selfSpeculative`) so callers pick AR /
-    /// diffusion / self-speculation at the call site instead of reaching
+    /// strategy; an explicit value wins, and `nil` (the default) falls
+    /// back to the mode the model was loaded with
+    /// (`LoadOptions.diffusionMode`, itself defaulting to
+    /// `.selfSpeculative`). So callers pick AR / diffusion /
+    /// self-speculation at load time *or* per call instead of reaching
     /// for three separate methods. Requires a NemotronDiffusion engine;
     /// all three modes return a `DiffusionResult` (NFE-counted).
     public func generate(
         prompt: String,
-        mode: DiffusionMode = .selfSpeculative,
+        mode: DiffusionMode? = nil,
         diffusionParameters: DiffusionParameters = DiffusionParameters()
     )
         -> DiffusionResult
     {
+        let resolvedMode = mode ?? loadOptions.diffusionMode
         let promptTokens = tokenizer.encode(text: prompt)
         let generated: (tokens: [Int], nfe: Int)
-        switch mode {
+        switch resolvedMode {
         case .autoregressive:
             generated = driveAutoregressive(
                 promptTokens: promptTokens, params: diffusionParameters)
