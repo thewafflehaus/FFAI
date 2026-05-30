@@ -369,74 +369,49 @@ extension DeepSeekV4Model {
         // down_exps: [intermediate, hidden, n_experts]
         //   → reshape [n_experts, hidden, intermediate], slice e,
         //     [hidden, intermediate] = [n_out, n_in].
+        // GPU-side accumulator: moeOut += w_k * expert_out_k for each
+        // of topK experts, then + shared-expert output. Uses Ops.add
+        // (vector_add) to keep the chain on-GPU — no per-expert
+        // CPU sync.
         let gateExps3D = layer.ffnGateExps.reshaped(to: [nExperts, intermediate, hidden])
         let upExps3D = layer.ffnUpExps.reshaped(to: [nExperts, intermediate, hidden])
         let downExps3D = layer.ffnDownExps.reshaped(to: [nExperts, hidden, intermediate])
-        var expertOutHost: [[Float]] = []
+        let cmd2 = device.makeCommandBuffer()
+        let moeAccum = Tensor.filled(0.0, shape: [hidden], dtype: dt, device: device)
         for k in 0..<topK {
             let e = topIndices[k]
+            let w = normWeights[k]
             let gateW = gateExps3D.slicedRows(start: e, count: 1)
                 .reshaped(to: [intermediate, hidden])
             let upW = upExps3D.slicedRows(start: e, count: 1)
                 .reshaped(to: [intermediate, hidden])
             let downW = downExps3D.slicedRows(start: e, count: 1)
                 .reshaped(to: [hidden, intermediate])
-            let cmdE = device.makeCommandBuffer()
-            let gateOut = Ops.gemv(weight: gateW, input: xNorm, on: cmdE)
-            let upOut = Ops.gemv(weight: upW, input: xNorm, on: cmdE)
-            let inner = Ops.swiglu(gate: gateOut, up: upOut, on: cmdE)
-            let expertOut = Ops.gemv(weight: downW, input: inner, on: cmdE)
-            cmdE.commit()
-            cmdE.waitUntilCompleted()
-            expertOutHost.append(expertOut.toArray(as: Float.self))
-        }
-        var moeOutHost = [Float](repeating: 0, count: hidden)
-        for k in 0..<topK {
-            let w = normWeights[k]
-            for d in 0..<hidden {
-                moeOutHost[d] += w * expertOutHost[k][d]
-            }
+            let gateOut = Ops.gemv(weight: gateW, input: xNorm, on: cmd2)
+            let upOut = Ops.gemv(weight: upW, input: xNorm, on: cmd2)
+            let inner = Ops.swiglu(gate: gateOut, up: upOut, on: cmd2)
+            let expertOut = Ops.gemv(weight: downW, input: inner, on: cmd2)
+            let wT = Tensor.filled(w, shape: [hidden], dtype: dt, device: device)
+            let scaled = Ops.mul(expertOut, wT, on: cmd2)
+            _ = Ops.add(moeAccum, scaled, on: cmd2, into: moeAccum)
         }
         // Shared expert
-        let cmd4 = device.makeCommandBuffer()
         let sGate = Ops.gemv(
-            weight: layer.ffnGateShexp.asGgufMatmulWeight(), input: xNorm, on: cmd4)
+            weight: layer.ffnGateShexp.asGgufMatmulWeight(), input: xNorm, on: cmd2)
         let sUp = Ops.gemv(
-            weight: layer.ffnUpShexp.asGgufMatmulWeight(), input: xNorm, on: cmd4)
-        let sInner = Ops.swiglu(gate: sGate, up: sUp, on: cmd4)
+            weight: layer.ffnUpShexp.asGgufMatmulWeight(), input: xNorm, on: cmd2)
+        let sInner = Ops.swiglu(gate: sGate, up: sUp, on: cmd2)
         let shexpOut = Ops.gemv(
-            weight: layer.ffnDownShexp.asGgufMatmulWeight(), input: sInner, on: cmd4)
-        cmd4.commit()
-        cmd4.waitUntilCompleted()
-        let shexpHost = shexpOut.toArray(as: Float.self)
-        for d in 0..<hidden {
-            moeOutHost[d] += shexpHost[d]
-        }
-        // Upload block_out back to GPU for mHC expand.
-        let blockOut = Tensor.filled(0.0, shape: [hidden], dtype: dt, device: device)
-        switch dt {
-        case .f32:
-            blockOut.copyIn(from: moeOutHost)
-        case .f16:
-            blockOut.copyIn(from: moeOutHost.map { Float16($0) })
-        case .bf16:
-            blockOut.copyIn(from: moeOutHost.map { v -> UInt16 in
-                let bits = v.bitPattern
-                let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
-                return UInt16(rounded >> 16)
-            })
-        default:
-            fatalError("forwardFfnSubblock: unsupported dtype \(dt)")
-        }
+            weight: layer.ffnDownShexp.asGgufMatmulWeight(), input: sInner, on: cmd2)
+        let blockOut = Ops.add(moeAccum, shexpOut, on: cmd2)
 
         // mHC expand
-        let cmd5 = device.makeCommandBuffer()
         let newH = Ops.dsv4MhcExpand(
             blockOut: blockOut, post: postFfn, comb: combFfn,
             residualState: state.hcState,
-            hiddenDim: hidden, nHc: 4, nTokens: 1, on: cmd5)
-        cmd5.commit()
-        cmd5.waitUntilCompleted()
+            hiddenDim: hidden, nHc: 4, nTokens: 1, on: cmd2)
+        cmd2.commit()
+        cmd2.waitUntilCompleted()
         state.hcState = newH
         return blockOut
     }
