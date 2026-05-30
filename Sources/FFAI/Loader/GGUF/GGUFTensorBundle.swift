@@ -73,31 +73,72 @@ public final class GGUFTensorBundle: @unchecked Sendable {
         self.reader = try GGUFReader(url: url)
     }
 
-    /// Materialize a tensor from the GGUF as a host-side `Tensor`
-    /// (dequantized to f32 unless the on-disk format is already a
-    /// supported float dtype). **WIP**: dispatches to the metaltile
-    /// dequant kernels for Q8_0 / Q2_K / IQ2_XXS once those are wired
-    /// through Ops.swift; for now, throws `notYetImplemented` for
-    /// quantized formats and returns a direct copy for F32 / F16 /
-    /// BF16 stored tensors.
-    public func tensor(named: String) throws -> Tensor {
+    /// Materialize a tensor from the GGUF as a host-side `Tensor`.
+    /// Supported on-disk formats: F32 / F16 / BF16 (direct copy) and
+    /// Q8_0 / Q2_K / IQ2_XXS (GPU dequant via the metaltile
+    /// `ffai_gguf_dequant_*` kernels). Other quant types raise
+    /// `GGUFError.unsupportedDequant` — they land in follow-ups as
+    /// the kernel surface grows.
+    ///
+    /// - Parameters:
+    ///   - named: tensor name from the GGUF tensor info table
+    ///   - outDtype: target activation dtype for the returned tensor.
+    ///     `nil` defaults to f32 for quantized inputs and the on-disk
+    ///     dtype for float inputs.
+    ///   - device: the device whose command queue handles the dequant
+    ///     dispatch. Defaults to `.shared`.
+    public func tensor(
+        named: String, outDtype: DType? = nil, device: Device = .shared
+    ) throws -> Tensor {
         guard let idx = reader.tensorIndex[named] else {
             throw GGUFError.missingMetadataKey("tensor:\(named)")
         }
         let info = reader.tensorInfos[idx]
+        let shape = info.dimensions.map { Int($0) }
+        let raw = try reader.rawBytes(named: named)
+
         switch info.type {
         case .f32, .f16, .bf16:
-            // Float storage — direct byte copy into a Tensor of the
-            // matching dtype. Defer the actual Tensor construction to
-            // the follow-up wiring PR; for now, raise so the loader
-            // fails fast at the type-check stage rather than silently
-            // returning garbage.
-            throw GGUFError.unsupportedDequant(info.type, tensor: named)
-        case .q8_0, .q2_K, .iq2_xxs:
-            // The on-disk → GPU-resident split + metaltile dequant
-            // kernel dispatch lands in the follow-up forward-path PR.
-            // PR #243 ships the kernels; this PR ships the reader.
-            throw GGUFError.unsupportedDequant(info.type, tensor: named)
+            let dtype: DType = info.type == .f32 ? .f32 : (info.type == .f16 ? .f16 : .bf16)
+            let buf = device.makeBuffer(length: max(raw.count, dtype.byteSize))
+            raw.withUnsafeBytes { src in
+                buf.contents().copyMemory(
+                    from: src.baseAddress!, byteCount: raw.count)
+            }
+            return Tensor(buffer: buf, offset: 0, shape: shape, dtype: dtype)
+
+        case .q8_0:
+            let cmd = device.makeCommandBuffer()
+            let result = GGUFDequant.dequantQ8_0(
+                rawBlocks: raw, nValues: Int(info.numElements),
+                outDtype: outDtype ?? .f32,
+                on: cmd, device: device)
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            return result.reshaped(to: shape)
+
+        case .q2_K:
+            let cmd = device.makeCommandBuffer()
+            let result = GGUFDequant.dequantQ2_K(
+                rawBlocks: raw, nValues: Int(info.numElements),
+                outDtype: outDtype ?? .f32,
+                on: cmd, device: device)
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            return result.reshaped(to: shape)
+
+        case .iq2_xxs:
+            let (grid, signs) = GGUFDequant.iq2xxsTables(device: device)
+            let cmd = device.makeCommandBuffer()
+            let result = GGUFDequant.dequantIQ2_XXS(
+                rawBlocks: raw, nValues: Int(info.numElements),
+                outDtype: outDtype ?? .f32,
+                gridTensor: grid, signsTensor: signs,
+                on: cmd, device: device)
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            return result.reshaped(to: shape)
+
         default:
             throw GGUFError.unsupportedDequant(info.type, tensor: named)
         }

@@ -1,0 +1,129 @@
+// Copyright 2026 Tom Turney (@TheTom)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// End-to-end GGUF loader integration on the user's local
+// DeepSeek-V4-Flash IQ2XXS imatrix file (~86 GB). Validates that the
+// parser + dequant pipeline successfully open the checkpoint, read
+// the architecture, decode a representative tensor of each quant
+// type the file uses (Q8_0, Q2_K, IQ2_XXS), and that the dequant
+// outputs are bounded (no NaN / inf — exact numerical comparison
+// against llama.cpp lands when the cross-reference tooling is in
+// tree).
+//
+// Skipped at CI time — gated on the model being staged at
+// `$FFAI_DSV4_GGUF_PATH` (default `~/models/ds4-model`).
+
+import Foundation
+import Testing
+
+@testable import FFAI
+
+@Suite("GGUF DSv4 end-to-end", .serialized)
+struct GGUFDsv4IntegrationTests {
+
+    private var modelPath: String? {
+        let env = ProcessInfo.processInfo.environment["FFAI_DSV4_GGUF_PATH"]
+            ?? NSString("~/models/ds4-model").expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: env) else { return nil }
+        return env
+    }
+
+    @Test("Open DSv4 GGUF, read header + arch metadata")
+    func opensCheckpoint() throws {
+        guard let dir = modelPath else {
+            print("GGUFDsv4IntegrationTests: skipping (no model at FFAI_DSV4_GGUF_PATH)")
+            return
+        }
+        let bundle = try GGUFTensorBundle(directory: URL(fileURLWithPath: dir))
+        // The antirez DSv4 GGUF carries `general.architecture: "deepseek4"`.
+        let arch = bundle.architecture
+        #expect(arch != nil, "DSv4 GGUF must carry general.architecture")
+        if let arch = arch {
+            #expect(
+                arch.lowercased().contains("deepseek")
+                    || arch.lowercased().contains("ds4")
+                    || arch == "deepseek4",
+                "Expected DeepSeek arch string, got '\(arch)'")
+        }
+        // The tensor info table should be substantial for a 284B model.
+        #expect(bundle.reader.tensorInfos.count > 100)
+    }
+
+    @Test("Dequant one representative Q8_0 tensor (attention projection)")
+    func dequantQ8_0Tensor() throws {
+        guard let dir = modelPath else {
+            print("GGUFDsv4IntegrationTests: skipping (no model)")
+            return
+        }
+        let bundle = try GGUFTensorBundle(directory: URL(fileURLWithPath: dir))
+        // Find any Q8_0 tensor (the filename says AProjQ8 / SExpQ8 / OutQ8 are Q8_0).
+        guard let q8 = bundle.reader.tensorInfos.first(where: { $0.type == .q8_0 }) else {
+            print("GGUFDsv4IntegrationTests: no Q8_0 tensors found — skipping")
+            return
+        }
+        let t = try bundle.tensor(named: q8.name, outDtype: .f32)
+        #expect(t.shape.map { Int($0) } == q8.dimensions.map { Int($0) })
+        // Sample a few elements; assert finite + bounded magnitude.
+        // The Q8_0 super-scale is fp16; values land in the same range
+        // as the original fp16 weights.
+        let sample = t.toArray(as: Float.self).prefix(1024)
+        for v in sample {
+            #expect(v.isFinite, "Q8_0 dequant produced non-finite value")
+            #expect(abs(v) < 1e3, "Q8_0 dequant magnitude unreasonable (\(v))")
+        }
+    }
+
+    @Test("Dequant one representative Q2_K tensor (w2 down-proj)")
+    func dequantQ2_KTensor() throws {
+        guard let dir = modelPath else {
+            print("GGUFDsv4IntegrationTests: skipping (no model)")
+            return
+        }
+        let bundle = try GGUFTensorBundle(directory: URL(fileURLWithPath: dir))
+        guard let q2 = bundle.reader.tensorInfos.first(where: { $0.type == .q2_K }) else {
+            print("GGUFDsv4IntegrationTests: no Q2_K tensors found — skipping")
+            return
+        }
+        let t = try bundle.tensor(named: q2.name, outDtype: .f32)
+        #expect(t.shape.map { Int($0) } == q2.dimensions.map { Int($0) })
+        let sample = t.toArray(as: Float.self).prefix(1024)
+        for v in sample {
+            #expect(v.isFinite, "Q2_K dequant produced non-finite value")
+            #expect(abs(v) < 1e3, "Q2_K dequant magnitude unreasonable (\(v))")
+        }
+    }
+
+    @Test("Dequant one representative IQ2_XXS tensor (MoE expert weight)")
+    func dequantIQ2_XXSTensor() throws {
+        guard let dir = modelPath else {
+            print("GGUFDsv4IntegrationTests: skipping (no model)")
+            return
+        }
+        let bundle = try GGUFTensorBundle(directory: URL(fileURLWithPath: dir))
+        guard let iq = bundle.reader.tensorInfos.first(where: { $0.type == .iq2_xxs }) else {
+            print("GGUFDsv4IntegrationTests: no IQ2_XXS tensors found — skipping")
+            return
+        }
+        let t = try bundle.tensor(named: iq.name, outDtype: .f32)
+        #expect(t.shape.map { Int($0) } == iq.dimensions.map { Int($0) })
+        let sample = t.toArray(as: Float.self).prefix(1024)
+        var anyNonZero = false
+        for v in sample {
+            #expect(v.isFinite, "IQ2_XXS dequant produced non-finite value")
+            #expect(abs(v) < 1e3, "IQ2_XXS dequant magnitude unreasonable (\(v))")
+            if v != 0 { anyNonZero = true }
+        }
+        #expect(anyNonZero, "IQ2_XXS dequant produced all-zero output for sample")
+    }
+}
