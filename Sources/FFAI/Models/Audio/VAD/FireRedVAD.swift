@@ -1199,11 +1199,20 @@ public final class FireRedVADModel: @unchecked Sendable {
             case 0x8C:  // SHORT_BINUNICODE len1
                 stack.append(.str(readLen1String()))
             case 0x8D:  // BINUNICODE8
-                let n =
-                    Int(pkl[pos]) | (Int(pkl[pos + 1]) << 8) | (Int(pkl[pos + 2]) << 16)
+                // Read little-endian u64 length. The single 8-way OR
+                // expression times out Swift's type-checker; split into
+                // two halves with explicit `Int` operands.
+                let lo =
+                    Int(pkl[pos])
+                    | (Int(pkl[pos + 1]) << 8)
+                    | (Int(pkl[pos + 2]) << 16)
                     | (Int(pkl[pos + 3]) << 24)
-                    | (Int(pkl[pos + 4]) << 32) | (Int(pkl[pos + 5]) << 40)
-                    | (Int(pkl[pos + 6]) << 48) | (Int(pkl[pos + 7]) << 56)
+                let hi =
+                    (Int(pkl[pos + 4]) << 32)
+                    | (Int(pkl[pos + 5]) << 40)
+                    | (Int(pkl[pos + 6]) << 48)
+                    | (Int(pkl[pos + 7]) << 56)
+                let n = lo | hi
                 pos += 8
                 let s = String(bytes: pkl[pos ..< (pos + n)], encoding: .utf8) ?? ""
                 pos += n
