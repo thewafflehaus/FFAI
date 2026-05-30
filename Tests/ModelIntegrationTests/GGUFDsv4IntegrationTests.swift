@@ -233,21 +233,37 @@ struct GGUFDsv4IntegrationTests {
             config: config, gguf: bundle, options: LoadOptions(), device: device)
         let layer0 = try model.layer(0)
         let state = model.makeDecodeState()
+        // Seed hcState with a real token embedding so the forward
+        // chain has non-zero input. Pick a low-ID token (1 = often
+        // BOS-equivalent in the DSv4 vocab); broadcast its embedding
+        // across all 4 mHC channels.
+        let hidden = model.textConfig.hidden
+        let tokenId = 1
+        let embedRow = model.tokenEmbd.asGgufMatmulWeight()
+            .slicedRows(start: tokenId, count: 1).reshaped(to: [hidden])
         let cmd = device.makeCommandBuffer()
+        for c in 0..<4 {
+            let dst = state.hcState.slicedRows(start: c, count: 1).reshaped(to: [hidden])
+            Ops.copy(embedRow, into: dst, on: cmd)
+        }
         let blockOut = model.forwardFullAttnSubblock(layer: layer0, state: state, on: cmd)
         cmd.commit()
         cmd.waitUntilCompleted()
-        #expect(blockOut.shape.map { Int($0) } == [model.textConfig.hidden])
+        #expect(blockOut.shape.map { Int($0) } == [hidden])
         let vals = blockOut.toArray(as: Float.self)
-        var anyNaN = 0, anyInf = 0
+        var anyNaN = 0, anyInf = 0, nonZero = 0
         for v in vals {
             if v.isNaN { anyNaN += 1 }
             if v.isInfinite { anyInf += 1 }
+            if v != 0 { nonZero += 1 }
         }
         #expect(anyNaN == 0, "block_out has \(anyNaN) NaN values")
         #expect(anyInf == 0, "block_out has \(anyInf) Inf values")
+        #expect(nonZero > 0, "block_out is all zero — forward chain produced no signal")
         let absMax = vals.map { abs($0) }.max() ?? 0
-        print("GGUFDsv4IntegrationTests: layer-0 attn sub-block done; |block_out|_max = \(absMax)")
+        let absMean = vals.map { abs($0) }.reduce(0, +) / Float(vals.count)
+        print("GGUFDsv4IntegrationTests: layer-0 forward done")
+        print("  nonzero = \(nonZero)/\(vals.count)  |block_out|_max = \(absMax)  mean = \(absMean)")
     }
 
     @Test("Dequant one representative IQ2_XXS tensor (MoE expert weight)")

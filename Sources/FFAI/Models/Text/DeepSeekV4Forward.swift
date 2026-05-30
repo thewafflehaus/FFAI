@@ -86,7 +86,7 @@ extension Tensor {
     /// dimensions order, but `Ops.gemv` expects `[n_out, n_in]`.
     /// Swap the two dim labels (no data movement — same byte layout,
     /// different interpretation).
-    fileprivate func asGgufMatmulWeight() -> Tensor {
+    public func asGgufMatmulWeight() -> Tensor {
         precondition(shape.count == 2, "asGgufMatmulWeight: rank must be 2")
         return reshaped(to: [shape[1], shape[0]])
     }
