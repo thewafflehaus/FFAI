@@ -137,6 +137,49 @@ struct GGUFDsv4IntegrationTests {
         print("GGUFDsv4IntegrationTests: \(ids.count) tokens → '\(decoded.prefix(80))…'")
     }
 
+    @Test("Lazy DeepSeekV4Model loader: open + load layer 0 (full-attn)")
+    func loadModelLayer0() throws {
+        guard let dir = modelPath else {
+            print("GGUFDsv4IntegrationTests: skipping (no model)")
+            return
+        }
+        let bundle = try GGUFTensorBundle(directory: URL(fileURLWithPath: dir))
+        // Synthesize a minimal ModelConfig from the GGUF metadata so the
+        // text-config decoder has something to read. In practice the
+        // FFAI family-dispatch fills this from a sidecar config.json,
+        // but the GGUF itself carries enough hparams for the load path.
+        let hidden = Int(bundle.reader.metadataUInt32("deepseek4.embedding_length") ?? 4096)
+        let nLayers = Int(bundle.reader.metadataUInt32("deepseek4.block_count") ?? 43)
+        let vocab = Int(bundle.reader.metadataUInt32("deepseek4.vocab_size") ?? 129_280)
+        let nHeads = Int(bundle.reader.metadataUInt32("deepseek4.attention.head_count") ?? 64)
+        let raw: [String: Any] = [
+            "hidden_size": hidden,
+            "num_hidden_layers": nLayers,
+            "vocab_size": vocab,
+            "num_attention_heads": nHeads,
+        ]
+        let config = ModelConfig(architecture: "DeepSeekV4ForCausalLM", modelType: "deepseek4", raw: raw)
+        let device = Device.shared
+        let model = try DeepSeekV4Flash.loadModelFromGGUF(
+            config: config, gguf: bundle,
+            options: LoadOptions(), device: device)
+        #expect(model.textConfig.nLayers == nLayers)
+        // The GGUF compress_ratios array includes one extra entry for
+        // the MTP next-N predictor slot — so count is `nLayers + 1`.
+        #expect(model.layerCompressRatios.count >= nLayers)
+        // Layer 0 is full-attention (compress_ratio = 0) per the GGUF
+        // structure. Loading it dequants the 24 layer tensors.
+        let layer0 = try model.layer(0)
+        #expect(layer0.compressRatio == 0)
+        #expect(layer0.layerIndex == 0)
+        // attn_sinks shape sanity (per-head learnable, n_heads=64).
+        #expect(layer0.attnSinks.shape.map { Int($0) } == [64])
+        // Release the layer to free GPU memory — exercise the LRU
+        // hook.
+        model.releaseLayer(0)
+        print("GGUFDsv4IntegrationTests: loaded layer 0, compress_ratios = \(model.layerCompressRatios)")
+    }
+
     @Test("Dequant one representative IQ2_XXS tensor (MoE expert weight)")
     func dequantIQ2_XXSTensor() throws {
         guard let dir = modelPath else {

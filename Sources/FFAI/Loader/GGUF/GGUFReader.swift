@@ -187,6 +187,24 @@ public final class GGUFReader {
         return nil
     }
 
+    /// Integer array accessor — coerces any of the integer-typed GGUF
+    /// array kinds (i32 / u32 / i64 / u64 / i16 / u16 / i8 / u8) to
+    /// `[Int]`. Used for per-layer parameter arrays like
+    /// `deepseek4.attention.compress_ratios`.
+    public func metadataIntArray(_ key: String) -> [Int]? {
+        switch metadata[key] {
+        case .array(.int32(let a)): return a.map { Int($0) }
+        case .array(.uint32(let a)): return a.map { Int($0) }
+        case .array(.int64(let a)): return a.map { Int($0) }
+        case .array(.uint64(let a)): return a.map { Int($0) }
+        case .array(.int16(let a)): return a.map { Int($0) }
+        case .array(.uint16(let a)): return a.map { Int($0) }
+        case .array(.int8(let a)): return a.map { Int($0) }
+        case .array(.uint8(let a)): return a.map { Int($0) }
+        default: return nil
+        }
+    }
+
     // ─── Value-type decoder (internal) ────────────────────────────────
 
     private static func readValue(cursor: inout GGUFCursor, key: String) throws -> GGUFValue {

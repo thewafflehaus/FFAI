@@ -76,7 +76,7 @@ import Foundation
 
 // ─── DeepSeekV4TextConfig ────────────────────────────────────────────
 
-struct DeepSeekV4TextConfig {
+public struct DeepSeekV4TextConfig: Sendable {
     let nLayers: Int        // 43 (excludes MTP)
     let hidden: Int         // 4096
     let vocab: Int          // 129_280
@@ -263,7 +263,7 @@ public enum DeepSeekV4Flash: DeepSeekV4Variant {
         options: LoadOptions, device: Device
     ) throws -> DeepSeekV4Model {
         let tc = DeepSeekV4Config.textConfig(config)
-        _ = try DeepSeekV4TextConfig.decode(tc)
+        let textConfig = try DeepSeekV4TextConfig.decode(tc)
         // Architecture-string sanity-check now that the reader is
         // open. Either form is accepted upstream.
         if let arch = gguf.architecture,
@@ -273,7 +273,8 @@ public enum DeepSeekV4Flash: DeepSeekV4Variant {
             throw DeepSeekV4Error.missingConfig(
                 "general.architecture='\(arch)' not in DeepSeekV4 known set")
         }
-        throw DeepSeekV4Error.notYetImplemented("DeepSeekV4Flash GGUF forward path")
+        return try DeepSeekV4Model.loadFromGGUF(
+            textConfig: textConfig, gguf: gguf, device: device, options: options)
     }
 }
 
@@ -332,7 +333,7 @@ public enum DeepSeekV4Pro: DeepSeekV4Variant {
 /// One transformer block's worth of weights. Allocated per-layer
 /// regardless of compression regime — the regime-specific tensors
 /// (compressor, indexer) are nil for layers that don't use them.
-final class DeepSeekV4Layer: @unchecked Sendable {
+public final class DeepSeekV4Layer: @unchecked Sendable {
     let layerIndex: Int
     let compressRatio: Int  // 0 = full, 4 = CSA, 128 = HCA
 
@@ -420,42 +421,225 @@ final class DeepSeekV4Layer: @unchecked Sendable {
     }
 }
 
-/// DSv4 decoder. Holds the per-layer weight bundles plus the
-/// shared embedding / output-norm / LM-head / output-mHC weights.
-///
-/// `forward(...)` lands incrementally — first the full-attn layer
-/// type (layers 0, 1) end-to-end against a small prompt, then the
-/// CSA and HCA paths. See `DeepSeekV4Forward.swift` (lands when the
-/// first layer type clears local tests).
+/// DSv4 decoder. Holds the shared embedding / output-norm / LM-head /
+/// output-mHC weights eagerly + a **lazy per-layer cache**. Layers are
+/// loaded on first `layer(_:)` access and can be evicted via
+/// `releaseLayer(_:)` so a streaming decoder pipeline keeps only a
+/// handful of layers in RAM at a time — the only realistic shape for
+/// the 86 GB DSv4-Flash GGUF on Apple Silicon.
 public final class DeepSeekV4Model: @unchecked Sendable {
-    let textConfig: DeepSeekV4TextConfig
+    public let textConfig: DeepSeekV4TextConfig
+    public let layerCompressRatios: [Int]  // 0 / 4 / 128 per layer
 
-    // ── Non-block weights ──
-    let tokenEmbd: Tensor         // f16 [hidden, vocab]
-    let outputNorm: Tensor        // f32 [hidden]
-    let outputHead: Tensor        // q8_0 [hidden, vocab]
-    let outputHcBase: Tensor      // f32 [n_hc=4]
-    let outputHcFn: Tensor        // f16 [hc_dim, n_hc]  (head mHC uses simpler decomposition)
-    let outputHcScale: Tensor     // f32 [1]
+    // ── Non-block weights, eagerly loaded ──
+    public let tokenEmbd: Tensor         // f16 [hidden, vocab]
+    public let outputNorm: Tensor        // f32 [hidden]
+    public let outputHead: Tensor        // q8_0 [hidden, vocab]
+    public let outputHcBase: Tensor      // f32 [n_hc=4]
+    public let outputHcFn: Tensor        // f16 [hc_dim, n_hc]
+    public let outputHcScale: Tensor     // f32 [1]
 
-    /// 43 per-layer bundles, indexed 0..<nLayers. CSA / HCA / full
-    /// regime is recoverable via `layers[i].compressRatio`.
-    let layers: [DeepSeekV4Layer]
+    // ── Lazy per-layer cache ──
+    let bundle: GGUFTensorBundle
+    let device: Device
+    let activationDtype: DType
+    private var layerCache: [Int: DeepSeekV4Layer] = [:]
+    private let cacheLock = NSLock()
 
     init(
-        textConfig: DeepSeekV4TextConfig,
+        textConfig: DeepSeekV4TextConfig, layerCompressRatios: [Int],
         tokenEmbd: Tensor, outputNorm: Tensor, outputHead: Tensor,
         outputHcBase: Tensor, outputHcFn: Tensor, outputHcScale: Tensor,
-        layers: [DeepSeekV4Layer]
+        bundle: GGUFTensorBundle, device: Device, activationDtype: DType
     ) {
         self.textConfig = textConfig
+        self.layerCompressRatios = layerCompressRatios
         self.tokenEmbd = tokenEmbd
         self.outputNorm = outputNorm
         self.outputHead = outputHead
         self.outputHcBase = outputHcBase
         self.outputHcFn = outputHcFn
         self.outputHcScale = outputHcScale
-        self.layers = layers
+        self.bundle = bundle
+        self.device = device
+        self.activationDtype = activationDtype
+    }
+
+    /// Lazy per-layer loader. First access dequants all tensors for
+    /// the layer; subsequent accesses return the cached bundle.
+    /// Thread-safe.
+    public func layer(_ index: Int) throws -> DeepSeekV4Layer {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if let cached = layerCache[index] { return cached }
+        let layer = try DeepSeekV4Model.loadLayer(
+            index: index,
+            compressRatio: layerCompressRatios[index],
+            bundle: bundle, device: device, activationDtype: activationDtype,
+            textConfig: textConfig)
+        layerCache[index] = layer
+        return layer
+    }
+
+    /// Drop a layer from the cache to free GPU memory. Caller drives
+    /// the eviction policy (typically: keep the active layer + the
+    /// next one prefetched, drop everything else).
+    public func releaseLayer(_ index: Int) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        layerCache.removeValue(forKey: index)
+    }
+
+    /// Top-level GGUF → DeepSeekV4Model entry. Eagerly loads the
+    /// non-block weights + compress_ratios array; layers stay lazy.
+    static func loadFromGGUF(
+        textConfig: DeepSeekV4TextConfig, gguf: GGUFTensorBundle,
+        device: Device, options: LoadOptions
+    ) throws -> DeepSeekV4Model {
+        let activationDtype: DType = .bf16  // DSv4 default
+        // Extract the compress_ratios array from GGUF metadata. The
+        // key matches the antirez/DSv4 fork naming convention used by
+        // the converter. Falls back to inferring from layer-tensor
+        // presence (CSA layers have indexer.*, HCA layers don't, full
+        // layers have neither).
+        let ratios = try resolveCompressRatios(gguf: gguf, nLayers: textConfig.nLayers)
+
+        // ── Eager non-block load ──
+        let tokenEmbd = try gguf.tensor(named: "token_embd.weight", outDtype: activationDtype, device: device)
+        let outputNorm = try gguf.tensor(named: "output_norm.weight", outDtype: .f32, device: device)
+        let outputHead = try gguf.tensor(named: "output.weight", outDtype: activationDtype, device: device)
+        let outputHcBase = try gguf.tensor(named: "output_hc_base.weight", outDtype: .f32, device: device)
+        let outputHcFn = try gguf.tensor(named: "output_hc_fn.weight", outDtype: activationDtype, device: device)
+        let outputHcScale = try gguf.tensor(named: "output_hc_scale.weight", outDtype: .f32, device: device)
+
+        return DeepSeekV4Model(
+            textConfig: textConfig, layerCompressRatios: ratios,
+            tokenEmbd: tokenEmbd, outputNorm: outputNorm, outputHead: outputHead,
+            outputHcBase: outputHcBase, outputHcFn: outputHcFn, outputHcScale: outputHcScale,
+            bundle: gguf, device: device, activationDtype: activationDtype)
+    }
+
+    /// Returns the per-layer `compress_ratios` array. Prefers the
+    /// GGUF metadata key; falls back to the structural inference if
+    /// the key is absent.
+    private static func resolveCompressRatios(
+        gguf: GGUFTensorBundle, nLayers: Int
+    ) throws -> [Int] {
+        // Try direct metadata keys first (different converters use
+        // slightly different names).
+        let keysToTry = [
+            "deepseek4.attention.compress_ratios",
+            "deepseek4.compress_ratios",
+            "compress_ratios",
+        ]
+        for key in keysToTry {
+            if let arr = gguf.reader.metadataIntArray(key) {
+                return arr
+            }
+        }
+        // Fallback: infer from per-layer tensor presence.
+        //   CSA → has `blk.N.indexer.attn_q_b.weight`
+        //   HCA → has `blk.N.attn_compressor_kv.weight` but no indexer
+        //   full → has neither
+        var ratios: [Int] = []
+        let names = Set(gguf.reader.tensorInfos.map { $0.name })
+        for n in 0..<nLayers {
+            let hasIndexer = names.contains("blk.\(n).indexer.attn_q_b.weight")
+            let hasCompressor = names.contains("blk.\(n).attn_compressor_kv.weight")
+            let ratio = hasIndexer ? 4 : (hasCompressor ? 128 : 0)
+            ratios.append(ratio)
+        }
+        return ratios
+    }
+
+    /// Loads all tensors for one layer. Called by `layer(_:)` on
+    /// cache miss. The activation-dtype dequant target is fixed at
+    /// `activationDtype` for the bulk weights, with `.f32` for the
+    /// per-channel norm + sink + bias scalars (they're tiny and the
+    /// downstream kernels expect f32).
+    private static func loadLayer(
+        index n: Int, compressRatio: Int,
+        bundle: GGUFTensorBundle, device: Device, activationDtype dt: DType,
+        textConfig: DeepSeekV4TextConfig
+    ) throws -> DeepSeekV4Layer {
+        let p = "blk.\(n)"
+        // Common attention path.
+        let attnNorm = try bundle.tensor(named: "\(p).attn_norm.weight", outDtype: .f32, device: device)
+        let attnQA = try bundle.tensor(named: "\(p).attn_q_a.weight", outDtype: dt, device: device)
+        let attnQANorm = try bundle.tensor(named: "\(p).attn_q_a_norm.weight", outDtype: .f32, device: device)
+        let attnQB = try bundle.tensor(named: "\(p).attn_q_b.weight", outDtype: dt, device: device)
+        let attnKV = try bundle.tensor(named: "\(p).attn_kv.weight", outDtype: dt, device: device)
+        let attnKVANorm = try bundle.tensor(named: "\(p).attn_kv_a_norm.weight", outDtype: .f32, device: device)
+        let attnSinks = try bundle.tensor(named: "\(p).attn_sinks.weight", outDtype: .f32, device: device)
+        let attnOutputA = try bundle.tensor(named: "\(p).attn_output_a.weight", outDtype: dt, device: device)
+        let attnOutputB = try bundle.tensor(named: "\(p).attn_output_b.weight", outDtype: dt, device: device)
+
+        // FFN path.
+        let ffnNorm = try bundle.tensor(named: "\(p).ffn_norm.weight", outDtype: .f32, device: device)
+        let ffnGateInp = try bundle.tensor(named: "\(p).ffn_gate_inp.weight", outDtype: dt, device: device)
+        let ffnGateTid2Eid = try? bundle.tensor(named: "\(p).ffn_gate_tid2eid.weight", outDtype: .i32, device: device)
+        let ffnGateExps = try bundle.tensor(named: "\(p).ffn_gate_exps.weight", outDtype: dt, device: device)
+        let ffnUpExps = try bundle.tensor(named: "\(p).ffn_up_exps.weight", outDtype: dt, device: device)
+        let ffnDownExps = try bundle.tensor(named: "\(p).ffn_down_exps.weight", outDtype: dt, device: device)
+        let ffnGateShexp = try bundle.tensor(named: "\(p).ffn_gate_shexp.weight", outDtype: dt, device: device)
+        let ffnUpShexp = try bundle.tensor(named: "\(p).ffn_up_shexp.weight", outDtype: dt, device: device)
+        let ffnDownShexp = try bundle.tensor(named: "\(p).ffn_down_shexp.weight", outDtype: dt, device: device)
+        let expProbsBias = try? bundle.tensor(named: "\(p).exp_probs_b.bias", outDtype: .f32, device: device)
+
+        // mHC weights.
+        let hcAttnBase = try bundle.tensor(named: "\(p).hc_attn_base.weight", outDtype: .f32, device: device)
+        let hcAttnFn = try bundle.tensor(named: "\(p).hc_attn_fn.weight", outDtype: dt, device: device)
+        let hcAttnScale = try bundle.tensor(named: "\(p).hc_attn_scale.weight", outDtype: .f32, device: device)
+        let hcFfnBase = try bundle.tensor(named: "\(p).hc_ffn_base.weight", outDtype: .f32, device: device)
+        let hcFfnFn = try bundle.tensor(named: "\(p).hc_ffn_fn.weight", outDtype: dt, device: device)
+        let hcFfnScale = try bundle.tensor(named: "\(p).hc_ffn_scale.weight", outDtype: .f32, device: device)
+
+        // CSA / HCA compressor.
+        var attnCompressorAPE: Tensor?
+        var attnCompressorGate: Tensor?
+        var attnCompressorKV: Tensor?
+        var attnCompressorNorm: Tensor?
+        if compressRatio > 0 {
+            attnCompressorAPE = try bundle.tensor(named: "\(p).attn_compressor_ape.weight", outDtype: dt, device: device)
+            attnCompressorGate = try bundle.tensor(named: "\(p).attn_compressor_gate.weight", outDtype: dt, device: device)
+            attnCompressorKV = try bundle.tensor(named: "\(p).attn_compressor_kv.weight", outDtype: dt, device: device)
+            attnCompressorNorm = try bundle.tensor(named: "\(p).attn_compressor_norm.weight", outDtype: .f32, device: device)
+        }
+
+        // CSA-only Lightning Indexer.
+        var indexerAttnQB: Tensor?
+        var indexerProj: Tensor?
+        var indexerCompressorAPE: Tensor?
+        var indexerCompressorGate: Tensor?
+        var indexerCompressorKV: Tensor?
+        var indexerCompressorNorm: Tensor?
+        if compressRatio == 4 {
+            indexerAttnQB = try bundle.tensor(named: "\(p).indexer.attn_q_b.weight", outDtype: dt, device: device)
+            indexerProj = try bundle.tensor(named: "\(p).indexer.proj.weight", outDtype: dt, device: device)
+            indexerCompressorAPE = try bundle.tensor(named: "\(p).indexer_compressor_ape.weight", outDtype: dt, device: device)
+            indexerCompressorGate = try bundle.tensor(named: "\(p).indexer_compressor_gate.weight", outDtype: dt, device: device)
+            indexerCompressorKV = try bundle.tensor(named: "\(p).indexer_compressor_kv.weight", outDtype: dt, device: device)
+            indexerCompressorNorm = try bundle.tensor(named: "\(p).indexer_compressor_norm.weight", outDtype: .f32, device: device)
+        }
+
+        _ = textConfig  // shape-checking against the config is a follow-up
+
+        return DeepSeekV4Layer(
+            layerIndex: n, compressRatio: compressRatio,
+            attnNorm: attnNorm, attnQA: attnQA, attnQANorm: attnQANorm, attnQB: attnQB,
+            attnKV: attnKV, attnKVANorm: attnKVANorm, attnSinks: attnSinks,
+            attnOutputA: attnOutputA, attnOutputB: attnOutputB,
+            ffnNorm: ffnNorm, ffnGateInp: ffnGateInp, ffnGateTid2Eid: ffnGateTid2Eid,
+            ffnGateExps: ffnGateExps, ffnUpExps: ffnUpExps, ffnDownExps: ffnDownExps,
+            ffnGateShexp: ffnGateShexp, ffnUpShexp: ffnUpShexp, ffnDownShexp: ffnDownShexp,
+            expProbsBias: expProbsBias,
+            hcAttnBase: hcAttnBase, hcAttnFn: hcAttnFn, hcAttnScale: hcAttnScale,
+            hcFfnBase: hcFfnBase, hcFfnFn: hcFfnFn, hcFfnScale: hcFfnScale,
+            attnCompressorAPE: attnCompressorAPE, attnCompressorGate: attnCompressorGate,
+            attnCompressorKV: attnCompressorKV, attnCompressorNorm: attnCompressorNorm,
+            indexerAttnQB: indexerAttnQB, indexerProj: indexerProj,
+            indexerCompressorAPE: indexerCompressorAPE, indexerCompressorGate: indexerCompressorGate,
+            indexerCompressorKV: indexerCompressorKV, indexerCompressorNorm: indexerCompressorNorm)
     }
 }
 
