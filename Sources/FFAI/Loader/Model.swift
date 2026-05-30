@@ -667,6 +667,28 @@ public enum ModelRegistry {
                 options: options, device: device)
         }
 
+        // DeepSeek V4 — hybrid full / CSA / HCA attention over a
+        // 43-layer MoE backbone with MLA latent KV, Lightning Indexer
+        // top-k sparse routing, and `sqrtsoftplus` MoE gating. Loads
+        // from safetensors today (forward path is WIP); GGUF loads via
+        // the sister `GGUFTensorBundle` path in this branch. Routes
+        // through its own family file.
+        if let arch = config.architecture, DeepSeekV4.architectures.contains(arch) {
+            let variant = try DeepSeekV4.variant(for: config)
+            _ = try variant.loadModel(
+                config: config, weights: weights, options: options, device: device)
+            // The variant.loadModel call above currently throws
+            // `notYetImplemented`; once forward lands, wrap in a
+            // `Loaded` here.
+            throw DeepSeekV4Error.notYetImplemented("DeepSeekV4 Loaded wrapping")
+        }
+        if let mt = config.modelType, DeepSeekV4.modelTypes.contains(mt) {
+            let variant = try DeepSeekV4.variant(for: config)
+            _ = try variant.loadModel(
+                config: config, weights: weights, options: options, device: device)
+            throw DeepSeekV4Error.notYetImplemented("DeepSeekV4 Loaded wrapping")
+        }
+
         // GPT-OSS — a mixture-of-experts transformer with an alternating
         // sliding/full attention schedule, learned per-head attention
         // sinks, and bias-corrected projections. Routes through its own
