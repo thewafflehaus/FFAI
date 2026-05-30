@@ -287,4 +287,233 @@ extension DeepSeekV4Model {
         state.hcState = newH
         return blockOut
     }
+
+    /// FFN sub-block — runs the mHC dance + RMS norm + MoE-top-6 +
+    /// shared expert + mHC expand. Single token, decode mode.
+    ///
+    /// Selection path: full sqrtsoftplus router scoring → top-6 via
+    /// CPU readback (no GPU `argpartition` Op yet, so this is the
+    /// quick-correct path). Expert dispatch is 6 × 3 gemvs against
+    /// per-expert slices of the [n_experts, intermediate, hidden]
+    /// tensors. Combine = weighted sum of expert outputs by
+    /// `score_unbiased * routed_scaling_factor`, plus the
+    /// always-on shared expert.
+    public func forwardFfnSubblock(
+        layer: DeepSeekV4Layer, state: DecodeState, on cmd: MTLCommandBuffer
+    ) -> Tensor {
+        let cfg = textConfig
+        let dt = activationDtype
+        let hidden = cfg.hidden
+        let intermediate = cfg.moeIntermediate
+        let nExperts = layer.ffnGateExps.shape.last ?? cfg.nExperts
+        let topK = cfg.nExpertsPerToken
+        let scaling = cfg.routerScalingFactor
+
+        // ── mHC pre/post/comb split ──
+        let flatH = state.hcState.reshaped(to: [4 * hidden])
+        let hcFnW = layer.hcFfnFn.asGgufMatmulWeight()
+        let mixes = Ops.gemv(weight: hcFnW, input: flatH, on: cmd)
+        let (preFfn, postFfn, combFfn) = Ops.dsv4MhcSinkhornSplit(
+            mixes: mixes, scale: layer.hcFfnScale, base: layer.hcFfnBase,
+            nTokens: 1, eps: cfg.hcEpsilon, sinkhornIters: cfg.hcSinkhornIterations,
+            on: cmd)
+
+        // ── mHC collapse + ffn_norm ──
+        let xWithTokens = Ops.dsv4MhcCollapse(
+            state: state.hcState, pre: preFfn,
+            hiddenDim: hidden, nHc: 4, nTokens: 1, outDtype: dt, on: cmd)
+        let x = xWithTokens.reshaped(to: [hidden])
+        let xNorm = Ops.rmsNorm(x, weight: layer.ffnNorm, eps: cfg.rmsNormEps, on: cmd)
+
+        // ── Router scoring: logits = ffn_gate_inp @ xNorm ──
+        let routerLogits = Ops.gemv(
+            weight: layer.ffnGateInp.asGgufMatmulWeight(), input: xNorm, on: cmd)
+        // The sqrtsoftplus router Op takes f32 logits + bias and writes
+        // f32 score_unbiased + score_biased. Routerlogits is `dt`
+        // (activation dtype). Cast to f32 first.
+        let routerLogitsF32 = Tensor.empty(shape: routerLogits.shape, dtype: .f32)
+        Ops.castToF32(routerLogits, into: routerLogitsF32, on: cmd)
+        let bias: Tensor
+        if let b = layer.expProbsBias {
+            bias = b
+        } else {
+            bias = Tensor.filled(0.0, shape: [nExperts], dtype: .f32, device: device)
+        }
+        let (scoreUnbiased, scoreBiased) = Ops.dsv4MoeRouterSqrtsoftplus(
+            logits: routerLogitsF32, bias: bias, on: cmd)
+
+        // CPU-side top-K selection. Sync flush, readback, argpartition.
+        // Slow but correct; replace with a GPU top-K when one lands.
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        let biasedHost = scoreBiased.toArray(as: Float.self)
+        let unbiasedHost = scoreUnbiased.toArray(as: Float.self)
+        var indexed = Array(biasedHost.enumerated())
+        indexed.sort { $0.element > $1.element }
+        let top = Array(indexed.prefix(topK))
+        let topIndices = top.map { $0.offset }
+        let topWeights = topIndices.map { unbiasedHost[$0] * scaling }
+        // Re-normalize weights so they sum to 1 (a common router
+        // convention — keeps activations stable across hash-route +
+        // sqrtsoftplus-route boundaries).
+        let weightSum = topWeights.reduce(0, +)
+        let normWeights: [Float] = weightSum > 0
+            ? topWeights.map { $0 / weightSum }
+            : Array(repeating: 1.0 / Float(topK), count: topK)
+
+        // ── Expert dispatch ──
+        // gate_exps / up_exps:  [hidden, intermediate, n_experts]
+        //   → reshape [n_experts, intermediate, hidden] (no data move,
+        //     fast/slow swap), slice expert e, get [intermediate, hidden]
+        //     = [n_out, n_in] which Ops.gemv accepts directly.
+        // down_exps: [intermediate, hidden, n_experts]
+        //   → reshape [n_experts, hidden, intermediate], slice e,
+        //     [hidden, intermediate] = [n_out, n_in].
+        let gateExps3D = layer.ffnGateExps.reshaped(to: [nExperts, intermediate, hidden])
+        let upExps3D = layer.ffnUpExps.reshaped(to: [nExperts, intermediate, hidden])
+        let downExps3D = layer.ffnDownExps.reshaped(to: [nExperts, hidden, intermediate])
+        var expertOutHost: [[Float]] = []
+        for k in 0..<topK {
+            let e = topIndices[k]
+            let gateW = gateExps3D.slicedRows(start: e, count: 1)
+                .reshaped(to: [intermediate, hidden])
+            let upW = upExps3D.slicedRows(start: e, count: 1)
+                .reshaped(to: [intermediate, hidden])
+            let downW = downExps3D.slicedRows(start: e, count: 1)
+                .reshaped(to: [hidden, intermediate])
+            let cmdE = device.makeCommandBuffer()
+            let gateOut = Ops.gemv(weight: gateW, input: xNorm, on: cmdE)
+            let upOut = Ops.gemv(weight: upW, input: xNorm, on: cmdE)
+            let inner = Ops.swiglu(gate: gateOut, up: upOut, on: cmdE)
+            let expertOut = Ops.gemv(weight: downW, input: inner, on: cmdE)
+            cmdE.commit()
+            cmdE.waitUntilCompleted()
+            expertOutHost.append(expertOut.toArray(as: Float.self))
+        }
+        var moeOutHost = [Float](repeating: 0, count: hidden)
+        for k in 0..<topK {
+            let w = normWeights[k]
+            for d in 0..<hidden {
+                moeOutHost[d] += w * expertOutHost[k][d]
+            }
+        }
+        // Shared expert
+        let cmd4 = device.makeCommandBuffer()
+        let sGate = Ops.gemv(
+            weight: layer.ffnGateShexp.asGgufMatmulWeight(), input: xNorm, on: cmd4)
+        let sUp = Ops.gemv(
+            weight: layer.ffnUpShexp.asGgufMatmulWeight(), input: xNorm, on: cmd4)
+        let sInner = Ops.swiglu(gate: sGate, up: sUp, on: cmd4)
+        let shexpOut = Ops.gemv(
+            weight: layer.ffnDownShexp.asGgufMatmulWeight(), input: sInner, on: cmd4)
+        cmd4.commit()
+        cmd4.waitUntilCompleted()
+        let shexpHost = shexpOut.toArray(as: Float.self)
+        for d in 0..<hidden {
+            moeOutHost[d] += shexpHost[d]
+        }
+        // Upload block_out back to GPU for mHC expand.
+        let blockOut = Tensor.filled(0.0, shape: [hidden], dtype: dt, device: device)
+        switch dt {
+        case .f32:
+            blockOut.copyIn(from: moeOutHost)
+        case .f16:
+            blockOut.copyIn(from: moeOutHost.map { Float16($0) })
+        case .bf16:
+            blockOut.copyIn(from: moeOutHost.map { v -> UInt16 in
+                let bits = v.bitPattern
+                let rounded = bits &+ 0x7FFF &+ ((bits >> 16) & 1)
+                return UInt16(rounded >> 16)
+            })
+        default:
+            fatalError("forwardFfnSubblock: unsupported dtype \(dt)")
+        }
+
+        // mHC expand
+        let cmd5 = device.makeCommandBuffer()
+        let newH = Ops.dsv4MhcExpand(
+            blockOut: blockOut, post: postFfn, comb: combFfn,
+            residualState: state.hcState,
+            hiddenDim: hidden, nHc: 4, nTokens: 1, on: cmd5)
+        cmd5.commit()
+        cmd5.waitUntilCompleted()
+        state.hcState = newH
+        return blockOut
+    }
+
+    /// Full single-token decode forward through all `nLayers` layers
+    /// + output mHC head + output norm + LM head. Returns the logits
+    /// vector `[vocab]`.
+    ///
+    /// **WIP**: CSA / HCA forward paths aren't implemented yet, so
+    /// `forwardFullAttnSubblock` is used on ALL layers regardless of
+    /// `compress_ratio`. The output is dispatch-correct but the
+    /// numerics for CSA/HCA layers are wrong (they should run the
+    /// indexer + compressed-cache attention). Quality of the
+    /// generated token will be garbage until those paths land.
+    public func forwardAllLayers(
+        inputTokenId: Int, state: DecodeState
+    ) throws -> Tensor {
+        let cfg = textConfig
+        let dt = activationDtype
+        let hidden = cfg.hidden
+
+        // Seed hcState with the input token's embedding broadcast
+        // across all 4 mHC channels.
+        let embedRow = tokenEmbd.asGgufMatmulWeight()
+            .slicedRows(start: inputTokenId, count: 1).reshaped(to: [hidden])
+        let cmdSeed = device.makeCommandBuffer()
+        for c in 0..<4 {
+            let dst = state.hcState.slicedRows(start: c, count: 1).reshaped(to: [hidden])
+            Ops.copy(embedRow, into: dst, on: cmdSeed)
+        }
+        cmdSeed.commit()
+        cmdSeed.waitUntilCompleted()
+
+        // Iterate layers: load → attn sub-block → FFN sub-block → release.
+        for layerIdx in 0..<cfg.nLayers {
+            let layer = try self.layer(layerIdx)
+            let cmdAttn = device.makeCommandBuffer()
+            _ = forwardFullAttnSubblock(layer: layer, state: state, on: cmdAttn)
+            cmdAttn.commit()
+            cmdAttn.waitUntilCompleted()
+            _ = forwardFfnSubblock(layer: layer, state: state, on: device.makeCommandBuffer())
+            self.releaseLayer(layerIdx)
+            print("forwardAllLayers: layer \(layerIdx) done")
+        }
+
+        // Output mHC head: simpler decomposition than per-layer mHC.
+        // pre = sigmoid(output_hc_fn^T @ flatten(H) * scale + base) + eps  → [4]
+        let flatH = state.hcState.reshaped(to: [4 * hidden])
+        let cmdHead = device.makeCommandBuffer()
+        let pre4 = Ops.gemv(
+            weight: outputHcFn.asGgufMatmulWeight(), input: flatH, on: cmdHead)
+        // Sigmoid + scale + base: compute on host (4 elements).
+        cmdHead.commit()
+        cmdHead.waitUntilCompleted()
+        let pre4Host = pre4.toArray(as: Float.self)
+        let scaleHost = outputHcScale.toArray(as: Float.self)
+        let baseHost = outputHcBase.toArray(as: Float.self)
+        let eps = cfg.hcEpsilon
+        var preFinal = [Float](repeating: 0, count: 4)
+        for c in 0..<4 {
+            let z = pre4Host[c] * scaleHost[0] + baseHost[c]
+            preFinal[c] = 1.0 / (1.0 + Foundation.exp(-z)) + eps
+        }
+        let preTensor = Tensor.empty(shape: [4], dtype: .f32)
+        preTensor.copyIn(from: preFinal)
+
+        // Collapse H → x using preFinal.
+        let cmdCollapse = device.makeCommandBuffer()
+        let xWithTokens = Ops.dsv4MhcCollapse(
+            state: state.hcState, pre: preTensor,
+            hiddenDim: hidden, nHc: 4, nTokens: 1, outDtype: dt, on: cmdCollapse)
+        let x = xWithTokens.reshaped(to: [hidden])
+        let xNorm = Ops.rmsNorm(x, weight: outputNorm, eps: cfg.rmsNormEps, on: cmdCollapse)
+        let logits = Ops.gemv(
+            weight: outputHead.asGgufMatmulWeight(), input: xNorm, on: cmdCollapse)
+        cmdCollapse.commit()
+        cmdCollapse.waitUntilCompleted()
+        return logits
+    }
 }
