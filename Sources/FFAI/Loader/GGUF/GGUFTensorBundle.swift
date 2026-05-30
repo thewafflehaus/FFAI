@@ -29,6 +29,7 @@
 // returning garbage.
 
 import Foundation
+import Tokenizers
 
 /// A single GGUF file presented as a tensor namespace. Mirrors the
 /// `SafeTensorsBundle` shape so the loader's family dispatch can use
@@ -157,5 +158,13 @@ public final class GGUFTensorBundle: @unchecked Sendable {
     /// "DeepSeek V4 Flash"). Optional.
     public var modelName: String? {
         reader.metadataString("general.name")
+    }
+
+    /// Build a swift-transformers `Tokenizer` from the embedded
+    /// `tokenizer.ggml.*` metadata. Throws when the embedded
+    /// tokenizer kind isn't a BPE-family variant the adapter knows
+    /// how to translate.
+    public func tokenizer() throws -> any Tokenizers.Tokenizer {
+        try GGUFTokenizerAdapter.build(reader: reader)
     }
 }

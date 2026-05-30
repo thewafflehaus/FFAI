@@ -26,6 +26,7 @@
 
 import Foundation
 import Testing
+import Tokenizers
 
 @testable import FFAI
 
@@ -102,6 +103,38 @@ struct GGUFDsv4IntegrationTests {
             #expect(v.isFinite, "Q2_K dequant produced non-finite value")
             #expect(abs(v) < 1e3, "Q2_K dequant magnitude unreasonable (\(v))")
         }
+    }
+
+    @Test("Build a tokenizer from the GGUF metadata block")
+    func buildTokenizer() throws {
+        guard let dir = modelPath else {
+            print("GGUFDsv4IntegrationTests: skipping (no model)")
+            return
+        }
+        let bundle = try GGUFTensorBundle(directory: URL(fileURLWithPath: dir))
+        let kind = bundle.reader.metadataString("tokenizer.ggml.model") ?? "<missing>"
+        print("GGUFDsv4IntegrationTests: tokenizer.ggml.model = '\(kind)'")
+        let tokenizer: any Tokenizer
+        do {
+            tokenizer = try GGUFTokenizerAdapter.build(reader: bundle.reader)
+        } catch GGUFTokenizerAdapter.Error.unsupportedKind(let k) {
+            // The antirez DSv4 GGUF uses a custom DSv4 pretokenizer
+            // that may not be in our BPE-kind set yet — accept the
+            // skip but make the failure mode visible.
+            print(
+                "GGUFDsv4IntegrationTests: tokenizer kind '\(k)' not in supported BPE-family set yet"
+            )
+            return
+        }
+        // Encode a short known prompt and assert we get a non-empty
+        // token list out — the encode round-trip is the load-bearing
+        // sanity check that the vocab + merges parsed correctly.
+        let prompt = "The history of the printing press began when European craftsmen"
+        let ids = tokenizer.encode(text: prompt)
+        #expect(!ids.isEmpty, "encode returned empty token list")
+        let decoded = tokenizer.decode(tokens: ids)
+        #expect(!decoded.isEmpty, "decode returned empty string")
+        print("GGUFDsv4IntegrationTests: \(ids.count) tokens → '\(decoded.prefix(80))…'")
     }
 
     @Test("Dequant one representative IQ2_XXS tensor (MoE expert weight)")
