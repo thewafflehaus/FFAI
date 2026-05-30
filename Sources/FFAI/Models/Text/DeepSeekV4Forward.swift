@@ -92,6 +92,36 @@ extension Tensor {
     }
 }
 
+// MARK: - Ones-tensor cache (for per-head unit-RMS Q-norm)
+
+extension DeepSeekV4Model {
+    /// `[head_dim]` ones tensor, cached lazily on first access so
+    /// the per-head Q unit-RMS norm has a no-op weight to pass to
+    /// `Ops.rmsNormRows`.
+    fileprivate func qHeadNormOnes(_ dt: DType) -> Tensor {
+        if let cached = qHeadNormOnesCache { return cached }
+        let n = textConfig.headDim
+        let buf = device.makeBuffer(length: max(n * dt.byteSize, dt.byteSize))
+        switch dt {
+        case .f32:
+            let p = buf.contents().assumingMemoryBound(to: Float.self)
+            for i in 0..<n { p[i] = 1.0 }
+        case .f16:
+            let p = buf.contents().assumingMemoryBound(to: Float16.self)
+            for i in 0..<n { p[i] = 1.0 }
+        case .bf16:
+            let p = buf.contents().assumingMemoryBound(to: UInt16.self)
+            let oneBits: UInt16 = 0x3F80  // bf16 1.0
+            for i in 0..<n { p[i] = oneBits }
+        default:
+            fatalError("qHeadNormOnes: unsupported dtype \(dt)")
+        }
+        let t = Tensor(buffer: buf, offset: 0, shape: [n], dtype: dt)
+        qHeadNormOnesCache = t
+        return t
+    }
+}
+
 // MARK: - Full-attention sub-block forward
 //
 // ## Infrastructure gaps blocking the runnable body
@@ -158,13 +188,7 @@ extension DeepSeekV4Model {
     ///   per-group dispatch lands.
     public func forwardFullAttnSubblock(
         layer: DeepSeekV4Layer, state: DecodeState, on cmd: MTLCommandBuffer
-    ) throws -> Tensor {
-        throw DeepSeekV4ForwardError.notImplementedForRegime(layer.compressRatio)
-        // The body below is the intended algorithmic structure —
-        // currently disabled because of the 5 infrastructure gaps
-        // listed in the file-level MARK comment above. Each gap is
-        // a discrete next-tick unit of work.
-        #if false
+    ) -> Tensor {
         let cfg = textConfig
         let dt = activationDtype
         let hidden = cfg.hidden
@@ -184,10 +208,11 @@ extension DeepSeekV4Model {
             nTokens: 1, eps: cfg.hcEpsilon, sinkhornIters: cfg.hcSinkhornIterations,
             on: cmd)
 
-        // ── mHC collapse: H[4, hidden] → x[hidden] ──
-        let x = Ops.dsv4MhcCollapse(
+        // ── mHC collapse: H[4, hidden] → x[hidden] (drop n_tokens=1 dim) ──
+        let xWithTokens = Ops.dsv4MhcCollapse(
             state: state.hcState, pre: preAttn,
             hiddenDim: hidden, nHc: 4, nTokens: 1, outDtype: dt, on: cmd)
+        let x = xWithTokens.reshaped(to: [hidden])
 
         // ── attn_norm ──
         let xNorm = Ops.rmsNorm(x, weight: layer.attnNorm, eps: cfg.rmsNormEps, on: cmd)
@@ -196,10 +221,12 @@ extension DeepSeekV4Model {
         let qA = Ops.gemv(weight: layer.attnQA.asGgufMatmulWeight(), input: xNorm, on: cmd)
         let qANorm = Ops.rmsNorm(qA, weight: layer.attnQANorm, eps: cfg.rmsNormEps, on: cmd)
         let q = Ops.gemv(weight: layer.attnQB.asGgufMatmulWeight(), input: qANorm, on: cmd)
-        // FIXME: per-head unit-RMS Q-norm omitted (needs ones-weight
-        // tensor or a no-learnable-weight rms variant). Skipping
-        // makes the model slightly mis-scaled but doesn't break
-        // dispatch.
+        // Per-head unit-RMS Q-norm: normalize each [head_dim] row
+        // independently with no learnable weight. Pass a ones-tensor
+        // of shape [head_dim] cached on the model.
+        Ops.rmsNormRows(
+            q, weight: qHeadNormOnes(dt), eps: cfg.rmsNormEps,
+            nRows: nHeads, rowSize: headDim, on: cmd, into: q)
 
         // ── Partial RoPE on Q tail ──
         let qRoped = Tensor.empty(shape: q.shape, dtype: dt)
@@ -240,19 +267,29 @@ extension DeepSeekV4Model {
             position: state.position, thetaBase: cfg.ropeTheta, inverse: true, on: cmd)
 
         // ── Grouped O-LoRA: 8 groups × [4096, 1024] then [8192, 4096] ──
-        // FIXME: this collapses 8 per-group LoRA-A slices into a
-        // single matmul with a "wrong but dim-matching" input
-        // collapse. The correct dispatch is 8 sequential gemvs
-        // against [4096, 1024] slices of attn_output_a, each fed
-        // by the matching [4096] slice of attnOut reshaped to
-        // [8 groups, 4096].
-        let attnOutFlat = attnOut.reshaped(to: [nHeads * headDim])  // [32768]
-        let collapsedInput = Tensor.empty(shape: [hidden], dtype: dt)
-        Ops.copy(
-            attnOutFlat.slicedRows(start: 0, count: hidden),
-            into: collapsedInput, on: cmd)
-        let oLow = Ops.gemv(
-            weight: layer.attnOutputA.asGgufMatmulWeight(), input: collapsedInput, on: cmd)
+        // Reshape attnOut [n_heads, head_dim] → [n_groups, group_dim]
+        // = [8, 4096]. Each group consumes a different LoRA-A slice;
+        // since attn_output_a is stored [n_in=4096, n_out=8192] in
+        // GGUF (= [8192, 4096] after the as-weight swap), and the
+        // 8192-output-dim is the **concatenation of 8 × 1024
+        // per-group LoRA-A outputs**, the per-group dispatch is:
+        //   oLow[g, :1024] = wA[g, :1024, :] @ attnOut_group[g, :]
+        // 8 sequential gemvs, each [1024, 4096], with weight slice
+        // taken as a row-range of the swapped weight tensor (axis-0
+        // slicing — contiguous and supported by `slicedRows`).
+        let oGroups = 8
+        let groupDim = (nHeads * headDim) / oGroups  // 4096
+        let oLoraRank = cfg.oLoraRank  // 1024
+        let attnOutGrouped = attnOut.reshaped(to: [oGroups, groupDim])
+        let oLow = Tensor.empty(shape: [oGroups * oLoraRank], dtype: dt)
+        let outputAW = layer.attnOutputA.asGgufMatmulWeight()  // [8192, 4096]
+        for g in 0..<oGroups {
+            let weightSlice = outputAW.slicedRows(start: g * oLoraRank, count: oLoraRank)
+            let inputSlice = attnOutGrouped.slicedRows(start: g, count: 1).reshaped(to: [groupDim])
+            let outSlice = oLow.slicedRows(start: g * oLoraRank, count: oLoraRank)
+            _ = Ops.gemv(
+                weight: weightSlice, input: inputSlice, on: cmd, into: outSlice)
+        }
         let blockOut = Ops.gemv(
             weight: layer.attnOutputB.asGgufMatmulWeight(), input: oLow, on: cmd)
 
@@ -263,6 +300,5 @@ extension DeepSeekV4Model {
             hiddenDim: hidden, nHc: 4, nTokens: 1, on: cmd)
         state.hcState = newH
         return blockOut
-        #endif
     }
 }

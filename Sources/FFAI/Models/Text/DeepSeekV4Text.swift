@@ -445,6 +445,9 @@ public final class DeepSeekV4Model: @unchecked Sendable {
     let activationDtype: DType
     private var layerCache: [Int: DeepSeekV4Layer] = [:]
     private let cacheLock = NSLock()
+    /// Cached `[head_dim]` ones tensor for the per-head unit-RMS Q
+    /// norm (no learnable weight, so we pass ones to `rmsNormRows`).
+    var qHeadNormOnesCache: Tensor?
 
     init(
         textConfig: DeepSeekV4TextConfig, layerCompressRatios: [Int],
@@ -511,7 +514,7 @@ public final class DeepSeekV4Model: @unchecked Sendable {
 
         // ── Eager non-block load ──
         let tokenEmbd = try gguf.tensor(named: "token_embd.weight", outDtype: activationDtype, device: device)
-        let outputNorm = try gguf.tensor(named: "output_norm.weight", outDtype: .f32, device: device)
+        let outputNorm = try gguf.tensor(named: "output_norm.weight", outDtype: activationDtype, device: device)
         let outputHead = try gguf.tensor(named: "output.weight", outDtype: activationDtype, device: device)
         let outputHcBase = try gguf.tensor(named: "output_hc_base.weight", outDtype: .f32, device: device)
         let outputHcFn = try gguf.tensor(named: "output_hc_fn.weight", outDtype: activationDtype, device: device)
@@ -569,18 +572,22 @@ public final class DeepSeekV4Model: @unchecked Sendable {
     ) throws -> DeepSeekV4Layer {
         let p = "blk.\(n)"
         // Common attention path.
-        let attnNorm = try bundle.tensor(named: "\(p).attn_norm.weight", outDtype: .f32, device: device)
+        // RMSNorm weights load at the ACTIVATION dtype so Ops.rmsNorm
+        // doesn't fail its `x.dtype == weight.dtype` precondition.
+        // The sink / bias / mHC-base / mHC-scale tensors stay f32 —
+        // their consumer kernels take f32 inputs regardless of T.
+        let attnNorm = try bundle.tensor(named: "\(p).attn_norm.weight", outDtype: dt, device: device)
         let attnQA = try bundle.tensor(named: "\(p).attn_q_a.weight", outDtype: dt, device: device)
-        let attnQANorm = try bundle.tensor(named: "\(p).attn_q_a_norm.weight", outDtype: .f32, device: device)
+        let attnQANorm = try bundle.tensor(named: "\(p).attn_q_a_norm.weight", outDtype: dt, device: device)
         let attnQB = try bundle.tensor(named: "\(p).attn_q_b.weight", outDtype: dt, device: device)
         let attnKV = try bundle.tensor(named: "\(p).attn_kv.weight", outDtype: dt, device: device)
-        let attnKVANorm = try bundle.tensor(named: "\(p).attn_kv_a_norm.weight", outDtype: .f32, device: device)
+        let attnKVANorm = try bundle.tensor(named: "\(p).attn_kv_a_norm.weight", outDtype: dt, device: device)
         let attnSinks = try bundle.tensor(named: "\(p).attn_sinks.weight", outDtype: .f32, device: device)
         let attnOutputA = try bundle.tensor(named: "\(p).attn_output_a.weight", outDtype: dt, device: device)
         let attnOutputB = try bundle.tensor(named: "\(p).attn_output_b.weight", outDtype: dt, device: device)
 
         // FFN path.
-        let ffnNorm = try bundle.tensor(named: "\(p).ffn_norm.weight", outDtype: .f32, device: device)
+        let ffnNorm = try bundle.tensor(named: "\(p).ffn_norm.weight", outDtype: dt, device: device)
         let ffnGateInp = try bundle.tensor(named: "\(p).ffn_gate_inp.weight", outDtype: dt, device: device)
         let ffnGateTid2Eid = try? bundle.tensor(named: "\(p).ffn_gate_tid2eid.weight", outDtype: .i32, device: device)
         let ffnGateExps = try bundle.tensor(named: "\(p).ffn_gate_exps.weight", outDtype: dt, device: device)
@@ -608,7 +615,7 @@ public final class DeepSeekV4Model: @unchecked Sendable {
             attnCompressorAPE = try bundle.tensor(named: "\(p).attn_compressor_ape.weight", outDtype: dt, device: device)
             attnCompressorGate = try bundle.tensor(named: "\(p).attn_compressor_gate.weight", outDtype: dt, device: device)
             attnCompressorKV = try bundle.tensor(named: "\(p).attn_compressor_kv.weight", outDtype: dt, device: device)
-            attnCompressorNorm = try bundle.tensor(named: "\(p).attn_compressor_norm.weight", outDtype: .f32, device: device)
+            attnCompressorNorm = try bundle.tensor(named: "\(p).attn_compressor_norm.weight", outDtype: dt, device: device)
         }
 
         // CSA-only Lightning Indexer.
@@ -624,7 +631,7 @@ public final class DeepSeekV4Model: @unchecked Sendable {
             indexerCompressorAPE = try bundle.tensor(named: "\(p).indexer_compressor_ape.weight", outDtype: dt, device: device)
             indexerCompressorGate = try bundle.tensor(named: "\(p).indexer_compressor_gate.weight", outDtype: dt, device: device)
             indexerCompressorKV = try bundle.tensor(named: "\(p).indexer_compressor_kv.weight", outDtype: dt, device: device)
-            indexerCompressorNorm = try bundle.tensor(named: "\(p).indexer_compressor_norm.weight", outDtype: .f32, device: device)
+            indexerCompressorNorm = try bundle.tensor(named: "\(p).indexer_compressor_norm.weight", outDtype: dt, device: device)
         }
 
         _ = textConfig  // shape-checking against the config is a follow-up

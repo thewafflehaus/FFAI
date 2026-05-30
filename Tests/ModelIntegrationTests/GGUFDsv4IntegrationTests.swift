@@ -216,6 +216,40 @@ struct GGUFDsv4IntegrationTests {
         print("GGUFDsv4IntegrationTests: mhc split pre=\(preVals)")
     }
 
+    @Test("Run one full-attn attention sub-block forward against layer 0")
+    func attentionSubblockForward() throws {
+        guard let dir = modelPath else {
+            print("GGUFDsv4IntegrationTests: skipping (no model)")
+            return
+        }
+        let bundle = try GGUFTensorBundle(directory: URL(fileURLWithPath: dir))
+        let raw: [String: Any] = [
+            "hidden_size": 4096, "num_hidden_layers": 43,
+            "vocab_size": 129_280, "num_attention_heads": 64,
+        ]
+        let config = ModelConfig(architecture: "DeepSeekV4ForCausalLM", modelType: "deepseek4", raw: raw)
+        let device = Device.shared
+        let model = try DeepSeekV4Flash.loadModelFromGGUF(
+            config: config, gguf: bundle, options: LoadOptions(), device: device)
+        let layer0 = try model.layer(0)
+        let state = model.makeDecodeState()
+        let cmd = device.makeCommandBuffer()
+        let blockOut = model.forwardFullAttnSubblock(layer: layer0, state: state, on: cmd)
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        #expect(blockOut.shape.map { Int($0) } == [model.textConfig.hidden])
+        let vals = blockOut.toArray(as: Float.self)
+        var anyNaN = 0, anyInf = 0
+        for v in vals {
+            if v.isNaN { anyNaN += 1 }
+            if v.isInfinite { anyInf += 1 }
+        }
+        #expect(anyNaN == 0, "block_out has \(anyNaN) NaN values")
+        #expect(anyInf == 0, "block_out has \(anyInf) Inf values")
+        let absMax = vals.map { abs($0) }.max() ?? 0
+        print("GGUFDsv4IntegrationTests: layer-0 attn sub-block done; |block_out|_max = \(absMax)")
+    }
+
     @Test("Dequant one representative IQ2_XXS tensor (MoE expert weight)")
     func dequantIQ2_XXSTensor() throws {
         guard let dir = modelPath else {

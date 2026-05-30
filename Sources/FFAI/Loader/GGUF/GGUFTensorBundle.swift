@@ -100,13 +100,26 @@ public final class GGUFTensorBundle: @unchecked Sendable {
 
         switch info.type {
         case .f32, .f16, .bf16:
-            let dtype: DType = info.type == .f32 ? .f32 : (info.type == .f16 ? .f16 : .bf16)
-            let buf = device.makeBuffer(length: max(raw.count, dtype.byteSize))
-            raw.withUnsafeBytes { src in
-                buf.contents().copyMemory(
-                    from: src.baseAddress!, byteCount: raw.count)
+            let srcDtype: DType = info.type == .f32 ? .f32 : (info.type == .f16 ? .f16 : .bf16)
+            let dstDtype = outDtype ?? srcDtype
+            if srcDtype == dstDtype {
+                // Fast path — direct byte copy.
+                let buf = device.makeBuffer(length: max(raw.count, srcDtype.byteSize))
+                raw.withUnsafeBytes { src in
+                    buf.contents().copyMemory(
+                        from: src.baseAddress!, byteCount: raw.count)
+                }
+                return Tensor(buffer: buf, offset: 0, shape: shape, dtype: srcDtype)
             }
-            return Tensor(buffer: buf, offset: 0, shape: shape, dtype: dtype)
+            // Cross-dtype convert path — go through f32, then narrow
+            // to the destination dtype. Tensors hit here are small
+            // (norms, sinks, biases) so CPU conversion is fine; the
+            // bulk weights live on the q8_0 / q2_K / iq2_xxs paths
+            // below where the dequant kernel handles the dtype
+            // narrowing on-GPU.
+            return try Self.convertHalfPrecisionTensor(
+                raw: raw, srcDtype: srcDtype, dstDtype: dstDtype,
+                shape: shape, device: device)
 
         case .q8_0:
             let cmd = device.makeCommandBuffer()
@@ -143,6 +156,67 @@ public final class GGUFTensorBundle: @unchecked Sendable {
         default:
             throw GGUFError.unsupportedDequant(info.type, tensor: named)
         }
+    }
+
+    // ─── Architecture-introspection helpers ──────────────────────────
+
+    /// CPU-side dtype conversion for the small float tensors
+    /// (norms, sinks, biases) where the GGUF on-disk dtype differs
+    /// from the caller's requested activation dtype. Goes via f32
+    /// then narrows; bf16 isn't covered yet (only emerges as a
+    /// destination once a model needs bf16 activations and a
+    /// dedicated f32-bytes → bf16-bytes helper lands).
+    private static func convertHalfPrecisionTensor(
+        raw: Data, srcDtype: DType, dstDtype: DType,
+        shape: [Int], device: Device
+    ) throws -> Tensor {
+        // Step 1: decode raw → [Float] in f32.
+        var f32s: [Float]
+        switch srcDtype {
+        case .f32:
+            f32s = raw.withUnsafeBytes { rawBuf in
+                Array(rawBuf.bindMemory(to: Float.self))
+            }
+        case .f16:
+            f32s = raw.withUnsafeBytes { rawBuf in
+                rawBuf.bindMemory(to: Float16.self).map { Float($0) }
+            }
+        case .bf16:
+            f32s = raw.withUnsafeBytes { rawBuf in
+                rawBuf.bindMemory(to: UInt16.self).map { bits in
+                    Float(bitPattern: UInt32(bits) << 16)
+                }
+            }
+        default:
+            throw GGUFError.unsupportedDequant(.f32, tensor: "convert src \(srcDtype)")
+        }
+        // Step 2: encode f32 → dst bytes.
+        let outByteCount = f32s.count * dstDtype.byteSize
+        let buf = device.makeBuffer(length: max(outByteCount, dstDtype.byteSize))
+        switch dstDtype {
+        case .f32:
+            buf.contents().assumingMemoryBound(to: Float.self)
+                .update(from: &f32s, count: f32s.count)
+        case .f16:
+            var f16s: [Float16] = f32s.map { Float16($0) }
+            buf.contents().assumingMemoryBound(to: Float16.self)
+                .update(from: &f16s, count: f16s.count)
+        case .bf16:
+            var bf16s: [UInt16] = f32s.map { v in
+                let bits = v.bitPattern
+                // Round-to-nearest-even truncation: add bias before
+                // shifting so the round-half-to-even tie-break is
+                // approximated (matches PyTorch's bf16 cast).
+                let lsb = (bits >> 16) & 1
+                let rounded = bits + 0x7FFF + lsb
+                return UInt16(rounded >> 16)
+            }
+            buf.contents().assumingMemoryBound(to: UInt16.self)
+                .update(from: &bf16s, count: bf16s.count)
+        default:
+            throw GGUFError.unsupportedDequant(.f32, tensor: "convert dst \(dstDtype)")
+        }
+        return Tensor(buffer: buf, offset: 0, shape: shape, dtype: dstDtype)
     }
 
     // ─── Architecture-introspection helpers ──────────────────────────
