@@ -266,6 +266,43 @@ struct GGUFDsv4IntegrationTests {
         print("  nonzero = \(nonZero)/\(vals.count)  |block_out|_max = \(absMax)  mean = \(absMean)")
     }
 
+    @Test("Memory leak repro: load + release layer 0 in a loop")
+    func layerLoadReleaseLeakRepro() throws {
+        guard let dir = modelPath else { return }
+        let bundle = try GGUFTensorBundle(directory: URL(fileURLWithPath: dir))
+        let raw: [String: Any] = [
+            "hidden_size": 4096, "num_hidden_layers": 43,
+            "vocab_size": 129_280, "num_attention_heads": 64,
+        ]
+        let config = ModelConfig(architecture: "DeepSeekV4ForCausalLM", modelType: "deepseek4", raw: raw)
+        let device = Device.shared
+        let model = try DeepSeekV4Flash.loadModelFromGGUF(
+            config: config, gguf: bundle, options: LoadOptions(), device: device)
+        // Load + release layer 0 five times. RSS between iterations
+        // should be approximately constant if the layer-load path
+        // doesn't leak. If it grows, the dequant kernel output
+        // buffer is retained somewhere.
+        for iter in 0..<5 {
+            try autoreleasepool {
+                let layer = try model.layer(0)
+                _ = layer.attnNorm.elementCount  // suppress unused
+                model.releaseLayer(0)
+                let pid = ProcessInfo.processInfo.processIdentifier
+                let task = Process()
+                task.launchPath = "/bin/ps"
+                task.arguments = ["-o", "rss=", "-p", "\(pid)"]
+                let pipe = Pipe()
+                task.standardOutput = pipe
+                try? task.run()
+                task.waitUntilExit()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                let rssKB = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? "?"
+                print("layerLoadReleaseLeakRepro iter=\(iter): RSS \(rssKB) KB")
+            }
+        }
+    }
+
     @Test("End-to-end forward: generate one token from BOS")
     func generateOneTokenFromBOS() throws {
         guard let dir = modelPath else {
