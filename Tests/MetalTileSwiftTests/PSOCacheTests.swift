@@ -24,7 +24,11 @@
 // lookup in `PSOCache.lookup`).
 
 import Foundation
-import Metal
+// MTLComputePipelineState (and most Metal protocols) are not declared
+// Sendable in the Metal headers. `@preconcurrency import Metal` lets
+// the cross-task `withTaskGroup(of:)` below compile on Swift 6 strict
+// concurrency without a per-call `@unchecked Sendable` wrapper.
+@preconcurrency import Metal
 import Testing
 
 @testable import MetalTileSwift
