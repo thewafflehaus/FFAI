@@ -180,6 +180,42 @@ struct GGUFDsv4IntegrationTests {
         print("GGUFDsv4IntegrationTests: loaded layer 0, compress_ratios = \(model.layerCompressRatios)")
     }
 
+    @Test("Dispatch mHC sinkhorn-split against loaded layer-0 weights")
+    func mhcSinkhornSplitSmoke() throws {
+        guard let dir = modelPath else {
+            print("GGUFDsv4IntegrationTests: skipping (no model)")
+            return
+        }
+        let bundle = try GGUFTensorBundle(directory: URL(fileURLWithPath: dir))
+        let raw: [String: Any] = [
+            "hidden_size": 4096, "num_hidden_layers": 43,
+            "vocab_size": 129_280, "num_attention_heads": 64,
+        ]
+        let config = ModelConfig(architecture: "DeepSeekV4ForCausalLM", modelType: "deepseek4", raw: raw)
+        let device = Device.shared
+        let model = try DeepSeekV4Flash.loadModelFromGGUF(
+            config: config, gguf: bundle, options: LoadOptions(), device: device)
+        let layer0 = try model.layer(0)
+        // Synthesize a 24-mix input (representative for one token).
+        // In real forward, this would be `hc_attn_fn @ flatten(H)`.
+        let mixes = Tensor.empty(shape: [24], dtype: model.activationDtype)
+        // Zero-fill is enough for the smoke check — pre/post/comb just
+        // need to be finite, not meaningful. The downstream sanity is
+        // "no NaN, no crash".
+        let cmd = device.makeCommandBuffer()
+        let (pre, post, comb) = Ops.dsv4MhcSinkhornSplit(
+            mixes: mixes, scale: layer0.hcAttnScale, base: layer0.hcAttnBase,
+            nTokens: 1, eps: 1e-6, sinkhornIters: 1, on: cmd)
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        #expect(pre.shape.map { Int($0) } == [1, 4])
+        #expect(post.shape.map { Int($0) } == [1, 4])
+        #expect(comb.shape.map { Int($0) } == [1, 4, 4])
+        let preVals = pre.toArray(as: Float.self)
+        for v in preVals { #expect(v.isFinite, "pre value non-finite: \(v)") }
+        print("GGUFDsv4IntegrationTests: mhc split pre=\(preVals)")
+    }
+
     @Test("Dequant one representative IQ2_XXS tensor (MoE expert weight)")
     func dequantIQ2_XXSTensor() throws {
         guard let dir = modelPath else {
