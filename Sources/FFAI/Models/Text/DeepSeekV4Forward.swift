@@ -97,26 +97,12 @@ extension Tensor {
 extension DeepSeekV4Model {
     /// `[head_dim]` ones tensor, cached lazily on first access so
     /// the per-head Q unit-RMS norm has a no-op weight to pass to
-    /// `Ops.rmsNormRows`.
+    /// `Ops.rmsNormRows`. Backed by the generic `Tensor.filled(...)`
+    /// constructor — any model that needs a constant-valued weight
+    /// for a no-learnable-weight norm can reuse the same primitive.
     fileprivate func qHeadNormOnes(_ dt: DType) -> Tensor {
         if let cached = qHeadNormOnesCache { return cached }
-        let n = textConfig.headDim
-        let buf = device.makeBuffer(length: max(n * dt.byteSize, dt.byteSize))
-        switch dt {
-        case .f32:
-            let p = buf.contents().assumingMemoryBound(to: Float.self)
-            for i in 0..<n { p[i] = 1.0 }
-        case .f16:
-            let p = buf.contents().assumingMemoryBound(to: Float16.self)
-            for i in 0..<n { p[i] = 1.0 }
-        case .bf16:
-            let p = buf.contents().assumingMemoryBound(to: UInt16.self)
-            let oneBits: UInt16 = 0x3F80  // bf16 1.0
-            for i in 0..<n { p[i] = oneBits }
-        default:
-            fatalError("qHeadNormOnes: unsupported dtype \(dt)")
-        }
-        let t = Tensor(buffer: buf, offset: 0, shape: [n], dtype: dt)
+        let t = Tensor.filled(1.0, shape: [textConfig.headDim], dtype: dt, device: device)
         qHeadNormOnesCache = t
         return t
     }
