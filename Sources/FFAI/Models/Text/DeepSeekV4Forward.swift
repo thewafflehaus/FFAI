@@ -445,16 +445,24 @@ extension DeepSeekV4Model {
         cmdSeed.commit()
         cmdSeed.waitUntilCompleted()
 
-        // Iterate layers: load → attn sub-block → FFN sub-block → release.
+        // Iterate layers wrapped in autoreleasepool so the per-layer
+        // tensors' MTLBuffer wrappers are released at end-of-block
+        // (Device.makeBuffer is not pooled — every Tensor.empty in
+        // the sub-block bodies allocates a fresh shared-storage
+        // MTLBuffer, ~100 per layer × 43 = ~4300 transient buffers
+        // per token without the pool drain).
         for layerIdx in 0..<cfg.nLayers {
-            let layer = try self.layer(layerIdx)
-            let cmdAttn = device.makeCommandBuffer()
-            _ = forwardFullAttnSubblock(layer: layer, state: state, on: cmdAttn)
-            cmdAttn.commit()
-            cmdAttn.waitUntilCompleted()
-            _ = forwardFfnSubblock(layer: layer, state: state, on: device.makeCommandBuffer())
-            self.releaseLayer(layerIdx)
-            print("forwardAllLayers: layer \(layerIdx) done")
+            try autoreleasepool {
+                let layer = try self.layer(layerIdx)
+                let cmdAttn = device.makeCommandBuffer()
+                _ = forwardFullAttnSubblock(layer: layer, state: state, on: cmdAttn)
+                cmdAttn.commit()
+                cmdAttn.waitUntilCompleted()
+                _ = forwardFfnSubblock(
+                    layer: layer, state: state, on: device.makeCommandBuffer())
+                self.releaseLayer(layerIdx)
+                print("forwardAllLayers: layer \(layerIdx) done")
+            }
         }
 
         // Output mHC head: simpler decomposition than per-layer mHC.
