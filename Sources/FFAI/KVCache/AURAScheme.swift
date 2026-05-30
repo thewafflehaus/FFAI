@@ -63,6 +63,61 @@ public struct AURAScheme: Sendable, Equatable, Hashable {
     /// near-baseline quality on tested attention-only models.
     public static let aura4v2 = AURAScheme(keyBits: 4, valueBits: 2)
 
+    /// Production K-protected recipe — 8-bit K + 4-bit V. Matches
+    /// canonical TQ+'s `q8_0-K + turbo4-V` shape; on Qwen3-0.6B-4bit
+    /// the FFAI KLD harness measures mean_kld=0.029 + same-top=89%
+    /// (vs aura4v4's 1.24 / 47%, a 43× quality improvement at 50%
+    /// size cost). The K-side precision is what dominates attention
+    /// quality (softmax exponentiates K-score errors); V can be
+    /// aggressive cheaply.
+    public static let aura8v4 = AURAScheme(keyBits: 8, valueBits: 4)
+
+    /// Sibling of `aura8v4` — 8-bit K + 2-bit V. Tightest size at
+    /// preserved K precision.
+    public static let aura8v2 = AURAScheme(keyBits: 8, valueBits: 2)
+
+    /// Auto-asymmetric-policy resolver. Mirrors canonical TQ+'s
+    /// `TURBO_AUTO_ASYMMETRIC` env behavior: when the model has a
+    /// high GQA fan-out (gqaFactor ≥ 6), shared K rows get
+    /// "amplified" by the softmax across many Q heads — small K
+    /// quantization errors compound across the GQA group. The
+    /// production fix is to keep K at the highest available precision
+    /// (8-bit Lloyd-Max in AURA-land, q8_0 in canonical TQ+).
+    ///
+    /// Behavior:
+    ///   - If `gqaFactor < 6`, return `requested` unchanged.
+    ///   - If `gqaFactor ≥ 6` and `requested.keyBits < 8`, return a
+    ///     scheme with keyBits bumped to 8 (V untouched).
+    ///   - If `gqaFactor ≥ 6` and `requested.keyBits == 8`, return
+    ///     `requested` unchanged (already protected).
+    ///
+    /// Pure resolver — always applies the policy when conditions are
+    /// met. **The policy itself is not opt-in here**; the opt-in lives
+    /// at the call site (model loaders gate this on
+    /// `FFAI_AURA_AUTO_ASYM=1`, and a per-load `LoadOptions` flag will
+    /// replace the env knob in a follow-up). Tests + future API
+    /// callers that want the canonical TQ+ behaviour can invoke this
+    /// directly without env coupling.
+    ///
+    /// Canonical-source mapping: TURBO_AUTO_ASYMMETRIC in
+    /// `~/local_llms/llama.cpp/src/llama-kv-cache.cpp`. Threshold = 6
+    /// matches the llama.cpp implementation.
+    public static func autoAsymmetric(
+        requested: AURAScheme, gqaFactor: Int
+    ) -> AURAScheme {
+        if gqaFactor < 6 { return requested }
+        if requested.keyBits >= 8 { return requested }
+        return AURAScheme(keyBits: 8, valueBits: requested.valueBits)
+    }
+
+    /// True when the caller has opted into the auto-asymmetric policy
+    /// via `FFAI_AURA_AUTO_ASYM=1`. Read once at module load. Default
+    /// OFF — Eric's "no magic by default" stance: the caller must
+    /// explicitly request the policy.
+    public static let autoAsymmetricOptedIn: Bool = {
+        ProcessInfo.processInfo.environment["FFAI_AURA_AUTO_ASYM"] == "1"
+    }()
+
     /// Parse a CLI / config string. Accepts:
     ///
     /// - `aura` — the stability-first default (aura4v4).

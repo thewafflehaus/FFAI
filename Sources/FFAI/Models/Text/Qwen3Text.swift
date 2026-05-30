@@ -314,12 +314,106 @@ public final class Qwen3Layer: Module {
             qForSdpa = qRotated
         }
 
-        let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
-        let attnOut = Ops.sdpaDecode(
-            q: qForSdpa, k: cacheK, v: cacheV,
-            nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
-            nKV: cache.length, kvStride: cache.maxSeq,
-            scale: scale, on: cmd)
+        // Decode path selection:
+        //   • `.compressed` (default) — score Q directly against the
+        //     packed K codes. V is dequanted per tile on chip; no
+        //     maxSeq-sized mirror is materialised. Two kernel variants:
+        //       – `auraFlashSdpa2Pass` when supported (token-parallel
+        //         FA-2; one TG per (q_head, block) — saturates the GPU
+        //         at long context).
+        //       – `auraFlashSdpa` (single-pass, one TG per q_head)
+        //         fallback for combos the 2-pass kernel hasn't emitted.
+        //     `kvStride = maxSeq` (NOT `length`) — the per-head row
+        //     stride is the allocated cache stride, not the live row
+        //     count. Passing `length` aliases reads across head
+        //     boundaries (metaltile#203).
+        //   • `.dequantMirror` — fully dequant the cache via
+        //     `prepareForAttention` and run the standard sdpaDecode.
+        //     Same quality as compressed, gives back the memory win.
+        // Non-AURA caches always take the dequantMirror branch.
+        let attnOut: Tensor
+        if let auraCache = cache as? AURAQuantizedKVCache,
+            auraCache.decodePath == .compressed,
+            Ops.supportsAuraFlashSdpa2Pass(
+                keyBits: auraCache.scheme.keyBits,
+                valueBits: auraCache.scheme.valueBits,
+                headDim: headDim, dtype: h.dtype)
+        {
+            // FA-2 block tile. Default 32 — `blockSizeSweep` bench at
+            // KV=256/1024 on M5 Max (Qwen3-0.6B-4bit aura4v4) shows
+            // bs=32 beats bs=64 by +2.5% to +5.5% and bs=128/256 are
+            // strictly worse. Smaller blocks distribute the
+            // single-simdgroup-per-(q_head, block) workload across more
+            // simdgroups, which matters more on Apple GPUs than the
+            // per-block work coalescing FA-2's bs=64 assumed for CUDA.
+            // `AuraFlashScratchCache.blockSizeOverride` is the bench
+            // knob for re-sweeping; production leaves it nil.
+            let blockSize = AuraFlashScratchCache.blockSizeOverride ?? 32
+            let maxBlocks = (auraCache.maxSeq + blockSize - 1) / blockSize
+            let partials = AuraFlashScratchCache.partials(
+                nQHeads: nHeads, maxBlocks: maxBlocks,
+                headDim: headDim, dtype: h.dtype)
+            let outTensor = Tensor.empty(
+                shape: [nHeads, headDim], dtype: h.dtype, device: device)
+            Ops.auraFlashSdpa2Pass(
+                q: qForSdpa,
+                kPacked: auraCache.kPacked, kNorms: auraCache.kNorms,
+                kCodebook: auraCache.kCodebook,
+                vPacked: auraCache.vPacked, vNorms: auraCache.vNorms,
+                vCodebook: auraCache.vCodebook,
+                into: outTensor,
+                nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
+                kPackedWidth: auraCache.kPackedWidth,
+                vPackedWidth: auraCache.vPackedWidth,
+                liveLength: auraCache.length, kvStride: auraCache.maxSeq,
+                keyBits: auraCache.scheme.keyBits,
+                valueBits: auraCache.scheme.valueBits,
+                scale: scale,
+                blockSize: blockSize,
+                partialO: partials.partialO,
+                partialM: partials.partialM,
+                partialL: partials.partialL,
+                on: cmd)
+            attnOut = outTensor
+        } else if let auraCache = cache as? AURAQuantizedKVCache,
+            auraCache.decodePath == .compressed,
+            Ops.supportsAuraFlashSdpa(
+                keyBits: auraCache.scheme.keyBits,
+                valueBits: auraCache.scheme.valueBits,
+                headDim: headDim, dtype: h.dtype)
+        {
+            let outTensor = Tensor.empty(
+                shape: [nHeads, headDim], dtype: h.dtype, device: device)
+            // Qwen3 dense has no attention sinks — the kernel gates the
+            // sinks load on `hasSinks=false`, but the wrapper still
+            // requires a same-dtype buffer to satisfy the precondition.
+            let sinksScratch = Tensor.empty(
+                shape: [nHeads], dtype: h.dtype, device: device)
+            Ops.auraFlashSdpa(
+                q: qForSdpa, sinks: sinksScratch,
+                kPacked: auraCache.kPacked, kNorms: auraCache.kNorms,
+                kCodebook: auraCache.kCodebook,
+                vPacked: auraCache.vPacked, vNorms: auraCache.vNorms,
+                vCodebook: auraCache.vCodebook,
+                into: outTensor,
+                nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
+                kPackedWidth: auraCache.kPackedWidth,
+                vPackedWidth: auraCache.vPackedWidth,
+                liveLength: auraCache.length, kvStride: auraCache.maxSeq,
+                keyBits: auraCache.scheme.keyBits,
+                valueBits: auraCache.scheme.valueBits,
+                scale: scale,
+                hasSinks: false, windowSize: 0,
+                on: cmd)
+            attnOut = outTensor
+        } else {
+            let (cacheK, cacheV) = cache.prepareForAttention(on: cmd)
+            attnOut = Ops.sdpaDecode(
+                q: qForSdpa, k: cacheK, v: cacheV,
+                nQHeads: nHeads, nKVHeads: nKVHeads, headDim: headDim,
+                nKV: cache.length, kvStride: cache.maxSeq,
+                scale: scale, on: cmd)
+        }
 
         let attnReadyForOProj: Tensor
         if let auraCache = cache as? AURAQuantizedKVCache {
@@ -583,27 +677,33 @@ public final class Qwen3Model: LanguageModel {
                     device: device
                 )
             }
-        case .auraQuantized(let scheme):
+        case .auraQuantized(let requestedScheme):
+            // Auto-asymmetric policy: GQA ≥ 6 amplifies K-quantization
+            // error across the shared-K-head fan-out, so bump K to
+            // 8-bit when the model is in that regime (mirrors canonical
+            // TQ+'s TURBO_AUTO_ASYMMETRIC env behavior). **Opt-in.**
+            // Default OFF; set `FFAI_AURA_AUTO_ASYM=1` to enable.
+            let gqaFactor = nHeads / max(nKVHeads, 1)
+            let scheme: AURAScheme = AURAScheme.autoAsymmetricOptedIn
+                ? AURAScheme.autoAsymmetric(
+                    requested: requestedScheme, gqaFactor: gqaFactor)
+                : requestedScheme
             // Codebooks are shared across layers (Lloyd-Max levels are
             // dim-only — no per-layer statistics baked in yet). Rotations
             // are per-layer: each Π_l is an SRHT matrix seeded by the
             // layer index, matching the AURA paper's "fresh rotation per
             // tensor" recipe for de-correlating activation statistics.
-            let kCodebookData = AURACodebook.centroids(dim: headDim, bits: scheme.keyBits)
-            let kBoundariesData = AURACodebook.boundaries(dim: headDim, bits: scheme.keyBits)
-            let vCodebookData = AURACodebook.centroids(dim: headDim, bits: scheme.valueBits)
-            let vBoundariesData = AURACodebook.boundaries(dim: headDim, bits: scheme.valueBits)
-
-            let kCodebook = Tensor.empty(shape: [kCodebookData.count], dtype: .f32, device: device)
-            kCodebook.copyIn(from: kCodebookData)
-            let kBoundaries = Tensor.empty(
-                shape: [kBoundariesData.count], dtype: .f32, device: device)
-            kBoundaries.copyIn(from: kBoundariesData)
-            let vCodebook = Tensor.empty(shape: [vCodebookData.count], dtype: .f32, device: device)
-            vCodebook.copyIn(from: vCodebookData)
-            let vBoundaries = Tensor.empty(
-                shape: [vBoundariesData.count], dtype: .f32, device: device)
-            vBoundaries.copyIn(from: vBoundariesData)
+            // Codebook in cache dtype (matches encode/decode kernel
+            // signatures — no per-call cast). Boundaries stay f32:
+            // encoder-only and precision-sensitive at Lloyd-Max compare.
+            let kCodebook = AURACodebook.centroidsTensor(
+                dim: headDim, bits: scheme.keyBits, dtype: dtype, device: device)
+            let kBoundaries = AURACodebook.boundariesTensor(
+                dim: headDim, bits: scheme.keyBits, dtype: dtype, device: device)
+            let vCodebook = AURACodebook.centroidsTensor(
+                dim: headDim, bits: scheme.valueBits, dtype: dtype, device: device)
+            let vBoundaries = AURACodebook.boundariesTensor(
+                dim: headDim, bits: scheme.valueBits, dtype: dtype, device: device)
 
             // Shared working buffers — same pattern as affineQuantized:
             // bulk-dequant target shared across all layers.

@@ -246,6 +246,56 @@ public enum AURACodebook {
         return base.map { $0 * scale }
     }
 
+    /// Allocate a codebook tensor in the requested activation dtype.
+    /// AURA cache stores codebook in the same dtype as the model
+    /// activations so both encode + decode kernels (which take
+    /// `Tensor<T>` for the codebook) read directly with no per-call
+    /// cast. The Lloyd-Max values themselves are computed in Float;
+    /// narrow dtypes (`bf16`/`f16`) round at the CPU-side host conversion.
+    public static func centroidsTensor(
+        dim: Int, bits: Int, dtype: DType, device: Device = .shared
+    ) -> Tensor {
+        let values = centroids(dim: dim, bits: bits)
+        return writeFloatsToTensor(values, shape: [values.count], dtype: dtype, device: device)
+    }
+
+    /// Allocate a boundaries tensor in the requested activation dtype.
+    /// Post-metaltile #226, `aura_encode` takes `boundaries: Tensor<T>`
+    /// — kernel-side bandwidth win (Π + boundaries dominate the encode
+    /// kernel's memory traffic). Lloyd-Max boundary values are computed
+    /// in Float; narrow dtypes (bf16/f16) round at the host-side
+    /// conversion. The bf16/f16 rounding (~1e-3) sits well below the
+    /// 2-4-bit quant bin so the matched-norm correction stays stable.
+    public static func boundariesTensor(
+        dim: Int, bits: Int, dtype: DType, device: Device = .shared
+    ) -> Tensor {
+        let values = boundaries(dim: dim, bits: bits)
+        return writeFloatsToTensor(values, shape: [values.count], dtype: dtype, device: device)
+    }
+
+    /// CPU-side host conversion from `[Float]` into a tensor of the
+    /// requested float dtype. Used by `centroidsTensor` and any caller
+    /// that needs Lloyd-Max-precise values landed into narrow storage.
+    private static func writeFloatsToTensor(
+        _ values: [Float], shape: [Int],
+        dtype: DType, device: Device
+    ) -> Tensor {
+        let t = Tensor.empty(shape: shape, dtype: dtype, device: device)
+        switch dtype {
+        case .f32:
+            t.copyIn(from: values)
+        case .f16:
+            t.copyIn(from: values.map { Float16($0) })
+        case .bf16:
+            t.copyIn(from: values.map { UInt16(truncatingIfNeeded: $0.bitPattern >> 16) })
+        default:
+            fatalError(
+                "AURACodebook.centroidsTensor: unsupported dtype \(dtype); "
+                    + "AURA cache supports f32 / f16 / bf16")
+        }
+        return t
+    }
+
     /// Bytes-per-token after AURA packing at this bit width and dim.
     /// `ceil(dim * bits / 32) * 4` for the packed u32 array, plus 4
     /// bytes for the f32 per-token norm. Excludes any per-vector DC

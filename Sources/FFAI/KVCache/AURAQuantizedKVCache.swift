@@ -107,16 +107,21 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
     /// Π^T in the activation dtype, used to un-rotate the SDPA output
     /// before `oProj`. Aliases `rotationT` when `dtype == .f32`.
     public let rotationDtypeT: Tensor
-    public let kCodebook: Tensor  // [2^keyBits]   f32
-    public let kBoundaries: Tensor  // [2^keyBits-1] f32
-    public let vCodebook: Tensor  // [2^valueBits] f32
-    public let vBoundaries: Tensor  // [2^valueBits-1] f32
+    /// Codebook in the cache dtype. Encode + decode kernels read
+    /// directly with no per-call cast — the dtype unification landed
+    /// when the single-pass `aura_flash_sdpa` kernel was migrated to
+    /// `Tensor<T>` (matches the production C++ TQ+ fork pattern: fp16-
+    /// stored norms / codebook, f32-at-use via cast-at-load).
+    public let kCodebook: Tensor  // [2^keyBits]   dtype
+    public let kBoundaries: Tensor  // [2^keyBits-1] dtype — Lloyd-Max thresholds (Tensor<T> per metaltile #226)
+    public let vCodebook: Tensor  // [2^valueBits] dtype
+    public let vBoundaries: Tensor  // [2^valueBits-1] dtype
 
     // Per-cache compressed storage.
     public let kPacked: Tensor  // [nKVHeads, maxSeq, kPackedWidth] u32
     public let vPacked: Tensor  // [nKVHeads, maxSeq, vPackedWidth] u32
-    public let kNorms: Tensor  // [nKVHeads, maxSeq] f32
-    public let vNorms: Tensor  // [nKVHeads, maxSeq] f32
+    public let kNorms: Tensor  // [nKVHeads, maxSeq] dtype — encode writes T, decode reads T
+    public let vNorms: Tensor  // [nKVHeads, maxSeq] dtype
 
     // Shared working buffers — bulk-dequant target; reused across layers.
     public let sharedWorkingK: Tensor  // [nKVHeads, maxSeq, headDim] dtype
@@ -192,11 +197,18 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
             "AURAQuantizedKVCache: rotationDtype/rotationDtypeT dtype must match cache dtype \(dtype)"
         )
         precondition(
-            kCodebook.dtype == .f32 && kBoundaries.dtype == .f32,
-            "AURAQuantizedKVCache: K codebook/boundaries must be f32")
+            kCodebook.dtype == dtype,
+            "AURAQuantizedKVCache: K codebook dtype must match cache dtype \(dtype)")
         precondition(
-            vCodebook.dtype == .f32 && vBoundaries.dtype == .f32,
-            "AURAQuantizedKVCache: V codebook/boundaries must be f32")
+            kBoundaries.dtype == dtype,
+            "AURAQuantizedKVCache: K boundaries dtype must match cache dtype \(dtype) "
+                + "— metaltile #226 unified rotation/boundaries to Tensor<T>")
+        precondition(
+            vCodebook.dtype == dtype,
+            "AURAQuantizedKVCache: V codebook dtype must match cache dtype \(dtype)")
+        precondition(
+            vBoundaries.dtype == dtype,
+            "AURAQuantizedKVCache: V boundaries dtype must match cache dtype \(dtype)")
         precondition(
             sharedWorkingK.shape == [nKVHeads, maxSeq, headDim],
             "AURAQuantizedKVCache: sharedWorkingK shape mismatch")
@@ -232,9 +244,9 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         self.vPacked = Tensor.empty(
             shape: [nKVHeads, maxSeq, vPackedWidth], dtype: .u32, device: device)
         self.kNorms = Tensor.empty(
-            shape: [nKVHeads, maxSeq], dtype: .f32, device: device)
+            shape: [nKVHeads, maxSeq], dtype: dtype, device: device)
         self.vNorms = Tensor.empty(
-            shape: [nKVHeads, maxSeq], dtype: .f32, device: device)
+            shape: [nKVHeads, maxSeq], dtype: dtype, device: device)
 
         // Codec is purely additive in atomic_or terms, so packed slots
         // MUST start zeroed. Norms slots get overwritten per encode but
@@ -377,7 +389,10 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
         let inputBytesPerHead = headDim * dtype.byteSize
         let packedBytesPerSlot = packedWidth * 4  // u32
         let packedBytesPerHead = maxSeq * packedBytesPerSlot
-        let normBytesPerHead = maxSeq * 4  // f32
+        // Norms are stored in the cache dtype post-unification — stride
+        // tracks the activation dtype's byte size, not the legacy 4 (f32).
+        let normByteSize = dtype.byteSize
+        let normBytesPerHead = maxSeq * normByteSize
 
         for h in 0 ..< nKVHeads {
             let inputView = Tensor(
@@ -390,10 +405,16 @@ public final class AURAQuantizedKVCache: KVCacheProtocol, @unchecked Sendable {
                 shape: [1, packedWidth], dtype: .u32)
             let normsView = Tensor(
                 buffer: norms.buffer,
-                offset: norms.offset + h * normBytesPerHead + pos * 4,
-                shape: [1], dtype: .f32)
+                offset: norms.offset + h * normBytesPerHead + pos * normByteSize,
+                shape: [1], dtype: dtype)
+            // metaltile #226: aura_encode now takes rotation+boundaries
+            // as Tensor<T>. Use the activation-dtype copy of Π
+            // (`rotationDtype`) instead of the legacy f32 `rotation`
+            // field — the f32 field is kept around for any future
+            // kernel that wants f32 rotations, but the encoder no
+            // longer does.
             Ops.auraEncode(
-                input: inputView, rotation: rotation,
+                input: inputView, rotation: rotationDtype,
                 boundaries: boundaries, codebook: codebook,
                 packedOut: packedView, normsOut: normsView,
                 rows: 1, dim: headDim, packedWidth: packedWidth, bits: bits,

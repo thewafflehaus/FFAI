@@ -185,6 +185,53 @@ struct AURASchemeTests {
         #expect(AURAScheme.aura4v2.valueBits == 2)
         #expect(AURAScheme.aura4v2.name == "aura4v2")
     }
+
+    // MARK: - autoAsymmetric policy
+
+    @Test("aura8v4 + aura8v2 canonical presets")
+    func k8AsymmetricPresets() {
+        #expect(AURAScheme.aura8v4.keyBits == 8 && AURAScheme.aura8v4.valueBits == 4)
+        #expect(AURAScheme.aura8v2.keyBits == 8 && AURAScheme.aura8v2.valueBits == 2)
+        #expect(AURAScheme.parse("aura8v4") == AURAScheme.aura8v4)
+        #expect(AURAScheme.parse("aura8v2") == AURAScheme.aura8v2)
+    }
+
+    @Test("autoAsymmetric leaves low-GQA models untouched (gqa < 6)")
+    func autoAsymmetricLowGQA() {
+        let s = AURAScheme.autoAsymmetric(
+            requested: AURAScheme(keyBits: 4, valueBits: 4), gqaFactor: 2)
+        #expect(s.keyBits == 4 && s.valueBits == 4)
+    }
+
+    @Test("autoAsymmetric leaves boundary gqa=5 untouched (threshold is ≥ 6)")
+    func autoAsymmetricBoundary() {
+        let s = AURAScheme.autoAsymmetric(
+            requested: AURAScheme(keyBits: 4, valueBits: 4), gqaFactor: 5)
+        #expect(s.keyBits == 4)
+    }
+
+    @Test("autoAsymmetric upgrades K to 8 when gqa ≥ 6 (Qwen3.6-A3B gqa=8)")
+    func autoAsymmetricHighGQA() {
+        let s = AURAScheme.autoAsymmetric(
+            requested: AURAScheme(keyBits: 4, valueBits: 4), gqaFactor: 8)
+        #expect(s.keyBits == 8, "got keyBits=\(s.keyBits), expected 8")
+        #expect(s.valueBits == 4, "valueBits should be untouched")
+    }
+
+    @Test("autoAsymmetric preserves V at user's chosen bit width")
+    func autoAsymmetricPreservesV() {
+        // aura4v2 + high GQA → aura8v2 (V kept at 2 bits).
+        let s = AURAScheme.autoAsymmetric(
+            requested: AURAScheme(keyBits: 4, valueBits: 2), gqaFactor: 8)
+        #expect(s.keyBits == 8 && s.valueBits == 2)
+    }
+
+    @Test("autoAsymmetric is a no-op when K is already 8-bit")
+    func autoAsymmetricAlreadyProtected() {
+        let s = AURAScheme.autoAsymmetric(
+            requested: AURAScheme.aura8v4, gqaFactor: 8)
+        #expect(s == AURAScheme.aura8v4)
+    }
 }
 
 @Suite("LoadOptions — AURA")

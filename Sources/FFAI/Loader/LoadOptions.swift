@@ -57,25 +57,31 @@ public enum DispatchMode: Sendable {
 /// Only relevant when `LoadOptions.kvCache == .auraQuantized(...)` —
 /// raw / affine caches ignore this setting.
 public enum AURADecodePath: Sendable, Equatable {
-    /// **Default.** Compressed-domain attention via the
-    /// `aura_flash_p1` + `aura_flash_pass2` kernel pair. Q is rotated,
+    /// **Default.** Compressed-domain attention via the 2-pass FA-2
+    /// kernel pair (`aura_flash_p1` + `aura_flash_pass2`) when emitted
+    /// for the (keyBits, valueBits, headDim, dtype) combo, with the
+    /// single-pass `aura_flash_sdpa` as fallback for cells the 2-pass
+    /// kernel hasn't been emitted for. Q is rotated + pre-scaled,
     /// scored directly against the packed K codes (no full-precision
-    /// dequant), then combined with the packed V codes — the kernel
-    /// dequantises per-tile on chip, never materialising a maxSeq-sized
-    /// f16 mirror buffer. Realises AURA's full memory savings (~4× at
-    /// `aura4v2`).
+    /// dequant), and the V codes are dequanted per-tile on chip. The
+    /// `[nKVHeads, maxSeq, headDim]` mirror buffer never materialises,
+    /// realising AURA's memory savings (~1.88× at aura4v4, ~3.7× at
+    /// aura4v2 on Qwen3 d=128).
+    ///
+    /// AURA-dtype unification (metaltile + FFAI joint change) put the
+    /// per-token norms and per-scheme codebook into the activation
+    /// dtype, so encode + both decode kernel paths consume the cache
+    /// buffers directly — no per-call f32 cast on the decode hot path
+    /// and no parallel f32 mirror storage.
     case compressed
 
-    /// Stage 1a behaviour. `prepareForAttention(on:)` dequantises the
-    /// full compressed K/V cache into per-layer shared working buffers
-    /// (`sharedWorkingK` / `sharedWorkingV`, sized
-    /// `[nKVHeads, maxSeq, headDim]`), and the standard
-    /// `Ops.sdpaDecode` reads those. Preserves AURA's quality but
-    /// **gives back the memory savings** — the mirror is the same size
-    /// as a raw fp16 cache. Kept as an opt-in path for A/B benching
-    /// (`compressed` vs `dequantMirror` speed at production shapes)
-    /// and for callers with the memory headroom who want
-    /// matrix-engine SDPA.
+    /// Dequant-mirror path. `prepareForAttention(on:)` materialises
+    /// the full compressed K/V cache into per-layer shared working
+    /// buffers (`sharedWorkingK` / `sharedWorkingV`, sized
+    /// `[nKVHeads, maxSeq, headDim]`) and `Ops.sdpaDecode` reads those.
+    /// Same quality as `.compressed`, **gives back the memory
+    /// savings** — the mirror is the same size as a raw fp16 cache.
+    /// Useful as an A/B baseline against the compressed path.
     case dequantMirror
 }
 
@@ -113,13 +119,13 @@ public struct LoadOptions: Sendable {
     /// entire advertised window, or a smaller value to bound memory.
     public var maxContextLength: Int?
 
-    /// Selects the AURA decode path. Defaults to `.compressed` (Stage
-    /// 1b: attend on packed K/V codes directly via the `aura_flash_*`
-    /// kernel pair — full ~4× memory savings). Set to `.dequantMirror`
-    /// for the Stage 1a path that maintains a full-precision
-    /// `[nKVHeads, maxSeq, headDim]` mirror buffer and runs the
-    /// standard `Ops.sdpaDecode` against it — useful for A/B speed
-    /// benching. Has no effect when `kvCache != .auraQuantized(...)`.
+    /// Selects the AURA decode path. Defaults to `.compressed` — the
+    /// 2-pass FA-2 kernel pair gives token-parallel attention over the
+    /// packed K/V codes directly, with no f16/f32 mirror materialised.
+    /// Set to `.dequantMirror` for an A/B baseline that dequants the
+    /// cache into a per-layer working buffer and runs the standard
+    /// `Ops.sdpaDecode` against it. Has no effect when
+    /// `kvCache != .auraQuantized(...)`.
     public var auraDecodePath: AURADecodePath
 
     public init(

@@ -196,6 +196,123 @@ struct AURACodecRoundTripTests {
         return sumErr / Float(headDim)
     }
 
+    /// Round-trip the codec on a slice with a known L2 norm and check
+    /// the reconstructed vector's L2 matches. This pins the **matched-
+    /// norm L2 correction** stage in `aura_encode_*` + `aura_dequant_*`:
+    /// encode stores `corrected = ||x|| / ||centroid_recon||`, dequant
+    /// multiplies each centroid value by `corrected`, restoring the
+    /// row L2 norm of the dequant to match the input. Mirrors canonical
+    /// TQ+'s matched-norm step (`~/local_llms/llama.cpp/ggml/src/ggml-
+    /// turbo-quant.c` line 510).
+    ///
+    /// A future refactor that drops the norm-correction stage (or
+    /// stores the un-corrected `||x||` directly) would silently degrade
+    /// quality everywhere; this test catches that by asserting the
+    /// recovered L2 differs from the input L2 by less than fp16 noise.
+    private func roundTripL2NormPreservation(scale: Float, bits: Int) -> (
+        inputL2: Float, recoveredL2: Float
+    ) {
+        let device = Device.shared
+        let headDim = 128
+        let packedWidth = AURACodebook.packedWidth(dim: headDim, bits: bits)
+
+        // Build a non-uniform input with a known L2 = `scale`. We pick
+        // a deterministic pattern (sine wave + DC offset) so the test
+        // catches both norm-correction bugs and zero-DC pathologies.
+        var input = [Float](repeating: 0, count: headDim)
+        var rawSumSq: Float = 0
+        for i in 0 ..< headDim {
+            input[i] = sin(Float(i) * 0.173) * 0.5 + 0.1
+            rawSumSq += input[i] * input[i]
+        }
+        let rawL2 = sqrtf(rawSumSq)
+        let normaliseScale = scale / rawL2
+        for i in 0 ..< headDim {
+            input[i] *= normaliseScale
+        }
+
+        let inputT = Tensor.empty(shape: [1, headDim], dtype: .f32, device: device)
+        inputT.copyIn(from: input)
+        let rotationData = AURARotation.identityMatrix(dim: headDim)
+        let rotation = Tensor.empty(shape: [headDim, headDim], dtype: .f32, device: device)
+        rotation.copyIn(from: rotationData)
+        let centroids = AURACodebook.centroids(dim: headDim, bits: bits)
+        let boundaries = AURACodebook.boundaries(dim: headDim, bits: bits)
+        let codebookT = Tensor.empty(shape: [centroids.count], dtype: .f32, device: device)
+        codebookT.copyIn(from: centroids)
+        let boundariesT = Tensor.empty(shape: [boundaries.count], dtype: .f32, device: device)
+        boundariesT.copyIn(from: boundaries)
+        let packedT = Tensor.empty(shape: [1, packedWidth], dtype: .u32, device: device)
+        packedT.zero()
+        let normsT = Tensor.empty(shape: [1], dtype: .f32, device: device)
+        normsT.zero()
+
+        let cmd1 = device.makeCommandBuffer()
+        Ops.auraEncode(
+            input: inputT, rotation: rotation,
+            boundaries: boundariesT, codebook: codebookT,
+            packedOut: packedT, normsOut: normsT,
+            rows: 1, dim: headDim, packedWidth: packedWidth, bits: bits,
+            on: cmd1)
+        cmd1.commit()
+        cmd1.waitUntilCompleted()
+
+        let outT = Tensor.empty(shape: [1, 1, headDim], dtype: .f32, device: device)
+        outT.zero()
+        let cmd2 = device.makeCommandBuffer()
+        Ops.auraDequantRotated(
+            packed: packedT, norms: normsT, codebook: codebookT,
+            into: outT,
+            nKVHeads: 1, dim: headDim, packedWidth: packedWidth,
+            tokens: 1, bits: bits, on: cmd2)
+        cmd2.commit()
+        cmd2.waitUntilCompleted()
+
+        let recon = outT.toArray(as: Float.self)
+        var inSq: Float = 0
+        var outSq: Float = 0
+        for i in 0 ..< headDim {
+            inSq += input[i] * input[i]
+            outSq += recon[i] * recon[i]
+        }
+        return (inputL2: sqrtf(inSq), recoveredL2: sqrtf(outSq))
+    }
+
+    @Test("aura4 round-trip preserves L2 norm (matched-norm correction)")
+    func aura4MatchedNormL2() {
+        autoreleasepool {
+            // Sweep three L2 magnitudes — small / unit / large — so the
+            // norm-correction stage gets exercised across the dynamic
+            // range a real K/V row sees post-RMSNorm.
+            let scales: [Float] = [0.25, 1.0, 4.0]
+            for scale in scales {
+                let r = roundTripL2NormPreservation(scale: scale, bits: 4)
+                let relErr = abs(r.inputL2 - r.recoveredL2) / r.inputL2
+                let msg =
+                    "aura4 L2 drift at scale=\(scale): "
+                    + "input=\(r.inputL2) recovered=\(r.recoveredL2) "
+                    + "rel_err=\(relErr) — matched-norm stage likely broken"
+                #expect(relErr < 1e-3, "\(msg)")
+            }
+        }
+    }
+
+    @Test("aura8 round-trip preserves L2 norm to fp16 noise (matched-norm correction)")
+    func aura8MatchedNormL2() {
+        autoreleasepool {
+            let scales: [Float] = [0.25, 1.0, 4.0]
+            for scale in scales {
+                let r = roundTripL2NormPreservation(scale: scale, bits: 8)
+                let relErr = abs(r.inputL2 - r.recoveredL2) / r.inputL2
+                let msg =
+                    "aura8 L2 drift at scale=\(scale): "
+                    + "input=\(r.inputL2) recovered=\(r.recoveredL2) "
+                    + "rel_err=\(relErr) — matched-norm stage likely broken"
+                #expect(relErr < 1e-3, "\(msg)")
+            }
+        }
+    }
+
     @Test("aura4 round-trip on a unit-norm slice")
     func aura4Roundtrip() {
         autoreleasepool {

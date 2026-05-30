@@ -1422,6 +1422,7 @@ public final class Qwen35GDNMixer: Module {
         _ xNorm: Tensor, cache: Qwen35GDNLayerCache,
         cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
+        return Profile.signpost("gdn.forward") { () -> Tensor in
         // ── GPU phase 1: projections + conv + SiLU ────────────────────
         // 4-projection shared-encoder fast path when all inProj are int4
         // QuantizedLinear with the same groupSize. Saves 3 encoder
@@ -1655,6 +1656,7 @@ public final class Qwen35GDNMixer: Module {
             phase3.waitUntilCompleted()
         }
         return result
+        }  // Profile.signpost("gdn.forward")
     }
 
     /// T-batched GDN mixer forward. Returns `[T, hidden]` flat. Requires
@@ -2088,6 +2090,7 @@ public final class Qwen35AttentionMixer: Module {
         _ xNorm: Tensor, position: Int, cache kv: KVCache,
         cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
+        return Profile.signpost("attn.forward") { () -> Tensor in
         // q_proj projects 2× heads when attn_output_gate is set: the
         // first `nHeads · headDim` elements are the queries, the second
         // half is the per-head sigmoid gate.
@@ -2277,6 +2280,7 @@ public final class Qwen35AttentionMixer: Module {
                 attnFlat, gate, on: cmd, into: attnFlatGatedScratch)
         }
         return oProj(attnFlat, on: cmd)
+        }  // Profile.signpost("attn.forward")
     }
 
     /// T-batched attention forward. `xNormFlat` is `[T, hidden]` flat
@@ -3017,20 +3021,24 @@ public final class Qwen35Model: LanguageModel {
 
         // The embedding + layers run on internal buffers — never `cmd`.
         var workCmd = device.makeCommandBuffer()
-        var h = embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
+        var h = Profile.signpost("model.embed") {
+            embedTokens(tokenTensor, on: workCmd).reshaped(to: [hidden])
+        }
 
-        for (i, layer) in layers.enumerated() {
-            h = layer.decode(
-                h, position: position, cache: caches[i],
-                cmd: workCmd, device: device)
-            // Refresh `workCmd` if the layer committed it.
-            let committed: Bool
-            switch layer {
-            case let l as Qwen35GDNLayer: committed = l.commitsCommandBuffer
-            case let l as Qwen35AttentionLayer: committed = l.commitsCommandBuffer
-            default: committed = false
+        Profile.signpost("model.layer_loop") {
+            for (i, layer) in layers.enumerated() {
+                h = layer.decode(
+                    h, position: position, cache: caches[i],
+                    cmd: workCmd, device: device)
+                // Refresh `workCmd` if the layer committed it.
+                let committed: Bool
+                switch layer {
+                case let l as Qwen35GDNLayer: committed = l.commitsCommandBuffer
+                case let l as Qwen35AttentionLayer: committed = l.commitsCommandBuffer
+                default: committed = false
+                }
+                if committed { workCmd = device.makeCommandBuffer() }
             }
-            if committed { workCmd = device.makeCommandBuffer() }
         }
 
         // If the last layer was a non-committing attention layer with a
@@ -3049,8 +3057,10 @@ public final class Qwen35Model: LanguageModel {
         // Final norm + lm_head queue onto the caller's pristine `cmd`.
         // Fused rmsNorm+qgemv when lmHead is 4-bit QuantizedLinear with
         // matching constraints; falls back otherwise.
-        return qwen35FinalNormLmHead(
-            h: h, finalNorm: finalNorm, lmHead: lmHead, on: cmd)
+        return Profile.signpost("model.final_norm_lm_head") {
+            qwen35FinalNormLmHead(
+                h: h, finalNorm: finalNorm, lmHead: lmHead, on: cmd)
+        }
     }
 
     /// LanguageModel-protocol entry point for chunked prefill. Delegates

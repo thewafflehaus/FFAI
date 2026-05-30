@@ -3589,6 +3589,7 @@ public enum Ops {
                 head_dim: UInt32(headDim), n_kv: UInt32(nKV),
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
+                has_sink: 0, sink_logit: 0.0,
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (64, .f16):
@@ -3600,6 +3601,7 @@ public enum Ops {
                 head_dim: UInt32(headDim), n_kv: UInt32(nKV),
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
+                has_sink: 0, sink_logit: 0.0,
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (64, .bf16):
@@ -3611,6 +3613,7 @@ public enum Ops {
                 head_dim: UInt32(headDim), n_kv: UInt32(nKV),
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
+                has_sink: 0, sink_logit: 0.0,
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (256, .f32):
@@ -3622,6 +3625,7 @@ public enum Ops {
                 head_dim: UInt32(headDim), n_kv: UInt32(nKV),
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
+                has_sink: 0, sink_logit: 0.0,
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (256, .f16):
@@ -3633,6 +3637,7 @@ public enum Ops {
                 head_dim: UInt32(headDim), n_kv: UInt32(nKV),
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
+                has_sink: 0, sink_logit: 0.0,
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case (256, .bf16):
@@ -3644,6 +3649,7 @@ public enum Ops {
                 head_dim: UInt32(headDim), n_kv: UInt32(nKV),
                 kv_stride: UInt32(kvStride),
                 heads_per_group: UInt32(headsPerGroup),
+                has_sink: 0, sink_logit: 0.0,
                 scale: scale,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         // d512 routes to the dedicated `ffai_sdpa_decode_d512_*` kernel.
@@ -4202,10 +4208,22 @@ public enum Ops {
         on cmd: MTLCommandBuffer
     ) {
         precondition(
-            rotation.dtype == .f32 && boundaries.dtype == .f32 && codebook.dtype == .f32,
-            "Ops.auraEncode: rotation/boundaries/codebook must be f32")
+            rotation.dtype == input.dtype && boundaries.dtype == input.dtype,
+            "Ops.auraEncode: rotation/boundaries dtype must match input "
+                + "dtype (got rotation=\(rotation.dtype), "
+                + "boundaries=\(boundaries.dtype) vs input=\(input.dtype)) "
+                + "— metaltile #226 unified to Tensor<T>; the Π matrix "
+                + "dominates encoder bandwidth so narrowing it at f16/bf16 "
+                + "halves the dominant read")
+        precondition(
+            codebook.dtype == input.dtype,
+            "Ops.auraEncode: codebook dtype must match input dtype "
+                + "(got \(codebook.dtype) vs \(input.dtype))")
         precondition(packedOut.dtype == .u32, "Ops.auraEncode: packed_out must be u32")
-        precondition(normsOut.dtype == .f32, "Ops.auraEncode: norms_out must be f32")
+        precondition(
+            normsOut.dtype == input.dtype,
+            "Ops.auraEncode: norms_out dtype must match input dtype "
+                + "(got \(normsOut.dtype) vs \(input.dtype))")
         // Kernel-invariant validation — see OpsValidation.swift.
         if let reason = OpsValidation.validateAuraEncode(rows: rows, dim: dim, bits: bits) {
             preconditionFailure("Ops.auraEncode: \(reason)")
@@ -4380,8 +4398,10 @@ public enum Ops {
     ) {
         precondition(packed.dtype == .u32, "Ops.auraDequantRotated: packed must be u32")
         precondition(
-            norms.dtype == .f32 && codebook.dtype == .f32,
-            "Ops.auraDequantRotated: norms/codebook must be f32")
+            norms.dtype == out.dtype && codebook.dtype == out.dtype,
+            "Ops.auraDequantRotated: norms/codebook must match output "
+                + "dtype (got norms=\(norms.dtype), codebook=\(codebook.dtype) "
+                + "vs out=\(out.dtype)) — post-AURA-dtype-unification")
         let stride = cacheStride ?? tokens
         // Kernel-invariant validation (cacheStride row-stride contract,
         // packedWidth dim coverage, bit-width). See
@@ -4518,6 +4538,492 @@ public enum Ops {
     ///   * `x.dtype == rotation.dtype` (gemv requires matched dtypes —
     ///     the caller is expected to keep an activation-dtype copy of
     ///     the rotation alongside the f32 copy required by `auraEncode`)
+    /// AURA flash-SDPA (compressed decode). Walks the packed K + V
+    /// buffers directly — no dequant-to-mirror — saving a per-decode
+    /// `nKVHeads × maxSeq × headDim` materialisation. At Qwen3-1.7B /
+    /// maxSeq=32K that's ~1.8 GB of working-buffer reads eliminated per
+    /// decode step.
+    ///
+    /// Caller must:
+    ///   - have already applied Π to `q` (matches the existing
+    ///     `dequantMirror` decode path — Π applied to Q before SDPA so
+    ///     scores cancel; Π^T applied to the output before oProj).
+    ///   - confirm `supportsFlashSdpa(scheme:headDim:)` is true; this
+    ///     wrapper only covers the metaltile flash variants currently
+    ///     emitted: (kb=4, vb=2) and (kb=4, vb=4) × d ∈ {64, 128}.
+    ///   - own + pass a `sinks` tensor of shape `[nQHeads]` (zeroed +
+    ///     `hasSinks=false` gives a no-op attention-sink path).
+    ///
+    /// The kernel takes `q_rot` as fp32; this wrapper casts on the
+    /// caller's behalf into a scratch buffer if needed. Output dtype
+    /// is the model's activation dtype.
+    /// - Parameter liveLength: number of populated K/V rows the loop
+    ///   should iterate over (the attention upper bound).
+    /// - Parameter kvStride: per-KV-head row stride of the cache —
+    ///   typically `maxSeq` of the AURA KVCache. MUST equal the cache's
+    ///   allocated stride, not `liveLength`, otherwise off-head reads
+    ///   alias into the previous head's tail bytes when the cache isn't
+    ///   fully populated.
+    public static func auraFlashSdpa(
+        q: Tensor, sinks: Tensor,
+        kPacked: Tensor, kNorms: Tensor, kCodebook: Tensor,
+        vPacked: Tensor, vNorms: Tensor, vCodebook: Tensor,
+        into out: Tensor,
+        nQHeads: Int, nKVHeads: Int, headDim: Int,
+        kPackedWidth: Int, vPackedWidth: Int,
+        liveLength: Int, kvStride: Int,
+        keyBits: Int, valueBits: Int,
+        scale: Float,
+        hasSinks: Bool = false, windowSize: Int = 0,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            kvStride >= liveLength,
+            "Ops.auraFlashSdpa: kvStride (\(kvStride)) must be ≥ liveLength (\(liveLength))")
+        precondition(
+            nQHeads % nKVHeads == 0,
+            "Ops.auraFlashSdpa: nQHeads (\(nQHeads)) must be divisible by nKVHeads (\(nKVHeads))")
+        precondition(
+            kPacked.dtype == .u32 && vPacked.dtype == .u32,
+            "Ops.auraFlashSdpa: packed K/V must be u32")
+        precondition(
+            kNorms.dtype == out.dtype && vNorms.dtype == out.dtype
+                && kCodebook.dtype == out.dtype && vCodebook.dtype == out.dtype,
+            "Ops.auraFlashSdpa: norms + codebooks must match activation "
+                + "dtype (got \(kNorms.dtype) vs \(out.dtype))")
+        precondition(
+            sinks.dtype == out.dtype,
+            "Ops.auraFlashSdpa: sinks must match activation dtype "
+                + "(got \(sinks.dtype) vs \(out.dtype))")
+        precondition(
+            q.dtype == out.dtype,
+            "Ops.auraFlashSdpa: q dtype must match activation dtype "
+                + "(got \(q.dtype) vs \(out.dtype))")
+
+        // The flash kernel's contract (aura_flash_sdpa.rs header):
+        // `q_rot` is WHT-rotated AND **pre-scaled** by the caller. The
+        // kernel computes `(Q · centroid) * k_norm` with no internal
+        // scale — caller must bake the softmax scale (1/√headDim) into
+        // Q before dispatch. Scratch + scale buffer cached by
+        // (shape, dtype, scale) so the hot decode path doesn't pay 2×
+        // Metal buffer allocations per attn layer per token.
+        //
+        // Post-dtype-unification the multiply happens in the activation
+        // dtype — kernel does cast-at-load to f32 internally, matching
+        // the precision of every other AURA kernel (encode / score /
+        // value / 2-pass), and the C++ TQ+ fork's production pattern.
+        let qScratch = AuraFlashScratchCache.qScratch(
+            shape: q.shape, dtype: out.dtype)
+        let scaleBuf = AuraFlashScratchCache.scaleBuffer(
+            shape: q.shape, scale: scale, dtype: out.dtype)
+        _ = Ops.mul(q, scaleBuf, on: cmd, into: qScratch)
+
+        let dim = UInt32(headDim)
+        let kpw = UInt32(kPackedWidth)
+        let vpw = UInt32(vPackedWidth)
+        let tokens = UInt32(liveLength)
+        let kvStrideU = UInt32(kvStride)
+        let repeatCount = UInt32(nQHeads / nKVHeads)
+        let numQ = UInt32(nQHeads)
+        let sinksFlag: UInt32 = hasSinks ? 1 : 0
+        let win = UInt32(windowSize)
+
+        // Grid invariant from `aura_flash_sdpa.rs`: one simdgroup per
+        // Q head. grid = [32, nQHeads, 1], tg = [32, 1, 1].
+        let grid = MTLSize(width: 32, height: nQHeads, depth: 1)
+        let tg = MTLSize(width: 32, height: 1, depth: 1)
+
+        switch (keyBits, valueBits, headDim, out.dtype) {
+        case (4, 2, 128, .f32):
+            MetalTileKernels.aura_flash_sdpa_kb4_vb2_d128_f32(
+                q_rot: qScratch.buffer, q_rotOffset: qScratch.offset,
+                key_packed: kPacked.buffer, key_packedOffset: kPacked.offset,
+                key_norms: kNorms.buffer, key_normsOffset: kNorms.offset,
+                key_codebook: kCodebook.buffer, key_codebookOffset: kCodebook.offset,
+                val_packed: vPacked.buffer, val_packedOffset: vPacked.offset,
+                val_norms: vNorms.buffer, val_normsOffset: vNorms.offset,
+                val_codebook: vCodebook.buffer, val_codebookOffset: vCodebook.offset,
+                sinks: sinks.buffer, sinksOffset: sinks.offset,
+                out: out.buffer, outOffset: out.offset,
+                dim: dim, key_packed_width: kpw, value_packed_width: vpw,
+                tokens: tokens, kv_stride: kvStrideU,
+                repeat_count: repeatCount, num_q_heads: numQ,
+                has_sinks: sinksFlag, window_size: win,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (4, 2, 128, .f16):
+            MetalTileKernels.aura_flash_sdpa_kb4_vb2_d128_f16(
+                q_rot: qScratch.buffer, q_rotOffset: qScratch.offset,
+                key_packed: kPacked.buffer, key_packedOffset: kPacked.offset,
+                key_norms: kNorms.buffer, key_normsOffset: kNorms.offset,
+                key_codebook: kCodebook.buffer, key_codebookOffset: kCodebook.offset,
+                val_packed: vPacked.buffer, val_packedOffset: vPacked.offset,
+                val_norms: vNorms.buffer, val_normsOffset: vNorms.offset,
+                val_codebook: vCodebook.buffer, val_codebookOffset: vCodebook.offset,
+                sinks: sinks.buffer, sinksOffset: sinks.offset,
+                out: out.buffer, outOffset: out.offset,
+                dim: dim, key_packed_width: kpw, value_packed_width: vpw,
+                tokens: tokens, kv_stride: kvStrideU,
+                repeat_count: repeatCount, num_q_heads: numQ,
+                has_sinks: sinksFlag, window_size: win,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (4, 2, 128, .bf16):
+            MetalTileKernels.aura_flash_sdpa_kb4_vb2_d128_bf16(
+                q_rot: qScratch.buffer, q_rotOffset: qScratch.offset,
+                key_packed: kPacked.buffer, key_packedOffset: kPacked.offset,
+                key_norms: kNorms.buffer, key_normsOffset: kNorms.offset,
+                key_codebook: kCodebook.buffer, key_codebookOffset: kCodebook.offset,
+                val_packed: vPacked.buffer, val_packedOffset: vPacked.offset,
+                val_norms: vNorms.buffer, val_normsOffset: vNorms.offset,
+                val_codebook: vCodebook.buffer, val_codebookOffset: vCodebook.offset,
+                sinks: sinks.buffer, sinksOffset: sinks.offset,
+                out: out.buffer, outOffset: out.offset,
+                dim: dim, key_packed_width: kpw, value_packed_width: vpw,
+                tokens: tokens, kv_stride: kvStrideU,
+                repeat_count: repeatCount, num_q_heads: numQ,
+                has_sinks: sinksFlag, window_size: win,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (4, 4, 128, .f32):
+            MetalTileKernels.aura_flash_sdpa_kb4_vb4_d128_f32(
+                q_rot: qScratch.buffer, q_rotOffset: qScratch.offset,
+                key_packed: kPacked.buffer, key_packedOffset: kPacked.offset,
+                key_norms: kNorms.buffer, key_normsOffset: kNorms.offset,
+                key_codebook: kCodebook.buffer, key_codebookOffset: kCodebook.offset,
+                val_packed: vPacked.buffer, val_packedOffset: vPacked.offset,
+                val_norms: vNorms.buffer, val_normsOffset: vNorms.offset,
+                val_codebook: vCodebook.buffer, val_codebookOffset: vCodebook.offset,
+                sinks: sinks.buffer, sinksOffset: sinks.offset,
+                out: out.buffer, outOffset: out.offset,
+                dim: dim, key_packed_width: kpw, value_packed_width: vpw,
+                tokens: tokens, kv_stride: kvStrideU,
+                repeat_count: repeatCount, num_q_heads: numQ,
+                has_sinks: sinksFlag, window_size: win,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (4, 4, 128, .f16):
+            MetalTileKernels.aura_flash_sdpa_kb4_vb4_d128_f16(
+                q_rot: qScratch.buffer, q_rotOffset: qScratch.offset,
+                key_packed: kPacked.buffer, key_packedOffset: kPacked.offset,
+                key_norms: kNorms.buffer, key_normsOffset: kNorms.offset,
+                key_codebook: kCodebook.buffer, key_codebookOffset: kCodebook.offset,
+                val_packed: vPacked.buffer, val_packedOffset: vPacked.offset,
+                val_norms: vNorms.buffer, val_normsOffset: vNorms.offset,
+                val_codebook: vCodebook.buffer, val_codebookOffset: vCodebook.offset,
+                sinks: sinks.buffer, sinksOffset: sinks.offset,
+                out: out.buffer, outOffset: out.offset,
+                dim: dim, key_packed_width: kpw, value_packed_width: vpw,
+                tokens: tokens, kv_stride: kvStrideU,
+                repeat_count: repeatCount, num_q_heads: numQ,
+                has_sinks: sinksFlag, window_size: win,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case (4, 4, 128, .bf16):
+            MetalTileKernels.aura_flash_sdpa_kb4_vb4_d128_bf16(
+                q_rot: qScratch.buffer, q_rotOffset: qScratch.offset,
+                key_packed: kPacked.buffer, key_packedOffset: kPacked.offset,
+                key_norms: kNorms.buffer, key_normsOffset: kNorms.offset,
+                key_codebook: kCodebook.buffer, key_codebookOffset: kCodebook.offset,
+                val_packed: vPacked.buffer, val_packedOffset: vPacked.offset,
+                val_norms: vNorms.buffer, val_normsOffset: vNorms.offset,
+                val_codebook: vCodebook.buffer, val_codebookOffset: vCodebook.offset,
+                sinks: sinks.buffer, sinksOffset: sinks.offset,
+                out: out.buffer, outOffset: out.offset,
+                dim: dim, key_packed_width: kpw, value_packed_width: vpw,
+                tokens: tokens, kv_stride: kvStrideU,
+                repeat_count: repeatCount, num_q_heads: numQ,
+                has_sinks: sinksFlag, window_size: win,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            preconditionFailure(
+                "Ops.auraFlashSdpa: unsupported (keyBits=\(keyBits), "
+                    + "valueBits=\(valueBits), headDim=\(headDim), "
+                    + "dtype=\(out.dtype)). Caller must check "
+                    + "supportsFlashSdpa(scheme:headDim:dtype:) first.")
+        }
+    }
+
+    /// Predicate for the `auraFlashSdpa` supported-scheme set. Returns
+    /// true when the metaltile flash kernel exists for this combo.
+    public static func supportsAuraFlashSdpa(
+        keyBits: Int, valueBits: Int, headDim: Int, dtype: DType
+    ) -> Bool {
+        guard [DType.f32, .f16, .bf16].contains(dtype) else { return false }
+        // d=64 metaltile kernels exist but FFAI side hasn't wired their
+        // Ops dispatch yet — gate to d=128 (Qwen3 / Llama-3 family).
+        guard headDim == 128 else { return false }
+        if keyBits == 4 && (valueBits == 2 || valueBits == 4) { return true }
+        return false
+    }
+
+    /// AURA flash-SDPA — two-pass token-parallel variant. Same external
+    /// contract as `auraFlashSdpa` but dispatches `aura_flash_p1` +
+    /// `aura_flash_pass2` instead of the single-pass kernel. Pass 1
+    /// fans tokens across `num_blocks × nQHeads` simdgroups (single-pass
+    /// dispatches one simdgroup per Q head, which starves the GPU at
+    /// long context). Pass 2 reduces the per-block partials.
+    ///
+    /// **Block-size contract.** `num_blocks = ceil(liveLength /
+    /// blockSize)`. `blockSize = 64` is the FA-2 conventional choice and
+    /// saturates an M5 Max around liveLength≈4K (~16 q-heads × 64 blocks
+    /// = 1024 active simdgroups). The kernel takes `block_size` as a
+    /// runtime scalar so the wrapper is free to tune per-call.
+    ///
+    /// Uses the non-causal `aura_flash_p1` variant — safe for decode
+    /// T=1 because `q_position == liveLength-1` and all populated K rows
+    /// satisfy `t ≤ q_position`. The causal variant exists for kb4_vb2
+    /// only; using non-causal everywhere unifies the dispatch surface.
+    ///
+    /// Caller owns the partials. Reuse across decode steps is safe — the
+    /// shapes depend only on `(nQHeads, headDim, blockSize, kvStride)`
+    /// and the wrapper writes the full surface each call.
+    public static func auraFlashSdpa2Pass(
+        q: Tensor,
+        kPacked: Tensor, kNorms: Tensor, kCodebook: Tensor,
+        vPacked: Tensor, vNorms: Tensor, vCodebook: Tensor,
+        into out: Tensor,
+        nQHeads: Int, nKVHeads: Int, headDim: Int,
+        kPackedWidth: Int, vPackedWidth: Int,
+        liveLength: Int, kvStride: Int,
+        keyBits: Int, valueBits: Int,
+        scale: Float,
+        blockSize: Int,
+        partialO: Tensor, partialM: Tensor, partialL: Tensor,
+        on cmd: MTLCommandBuffer
+    ) {
+        precondition(
+            kvStride >= liveLength,
+            "Ops.auraFlashSdpa2Pass: kvStride (\(kvStride)) must be ≥ liveLength (\(liveLength))")
+        precondition(
+            nQHeads % nKVHeads == 0,
+            "Ops.auraFlashSdpa2Pass: nQHeads (\(nQHeads)) must be divisible by nKVHeads (\(nKVHeads))")
+        precondition(
+            kPacked.dtype == .u32 && vPacked.dtype == .u32,
+            "Ops.auraFlashSdpa2Pass: packed K/V must be u32")
+        precondition(
+            kNorms.dtype == out.dtype && vNorms.dtype == out.dtype
+                && kCodebook.dtype == out.dtype && vCodebook.dtype == out.dtype,
+            "Ops.auraFlashSdpa2Pass: norms + codebooks must match "
+                + "activation dtype (got \(kNorms.dtype) vs \(out.dtype))")
+        precondition(
+            q.dtype == out.dtype,
+            "Ops.auraFlashSdpa2Pass: q dtype must match activation dtype")
+        precondition(
+            blockSize > 0 && blockSize % 32 == 0,
+            "Ops.auraFlashSdpa2Pass: blockSize (\(blockSize)) must be a "
+                + "positive multiple of 32")
+        let numBlocks = (liveLength + blockSize - 1) / blockSize
+        precondition(
+            partialO.dtype == out.dtype && partialM.dtype == out.dtype
+                && partialL.dtype == out.dtype,
+            "Ops.auraFlashSdpa2Pass: partials must match activation dtype")
+        precondition(
+            partialO.elementCount >= nQHeads * numBlocks * headDim,
+            "Ops.auraFlashSdpa2Pass: partialO too small for nQHeads * numBlocks * headDim")
+        precondition(
+            partialM.elementCount >= nQHeads * numBlocks
+                && partialL.elementCount >= nQHeads * numBlocks,
+            "Ops.auraFlashSdpa2Pass: partialM/L too small for nQHeads * numBlocks")
+
+        // Same q pre-scale flow as the single-pass wrapper — kernel
+        // expects pre-scaled Q in activation dtype.
+        let qScratch = AuraFlashScratchCache.qScratch(
+            shape: q.shape, dtype: out.dtype)
+        let scaleBuf = AuraFlashScratchCache.scaleBuffer(
+            shape: q.shape, scale: scale, dtype: out.dtype)
+        _ = Ops.mul(q, scaleBuf, on: cmd, into: qScratch)
+
+        let dim = UInt32(headDim)
+        let kpw = UInt32(kPackedWidth)
+        let vpw = UInt32(vPackedWidth)
+        let tokens = UInt32(liveLength)
+        let kvStrideU = UInt32(kvStride)
+        let repeatCount = UInt32(nQHeads / nKVHeads)
+        let numBlocksU = UInt32(numBlocks)
+        let blockSizeU = UInt32(blockSize)
+        // Causal masking unused by the non-causal variant; pass 0.
+        let qPosition: UInt32 = 0
+
+        // Pass 1: Grid3D (lane, q_idx, block_idx), tg = (32, 1, 1).
+        // Raw threads = [32, nQHeads, numBlocks] groups into
+        // [1, nQHeads, numBlocks] TGs of 32 lanes each.
+        let p1Grid = MTLSize(width: 32, height: nQHeads, depth: numBlocks)
+        let p1Tg = MTLSize(width: 32, height: 1, depth: 1)
+        // Pass 2: tg = (32, 1, 1) per q_idx; kernel reads
+        // `q_idx = tgid_x`. Raw threads = [nQHeads*32, 1, 1] groups into
+        // [nQHeads, 1, 1] TGs, one per q_idx — matches the end-to-end
+        // `aura_flash_gpu_correctness.rs` dispatch shape.
+        let p2Grid = MTLSize(width: nQHeads * 32, height: 1, depth: 1)
+        let p2Tg = MTLSize(width: 32, height: 1, depth: 1)
+
+        switch (keyBits, valueBits, headDim, out.dtype) {
+        case (4, 2, 128, .f32):
+            MetalTileKernels.aura_flash_p1_kb4_vb2_d128_f32(
+                q_rot: qScratch.buffer, q_rotOffset: qScratch.offset,
+                key_packed: kPacked.buffer, key_packedOffset: kPacked.offset,
+                key_norms: kNorms.buffer, key_normsOffset: kNorms.offset,
+                key_codebook: kCodebook.buffer, key_codebookOffset: kCodebook.offset,
+                val_packed: vPacked.buffer, val_packedOffset: vPacked.offset,
+                val_norms: vNorms.buffer, val_normsOffset: vNorms.offset,
+                val_codebook: vCodebook.buffer, val_codebookOffset: vCodebook.offset,
+                o_partials: partialO.buffer, o_partialsOffset: partialO.offset,
+                m_partials: partialM.buffer, m_partialsOffset: partialM.offset,
+                l_partials: partialL.buffer, l_partialsOffset: partialL.offset,
+                dim: dim, key_packed_width: kpw, value_packed_width: vpw,
+                tokens: tokens, kv_stride: kvStrideU,
+                repeat_count: repeatCount,
+                num_blocks: numBlocksU, block_size: blockSizeU,
+                q_position: qPosition,
+                gridSize: p1Grid, threadgroupSize: p1Tg, on: cmd)
+            MetalTileKernels.aura_flash_pass2_d128_f32(
+                o_partials: partialO.buffer, o_partialsOffset: partialO.offset,
+                m_partials: partialM.buffer, m_partialsOffset: partialM.offset,
+                l_partials: partialL.buffer, l_partialsOffset: partialL.offset,
+                output: out.buffer, outputOffset: out.offset,
+                dim: dim, num_blocks: numBlocksU,
+                gridSize: p2Grid, threadgroupSize: p2Tg, on: cmd)
+        case (4, 2, 128, .f16):
+            MetalTileKernels.aura_flash_p1_kb4_vb2_d128_f16(
+                q_rot: qScratch.buffer, q_rotOffset: qScratch.offset,
+                key_packed: kPacked.buffer, key_packedOffset: kPacked.offset,
+                key_norms: kNorms.buffer, key_normsOffset: kNorms.offset,
+                key_codebook: kCodebook.buffer, key_codebookOffset: kCodebook.offset,
+                val_packed: vPacked.buffer, val_packedOffset: vPacked.offset,
+                val_norms: vNorms.buffer, val_normsOffset: vNorms.offset,
+                val_codebook: vCodebook.buffer, val_codebookOffset: vCodebook.offset,
+                o_partials: partialO.buffer, o_partialsOffset: partialO.offset,
+                m_partials: partialM.buffer, m_partialsOffset: partialM.offset,
+                l_partials: partialL.buffer, l_partialsOffset: partialL.offset,
+                dim: dim, key_packed_width: kpw, value_packed_width: vpw,
+                tokens: tokens, kv_stride: kvStrideU,
+                repeat_count: repeatCount,
+                num_blocks: numBlocksU, block_size: blockSizeU,
+                q_position: qPosition,
+                gridSize: p1Grid, threadgroupSize: p1Tg, on: cmd)
+            MetalTileKernels.aura_flash_pass2_d128_f16(
+                o_partials: partialO.buffer, o_partialsOffset: partialO.offset,
+                m_partials: partialM.buffer, m_partialsOffset: partialM.offset,
+                l_partials: partialL.buffer, l_partialsOffset: partialL.offset,
+                output: out.buffer, outputOffset: out.offset,
+                dim: dim, num_blocks: numBlocksU,
+                gridSize: p2Grid, threadgroupSize: p2Tg, on: cmd)
+        case (4, 2, 128, .bf16):
+            MetalTileKernels.aura_flash_p1_kb4_vb2_d128_bf16(
+                q_rot: qScratch.buffer, q_rotOffset: qScratch.offset,
+                key_packed: kPacked.buffer, key_packedOffset: kPacked.offset,
+                key_norms: kNorms.buffer, key_normsOffset: kNorms.offset,
+                key_codebook: kCodebook.buffer, key_codebookOffset: kCodebook.offset,
+                val_packed: vPacked.buffer, val_packedOffset: vPacked.offset,
+                val_norms: vNorms.buffer, val_normsOffset: vNorms.offset,
+                val_codebook: vCodebook.buffer, val_codebookOffset: vCodebook.offset,
+                o_partials: partialO.buffer, o_partialsOffset: partialO.offset,
+                m_partials: partialM.buffer, m_partialsOffset: partialM.offset,
+                l_partials: partialL.buffer, l_partialsOffset: partialL.offset,
+                dim: dim, key_packed_width: kpw, value_packed_width: vpw,
+                tokens: tokens, kv_stride: kvStrideU,
+                repeat_count: repeatCount,
+                num_blocks: numBlocksU, block_size: blockSizeU,
+                q_position: qPosition,
+                gridSize: p1Grid, threadgroupSize: p1Tg, on: cmd)
+            MetalTileKernels.aura_flash_pass2_d128_bf16(
+                o_partials: partialO.buffer, o_partialsOffset: partialO.offset,
+                m_partials: partialM.buffer, m_partialsOffset: partialM.offset,
+                l_partials: partialL.buffer, l_partialsOffset: partialL.offset,
+                output: out.buffer, outputOffset: out.offset,
+                dim: dim, num_blocks: numBlocksU,
+                gridSize: p2Grid, threadgroupSize: p2Tg, on: cmd)
+        case (4, 4, 128, .f32):
+            MetalTileKernels.aura_flash_p1_kb4_vb4_d128_f32(
+                q_rot: qScratch.buffer, q_rotOffset: qScratch.offset,
+                key_packed: kPacked.buffer, key_packedOffset: kPacked.offset,
+                key_norms: kNorms.buffer, key_normsOffset: kNorms.offset,
+                key_codebook: kCodebook.buffer, key_codebookOffset: kCodebook.offset,
+                val_packed: vPacked.buffer, val_packedOffset: vPacked.offset,
+                val_norms: vNorms.buffer, val_normsOffset: vNorms.offset,
+                val_codebook: vCodebook.buffer, val_codebookOffset: vCodebook.offset,
+                o_partials: partialO.buffer, o_partialsOffset: partialO.offset,
+                m_partials: partialM.buffer, m_partialsOffset: partialM.offset,
+                l_partials: partialL.buffer, l_partialsOffset: partialL.offset,
+                dim: dim, key_packed_width: kpw, value_packed_width: vpw,
+                tokens: tokens, kv_stride: kvStrideU,
+                repeat_count: repeatCount,
+                num_blocks: numBlocksU, block_size: blockSizeU,
+                q_position: qPosition,
+                gridSize: p1Grid, threadgroupSize: p1Tg, on: cmd)
+            MetalTileKernels.aura_flash_pass2_d128_f32(
+                o_partials: partialO.buffer, o_partialsOffset: partialO.offset,
+                m_partials: partialM.buffer, m_partialsOffset: partialM.offset,
+                l_partials: partialL.buffer, l_partialsOffset: partialL.offset,
+                output: out.buffer, outputOffset: out.offset,
+                dim: dim, num_blocks: numBlocksU,
+                gridSize: p2Grid, threadgroupSize: p2Tg, on: cmd)
+        case (4, 4, 128, .f16):
+            MetalTileKernels.aura_flash_p1_kb4_vb4_d128_f16(
+                q_rot: qScratch.buffer, q_rotOffset: qScratch.offset,
+                key_packed: kPacked.buffer, key_packedOffset: kPacked.offset,
+                key_norms: kNorms.buffer, key_normsOffset: kNorms.offset,
+                key_codebook: kCodebook.buffer, key_codebookOffset: kCodebook.offset,
+                val_packed: vPacked.buffer, val_packedOffset: vPacked.offset,
+                val_norms: vNorms.buffer, val_normsOffset: vNorms.offset,
+                val_codebook: vCodebook.buffer, val_codebookOffset: vCodebook.offset,
+                o_partials: partialO.buffer, o_partialsOffset: partialO.offset,
+                m_partials: partialM.buffer, m_partialsOffset: partialM.offset,
+                l_partials: partialL.buffer, l_partialsOffset: partialL.offset,
+                dim: dim, key_packed_width: kpw, value_packed_width: vpw,
+                tokens: tokens, kv_stride: kvStrideU,
+                repeat_count: repeatCount,
+                num_blocks: numBlocksU, block_size: blockSizeU,
+                q_position: qPosition,
+                gridSize: p1Grid, threadgroupSize: p1Tg, on: cmd)
+            MetalTileKernels.aura_flash_pass2_d128_f16(
+                o_partials: partialO.buffer, o_partialsOffset: partialO.offset,
+                m_partials: partialM.buffer, m_partialsOffset: partialM.offset,
+                l_partials: partialL.buffer, l_partialsOffset: partialL.offset,
+                output: out.buffer, outputOffset: out.offset,
+                dim: dim, num_blocks: numBlocksU,
+                gridSize: p2Grid, threadgroupSize: p2Tg, on: cmd)
+        case (4, 4, 128, .bf16):
+            MetalTileKernels.aura_flash_p1_kb4_vb4_d128_bf16(
+                q_rot: qScratch.buffer, q_rotOffset: qScratch.offset,
+                key_packed: kPacked.buffer, key_packedOffset: kPacked.offset,
+                key_norms: kNorms.buffer, key_normsOffset: kNorms.offset,
+                key_codebook: kCodebook.buffer, key_codebookOffset: kCodebook.offset,
+                val_packed: vPacked.buffer, val_packedOffset: vPacked.offset,
+                val_norms: vNorms.buffer, val_normsOffset: vNorms.offset,
+                val_codebook: vCodebook.buffer, val_codebookOffset: vCodebook.offset,
+                o_partials: partialO.buffer, o_partialsOffset: partialO.offset,
+                m_partials: partialM.buffer, m_partialsOffset: partialM.offset,
+                l_partials: partialL.buffer, l_partialsOffset: partialL.offset,
+                dim: dim, key_packed_width: kpw, value_packed_width: vpw,
+                tokens: tokens, kv_stride: kvStrideU,
+                repeat_count: repeatCount,
+                num_blocks: numBlocksU, block_size: blockSizeU,
+                q_position: qPosition,
+                gridSize: p1Grid, threadgroupSize: p1Tg, on: cmd)
+            MetalTileKernels.aura_flash_pass2_d128_bf16(
+                o_partials: partialO.buffer, o_partialsOffset: partialO.offset,
+                m_partials: partialM.buffer, m_partialsOffset: partialM.offset,
+                l_partials: partialL.buffer, l_partialsOffset: partialL.offset,
+                output: out.buffer, outputOffset: out.offset,
+                dim: dim, num_blocks: numBlocksU,
+                gridSize: p2Grid, threadgroupSize: p2Tg, on: cmd)
+        default:
+            preconditionFailure(
+                "Ops.auraFlashSdpa2Pass: unsupported (keyBits=\(keyBits), "
+                    + "valueBits=\(valueBits), headDim=\(headDim), "
+                    + "dtype=\(out.dtype)). Caller must check "
+                    + "supportsAuraFlashSdpa2Pass(...) first.")
+        }
+    }
+
+    /// Predicate for the `auraFlashSdpa2Pass` supported-scheme set.
+    /// Matches `supportsAuraFlashSdpa` today — both wrappers cover the
+    /// same metaltile-emitted (kb=4, vb∈{2,4}) × d=128 cells.
+    public static func supportsAuraFlashSdpa2Pass(
+        keyBits: Int, valueBits: Int, headDim: Int, dtype: DType
+    ) -> Bool {
+        guard [DType.f32, .f16, .bf16].contains(dtype) else { return false }
+        guard headDim == 128 else { return false }
+        if keyBits == 4 && (valueBits == 2 || valueBits == 4) { return true }
+        return false
+    }
+
     public static func auraRotatePerHead(
         _ x: Tensor, rotation: Tensor,
         nHeads: Int, headDim: Int,
@@ -7216,5 +7722,144 @@ public enum Ops {
             fatalError("Ops.vocoderISTFT: unsupported dtype \(specRe.dtype)")
         }
         return result
+    }
+}
+
+/// Process-wide scratch cache for `Ops.auraFlashSdpa`. The flash
+/// wrapper allocates a same-shape Q scratch (for the scale multiply)
+/// and a same-shape scale buffer (filled with the softmax scale value)
+/// on every call. Per-decode-token across ~28 attention layers, those
+/// Metal buffer allocations cost ~3 ms — enough to make the
+/// compressed path lose to dequant-mirror at short KV. This cache
+/// allocates each scratch ONCE per (shape, dtype, scale) tuple and
+/// reuses it across all subsequent calls. The decode pipeline is
+/// single-inference-per-instance (see `Qwen35AttentionMixer` threading
+/// contract) so an `NSLock` around the dictionary is sufficient.
+///
+/// Post-AURA-dtype-unification, the Q scratch + scale buffer follow
+/// the activation dtype directly (was f32-only pre-unification, paired
+/// with the legacy `Tensor<f32>` kernel sig).
+final class AuraFlashScratchCache: @unchecked Sendable {
+    static let shared = AuraFlashScratchCache()
+
+    private let lock = NSLock()
+    private var qScratchByKey: [ScratchKey: Tensor] = [:]
+    private var scaleBufByKey: [ScaleKey: Tensor] = [:]
+    private var partialsByKey: [PartialsKey: PartialsScratch] = [:]
+
+    /// Optional override for the FA-2 block size used by
+    /// `Ops.auraFlashSdpa2Pass` via `Qwen3Layer.forward`. Set to a value
+    /// in {32, 64, 128, 256} (or any multiple of 32) to override the
+    /// default 64. Bench-only knob — production should leave nil.
+    /// `nonisolated(unsafe)` because the single-inference-per-instance
+    /// threading contract (see `AuraFlashScratchCache` header) makes
+    /// races a non-issue and the bench surface needs simple writes.
+    nonisolated(unsafe) public static var blockSizeOverride: Int?
+
+    private struct ScratchKey: Hashable {
+        let count: Int
+        let dtype: DType
+    }
+
+    private struct ScaleKey: Hashable {
+        let count: Int
+        let dtype: DType
+        let scaleBits: UInt32
+    }
+
+    /// Keys the 2-pass partial-O / M / L scratch by the longest decode-
+    /// time shape: `(nQHeads, maxBlocks, headDim, dtype)`. Cache hot path
+    /// allocates once at first call (sized for `maxSeq/blockSize` blocks)
+    /// and reuses; the kernel overwrites the full surface each call.
+    private struct PartialsKey: Hashable {
+        let nQHeads: Int
+        let maxBlocks: Int
+        let headDim: Int
+        let dtype: DType
+    }
+
+    /// Bundled partials triple — `Ops.auraFlashSdpa2Pass` takes the three
+    /// buffers separately so the caller can reuse them across schemes.
+    struct PartialsScratch {
+        let partialO: Tensor
+        let partialM: Tensor
+        let partialL: Tensor
+    }
+
+    static func qScratch(shape: [Int], dtype: DType) -> Tensor {
+        shared.qScratch(shape: shape, dtype: dtype)
+    }
+
+    static func scaleBuffer(shape: [Int], scale: Float, dtype: DType) -> Tensor {
+        shared.scaleBuffer(shape: shape, scale: scale, dtype: dtype)
+    }
+
+    /// Cached 2-pass partials sized for the worst-case `(nQHeads,
+    /// maxBlocks, headDim, dtype)`. `maxBlocks` should be sized for the
+    /// cache's `maxSeq / blockSize` so all decode-step sizes fit.
+    static func partials(
+        nQHeads: Int, maxBlocks: Int, headDim: Int, dtype: DType
+    ) -> PartialsScratch {
+        shared.partials(
+            nQHeads: nQHeads, maxBlocks: maxBlocks, headDim: headDim, dtype: dtype)
+    }
+
+    private func partials(
+        nQHeads: Int, maxBlocks: Int, headDim: Int, dtype: DType
+    ) -> PartialsScratch {
+        let key = PartialsKey(
+            nQHeads: nQHeads, maxBlocks: maxBlocks, headDim: headDim, dtype: dtype)
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = partialsByKey[key] { return cached }
+        let o = Tensor.empty(
+            shape: [nQHeads, maxBlocks, headDim], dtype: dtype, device: .shared)
+        let m = Tensor.empty(
+            shape: [nQHeads, maxBlocks], dtype: dtype, device: .shared)
+        let l = Tensor.empty(
+            shape: [nQHeads, maxBlocks], dtype: dtype, device: .shared)
+        let scratch = PartialsScratch(partialO: o, partialM: m, partialL: l)
+        partialsByKey[key] = scratch
+        return scratch
+    }
+
+    private func qScratch(shape: [Int], dtype: DType) -> Tensor {
+        let count = shape.reduce(1, *)
+        let key = ScratchKey(count: count, dtype: dtype)
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = qScratchByKey[key], cached.shape == shape {
+            return cached
+        }
+        let fresh = Tensor.empty(shape: shape, dtype: dtype, device: .shared)
+        qScratchByKey[key] = fresh
+        return fresh
+    }
+
+    private func scaleBuffer(shape: [Int], scale: Float, dtype: DType) -> Tensor {
+        let count = shape.reduce(1, *)
+        let key = ScaleKey(count: count, dtype: dtype, scaleBits: scale.bitPattern)
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = scaleBufByKey[key], cached.shape == shape {
+            return cached
+        }
+        // Host-side conversion from Float into the target dtype. The
+        // scale is a single value broadcast across the buffer; bf16/f16
+        // narrow it once at construction.
+        let fresh = Tensor.empty(shape: shape, dtype: dtype, device: .shared)
+        switch dtype {
+        case .f32:
+            fresh.copyIn(from: [Float](repeating: scale, count: count))
+        case .f16:
+            fresh.copyIn(from: [Float16](repeating: Float16(scale), count: count))
+        case .bf16:
+            let bf16Bits = UInt16(truncatingIfNeeded: scale.bitPattern >> 16)
+            fresh.copyIn(from: [UInt16](repeating: bf16Bits, count: count))
+        default:
+            fatalError("AuraFlashScratchCache: unsupported scale dtype \(dtype)")
+        }
+        scaleBufByKey[key] = fresh
+        return fresh
     }
 }

@@ -532,6 +532,7 @@ public final class MoELayer: Module, DecoderLayer {
         cache _: any LayerCacheProtocol,
         cmd: MTLCommandBuffer, device: Device
     ) -> Tensor {
+        return Profile.signpost("moe.decode") { () -> Tensor in
         precondition(
             h.elementCount == hidden,
             "MoELayer.decode: input has \(h.elementCount) elements, expected hidden \(hidden)")
@@ -631,6 +632,7 @@ public final class MoELayer: Module, DecoderLayer {
         // MoE layer per token (Qwen3.6-A3B = 40 layers).
         work.commit()
         return result
+        }  // Profile.signpost("moe.decode")
     }
 
     /// T-batched MoE forward. `hFlat` is `[T, hidden]` flat; returns
