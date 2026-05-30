@@ -291,16 +291,172 @@ public enum DeepSeekV4Pro: DeepSeekV4Variant {
     }
 }
 
-// ─── DeepSeekV4Model — placeholder ───────────────────────────────────
+// ─── DeepSeekV4Model — weight slots ──────────────────────────────────
+//
+// Tensor inventory mirrors the antirez DSv4-Flash GGUF (see
+// `Tests/ModelIntegrationTests/GGUFDsv4TensorMapTest.swift` for the
+// full dump). Field names follow the GGUF tensor-name convention so
+// the loader is a direct `bundle.tensor(named:"blk.\(N).\(suffix)")`
+// dispatch.
+//
+// Architecture (from the antirez/llama.cpp-deepseek-v4-flash fork's
+// `src/models/deepseek4.cpp` graph build):
+//
+// - Each layer holds an mHC 4-channel residual state H[hidden, 4, t].
+// - Attention sub-block: rms_norm → q_a → q_a_norm → q_b → per-head
+//   Q-norm (eps-only) → partial RoPE on tail 64 dims of each head;
+//   kv (single 512-d MQA head) → kv_a_norm → partial RoPE on tail 64
+//   dims → optional FP8 quantize on first 448 dims → store in cache.
+//   Softmax-attention with `attn_sinks` (per-head learnable extra
+//   logit). Inverse partial RoPE on output. Grouped O-LoRA: reshape
+//   to [4096, 8 groups] × [4096, 1024] per group → [8192] → wo_b →
+//   [4096].
+// - FFN sub-block: rms_norm → MoE (256 experts top-6, sqrt-softplus
+//   routing OR precomputed hash routing via `ffn_gate_tid2eid` on
+//   the first `n_hash_layers`) + shared-expert SwiGLU.
+// - mHC: at each sub-block boundary, `hc_*_fn @ flatten(H)` produces
+//   a 24-dim mix that splits as 4 `pre` (sigmoid+eps) + 4 `post`
+//   (2·sigmoid) + 16 (=4×4) `comb` matrix (softmax + Sinkhorn-Knopp
+//   row/col-normalized). `pre` collapses H → sub-block input;
+//   `post` + `comb` expand the sub-block output back into H.
+// - CSA (compress_ratio=4): adds a Lightning Indexer that scores all
+//   compressed K-entries against a 64-head × 128-dim Q (sharing the
+//   same `qr` from the main attn-path) + an attn compressor that
+//   builds a 4×-pooled (overlap-2) compressed KV stream. Top-512
+//   compressed slots feed the sparse-gather attention.
+// - HCA (compress_ratio=128): only the attn compressor (no indexer);
+//   dense attention over the small compressed stream.
+// - Layer pattern per the GGUF: 0,1 = full; 2,4,…,42 = CSA;
+//   3,5,…,41 = HCA. The `compress_ratios` array on the GGUF metadata
+//   is authoritative.
 
-/// Hybrid DSv4 decoder. **WIP** — the concrete `Module` conformance,
-/// per-layer wiring, and `forward` paths land in follow-up commits.
-/// The type exists so the family entry-point + loader dispatch
-/// type-check today.
-public final class DeepSeekV4Model {
+/// One transformer block's worth of weights. Allocated per-layer
+/// regardless of compression regime — the regime-specific tensors
+/// (compressor, indexer) are nil for layers that don't use them.
+final class DeepSeekV4Layer: @unchecked Sendable {
+    let layerIndex: Int
+    let compressRatio: Int  // 0 = full, 4 = CSA, 128 = HCA
+
+    // ── Common attention path ──
+    let attnNorm: Tensor          // f32 [hidden]
+    let attnQA: Tensor            // q8_0 [hidden, q_lora_rank]
+    let attnQANorm: Tensor        // f32 [q_lora_rank]
+    let attnQB: Tensor            // q8_0 [q_lora_rank, n_heads * head_dim]
+    let attnKV: Tensor            // q8_0 [hidden, head_dim] (MQA: 1 kv head)
+    let attnKVANorm: Tensor       // f32 [head_dim]
+    let attnSinks: Tensor         // f32 [n_heads]
+    let attnOutputA: Tensor       // q8_0 [group_dim, n_groups * o_lora_rank]
+    let attnOutputB: Tensor       // q8_0 [n_groups * o_lora_rank, hidden]
+
+    // ── FFN path ──
+    let ffnNorm: Tensor              // f32 [hidden]
+    let ffnGateInp: Tensor           // f16 [hidden, n_experts]
+    let ffnGateTid2Eid: Tensor?      // i32 [n_experts_per_token, vocab] — hash-route, nil past n_hash_layers
+    let ffnGateExps: Tensor          // iq2_xxs [hidden, expert_intermediate, n_experts]
+    let ffnUpExps: Tensor            // iq2_xxs [hidden, expert_intermediate, n_experts]
+    let ffnDownExps: Tensor          // q2_K [expert_intermediate, hidden, n_experts]
+    let ffnGateShexp: Tensor         // q8_0 [hidden, shared_expert_intermediate]
+    let ffnUpShexp: Tensor           // q8_0 [hidden, shared_expert_intermediate]
+    let ffnDownShexp: Tensor         // q8_0 [shared_expert_intermediate, hidden]
+    let expProbsBias: Tensor?        // f32 [n_experts] — noaux_tc bias, only on non-hash layers
+
+    // ── mHC weights (attn + ffn sub-blocks) ──
+    let hcAttnBase: Tensor    // f32 [24]
+    let hcAttnFn: Tensor      // f16 [hc_dim, 24]  where hc_dim = n_hc * hidden = 4*4096 = 16384
+    let hcAttnScale: Tensor   // f32 [3]
+    let hcFfnBase: Tensor     // f32 [24]
+    let hcFfnFn: Tensor       // f16 [hc_dim, 24]
+    let hcFfnScale: Tensor    // f32 [3]
+
+    // ── CSA / HCA compressor (compress_ratio > 0) ──
+    let attnCompressorAPE: Tensor?    // f16 [coff * head_dim, ratio]  (ratio=4 for CSA, =128 for HCA)
+    let attnCompressorGate: Tensor?   // f16 [hidden, coff * head_dim]
+    let attnCompressorKV: Tensor?     // f16 [hidden, coff * head_dim]
+    let attnCompressorNorm: Tensor?   // f32 [head_dim]
+
+    // ── CSA-only Lightning Indexer (compress_ratio == 4) ──
+    let indexerAttnQB: Tensor?              // f16 [q_lora_rank, indexer_n_heads * indexer_head_size]
+    let indexerProj: Tensor?                // f16 [hidden, indexer_n_heads]
+    let indexerCompressorAPE: Tensor?       // f16 [coff * indexer_head_size, ratio]
+    let indexerCompressorGate: Tensor?      // f16 [hidden, coff * indexer_head_size]
+    let indexerCompressorKV: Tensor?        // f16 [hidden, coff * indexer_head_size]
+    let indexerCompressorNorm: Tensor?      // f32 [indexer_head_size]
+
+    init(
+        layerIndex: Int, compressRatio: Int,
+        attnNorm: Tensor, attnQA: Tensor, attnQANorm: Tensor, attnQB: Tensor,
+        attnKV: Tensor, attnKVANorm: Tensor, attnSinks: Tensor,
+        attnOutputA: Tensor, attnOutputB: Tensor,
+        ffnNorm: Tensor, ffnGateInp: Tensor, ffnGateTid2Eid: Tensor?,
+        ffnGateExps: Tensor, ffnUpExps: Tensor, ffnDownExps: Tensor,
+        ffnGateShexp: Tensor, ffnUpShexp: Tensor, ffnDownShexp: Tensor,
+        expProbsBias: Tensor?,
+        hcAttnBase: Tensor, hcAttnFn: Tensor, hcAttnScale: Tensor,
+        hcFfnBase: Tensor, hcFfnFn: Tensor, hcFfnScale: Tensor,
+        attnCompressorAPE: Tensor? = nil, attnCompressorGate: Tensor? = nil,
+        attnCompressorKV: Tensor? = nil, attnCompressorNorm: Tensor? = nil,
+        indexerAttnQB: Tensor? = nil, indexerProj: Tensor? = nil,
+        indexerCompressorAPE: Tensor? = nil, indexerCompressorGate: Tensor? = nil,
+        indexerCompressorKV: Tensor? = nil, indexerCompressorNorm: Tensor? = nil
+    ) {
+        self.layerIndex = layerIndex
+        self.compressRatio = compressRatio
+        self.attnNorm = attnNorm; self.attnQA = attnQA; self.attnQANorm = attnQANorm
+        self.attnQB = attnQB; self.attnKV = attnKV; self.attnKVANorm = attnKVANorm
+        self.attnSinks = attnSinks
+        self.attnOutputA = attnOutputA; self.attnOutputB = attnOutputB
+        self.ffnNorm = ffnNorm; self.ffnGateInp = ffnGateInp; self.ffnGateTid2Eid = ffnGateTid2Eid
+        self.ffnGateExps = ffnGateExps; self.ffnUpExps = ffnUpExps; self.ffnDownExps = ffnDownExps
+        self.ffnGateShexp = ffnGateShexp; self.ffnUpShexp = ffnUpShexp; self.ffnDownShexp = ffnDownShexp
+        self.expProbsBias = expProbsBias
+        self.hcAttnBase = hcAttnBase; self.hcAttnFn = hcAttnFn; self.hcAttnScale = hcAttnScale
+        self.hcFfnBase = hcFfnBase; self.hcFfnFn = hcFfnFn; self.hcFfnScale = hcFfnScale
+        self.attnCompressorAPE = attnCompressorAPE; self.attnCompressorGate = attnCompressorGate
+        self.attnCompressorKV = attnCompressorKV; self.attnCompressorNorm = attnCompressorNorm
+        self.indexerAttnQB = indexerAttnQB; self.indexerProj = indexerProj
+        self.indexerCompressorAPE = indexerCompressorAPE
+        self.indexerCompressorGate = indexerCompressorGate
+        self.indexerCompressorKV = indexerCompressorKV
+        self.indexerCompressorNorm = indexerCompressorNorm
+    }
+}
+
+/// DSv4 decoder. Holds the per-layer weight bundles plus the
+/// shared embedding / output-norm / LM-head / output-mHC weights.
+///
+/// `forward(...)` lands incrementally — first the full-attn layer
+/// type (layers 0, 1) end-to-end against a small prompt, then the
+/// CSA and HCA paths. See `DeepSeekV4Forward.swift` (lands when the
+/// first layer type clears local tests).
+public final class DeepSeekV4Model: @unchecked Sendable {
     let textConfig: DeepSeekV4TextConfig
-    init(textConfig: DeepSeekV4TextConfig) {
+
+    // ── Non-block weights ──
+    let tokenEmbd: Tensor         // f16 [hidden, vocab]
+    let outputNorm: Tensor        // f32 [hidden]
+    let outputHead: Tensor        // q8_0 [hidden, vocab]
+    let outputHcBase: Tensor      // f32 [n_hc=4]
+    let outputHcFn: Tensor        // f16 [hc_dim, n_hc]  (head mHC uses simpler decomposition)
+    let outputHcScale: Tensor     // f32 [1]
+
+    /// 43 per-layer bundles, indexed 0..<nLayers. CSA / HCA / full
+    /// regime is recoverable via `layers[i].compressRatio`.
+    let layers: [DeepSeekV4Layer]
+
+    init(
+        textConfig: DeepSeekV4TextConfig,
+        tokenEmbd: Tensor, outputNorm: Tensor, outputHead: Tensor,
+        outputHcBase: Tensor, outputHcFn: Tensor, outputHcScale: Tensor,
+        layers: [DeepSeekV4Layer]
+    ) {
         self.textConfig = textConfig
+        self.tokenEmbd = tokenEmbd
+        self.outputNorm = outputNorm
+        self.outputHead = outputHead
+        self.outputHcBase = outputHcBase
+        self.outputHcFn = outputHcFn
+        self.outputHcScale = outputHcScale
+        self.layers = layers
     }
 }
 
