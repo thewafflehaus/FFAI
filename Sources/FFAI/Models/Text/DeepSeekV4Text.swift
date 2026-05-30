@@ -239,7 +239,7 @@ struct DeepSeekV4TextConfig {
 
 /// 284B total / 13B active. The user-runnable size on Apple Silicon
 /// today (4-bit weights + dequant load fits in 128 GB unified memory
-/// at ~32K context per the antirez/deepseek-v4-gguf measurements).
+/// at ~32K context).
 public enum DeepSeekV4Flash: DeepSeekV4Variant {
     public static var availableCapabilities: Set<Capability> { [.textIn, .textOut] }
     public static var defaultGenerationParameters: GenerationParameters {
@@ -293,14 +293,13 @@ public enum DeepSeekV4Pro: DeepSeekV4Variant {
 
 // ─── DeepSeekV4Model — weight slots ──────────────────────────────────
 //
-// Tensor inventory mirrors the antirez DSv4-Flash GGUF (see
+// Tensor inventory mirrors the DSv4-Flash GGUF (see
 // `Tests/ModelIntegrationTests/GGUFDsv4TensorMapTest.swift` for the
 // full dump). Field names follow the GGUF tensor-name convention so
 // the loader is a direct `bundle.tensor(named:"blk.\(N).\(suffix)")`
 // dispatch.
 //
-// Architecture (from the antirez/llama.cpp-deepseek-v4-flash fork's
-// `src/models/deepseek4.cpp` graph build):
+// Architecture summary:
 //
 // - Each layer holds an mHC 4-channel residual state H[hidden, 4, t].
 // - Attention sub-block: rms_norm → q_a → q_a_norm → q_b → per-head

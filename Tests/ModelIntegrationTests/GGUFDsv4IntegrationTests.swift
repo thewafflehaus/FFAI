@@ -47,7 +47,7 @@ struct GGUFDsv4IntegrationTests {
             return
         }
         let bundle = try GGUFTensorBundle(directory: URL(fileURLWithPath: dir))
-        // The antirez DSv4 GGUF carries `general.architecture: "deepseek4"`.
+        // The DSv4 GGUF carries `general.architecture: "deepseek4"`.
         let arch = bundle.architecture
         #expect(arch != nil, "DSv4 GGUF must carry general.architecture")
         if let arch = arch {
@@ -118,7 +118,7 @@ struct GGUFDsv4IntegrationTests {
         do {
             tokenizer = try GGUFTokenizerAdapter.build(reader: bundle.reader)
         } catch GGUFTokenizerAdapter.Error.unsupportedKind(let k) {
-            // The antirez DSv4 GGUF uses a custom DSv4 pretokenizer
+            // The DSv4 GGUF uses a custom DSv4 pretokenizer
             // that may not be in our BPE-kind set yet — accept the
             // skip but make the failure mode visible.
             print(
