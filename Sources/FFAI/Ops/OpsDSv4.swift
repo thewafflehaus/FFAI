@@ -475,6 +475,53 @@ extension Ops {
         return result
     }
 
+    // ─── Partial RoPE (tail-only rotation) ──────────────────────────
+
+    /// Rotates only the tail `n_rot = head_dim - n_nope` dims of each
+    /// head. Caller initialises `out` with the nope passthrough (or
+    /// passes the same buffer for `qk` and `out` to rotate in-place).
+    /// `inverse = true` un-rotates the attention output.
+    public static func dsv4PartialRope(
+        qk: Tensor, out: Tensor,
+        nHeads: Int, headDim: Int, nNope: Int, position: Int,
+        thetaBase: Float, inverse: Bool,
+        on cmd: MTLCommandBuffer
+    ) {
+        let halfRot = (headDim - nNope) / 2
+        let gridSize = MTLSize(width: nHeads, height: halfRot, depth: 1)
+        let tg = MTLSize(width: 1, height: 1, depth: 1)
+        let hd = UInt32(headDim)
+        let nNopeU = UInt32(nNope)
+        let halfRotU = UInt32(halfRot)
+        let posU = UInt32(position)
+        let invFlag: UInt32 = inverse ? 1 : 0
+        switch qk.dtype {
+        case .f32:
+            MetalTileKernels.ffai_dsv4_partial_rope_f32(
+                qk: qk.buffer, qkOffset: qk.offset,
+                out: out.buffer, outOffset: out.offset,
+                head_dim: hd, n_nope: nNopeU, half_rot: halfRotU,
+                position: posU, theta_base: thetaBase, inverse_flag: invFlag,
+                gridSize: gridSize, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.ffai_dsv4_partial_rope_f16(
+                qk: qk.buffer, qkOffset: qk.offset,
+                out: out.buffer, outOffset: out.offset,
+                head_dim: hd, n_nope: nNopeU, half_rot: halfRotU,
+                position: posU, theta_base: thetaBase, inverse_flag: invFlag,
+                gridSize: gridSize, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.ffai_dsv4_partial_rope_bf16(
+                qk: qk.buffer, qkOffset: qk.offset,
+                out: out.buffer, outOffset: out.offset,
+                head_dim: hd, n_nope: nNopeU, half_rot: halfRotU,
+                position: posU, theta_base: thetaBase, inverse_flag: invFlag,
+                gridSize: gridSize, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("dsv4PartialRope: unsupported qk dtype \(qk.dtype)")
+        }
+    }
+
     // ─── SDPA: CSA sparse-gather ────────────────────────────────────
 
     /// Sparse-gather SDPA decode for `head_dim == 512`. Attention is
