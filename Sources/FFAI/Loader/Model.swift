@@ -250,6 +250,22 @@ public enum ModelRegistry {
                     availableCapabilities: Qwen3VLMoe.availableCapabilities,
                     vlModel: vlm)
             }
+            // Step-3 vision-language — Perception-Encoder ViT tower +
+            // 2× strided patch-downsamplers + projector + the Step-3
+            // hybrid (full + sliding-window) text backbone, joined by
+            // the cross-modal splice. WIP — load() throws
+            // `Step3Error.notYetImplemented` today; the dispatch is in
+            // place so the architecture is recognized end-to-end.
+            if let arch = config.architecture, Step3.vlArchitectures.contains(arch) {
+                let vlm = try Step3VL.load(
+                    config: config, weights: weights,
+                    options: options, device: device)
+                return Loaded(
+                    engine: vlm.engine,
+                    defaultGenerationParameters: Step3Hybrid.defaultGenerationParameters,
+                    availableCapabilities: Step3VL.availableCapabilities,
+                    vlModel: vlm)
+            }
             // Gemma 4 VL — the bespoke Gemma 4 ViT tower (RoPE attention,
             // q/k/v norms, attention-pooling head) + multi-modal embedder
             // + the Gemma 4 text backbone, joined by the splice.
