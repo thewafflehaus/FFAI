@@ -266,6 +266,52 @@ struct GGUFDsv4IntegrationTests {
         print("  nonzero = \(nonZero)/\(vals.count)  |block_out|_max = \(absMax)  mean = \(absMean)")
     }
 
+    @Test("End-to-end forward: generate one token from BOS")
+    func generateOneTokenFromBOS() throws {
+        guard let dir = modelPath else {
+            print("GGUFDsv4IntegrationTests: skipping (no model)")
+            return
+        }
+        let bundle = try GGUFTensorBundle(directory: URL(fileURLWithPath: dir))
+        let raw: [String: Any] = [
+            "hidden_size": 4096, "num_hidden_layers": 43,
+            "vocab_size": 129_280, "num_attention_heads": 64,
+        ]
+        let config = ModelConfig(architecture: "DeepSeekV4ForCausalLM", modelType: "deepseek4", raw: raw)
+        let device = Device.shared
+        let model = try DeepSeekV4Flash.loadModelFromGGUF(
+            config: config, gguf: bundle, options: LoadOptions(), device: device)
+        let state = model.makeDecodeState()
+        let bosTokenId = Int(bundle.reader.metadataUInt32("tokenizer.ggml.bos_token_id") ?? 0)
+        print("GGUFDsv4IntegrationTests: BOS token id = \(bosTokenId)")
+        let t0 = Date()
+        let logits = try model.forwardAllLayers(inputTokenId: bosTokenId, state: state)
+        let elapsed = Date().timeIntervalSince(t0)
+        let logitsHost = logits.toArray(as: Float.self)
+        // Argmax
+        var maxIdx = 0
+        var maxVal: Float = -Float.infinity
+        for (i, v) in logitsHost.enumerated() {
+            if v > maxVal { maxVal = v; maxIdx = i }
+        }
+        print("GGUFDsv4IntegrationTests: forward took \(elapsed) sec; argmax token id = \(maxIdx) (logit=\(maxVal))")
+        // Decode the token via the tokenizer if available
+        do {
+            let tokenizer = try GGUFTokenizerAdapter.build(reader: bundle.reader)
+            let decoded = tokenizer.decode(tokens: [maxIdx])
+            print("GGUFDsv4IntegrationTests: predicted token: '\(decoded)'")
+        } catch {
+            print("GGUFDsv4IntegrationTests: tokenizer build failed: \(error)")
+        }
+        // Sanity: no NaN, finite max.
+        var nNaN = 0
+        for v in logitsHost {
+            if v.isNaN { nNaN += 1 }
+        }
+        #expect(nNaN == 0, "logits has \(nNaN) NaN values")
+        #expect(maxVal.isFinite, "argmax logit not finite: \(maxVal)")
+    }
+
     @Test("Dequant one representative IQ2_XXS tensor (MoE expert weight)")
     func dequantIQ2_XXSTensor() throws {
         guard let dir = modelPath else {
