@@ -78,3 +78,191 @@ enum DeepSeekV4ForwardError: Error, CustomStringConvertible {
         }
     }
 }
+
+// MARK: - Shape helpers
+
+extension Tensor {
+    /// GGUF stores matmul weights as `[n_in_fast, n_out_slow]` in
+    /// dimensions order, but `Ops.gemv` expects `[n_out, n_in]`.
+    /// Swap the two dim labels (no data movement — same byte layout,
+    /// different interpretation).
+    fileprivate func asGgufMatmulWeight() -> Tensor {
+        precondition(shape.count == 2, "asGgufMatmulWeight: rank must be 2")
+        return reshaped(to: [shape[1], shape[0]])
+    }
+}
+
+// MARK: - Full-attention sub-block forward
+//
+// ## Infrastructure gaps blocking the runnable body
+//
+// 1. **Mixed-dtype rmsNorm**. `Ops.rmsNorm` enforces
+//    `x.dtype == weight.dtype` but DSv4 ships norm weights as f32
+//    while activations are f16. Either (a) cast f32 norm weights to
+//    f16 at load time inside `GGUFTensorBundle.tensor(named:outDtype:)`
+//    (currently f32/f16/bf16 sources ignore `outDtype` and pass
+//    through with their on-disk dtype), or (b) widen Ops.rmsNorm to
+//    accept f32 weight + f16 input.
+//
+// 2. **No-weight rmsNormRows**. The per-head Q-norm has no learnable
+//    weight (just `eps`). `Ops.rmsNormRows` requires a `[rowSize]`
+//    weight tensor. Either allocate a ones tensor once, or add a
+//    `rmsNormRowsNoWeight` variant.
+//
+// 3. **Grouped O-LoRA `mul_mat_id`**. `attn_output_a` is a single
+//    [4096 × 8192] tensor that must be applied as 8 distinct
+//    [4096 × 1024] slices, each driven by a different [4096] slice
+//    of the [n_heads × head_dim] attention output. No Ops surface
+//    today does this without 8 sequential gemvs against
+//    output-axis-strided weight views — and `slicedRows` only
+//    slices the leading dim.
+//
+// 4. **GGUF matmul-weight layout swap**. GGUF dimensions list the
+//    fast dim first: `[n_in, n_out]`. Ops.gemv expects `[n_out, n_in]`.
+//    The `Tensor.asGgufMatmulWeight()` helper above swaps the dim
+//    labels (no data movement). Verified correct for `Ops.gemv` by
+//    inspection but not yet unit-tested.
+//
+// 5. **Sliding-window cache append**. `Ops.copy(_:into:)` writes the
+//    [head_dim] kv_norm into `swCache.slicedRows(start: slot, count: 1)`
+//    which is shape `[1, head_dim]` — element-count matches but
+//    dtype precondition may need the slice to be the same dtype as
+//    src (currently fine, both are activation dtype). Untested.
+//
+// The decode-state types below are correct as-is; the
+// `forwardFullAttnSubblock` function body lives in a working
+// branch until the 5 gaps are closed.
+
+extension DeepSeekV4Model {
+
+    /// Decode one full-attention layer's attention sub-block.
+    /// Reads `state.hcState` (the 4-channel residual), runs the
+    /// full-attn block, writes the new 4-channel state back into
+    /// `state.hcState`, and returns the un-residualised
+    /// `block_out [hidden]` for downstream introspection.
+    ///
+    /// Wired against the real Ops API (`gemv` with GGUF shape-swap,
+    /// `rmsNorm` for the learnable norms, `dsv4MhcSinkhornSplit /
+    /// Collapse / Expand` for the mHC dance, `dsv4PartialRope` for
+    /// the K/Q tail rotation, `dsv4SdpaDecodeD512Sink` for the
+    /// MQA attention with attn_sinks).
+    ///
+    /// Known-incorrect details flagged with `// FIXME` — these
+    /// matter for numerical correctness but not for "does the
+    /// dispatch chain compile and run without NaN?":
+    /// - Per-head Q-norm (eps-only, no learnable weight) is **skipped**
+    ///   — needs a `[head_dim]` ones tensor or a no-weight rms variant.
+    /// - Grouped O-LoRA collapses to a single 32768 → 8192 → 4096
+    ///   matmul that **does NOT** apply per-group LoRA-A slices.
+    ///   Output dims match; values are wrong until the proper
+    ///   per-group dispatch lands.
+    public func forwardFullAttnSubblock(
+        layer: DeepSeekV4Layer, state: DecodeState, on cmd: MTLCommandBuffer
+    ) throws -> Tensor {
+        throw DeepSeekV4ForwardError.notImplementedForRegime(layer.compressRatio)
+        // The body below is the intended algorithmic structure —
+        // currently disabled because of the 5 infrastructure gaps
+        // listed in the file-level MARK comment above. Each gap is
+        // a discrete next-tick unit of work.
+        #if false
+        let cfg = textConfig
+        let dt = activationDtype
+        let hidden = cfg.hidden
+        let headDim = cfg.headDim
+        let qLoraRank = cfg.qLoraRank
+        let nHeads = cfg.nHeads
+        let qkRopeDim = cfg.qkRopeHeadDim
+        let nNope = headDim - qkRopeDim
+
+        // ── mHC pre/post/comb split ──
+        // mixes = hc_attn_fn @ flatten(H)  →  [24]
+        let flatH = state.hcState.reshaped(to: [4 * hidden])
+        let hcAttnFnW = layer.hcAttnFn.asGgufMatmulWeight()
+        let mixes = Ops.gemv(weight: hcAttnFnW, input: flatH, on: cmd)
+        let (preAttn, postAttn, combAttn) = Ops.dsv4MhcSinkhornSplit(
+            mixes: mixes, scale: layer.hcAttnScale, base: layer.hcAttnBase,
+            nTokens: 1, eps: cfg.hcEpsilon, sinkhornIters: cfg.hcSinkhornIterations,
+            on: cmd)
+
+        // ── mHC collapse: H[4, hidden] → x[hidden] ──
+        let x = Ops.dsv4MhcCollapse(
+            state: state.hcState, pre: preAttn,
+            hiddenDim: hidden, nHc: 4, nTokens: 1, outDtype: dt, on: cmd)
+
+        // ── attn_norm ──
+        let xNorm = Ops.rmsNorm(x, weight: layer.attnNorm, eps: cfg.rmsNormEps, on: cmd)
+
+        // ── Q low-rank chain: x → q_a → q_a_norm → q_b ──
+        let qA = Ops.gemv(weight: layer.attnQA.asGgufMatmulWeight(), input: xNorm, on: cmd)
+        let qANorm = Ops.rmsNorm(qA, weight: layer.attnQANorm, eps: cfg.rmsNormEps, on: cmd)
+        let q = Ops.gemv(weight: layer.attnQB.asGgufMatmulWeight(), input: qANorm, on: cmd)
+        // FIXME: per-head unit-RMS Q-norm omitted (needs ones-weight
+        // tensor or a no-learnable-weight rms variant). Skipping
+        // makes the model slightly mis-scaled but doesn't break
+        // dispatch.
+
+        // ── Partial RoPE on Q tail ──
+        let qRoped = Tensor.empty(shape: q.shape, dtype: dt)
+        Ops.copy(q, into: qRoped, on: cmd)
+        Ops.dsv4PartialRope(
+            qk: qRoped, out: qRoped,
+            nHeads: nHeads, headDim: headDim, nNope: nNope,
+            position: state.position, thetaBase: cfg.ropeTheta, inverse: false, on: cmd)
+
+        // ── KV down-projection + norm + partial RoPE ──
+        let kv = Ops.gemv(weight: layer.attnKV.asGgufMatmulWeight(), input: xNorm, on: cmd)
+        let kvNorm = Ops.rmsNorm(kv, weight: layer.attnKVANorm, eps: cfg.rmsNormEps, on: cmd)
+        Ops.dsv4PartialRope(
+            qk: kvNorm, out: kvNorm,
+            nHeads: 1, headDim: headDim, nNope: nNope,
+            position: state.position, thetaBase: cfg.ropeTheta, inverse: false, on: cmd)
+
+        // ── Append to sliding-window cache ──
+        let layerState = state.layerStates[layer.layerIndex]
+        let slot = layerState.swCount % layerState.nSWA
+        Ops.copy(kvNorm, into: layerState.swCache.slicedRows(start: slot, count: 1), on: cmd)
+        layerState.swCount += 1
+        let nVisible = min(layerState.swCount, layerState.nSWA)
+
+        // ── MQA SDPA with attn_sinks: K == V, n_kv_heads=1 ──
+        let kvBuf = layerState.swCache.slicedRows(start: 0, count: nVisible)
+        let scale = 1.0 / Float(headDim).squareRoot()
+        let attnOut = Ops.dsv4SdpaDecodeD512Sink(
+            q: qRoped, k: kvBuf, v: kvBuf, sinkLogit: layer.attnSinks,
+            nQHeads: nHeads, nKvHeads: 1, headDim: headDim,
+            nKv: nVisible, kvStride: layerState.nSWA,
+            scale: scale, outDtype: dt, on: cmd)
+
+        // ── Inverse partial RoPE on attention output ──
+        Ops.dsv4PartialRope(
+            qk: attnOut, out: attnOut,
+            nHeads: nHeads, headDim: headDim, nNope: nNope,
+            position: state.position, thetaBase: cfg.ropeTheta, inverse: true, on: cmd)
+
+        // ── Grouped O-LoRA: 8 groups × [4096, 1024] then [8192, 4096] ──
+        // FIXME: this collapses 8 per-group LoRA-A slices into a
+        // single matmul with a "wrong but dim-matching" input
+        // collapse. The correct dispatch is 8 sequential gemvs
+        // against [4096, 1024] slices of attn_output_a, each fed
+        // by the matching [4096] slice of attnOut reshaped to
+        // [8 groups, 4096].
+        let attnOutFlat = attnOut.reshaped(to: [nHeads * headDim])  // [32768]
+        let collapsedInput = Tensor.empty(shape: [hidden], dtype: dt)
+        Ops.copy(
+            attnOutFlat.slicedRows(start: 0, count: hidden),
+            into: collapsedInput, on: cmd)
+        let oLow = Ops.gemv(
+            weight: layer.attnOutputA.asGgufMatmulWeight(), input: collapsedInput, on: cmd)
+        let blockOut = Ops.gemv(
+            weight: layer.attnOutputB.asGgufMatmulWeight(), input: oLow, on: cmd)
+
+        // ── mHC expand: write new 4-channel state ──
+        let newH = Ops.dsv4MhcExpand(
+            blockOut: blockOut, post: postAttn, comb: combAttn,
+            residualState: state.hcState,
+            hiddenDim: hidden, nHc: 4, nTokens: 1, on: cmd)
+        state.hcState = newH
+        return blockOut
+        #endif
+    }
+}

@@ -496,7 +496,12 @@ public final class DeepSeekV4Model: @unchecked Sendable {
         textConfig: DeepSeekV4TextConfig, gguf: GGUFTensorBundle,
         device: Device, options: LoadOptions
     ) throws -> DeepSeekV4Model {
-        let activationDtype: DType = .bf16  // DSv4 default
+        // Activation dtype = f16 to match the GGUF's f16 weights
+        // (hc_*_fn, indexer.*, compressor.*, token_embd, ffn_gate_inp).
+        // The q8_0 / q2_K / iq2_xxs dequant kernels narrow into f16
+        // at the store boundary so the bulk matmul weights end up
+        // at the same dtype as the activations.
+        let activationDtype: DType = .f16
         // Extract the compress_ratios array from GGUF metadata. The
         // key matches the antirez/DSv4 fork naming convention used by
         // the converter. Falls back to inferring from layer-tensor
