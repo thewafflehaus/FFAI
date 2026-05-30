@@ -200,85 +200,156 @@ extension Ops {
         return result
     }
 
-    // ─── mHC residual mix ────────────────────────────────────────────
+    // ─── mHC dynamic residual mix ───────────────────────────────────
 
-    /// mHC pre-mix — `out[d] = sum_c pre[c] * state[c, d]`.
-    public static func dsv4MhcPre(
-        state: Tensor, pre: Tensor,
-        hiddenDim: Int, nCh: Int, outDtype: DType,
-        on cmd: MTLCommandBuffer, into out: Tensor? = nil
-    ) -> Tensor {
-        precondition(pre.dtype == .f32, "dsv4MhcPre: pre must be f32")
-        precondition(state.dtype == outDtype, "dsv4MhcPre: state dtype must match outDtype")
-        let result = out ?? Tensor.empty(shape: [hiddenDim], dtype: outDtype)
-        let (grid, tg) = elementwiseGrid(hiddenDim)
-        let hd = UInt32(hiddenDim)
-        let nc = UInt32(nCh)
-        switch outDtype {
+    /// Compute the dynamic per-token `(pre, post, comb)` control
+    /// tensors from the 24-mix output of `hc_*_fn @ flatten(H)`:
+    ///   pre  [n_tokens, 4]    = sigmoid(...) + eps
+    ///   post [n_tokens, 4]    = 2 * sigmoid(...)
+    ///   comb [n_tokens, 4, 4] = Sinkhorn(softmax_over_src(...) + eps)
+    /// Sinkhorn-Knopp normalization runs for `sinkhornIters` iterations.
+    public static func dsv4MhcSinkhornSplit(
+        mixes: Tensor, scale: Tensor, base: Tensor,
+        nTokens: Int, eps: Float, sinkhornIters: Int,
+        on cmd: MTLCommandBuffer,
+        pre: Tensor? = nil, post: Tensor? = nil, comb: Tensor? = nil
+    ) -> (pre: Tensor, post: Tensor, comb: Tensor) {
+        precondition(scale.dtype == .f32, "dsv4MhcSinkhornSplit: scale must be f32")
+        precondition(base.dtype == .f32, "dsv4MhcSinkhornSplit: base must be f32")
+        let pre = pre ?? Tensor.empty(shape: [nTokens, 4], dtype: .f32)
+        let post = post ?? Tensor.empty(shape: [nTokens, 4], dtype: .f32)
+        let comb = comb ?? Tensor.empty(shape: [nTokens, 4, 4], dtype: .f32)
+        let (grid, tg) = elementwiseGrid(nTokens)
+        let nt = UInt32(nTokens)
+        let iters = UInt32(sinkhornIters)
+        switch mixes.dtype {
         case .f32:
-            MetalTileKernels.ffai_dsv4_mhc_pre_f32(
-                state: state.buffer, stateOffset: state.offset,
+            MetalTileKernels.ffai_dsv4_mhc_sinkhorn_split_f32(
+                mixes: mixes.buffer, mixesOffset: mixes.offset,
+                scale: scale.buffer, scaleOffset: scale.offset,
+                base: base.buffer, baseOffset: base.offset,
                 pre: pre.buffer, preOffset: pre.offset,
-                out: result.buffer, outOffset: result.offset,
-                hidden_dim: hd, n_ch: nc,
+                post: post.buffer, postOffset: post.offset,
+                comb: comb.buffer, combOffset: comb.offset,
+                n_tokens: nt, eps: eps, sinkhorn_iters: iters,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case .f16:
-            MetalTileKernels.ffai_dsv4_mhc_pre_f16(
-                state: state.buffer, stateOffset: state.offset,
+            MetalTileKernels.ffai_dsv4_mhc_sinkhorn_split_f16(
+                mixes: mixes.buffer, mixesOffset: mixes.offset,
+                scale: scale.buffer, scaleOffset: scale.offset,
+                base: base.buffer, baseOffset: base.offset,
                 pre: pre.buffer, preOffset: pre.offset,
-                out: result.buffer, outOffset: result.offset,
-                hidden_dim: hd, n_ch: nc,
+                post: post.buffer, postOffset: post.offset,
+                comb: comb.buffer, combOffset: comb.offset,
+                n_tokens: nt, eps: eps, sinkhorn_iters: iters,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case .bf16:
-            MetalTileKernels.ffai_dsv4_mhc_pre_bf16(
+            MetalTileKernels.ffai_dsv4_mhc_sinkhorn_split_bf16(
+                mixes: mixes.buffer, mixesOffset: mixes.offset,
+                scale: scale.buffer, scaleOffset: scale.offset,
+                base: base.buffer, baseOffset: base.offset,
+                pre: pre.buffer, preOffset: pre.offset,
+                post: post.buffer, postOffset: post.offset,
+                comb: comb.buffer, combOffset: comb.offset,
+                n_tokens: nt, eps: eps, sinkhorn_iters: iters,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        default:
+            fatalError("dsv4MhcSinkhornSplit: unsupported mixes dtype \(mixes.dtype)")
+        }
+        return (pre, post, comb)
+    }
+
+    /// mHC collapse — `x[d, t] = sum_c pre[t, c] * H[d, c, t]`.
+    public static func dsv4MhcCollapse(
+        state: Tensor, pre: Tensor,
+        hiddenDim: Int, nHc: Int, nTokens: Int, outDtype: DType,
+        on cmd: MTLCommandBuffer, into out: Tensor? = nil
+    ) -> Tensor {
+        precondition(pre.dtype == .f32, "dsv4MhcCollapse: pre must be f32")
+        precondition(state.dtype == outDtype, "dsv4MhcCollapse: state dtype must match outDtype")
+        let result = out ?? Tensor.empty(shape: [nTokens, hiddenDim], dtype: outDtype)
+        let (grid, tg) = elementwiseGrid(hiddenDim)
+        let hd = UInt32(hiddenDim)
+        let nc = UInt32(nHc)
+        let nt = UInt32(nTokens)
+        switch outDtype {
+        case .f32:
+            MetalTileKernels.ffai_dsv4_mhc_collapse_f32(
                 state: state.buffer, stateOffset: state.offset,
                 pre: pre.buffer, preOffset: pre.offset,
                 out: result.buffer, outOffset: result.offset,
-                hidden_dim: hd, n_ch: nc,
+                hidden_dim: hd, n_hc: nc, n_tokens: nt,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .f16:
+            MetalTileKernels.ffai_dsv4_mhc_collapse_f16(
+                state: state.buffer, stateOffset: state.offset,
+                pre: pre.buffer, preOffset: pre.offset,
+                out: result.buffer, outOffset: result.offset,
+                hidden_dim: hd, n_hc: nc, n_tokens: nt,
+                gridSize: grid, threadgroupSize: tg, on: cmd)
+        case .bf16:
+            MetalTileKernels.ffai_dsv4_mhc_collapse_bf16(
+                state: state.buffer, stateOffset: state.offset,
+                pre: pre.buffer, preOffset: pre.offset,
+                out: result.buffer, outOffset: result.offset,
+                hidden_dim: hd, n_hc: nc, n_tokens: nt,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         default:
-            fatalError("dsv4MhcPre: unsupported output dtype \(outDtype)")
+            fatalError("dsv4MhcCollapse: unsupported output dtype \(outDtype)")
         }
         return result
     }
 
-    /// mHC post-mix — in-place outer-product accumulate:
-    ///   `state[c, d] += post[c] * sublayer_out[d]` for c ∈ [0, n_ch).
-    public static func dsv4MhcPost(
-        sublayerOut: Tensor, post: Tensor, state: Tensor,
-        hiddenDim: Int, nCh: Int,
-        on cmd: MTLCommandBuffer
-    ) {
-        precondition(post.dtype == .f32, "dsv4MhcPost: post must be f32")
-        precondition(state.dtype == sublayerOut.dtype, "dsv4MhcPost: state/sublayerOut dtype mismatch")
+    /// mHC expand — channel-wise residual remix:
+    ///   `H_new[d, dst, t] = block_out[d, t] * post[t, dst]
+    ///                     + sum_src comb[t, dst, src] * residual[d, src, t]`
+    public static func dsv4MhcExpand(
+        blockOut: Tensor, post: Tensor, comb: Tensor, residualState: Tensor,
+        hiddenDim: Int, nHc: Int, nTokens: Int,
+        on cmd: MTLCommandBuffer, into state: Tensor? = nil
+    ) -> Tensor {
+        precondition(post.dtype == .f32, "dsv4MhcExpand: post must be f32")
+        precondition(comb.dtype == .f32, "dsv4MhcExpand: comb must be f32")
+        precondition(
+            residualState.dtype == blockOut.dtype,
+            "dsv4MhcExpand: residualState / blockOut dtype mismatch")
+        let result = state ?? Tensor.empty(shape: [nTokens, nHc, hiddenDim], dtype: blockOut.dtype)
         let (grid, tg) = elementwiseGrid(hiddenDim)
         let hd = UInt32(hiddenDim)
-        let nc = UInt32(nCh)
-        switch state.dtype {
+        let nc = UInt32(nHc)
+        let nt = UInt32(nTokens)
+        switch blockOut.dtype {
         case .f32:
-            MetalTileKernels.ffai_dsv4_mhc_post_f32(
-                sublayer_out: sublayerOut.buffer, sublayer_outOffset: sublayerOut.offset,
+            MetalTileKernels.ffai_dsv4_mhc_expand_f32(
+                block_out: blockOut.buffer, block_outOffset: blockOut.offset,
                 post: post.buffer, postOffset: post.offset,
-                state: state.buffer, stateOffset: state.offset,
-                hidden_dim: hd, n_ch: nc,
+                comb: comb.buffer, combOffset: comb.offset,
+                residual_state: residualState.buffer, residual_stateOffset: residualState.offset,
+                state: result.buffer, stateOffset: result.offset,
+                hidden_dim: hd, n_hc: nc, n_tokens: nt,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case .f16:
-            MetalTileKernels.ffai_dsv4_mhc_post_f16(
-                sublayer_out: sublayerOut.buffer, sublayer_outOffset: sublayerOut.offset,
+            MetalTileKernels.ffai_dsv4_mhc_expand_f16(
+                block_out: blockOut.buffer, block_outOffset: blockOut.offset,
                 post: post.buffer, postOffset: post.offset,
-                state: state.buffer, stateOffset: state.offset,
-                hidden_dim: hd, n_ch: nc,
+                comb: comb.buffer, combOffset: comb.offset,
+                residual_state: residualState.buffer, residual_stateOffset: residualState.offset,
+                state: result.buffer, stateOffset: result.offset,
+                hidden_dim: hd, n_hc: nc, n_tokens: nt,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         case .bf16:
-            MetalTileKernels.ffai_dsv4_mhc_post_bf16(
-                sublayer_out: sublayerOut.buffer, sublayer_outOffset: sublayerOut.offset,
+            MetalTileKernels.ffai_dsv4_mhc_expand_bf16(
+                block_out: blockOut.buffer, block_outOffset: blockOut.offset,
                 post: post.buffer, postOffset: post.offset,
-                state: state.buffer, stateOffset: state.offset,
-                hidden_dim: hd, n_ch: nc,
+                comb: comb.buffer, combOffset: comb.offset,
+                residual_state: residualState.buffer, residual_stateOffset: residualState.offset,
+                state: result.buffer, stateOffset: result.offset,
+                hidden_dim: hd, n_hc: nc, n_tokens: nt,
                 gridSize: grid, threadgroupSize: tg, on: cmd)
         default:
-            fatalError("dsv4MhcPost: unsupported state dtype \(state.dtype)")
+            fatalError("dsv4MhcExpand: unsupported blockOut dtype \(blockOut.dtype)")
         }
+        return result
     }
 
     // ─── Lightning Indexer ───────────────────────────────────────────
